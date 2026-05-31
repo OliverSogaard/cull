@@ -1,0 +1,2594 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CULL · Design mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0c0d;
+    --surface: #16161a;
+    --surface-2: #1d1d22;
+    --matte: #1a1a1e;
+    --border: #28282e;
+    --border-soft: rgba(40, 40, 46, 0.5);
+    --text: #ededed;
+    --text-2: #a3a3aa;
+    --muted: #6c6c74;
+    --accent: #d4af6a;
+    --accent-soft: rgba(212, 175, 106, 0.15);
+    --ok: #9ec5a4;
+    --bad: #c87f7f;
+    --fav: #d4af6a;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    font-feature-settings: "ss01", "cv11", "cv10";
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* CHROME */
+  .chrome {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 36px; padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    user-select: none;
+    position: relative; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: 0.18em; font-weight: 500; }
+  .brand-mark { color: var(--accent); }
+  .brand-sep { color: var(--muted); }
+  .brand-mode { color: var(--text-2); }
+  .chrome-actions { display: flex; gap: 4px; }
+  .chrome-btn {
+    width: 30px; height: 24px; display: grid; place-items: center;
+    color: var(--text-2); background: transparent;
+    border: none; border-radius: 3px; cursor: pointer;
+    font-size: 13px; font-family: inherit;
+  }
+  .chrome-btn:hover { background: var(--surface-2); color: var(--text); }
+
+  .save-status {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-left: 16px; padding: 2px 9px;
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.06em;
+    text-transform: lowercase;
+    color: var(--muted); cursor: default;
+    transition: background 200ms;
+  }
+  .save-status::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok); opacity: 0.45;
+  }
+  .save-status::after { content: "saved"; }
+  body[data-save="saving"] .save-status { color: var(--accent); }
+  body[data-save="saving"] .save-status::before {
+    background: var(--accent); opacity: 1;
+    animation: savePulse 0.9s infinite;
+  }
+  body[data-save="saving"] .save-status::after { content: "saving…"; }
+  body[data-save="failed"] .save-status {
+    color: var(--bad);
+    background: rgba(200, 127, 127, 0.12);
+    cursor: pointer;
+  }
+  body[data-save="failed"] .save-status::before { background: var(--bad); opacity: 1; }
+  body[data-save="failed"] .save-status::after { content: "failed · retry"; }
+  body[data-save="failed"] .save-status:hover { background: rgba(200, 127, 127, 0.2); }
+  @keyframes savePulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.75); }
+  }
+
+  /* CONTROLS */
+  .controls {
+    position: fixed; top: 50px; right: 16px;
+    z-index: 200;
+    display: flex; flex-direction: column; gap: 6px;
+    align-items: flex-end;
+  }
+  .view-tabs, .overlay-tabs, .state-tabs {
+    display: flex; gap: 4px;
+    background: var(--surface);
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+  }
+  .state-tabs { font-size: 9px; padding: 3px; flex-wrap: wrap; max-width: 580px; justify-content: flex-end; }
+  .view-tab, .overlay-tab, .state-tab {
+    padding: 6px 12px; border: none; background: transparent;
+    color: var(--text-2); cursor: pointer; border-radius: 999px;
+    font-family: inherit; font-size: inherit; letter-spacing: inherit;
+    font-weight: 500;
+  }
+  .state-tab { padding: 5px 9px; }
+  .view-tab.active { background: var(--accent); color: #1a1408; }
+  .overlay-tab.active, .state-tab.active {
+    background: var(--surface-2); color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
+  }
+  .state-tabs .reset-all, .state-tabs .fire {
+    color: var(--muted); padding: 5px 9px;
+    border-left: 1px solid var(--border); margin-left: 4px;
+  }
+  .state-tabs .fire { color: var(--accent); border-left: none; margin-left: 0; }
+  .state-tabs .reset-all:hover, .state-tabs .fire:hover { color: var(--text); }
+
+  /* view visibility */
+  body[data-view="home"]    .view-loupe,
+  body[data-view="home"]    .view-compare,
+  body[data-view="home"]    .view-grid    { display: none; }
+  body[data-view="loupe"]   .view-home,
+  body[data-view="loupe"]   .view-compare,
+  body[data-view="loupe"]   .view-grid    { display: none; }
+  body[data-view="compare"] .view-home,
+  body[data-view="compare"] .view-loupe,
+  body[data-view="compare"] .view-grid    { display: none; }
+  body[data-view="grid"]    .view-home,
+  body[data-view="grid"]    .view-loupe,
+  body[data-view="grid"]    .view-compare { display: none; }
+
+  /* overlay visibility */
+  .overlay-settings, .overlay-help, .overlay-finish, .overlay-quit { display: none; }
+  body[data-overlay="settings"] .overlay-settings { display: flex; }
+  body[data-overlay="help"]     .overlay-help     { display: flex; }
+  body[data-overlay="finish"]   .overlay-finish   { display: flex; }
+  body[data-overlay="quit"]     .overlay-quit     { display: flex; }
+
+  /* HOME */
+  .home {
+    min-height: calc(100vh - 36px);
+    display: grid; place-items: center;
+    padding: 80px 60px;
+    position: relative;
+  }
+  .home-inner { max-width: 620px; width: 100%; }
+  .home-title {
+    font-size: 56px; line-height: 1.05; letter-spacing: -0.025em;
+    font-weight: 500; margin-bottom: 20px;
+  }
+  .home-title em { font-style: normal; color: var(--accent); }
+  .home-sub {
+    font-size: 17px; color: var(--text-2); line-height: 1.55;
+    margin-bottom: 44px; max-width: 500px;
+  }
+  .home-cta-row { display: flex; align-items: center; gap: 18px; }
+  .home-cta {
+    display: inline-flex; align-items: center; gap: 12px;
+    padding: 14px 22px; background: var(--accent); color: #1a1408;
+    border: none; border-radius: 4px; font-family: inherit;
+    font-size: 15px; font-weight: 500; cursor: pointer;
+    transition: background 200ms;
+  }
+  .home-cta:hover { background: #e8c182; }
+  .home-cta .key {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    padding: 2px 7px; background: rgba(26, 20, 8, 0.18);
+    border-radius: 2px; letter-spacing: 0.05em;
+  }
+  .home-drop-hint {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    letter-spacing: 0.06em;
+  }
+  .home-recent { margin-top: 68px; }
+  .home-recent-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 16px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .recent-item {
+    display: grid; grid-template-columns: 1fr 100px 100px;
+    gap: 20px; align-items: baseline;
+    padding: 13px 0; cursor: pointer;
+    border-bottom: 1px solid var(--border-soft);
+    transition: color 150ms;
+  }
+  .recent-item:last-child { border-bottom: none; }
+  .recent-item:hover .recent-path { color: var(--accent); }
+  .recent-path {
+    font-size: 14px; overflow: hidden; white-space: nowrap;
+    transition: color 150ms; min-width: 0;
+  }
+  .recent-count {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--text-2); font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .recent-count b { color: var(--text); font-weight: 500; }
+  .recent-count .of { color: var(--muted); }
+  .recent-count .done { color: var(--ok); margin-left: 4px; }
+  .recent-time { font-size: 12px; color: var(--muted); text-align: right; }
+  .recent-empty {
+    padding: 22px 0 14px;
+    font-size: 13px; color: var(--muted);
+    line-height: 1.55;
+  }
+  .recent-empty kbd {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    background: var(--surface); padding: 2px 6px;
+    border: 1px solid var(--border); border-radius: 3px;
+    color: var(--text-2); margin: 0 2px;
+  }
+  body[data-no-recents="on"] .recent-items { display: none; }
+  body:not([data-no-recents="on"]) .recent-empty { display: none; }
+  .home-foot {
+    margin-top: 70px; padding-top: 24px;
+    border-top: 1px solid var(--border-soft);
+    display: flex; gap: 28px; font-size: 12px; color: var(--muted);
+  }
+  .key-hint {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    background: var(--surface); padding: 3px 7px;
+    border: 1px solid var(--border); border-radius: 3px;
+    margin-right: 8px; color: var(--text-2); letter-spacing: 0.04em;
+  }
+
+  .drag-indicator {
+    display: none;
+    position: absolute; inset: 20px;
+    background: rgba(212, 175, 106, 0.07);
+    border: 2px dashed var(--accent);
+    border-radius: 6px;
+    z-index: 5;
+    flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 14px;
+    pointer-events: none;
+  }
+  body[data-drag-over="on"] .drag-indicator { display: flex; }
+  body[data-drag-over="on"] .home-inner { opacity: 0.35; transition: opacity 200ms; }
+  .drag-arrow { font-size: 36px; color: var(--accent); line-height: 1; }
+  .drag-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px; letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  /* LOUPE — uses flex order so thumb strip position can flip */
+  .loupe {
+    height: calc(100vh - 36px);
+    display: flex; flex-direction: column;
+  }
+  .loupe-body { flex: 1; display: flex; min-height: 0; order: 1; }
+  .loupe .strip   { order: 2; }
+  .loupe .status  { order: 3; }
+  body[data-thumbs-pos="top"] .loupe .strip { order: 0; }
+
+  .loupe-stage {
+    flex: 1; background: var(--bg);
+    display: grid; place-items: center;
+    padding: 48px 56px; overflow: hidden; min-width: 0;
+  }
+  .photo-frame {
+    aspect-ratio: 3 / 2;
+    max-width: 100%; max-height: 100%; width: auto;
+    padding: 14px;
+    background: var(--matte);
+    border-radius: 2px;
+    box-shadow: 0 8px 48px rgba(0,0,0,0.6);
+    position: relative;
+    transition: aspect-ratio 200ms;
+    overflow: hidden;
+  }
+  body[data-portrait="on"] .view-loupe .photo-frame { aspect-ratio: 2 / 3; }
+  /* <img> element fills the photo-frame's content area (inside the 14px padding) */
+  img.photo {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 1px;
+    background-color: var(--matte);
+  }
+
+  /* loading photo placeholder */
+  .photo-loading-overlay {
+    display: none;
+    position: absolute; inset: 0;
+    z-index: 3;
+    backdrop-filter: blur(20px);
+    background: rgba(12, 12, 13, 0.45);
+    align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  body[data-loading-photo="on"] .view-loupe .photo-loading-overlay,
+  body[data-loading-photo="on"] .view-compare .photo-loading-overlay { display: flex; }
+  .photo-loading-overlay::after {
+    content: ""; width: 32px; height: 32px;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    border: 2px solid var(--surface-2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  /* photo overlays (clipping / peaking / thirds) — inside the padded photo area */
+  .photo-overlay {
+    display: none;
+    position: absolute; inset: 14px;
+    z-index: 3;
+    pointer-events: none;
+    border-radius: 1px;
+  }
+  body.thirds-on   .photo-overlay.thirds   { display: block; }
+  body.clipping-on .photo-overlay.clipping { display: block; }
+  body.peaking-on  .photo-overlay.peaking  { display: block; }
+
+  .photo-overlay.thirds {
+    background-image:
+      linear-gradient(to right,
+        transparent calc(33.33% - 0.5px),
+        rgba(255,255,255,0.55) calc(33.33% - 0.5px),
+        rgba(255,255,255,0.55) calc(33.33% + 0.5px),
+        transparent calc(33.33% + 0.5px)),
+      linear-gradient(to right,
+        transparent calc(66.66% - 0.5px),
+        rgba(255,255,255,0.55) calc(66.66% - 0.5px),
+        rgba(255,255,255,0.55) calc(66.66% + 0.5px),
+        transparent calc(66.66% + 0.5px)),
+      linear-gradient(to bottom,
+        transparent calc(33.33% - 0.5px),
+        rgba(255,255,255,0.55) calc(33.33% - 0.5px),
+        rgba(255,255,255,0.55) calc(33.33% + 0.5px),
+        transparent calc(33.33% + 0.5px)),
+      linear-gradient(to bottom,
+        transparent calc(66.66% - 0.5px),
+        rgba(255,255,255,0.55) calc(66.66% - 0.5px),
+        rgba(255,255,255,0.55) calc(66.66% + 0.5px),
+        transparent calc(66.66% + 0.5px));
+  }
+  .photo-overlay.clipping {
+    background-image:
+      radial-gradient(ellipse 100px 70px at 22% 28%, rgba(255, 70, 70, 0.55) 0%, rgba(255, 70, 70, 0.3) 50%, transparent 70%),
+      radial-gradient(ellipse 80px 60px at 62% 22%, rgba(255, 70, 70, 0.45) 0%, transparent 70%),
+      radial-gradient(ellipse 60px 50px at 45% 50%, rgba(255, 70, 70, 0.35) 0%, transparent 70%),
+      radial-gradient(ellipse 90px 60px at 78% 78%, rgba(60, 130, 255, 0.45) 0%, transparent 70%),
+      radial-gradient(ellipse 100px 70px at 18% 82%, rgba(60, 130, 255, 0.5) 0%, transparent 70%),
+      repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255,255,255,0.04) 4px, rgba(255,255,255,0.04) 5px);
+  }
+  .photo-overlay.peaking {
+    background-image:
+      radial-gradient(circle 2.5px at 28% 35%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 35% 40%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 42% 38%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 48% 35%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 56% 32%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 38% 50%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 44% 55%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 52% 58%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 60% 52%, rgba(255, 230, 70, 0.85) 100%, transparent 100%),
+      radial-gradient(circle 2.5px at 45% 70%, rgba(255, 230, 70, 0.85) 100%, transparent 100%);
+  }
+
+  /* verdict flash — quick, dim, three colors */
+  .photo-frame.flash-keep::after,
+  .photo-frame.flash-reject::after,
+  .photo-frame.flash-fav::after {
+    content: ""; position: absolute; inset: 14px;
+    border-radius: 1px;
+    z-index: 5; pointer-events: none;
+    animation: flashPulse 380ms ease-out forwards;
+  }
+  .photo-frame.flash-keep::after   { background: rgba(158, 197, 164, 0.45); box-shadow: inset 0 0 0 3px rgba(158, 197, 164, 0.7); }
+  .photo-frame.flash-reject::after { background: rgba(200, 127, 127, 0.45); box-shadow: inset 0 0 0 3px rgba(200, 127, 127, 0.7); }
+  .photo-frame.flash-fav::after    { background: rgba(212, 175, 106, 0.45); box-shadow: inset 0 0 0 3px rgba(212, 175, 106, 0.7); }
+  @keyframes flashPulse {
+    0%   { opacity: 0; }
+    25%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  .exif-rail {
+    width: 290px; flex-shrink: 0;
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    padding: 40px 32px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 36px;
+  }
+  body:not(.info-on) .view-loupe .exif-rail { display: none; }
+  .rail-section { display: flex; flex-direction: column; gap: 14px; }
+  .rail-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .rail-rows { display: flex; flex-direction: column; gap: 11px; }
+  .rail-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 12px; line-height: 1.4;
+  }
+  .rail-row .k { color: var(--muted); font-size: 11px; letter-spacing: 0.02em; }
+  .rail-row .v {
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .rail-row.lrc { display: none; }
+  body[data-lrc="on"] .rail-row.lrc { display: flex; }
+  .lrc-stars { letter-spacing: 0.04em; font-size: 13px; line-height: 1; }
+  .lrc-stars .filled { color: var(--accent); }
+  .lrc-stars .dim { color: var(--surface-2); }
+  .hist {
+    height: 70px; position: relative; overflow: hidden;
+    border-radius: 1px; background: rgba(255,255,255,0.02);
+  }
+  .hist::before {
+    content: ""; position: absolute; inset: 2px;
+    background: linear-gradient(180deg, transparent 0%, rgba(212, 175, 106, 0.6) 100%);
+    clip-path: polygon(
+      0 100%, 4% 90%, 8% 78%, 14% 62%, 20% 48%, 28% 32%,
+      36% 22%, 44% 18%, 52% 24%, 60% 36%, 68% 48%, 76% 60%,
+      84% 72%, 92% 84%, 100% 100%);
+  }
+
+  /* thumb strip — no vertical scroll, both clips clean */
+  .strip {
+    height: 70px; background: var(--bg);
+    border-top: 1px solid var(--border);
+    display: flex; gap: 4px; padding: 8px 12px;
+    overflow-x: auto; overflow-y: hidden;
+    flex-shrink: 0;
+  }
+  body[data-thumbs-pos="top"] .strip {
+    border-top: none;
+    border-bottom: 1px solid var(--border);
+  }
+  body.thumbs-off .strip { display: none; }
+  .strip::-webkit-scrollbar { height: 0; display: none; }
+  .thumb {
+    flex: 0 0 76px; height: 54px; border-radius: 1px;
+    background: linear-gradient(135deg, #2a2018 0%, #1a1410 100%);
+    cursor: pointer; position: relative;
+    transition: outline-color 150ms;
+    outline: 1.5px solid transparent; outline-offset: -1.5px;
+  }
+  .thumb:nth-child(3n) { background: linear-gradient(135deg, #1a1c20 0%, #0c0e12 100%); }
+  .thumb:nth-child(5n) { background: linear-gradient(135deg, #281c1a 0%, #181010 100%); }
+  .thumb:nth-child(7n) { background: linear-gradient(135deg, #2a2418 0%, #1a160e 100%); }
+  .thumb.active { outline-color: var(--accent); }
+
+  .thumb[data-rate]::after {
+    position: absolute; bottom: 3px; right: 3px;
+    width: 14px; height: 14px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, "Segoe UI Symbol", system-ui, sans-serif;
+    font-size: 10px; font-weight: 700;
+    color: #0a0a0c; line-height: 1;
+    box-shadow: 0 0 0 1.5px rgba(0,0,0,0.6);
+  }
+  .thumb[data-rate="keep"]::after   { content: "✓"; background: var(--ok); }
+  .thumb[data-rate="reject"]::after { content: "✕"; background: var(--bad); }
+  .thumb[data-rate="fav"]::after    { content: "★"; background: var(--fav); }
+
+  /* dim rejected so they fade visually */
+  .thumb[data-rate="reject"]      { opacity: 0.45; }
+  .thumb[data-rate="reject"].active { opacity: 1; }
+
+  .thumb.lrc-rated::before {
+    content: "★";
+    position: absolute; top: 3px; left: 3px;
+    color: var(--accent);
+    font-size: 9px;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 1px 4px;
+    border-radius: 1px;
+    z-index: 1; display: none;
+  }
+  body[data-lrc="on"] .thumb.lrc-rated::before { display: block; }
+
+  /* STATUS BAR */
+  .status {
+    display: flex; align-items: center; height: 38px;
+    padding: 0 18px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 11px; flex-shrink: 0; gap: 18px;
+  }
+  .status-fn {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text); letter-spacing: 0.02em;
+    display: inline-flex; align-items: baseline;
+    min-width: 0;
+  }
+  .status-fn-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 220px; display: inline-block;
+    vertical-align: bottom;
+  }
+  .status-fn .sep { color: var(--border); margin: 0 8px; flex-shrink: 0; }
+  .status-fn-meta { color: var(--text-2); flex-shrink: 0; }
+  .status-verdict {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .status-verdict::before {
+    width: 14px; height: 14px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: -apple-system, "Segoe UI Symbol", system-ui, sans-serif;
+    font-size: 10px; font-weight: 700;
+    color: #0a0a0c; line-height: 1;
+  }
+  .status-verdict.keep        { color: var(--ok);  }
+  .status-verdict.keep::before { content: "✓"; background: var(--ok); }
+  .status-verdict.reject      { color: var(--bad); }
+  .status-verdict.reject::before { content: "✕"; background: var(--bad); }
+  .status-verdict.fav         { color: var(--fav); }
+  .status-verdict.fav::before  { content: "★"; background: var(--fav); }
+  .status-spacer { flex: 1; }
+  .status-pos {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--text-2); font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em; flex-shrink: 0;
+  }
+  .status-pos b { color: var(--text); font-weight: 500; }
+  .status-pos .of { color: var(--muted); }
+
+  .scrub-indicator {
+    display: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent);
+    align-items: center; gap: 4px;
+  }
+  body[data-scrubbing="on"] .scrub-indicator { display: inline-flex; }
+  .scrub-indicator::before {
+    content: "⟶"; font-size: 11px;
+    animation: scrubFlash 0.5s infinite;
+  }
+  @keyframes scrubFlash {
+    0%, 100% { opacity: 1; transform: translateX(0); }
+    50% { opacity: 0.4; transform: translateX(2px); }
+  }
+
+  .overlay-cluster {
+    display: inline-flex; gap: 3px; align-items: center;
+    padding-left: 14px;
+    border-left: 1px solid var(--border);
+    margin-left: -8px;
+    flex-shrink: 0;
+  }
+  .overlay-cluster button {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; font-weight: 500;
+    cursor: pointer;
+    transition: all 150ms;
+    display: grid; place-items: center;
+  }
+  .overlay-cluster button:hover { color: var(--text-2); background: var(--surface-2); }
+  .overlay-cluster button.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .filter-tabs {
+    display: inline-flex; gap: 0;
+    border-left: 1px solid var(--border);
+    padding-left: 18px; margin-left: 4px;
+    flex-shrink: 0;
+  }
+  .filter-tabs button {
+    background: transparent; border: none; color: var(--muted);
+    padding: 4px 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    cursor: pointer; letter-spacing: 0.16em; text-transform: uppercase;
+  }
+  .filter-tabs button.active {
+    color: var(--accent);
+    border-bottom: 1px solid var(--accent);
+  }
+
+  .finish-btn {
+    background: transparent; color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 5px 14px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    cursor: pointer; border-radius: 2px;
+    transition: background 150ms;
+    flex-shrink: 0;
+  }
+  .finish-btn:hover { background: var(--accent); color: #1a1408; }
+
+  /* COMPARE */
+  .compare {
+    height: calc(100vh - 36px);
+    display: flex; flex-direction: column;
+  }
+  .compare-body { flex: 1; display: flex; min-height: 0; order: 1; }
+  .compare .strip { order: 2; }
+  .compare .status { order: 3; }
+  body[data-thumbs-pos="top"] .compare .strip { order: 0; }
+
+  .compare-stage {
+    flex: 1; background: var(--bg);
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 24px; padding: 32px 56px 26px;
+    overflow: hidden; min-height: 0;
+  }
+  .compare-pane {
+    display: flex; flex-direction: column;
+    gap: 16px; min-height: 0; min-width: 0;
+    align-items: center; justify-content: center;
+  }
+  .compare-pane .photo-frame {
+    max-width: 100%; max-height: calc(100% - 36px);
+  }
+  .compare-pane.landscape .photo-frame { aspect-ratio: 3 / 2; }
+  .compare-pane.portrait  .photo-frame { aspect-ratio: 2 / 3; }
+
+  .compare-role {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 14px; border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+  .compare-role.champion {
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .compare-role.challenger {
+    background: transparent; color: var(--text-2);
+    border: 1px solid var(--border);
+  }
+
+  /* compare side EXIF rail */
+  .compare-rail {
+    width: 340px; flex-shrink: 0;
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    padding: 32px 24px; overflow-y: auto;
+    display: none;
+    flex-direction: column; gap: 28px;
+  }
+  body.info-on .view-compare .compare-rail { display: flex; }
+  body.info-on .compare-stage { padding-right: 24px; }
+  .compare-rail-head {
+    display: grid; grid-template-columns: 90px 1fr 1fr;
+    gap: 12px; align-items: baseline;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .compare-rail-head .col-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .compare-rail-head .col-name.challenger { color: var(--text-2); }
+  .cr-row {
+    display: grid; grid-template-columns: 90px 1fr 1fr;
+    gap: 12px; align-items: baseline;
+    padding: 5px 0;
+  }
+  .cr-row .k {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .cr-row .ch-v {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .cr-row.diff .ch-v { color: var(--accent); }
+  .cr-row.diff .k::before { content: "•"; margin-right: 5px; color: var(--accent); }
+
+  /* candidate strip — SAME dimensions as loupe strip */
+  .strip.candidates .thumb { flex: 0 0 76px; height: 54px; }
+  .strip-separator {
+    flex-shrink: 0;
+    width: 18px; height: 54px;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+    user-select: none;
+  }
+  .strip-separator::before {
+    content: ""; position: absolute;
+    top: 8px; bottom: 8px; left: 50%;
+    width: 1px; background: var(--border);
+    transform: translateX(-50%);
+  }
+  .strip-separator span {
+    position: relative;
+    background: var(--bg);
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px; font-weight: 500;
+    padding: 3px 4px;
+    line-height: 1;
+  }
+  .strip.candidates .thumb.pinned {
+    outline-color: var(--accent); outline-width: 2px;
+  }
+  .strip.candidates .thumb.pinned::before {
+    content: "champion"; position: absolute; top: 2px; left: 2px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); background: rgba(0,0,0,0.7);
+    padding: 1px 4px; border-radius: 1px;
+    z-index: 1;
+    display: block;
+  }
+  .strip.candidates .thumb.challenger {
+    outline-color: var(--accent); outline-width: 2px;
+  }
+  .strip.candidates .thumb.challenger::before {
+    content: "challenger"; position: absolute; top: 2px; left: 2px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text); background: rgba(0,0,0,0.7);
+    padding: 1px 4px; border-radius: 1px;
+    z-index: 1;
+    display: block;
+  }
+  /* LrC star added inline to the role badge when both pinned/challenger AND lrc-rated */
+  body[data-lrc="on"] .strip.candidates .thumb.lrc-rated.pinned::before {
+    content: "champion ★"; color: var(--accent);
+  }
+  body[data-lrc="on"] .strip.candidates .thumb.lrc-rated.challenger::before {
+    content: "challenger ★"; color: var(--accent);
+  }
+  /* compare-rail LrC row */
+  .cr-row.lrc { display: none; }
+  body[data-lrc="on"] .cr-row.lrc { display: grid; }
+
+  /* GRID */
+  .grid {
+    height: calc(100vh - 36px);
+    display: flex; flex-direction: column;
+  }
+  .grid-stage {
+    flex: 1; background: var(--bg);
+    padding: 20px 24px; overflow-y: auto;
+  }
+  .grid-cells {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+    gap: 6px;
+  }
+  .grid-cell {
+    aspect-ratio: 3 / 2;
+    border-radius: 2px;
+    cursor: pointer; position: relative;
+    outline: 3px solid transparent;
+    outline-offset: 2px;
+    transition: outline-color 120ms;
+    overflow: hidden;
+    background: transparent;
+  }
+  .grid-cell.active { outline-color: var(--accent); }
+  .cell-photo {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #2a2018 0%, #1a1410 100%);
+    background-size: cover; background-position: center;
+  }
+  .grid-cell:nth-child(2n) .cell-photo { background-color: #1a1c20; background-image: linear-gradient(135deg, #1a1c20 0%, #0c0e12 100%); }
+  .grid-cell:nth-child(3n) .cell-photo { background-color: #281c1a; background-image: linear-gradient(135deg, #281c1a 0%, #181010 100%); }
+  .grid-cell:nth-child(5n) .cell-photo { background-color: #2a2418; background-image: linear-gradient(135deg, #2a2418 0%, #1a160e 100%); }
+  .grid-cell:nth-child(7n) .cell-photo { background-color: #1c1f27; background-image: linear-gradient(135deg, #1c1f27 0%, #0a0c12 100%); }
+  .grid-cell.portrait .cell-photo {
+    inset: 0; width: auto; height: 100%;
+    aspect-ratio: 2 / 3;
+    left: 50%; transform: translateX(-50%);
+    right: auto;
+  }
+
+  /* multi-select: solid champagne tint + accent outline */
+  body[data-multi="on"] .grid-cell.multi-selected { outline-color: var(--accent); }
+  .multi-tint {
+    display: none;
+    position: absolute; inset: 0;
+    background: rgba(212, 175, 106, 0.42);
+    z-index: 2; pointer-events: none;
+  }
+  body[data-multi="on"] .grid-cell.multi-selected .multi-tint { display: block; }
+
+  .grid-cell[data-rate]::after {
+    position: absolute; bottom: 6px; right: 6px;
+    width: 18px; height: 18px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, "Segoe UI Symbol", system-ui, sans-serif;
+    font-size: 12px; font-weight: 700;
+    color: #0a0a0c; line-height: 1;
+    box-shadow: 0 0 0 1.5px rgba(0,0,0,0.55);
+    z-index: 3;
+  }
+  .grid-cell[data-rate="keep"]::after   { content: "✓"; background: var(--ok); }
+  .grid-cell[data-rate="reject"]::after { content: "✕"; background: var(--bad); }
+  .grid-cell[data-rate="fav"]::after    { content: "★"; background: var(--fav); }
+
+  .grid-cell[data-rate="reject"]        { opacity: 0.5; }
+  .grid-cell[data-rate="reject"].active { opacity: 1; }
+
+  .grid-cell.lrc-rated::before {
+    content: "★";
+    position: absolute; top: 5px; left: 5px;
+    color: var(--accent);
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 2px 6px;
+    border-radius: 2px;
+    z-index: 3;
+    display: none;
+  }
+  body[data-lrc="on"] .grid-cell.lrc-rated::before { display: block; }
+
+  .grid-cell.skeleton .cell-photo {
+    background-color: var(--surface);
+    background-image:
+      linear-gradient(110deg,
+        rgba(255,255,255,0.04) 25%,
+        rgba(255,255,255,0.14) 50%,
+        rgba(255,255,255,0.04) 75%
+      );
+    background-size: 200% 100%;
+    background-position: 0 0;
+    animation: shimmer 1.4s linear infinite;
+  }
+  .grid-cell.skeleton::before {
+    content: attr(data-fn);
+    position: absolute; left: 8px; right: 8px; bottom: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px; color: var(--muted); letter-spacing: 0.04em;
+    background: none; padding: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    z-index: 3;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  .cell-fn {
+    display: none;
+    position: absolute; left: 5px; bottom: 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px; color: var(--text);
+    background: rgba(0,0,0,0.78);
+    padding: 2px 6px; border-radius: 2px;
+    z-index: 4;
+    max-width: calc(100% - 32px);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    pointer-events: none;
+    letter-spacing: 0.02em;
+  }
+  .grid-cell:hover .cell-fn { display: block; }
+
+  .multi-counter {
+    display: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent);
+    align-items: center; gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(212, 175, 106, 0.15);
+  }
+  body[data-multi="on"] .multi-counter { display: inline-flex; }
+  body[data-multi="on"] .view-grid .status-verdict { display: none; }
+  body[data-multi="on"] .view-grid .status-fn-meta { display: none; }
+  body[data-multi="on"] .view-grid .status-fn-name::after { content: "  + 2 more"; color: var(--muted); }
+
+  /* EMPTY STATES */
+  .empty-state {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 14px;
+    padding: 40px;
+    text-align: center;
+    color: var(--text-2);
+  }
+  .empty-icon {
+    width: 64px; height: 64px; border-radius: 50%;
+    border: 1.5px solid var(--border);
+    display: grid; place-items: center;
+    font-size: 26px; color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .empty-icon.success { border-color: var(--ok); color: var(--ok); }
+  .empty-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .empty-title {
+    font-size: 22px; font-weight: 500;
+    color: var(--text); letter-spacing: -0.01em;
+  }
+  .empty-title em { font-style: normal; color: var(--accent); }
+  .empty-action {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: var(--muted);
+    letter-spacing: 0.04em;
+  }
+  .empty-action kbd {
+    background: var(--surface); padding: 2px 7px;
+    border: 1px solid var(--border); border-radius: 3px;
+    color: var(--text-2); font-family: inherit;
+    margin: 0 2px;
+  }
+
+  .empty-filter, .no-candidates { display: none; }
+  body[data-empty-filter="on"] .loupe-body { display: none; }
+  body[data-empty-filter="on"] .view-loupe .empty-filter { display: flex; flex: 1; }
+  body[data-empty-filter="on"] .grid-stage > .grid-cells { display: none; }
+  body[data-empty-filter="on"] .view-grid .empty-filter { display: flex; flex: 1; }
+  body[data-no-candidates="on"] .compare-body { display: none; }
+  body[data-no-candidates="on"] .view-compare .no-candidates { display: flex; flex: 1; }
+  body[data-no-candidates="on"] .strip.candidates { display: none; }
+
+  .scanning-view {
+    display: none;
+    position: fixed;
+    inset: 36px 0 0 0;
+    z-index: 80;
+    background: var(--bg);
+    align-items: center; justify-content: center;
+  }
+  body[data-scanning="on"] .scanning-view { display: flex; }
+  .scan-inner {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 18px;
+    text-align: center;
+  }
+  .scan-spinner {
+    width: 36px; height: 36px;
+    border: 2px solid var(--surface-2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .scan-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .scan-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 38px; font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .scan-count b { color: var(--text); font-weight: 500; }
+  .scan-count .of { color: var(--muted); font-size: 22px; margin-left: 8px; }
+  .scan-path {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    letter-spacing: 0.04em;
+    max-width: 480px;
+    overflow: hidden; white-space: nowrap;
+  }
+
+  .external-banner {
+    display: none;
+    position: fixed;
+    top: 50px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    padding: 9px 14px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    z-index: 60;
+    align-items: center; gap: 14px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    max-width: 540px;
+  }
+  body[data-external-change="on"] .external-banner { display: flex; }
+  .external-banner .warn { color: var(--accent); font-size: 13px; }
+  .external-banner b {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text); font-weight: 500;
+  }
+  .external-banner button {
+    background: var(--accent); color: #1a1408; border: none;
+    padding: 4px 10px; border-radius: 3px;
+    font-family: inherit; font-size: 11px; font-weight: 500;
+    cursor: pointer;
+  }
+  .external-banner button:hover { background: #e8c182; }
+
+  /* OVERLAYS */
+  .overlay {
+    position: fixed; inset: 36px 0 0 0;
+    z-index: 100;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .overlay-settings {
+    align-items: center; justify-content: center;
+    background: rgba(8, 8, 10, 0.7);
+    backdrop-filter: blur(6px);
+    padding: 40px;
+  }
+  .dialog {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 100%; max-width: 540px;
+    max-height: 100%;
+    display: flex; flex-direction: column;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+  }
+  .dialog-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 22px 26px 18px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .dialog-title {
+    font-size: 18px; font-weight: 500; color: var(--text);
+    letter-spacing: -0.005em;
+  }
+  .dialog-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .dialog-body {
+    padding: 8px 26px 24px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 24px;
+  }
+  .dialog-foot {
+    padding: 14px 26px;
+    border-top: 1px solid var(--border-soft);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.1em; color: var(--muted);
+    text-transform: uppercase;
+  }
+  .dialog-foot kbd {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 2px 6px; border-radius: 2px;
+    color: var(--text-2); font-family: inherit;
+    margin: 0 4px;
+  }
+
+  .settings-section {
+    display: flex; flex-direction: column;
+    gap: 14px;
+    padding-top: 18px;
+  }
+  .settings-section:first-child { padding-top: 8px; }
+  .section-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .settings-row {
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 24px; align-items: center;
+  }
+  .settings-row-label { font-size: 13.5px; color: var(--text); }
+  .settings-row-help {
+    font-size: 11.5px; color: var(--muted);
+    margin-top: 2px; line-height: 1.45; max-width: 280px;
+  }
+  .seg {
+    display: inline-flex;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px; padding: 2px;
+  }
+  .seg button {
+    background: transparent; border: none;
+    color: var(--text-2);
+    padding: 5px 12px; border-radius: 2px;
+    font-family: inherit; font-size: 12px;
+    cursor: pointer; transition: background 120ms;
+  }
+  .seg button.active {
+    background: var(--accent); color: #1a1408; font-weight: 500;
+  }
+  .toggle {
+    width: 36px; height: 20px;
+    background: var(--surface-2);
+    border-radius: 999px; position: relative;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    transition: background 150ms;
+  }
+  .toggle::after {
+    content: ""; position: absolute;
+    top: 2px; left: 2px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--text-2);
+    transition: transform 150ms, background 150ms;
+  }
+  .toggle.on { background: var(--accent-soft); border-color: var(--accent); }
+  .toggle.on::after { transform: translateX(16px); background: var(--accent); }
+  .chips {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .chip {
+    padding: 5px 11px; background: transparent;
+    border: 1px solid var(--border); border-radius: 999px;
+    font-family: inherit; font-size: 11px;
+    color: var(--text-2); cursor: pointer;
+    transition: all 150ms;
+  }
+  .chip.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    min-width: 140px;
+    transition: border-color 150ms, background 150ms;
+  }
+  .input:focus { outline: none; border-color: var(--accent); }
+  .input.invalid { border-color: var(--bad); background: rgba(200, 127, 127, 0.06); }
+  .input.flash-restore { animation: flashRestore 0.9s ease-out; }
+  @keyframes flashRestore {
+    0%   { background: rgba(212, 175, 106, 0.25); border-color: var(--accent); }
+    100% { background: var(--bg); border-color: var(--border); }
+  }
+
+  .pinned-config { display: none; }
+  body[data-export-mode="pinned"] .pinned-config { display: grid; }
+  .pinned-config {
+    position: relative;
+    padding-left: 14px;
+    border-left: 2px solid var(--accent-soft);
+  }
+  .pinned-control { display: flex; gap: 8px; align-items: center; min-width: 0; }
+
+  .reset-container, .confirm-container { display: flex; align-items: center; gap: 8px; }
+  .reset-btn {
+    background: transparent;
+    border: 1px solid var(--bad);
+    color: var(--bad);
+    padding: 7px 16px;
+    border-radius: 3px;
+    font-family: inherit; font-size: 12px;
+    cursor: pointer;
+    transition: background 150ms;
+  }
+  .reset-btn:hover { background: rgba(200, 127, 127, 0.1); }
+  .reset-confirm, .move-confirm { display: none; align-items: center; gap: 6px; }
+  .reset-container.confirming .reset-btn { display: none; }
+  .reset-container.confirming .reset-confirm { display: flex; }
+  .confirm-container.confirming .confirm-trigger { display: none; }
+  .confirm-container.confirming .move-confirm { display: flex; }
+  .reset-confirm-msg, .confirm-msg {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--bad);
+    letter-spacing: 0.04em; margin-right: 2px;
+  }
+  .reset-yes, .confirm-yes {
+    background: var(--bad); color: #fff; border: none;
+    padding: 6px 12px; border-radius: 3px;
+    font-family: inherit; font-size: 12px; font-weight: 500;
+    cursor: pointer;
+  }
+  .reset-yes:hover, .confirm-yes:hover { background: #d49090; }
+  .reset-no, .confirm-no {
+    background: transparent; color: var(--text-2);
+    border: 1px solid var(--border);
+    padding: 5px 12px; border-radius: 3px;
+    font-family: inherit; font-size: 12px;
+    cursor: pointer;
+  }
+  .reset-no:hover, .confirm-no:hover { color: var(--text); }
+
+  /* HELP overlay — four variants (home / loupe / compare / grid) */
+  .overlay-help {
+    background: rgba(8, 8, 10, 0.92);
+    backdrop-filter: blur(8px);
+    align-items: center; justify-content: center;
+    padding: 60px 40px; z-index: 150;
+  }
+  .help-inner { max-width: 880px; width: 100%; display: none; }
+  body[data-view="home"]    .help-inner.help-mode-home    { display: block; }
+  body[data-view="loupe"]   .help-inner.help-mode-loupe   { display: block; }
+  body[data-view="compare"] .help-inner.help-mode-compare { display: block; }
+  body[data-view="grid"]    .help-inner.help-mode-grid    { display: block; }
+  .help-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 10px;
+  }
+  .help-title {
+    font-size: 28px; font-weight: 500;
+    letter-spacing: -0.015em;
+    margin-bottom: 36px;
+    color: var(--text);
+  }
+  .help-title em { font-style: normal; color: var(--muted); font-weight: 400; }
+  .help-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 28px 36px;
+  }
+  .help-group { display: flex; flex-direction: column; gap: 8px; }
+  .help-group-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 4px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .help-row {
+    display: grid; grid-template-columns: 110px 1fr;
+    gap: 12px; align-items: baseline; font-size: 12px;
+  }
+  .help-key {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text); font-size: 11px;
+    letter-spacing: 0.04em;
+  }
+  .help-desc { color: var(--text-2); font-size: 12px; }
+  .help-intro {
+    color: var(--text-2); font-size: 15px;
+    line-height: 1.55; max-width: 640px;
+    margin-bottom: 28px;
+  }
+
+  /* FINISH overlay */
+  .overlay-finish {
+    align-items: center; justify-content: center;
+    background: rgba(8, 8, 10, 0.7);
+    backdrop-filter: blur(6px);
+    padding: 40px;
+  }
+  .finish-dialog {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 100%; max-width: 520px;
+    display: flex; flex-direction: column;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+  }
+  .finish-summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+    margin-top: 16px;
+  }
+  .finish-stat {
+    padding: 16px 20px;
+    background: var(--surface);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .finish-stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .finish-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 24px; font-variant-numeric: tabular-nums;
+    color: var(--text); font-weight: 500;
+    line-height: 1.1;
+  }
+  .finish-stat-value.keep   { color: var(--ok); }
+  .finish-stat-value.reject { color: var(--bad); }
+  body[data-no-keeps="on"]   .finish-stat-value.keep   { color: var(--muted); }
+  body[data-no-rejects="on"] .finish-stat-value.reject { color: var(--muted); }
+  body[data-no-keeps="on"]   .finish-stat-sub { display: none; }
+  .finish-stat-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--fav);
+    letter-spacing: 0.05em;
+    margin-top: 2px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .finish-stat-sub .star { color: var(--fav); font-size: 11px; }
+
+  .finish-unrated {
+    margin: 14px 26px 0;
+    padding: 10px 14px;
+    background: rgba(212, 175, 106, 0.07);
+    border-left: 3px solid var(--accent);
+    border-radius: 2px;
+    font-size: 11.5px;
+    color: var(--text-2);
+    display: flex; gap: 8px; align-items: center;
+    line-height: 1.45;
+  }
+  .finish-unrated .warn-icon { color: var(--accent); font-size: 13px; }
+
+  .finish-actions {
+    padding: 22px 26px 18px;
+    display: flex; flex-direction: column; gap: 22px;
+  }
+  .finish-action { display: flex; flex-direction: column; gap: 8px; }
+  .finish-action-label { font-size: 13.5px; color: var(--text); }
+  .finish-action-help {
+    font-size: 11.5px; color: var(--muted);
+    line-height: 1.5;
+  }
+  .finish-action-help b {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-2); font-weight: 500;
+    background: var(--bg); padding: 1px 5px;
+    border-radius: 2px; border: 1px solid var(--border-soft);
+  }
+  .finish-action-row {
+    display: flex; gap: 8px; align-items: center;
+    margin-top: 4px;
+  }
+  .finish-pri {
+    background: var(--accent); color: #1a1408; border: none;
+    padding: 8px 14px; border-radius: 3px;
+    font-family: inherit; font-size: 12px; font-weight: 500;
+    cursor: pointer;
+  }
+  .finish-pri:hover { background: #e8c182; }
+  .finish-pri:disabled, .finish-pri.disabled {
+    background: var(--surface-2); color: var(--muted); cursor: not-allowed;
+  }
+  .finish-pri:disabled:hover, .finish-pri.disabled:hover { background: var(--surface-2); }
+  .finish-sec {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    padding: 7px 12px; border-radius: 3px;
+    font-family: inherit; font-size: 11px;
+    cursor: pointer;
+  }
+  .finish-sec:hover { color: var(--text); border-color: var(--border-soft); }
+  .dest-tag {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg); border: 1px solid var(--border);
+    padding: 5px 10px; border-radius: 3px;
+    font-size: 11px; color: var(--text-2);
+    white-space: nowrap;
+    max-width: 220px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .dest-path-edit {
+    display: flex; align-items: stretch;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    flex: 1; overflow: hidden;
+    transition: border-color 150ms;
+    min-width: 0;
+  }
+  .dest-path-edit:focus-within { border-color: var(--accent); }
+  .dest-root {
+    color: var(--muted); padding: 7px 0 7px 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    max-width: 50%;
+    overflow: hidden;
+  }
+  .dest-sub {
+    background: transparent; border: none; outline: none;
+    color: var(--text);
+    font-family: inherit; font-size: inherit;
+    padding: 7px 10px 7px 0;
+    flex: 1; min-width: 80px; width: 100%;
+  }
+  .dest-sub.invalid { color: var(--bad); }
+
+  .finish-action-row[data-mode="ask"]   .variant-pinned { display: none; }
+  .finish-action-row[data-mode="pinned"] .variant-ask    { display: none; }
+  .variant-ask, .variant-pinned { display: contents; }
+
+  /* ask mode: two stages — default (before picker) vs picked (after picker) */
+  .picked-label, .picked-path, .ask-change-btn, .ask-copy-btn { display: none; }
+  body[data-picked="on"] .finish-action-row[data-mode="ask"] .ask-default-btn { display: none; }
+  body[data-picked="on"] .finish-action-row[data-mode="ask"] .picked-label,
+  body[data-picked="on"] .finish-action-row[data-mode="ask"] .ask-change-btn,
+  body[data-picked="on"] .finish-action-row[data-mode="ask"] .ask-copy-btn { display: inline-flex; }
+  body[data-picked="on"] .finish-action-row[data-mode="ask"] .picked-path { display: inline-block; }
+  .picked-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted);
+    align-self: center;
+  }
+  .picked-path { flex-shrink: 1; }
+
+  .finish-progress { display: none; gap: 10px; align-items: center; margin-top: 4px; }
+  body[data-finishing="on"] .finish-action.move-rejects .finish-action-row { display: none; }
+  body[data-finishing="on"] .finish-action.move-rejects .finish-progress { display: flex; }
+  .finish-progress-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--text-2);
+    letter-spacing: 0.04em;
+    min-width: 110px;
+    flex-shrink: 0;
+  }
+  .finish-progress-label b { color: var(--accent); font-weight: 500; }
+  .finish-progress-bar {
+    flex: 1; height: 4px;
+    background: var(--surface-2);
+    border-radius: 2px; overflow: hidden;
+  }
+  .finish-progress-fill {
+    width: 43%; height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 200ms;
+    animation: progressBreathe 1.8s ease-in-out infinite;
+  }
+  @keyframes progressBreathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.65; }
+  }
+
+  .folder-exists-banner {
+    display: none;
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: rgba(200, 127, 127, 0.08);
+    border-left: 3px solid var(--bad);
+    border-radius: 2px;
+    font-size: 11.5px; color: var(--text-2);
+    line-height: 1.45;
+  }
+  /* warning is only meaningful in pinned mode where destination is pre-known */
+  body[data-folder-exists="on"][data-export-mode="pinned"] .folder-exists-banner { display: block; }
+  .folder-exists-banner .warn-icon { color: var(--bad); margin-right: 6px; }
+
+  /* QUIT GUARD */
+  .overlay-quit {
+    align-items: center; justify-content: center;
+    background: rgba(8, 8, 10, 0.8);
+    backdrop-filter: blur(6px);
+    padding: 40px;
+    z-index: 160;
+  }
+  .quit-dialog {
+    background: var(--surface);
+    border: 1px solid var(--bad);
+    border-radius: 6px;
+    width: 100%; max-width: 440px;
+    display: flex; flex-direction: column;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+  }
+  .quit-dialog .dialog-head {
+    border-bottom: 1px solid rgba(200, 127, 127, 0.2);
+  }
+  .quit-body {
+    padding: 18px 26px;
+    display: flex; flex-direction: column; gap: 14px;
+    font-size: 13px; color: var(--text-2); line-height: 1.55;
+  }
+  .quit-stat {
+    display: flex; gap: 10px; align-items: baseline;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .quit-stat .num { color: var(--bad); font-size: 22px; font-weight: 500; }
+  .quit-stat .lbl { color: var(--text); }
+  .quit-actions {
+    padding: 16px 26px;
+    display: flex; gap: 8px; justify-content: flex-end;
+    border-top: 1px solid var(--border-soft);
+  }
+</style>
+</head>
+<body data-view="home" data-overlay="" data-export-mode="ask" data-save="" data-thumbs-pos="bottom" class="info-on">
+
+<div class="chrome">
+  <div class="brand">
+    <span class="brand-mark">CULL</span>
+    <span class="brand-sep">·</span>
+    <span class="brand-mode" id="brand-mode">HOME</span>
+    <span class="save-status" title="XMP save status"></span>
+  </div>
+  <div class="chrome-actions">
+    <button class="chrome-btn" title="Settings" onclick="toggleOverlay('settings')">⚙</button>
+    <button class="chrome-btn" title="Minimize">‒</button>
+    <button class="chrome-btn" title="Close">✕</button>
+  </div>
+</div>
+
+<div class="external-banner">
+  <span class="warn">⚠</span>
+  <span><b>IMG_2384.CR3</b> was modified externally.</span>
+  <button>Reload</button>
+</div>
+
+<div class="controls">
+  <div class="view-tabs" id="view-tabs">
+    <button class="view-tab active" data-tab="home">Home</button>
+    <button class="view-tab" data-tab="loupe">Loupe</button>
+    <button class="view-tab" data-tab="compare">Compare</button>
+    <button class="view-tab" data-tab="grid">Grid</button>
+  </div>
+  <div class="overlay-tabs" id="overlay-tabs">
+    <button class="overlay-tab" data-overlay="settings">⚙ Settings</button>
+    <button class="overlay-tab" data-overlay="help">⌨ Help</button>
+    <button class="overlay-tab" data-overlay="finish">✦ Finish</button>
+    <button class="overlay-tab" data-overlay="quit">✕ Quit guard</button>
+  </div>
+  <div class="state-tabs" id="state-tabs">
+    <!-- HOME-only -->
+    <button class="state-tab" data-state="no-recents" data-views="home">No recents</button>
+    <button class="state-tab" data-state="drag-over" data-views="home">Drag-over</button>
+    <!-- Cull views -->
+    <button class="state-tab" data-state="scanning" data-views="loupe,compare,grid">Loading</button>
+    <button class="state-tab" data-state="loading-photo" data-views="loupe,compare">Loading photo</button>
+    <button class="state-tab" data-state="empty-filter" data-views="loupe,grid">Empty filter</button>
+    <button class="state-tab" data-state="no-candidates" data-views="compare">No candidates</button>
+    <button class="state-tab" data-state="portrait" data-views="loupe,compare">Portrait</button>
+    <button class="state-tab" data-state="lrc" data-views="loupe,compare,grid">LrC 3★</button>
+    <button class="state-tab" data-state="longfn" data-views="loupe,compare,grid">Long fn</button>
+    <button class="state-tab" data-state="scrubbing" data-views="loupe,compare,grid">Scrubbing</button>
+    <button class="state-tab" data-state="multi" data-views="grid">Multi-select</button>
+    <!-- visible everywhere (chrome / banner / dialogs) -->
+    <button class="state-tab" data-save-state="saving" data-views="home,loupe,compare,grid">Saving</button>
+    <button class="state-tab" data-save-state="failed" data-views="home,loupe,compare,grid">Save failed</button>
+    <button class="state-tab" data-state="external-change" data-views="home,loupe,compare,grid">External change</button>
+    <button class="state-tab" data-state="finishing" data-views="home,loupe,compare,grid">Finishing</button>
+    <button class="state-tab" data-state="picked" data-views="home,loupe,compare,grid">Destination picked</button>
+    <button class="state-tab" data-state="folder-exists" data-views="home,loupe,compare,grid">Folder exists</button>
+    <button class="state-tab" data-state="no-rejects" data-views="home,loupe,compare,grid">No rejects</button>
+    <button class="state-tab" data-state="no-keeps" data-views="home,loupe,compare,grid">No keeps</button>
+    <button class="fire" data-flash="keep">⚡ Keep</button>
+    <button class="fire" data-flash="reject">⚡ Reject</button>
+    <button class="fire" data-flash="fav">⚡ Fav</button>
+    <button class="reset-all" id="reset-all-states">Reset</button>
+  </div>
+</div>
+
+<!-- HOME -->
+<div class="view-home">
+  <div class="home">
+    <div class="home-inner">
+      <h1 class="home-title">Pick keepers, <em>fast.</em></h1>
+      <p class="home-sub">A keyboard-first culling tool for Canon CR3 RAW photos. Verdicts save into Lightroom-compatible XMP sidecars.</p>
+      <div class="home-cta-row">
+        <button class="home-cta">Open folder<span class="key">⌃ O</span></button>
+        <span class="home-drop-hint">or drop a folder anywhere</span>
+      </div>
+      <div class="home-recent">
+        <div class="home-recent-label">Recent</div>
+        <div class="recent-empty">
+          No folders yet. Drop one anywhere, or press <kbd>⌃ O</kbd>.
+        </div>
+        <div class="recent-items">
+          <div class="recent-item">
+            <span class="recent-path path-truncate">D:\Shoots\2026-05-28 Greg & Lou Wedding\Day 2 Reception After-Party</span>
+            <span class="recent-count"><b>327</b><span class="of"> / 372</span></span>
+            <span class="recent-time">2 hours ago</span>
+          </div>
+          <div class="recent-item">
+            <span class="recent-path path-truncate">E:\Studio\Test 2026-05-30</span>
+            <span class="recent-count">421</span>
+            <span class="recent-time">yesterday</span>
+          </div>
+          <div class="recent-item">
+            <span class="recent-path path-truncate">D:\Backyard portraits 6-14</span>
+            <span class="recent-count">932<span class="done">✓</span></span>
+            <span class="recent-time">3 days ago</span>
+          </div>
+        </div>
+      </div>
+      <div class="home-foot">
+        <span><span class="key-hint">tab</span>hold for help</span>
+        <span><span class="key-hint">⌃ ,</span>settings</span>
+      </div>
+    </div>
+    <div class="drag-indicator">
+      <div class="drag-arrow">↓</div>
+      <div class="drag-text">Drop folder to open</div>
+    </div>
+  </div>
+</div>
+
+<!-- LOUPE -->
+<div class="view-loupe">
+  <div class="loupe">
+    <div class="loupe-body">
+      <div class="loupe-stage">
+        <div class="photo-frame">
+          <img class="photo" src="https://picsum.photos/seed/wedding/1600/1067" alt="" />
+          <div class="photo-overlay thirds"></div>
+          <div class="photo-overlay clipping"></div>
+          <div class="photo-overlay peaking"></div>
+          <div class="photo-loading-overlay"></div>
+        </div>
+      </div>
+      <aside class="exif-rail">
+        <div class="rail-section">
+          <div class="rail-label">Frame</div>
+          <div class="rail-rows">
+            <div class="rail-row"><span class="k">Body</span><span class="v">EOS R6 II</span></div>
+            <div class="rail-row"><span class="k">Lens</span><span class="v">RF 50 / 1.2 L</span></div>
+            <div class="rail-row"><span class="k">Time</span><span class="v">19:34:12</span></div>
+            <div class="rail-row"><span class="k">Date</span><span class="v">2026-05-28</span></div>
+            <div class="rail-row lrc"><span class="k">LrC rating</span><span class="v lrc-stars"><span class="filled">★★★</span><span class="dim">★★</span></span></div>
+          </div>
+        </div>
+        <div class="rail-section">
+          <div class="rail-label">Exposure</div>
+          <div class="rail-rows">
+            <div class="rail-row"><span class="k">Shutter</span><span class="v">1/250 s</span></div>
+            <div class="rail-row"><span class="k">Aperture</span><span class="v">ƒ/1.4</span></div>
+            <div class="rail-row"><span class="k">ISO</span><span class="v">800</span></div>
+            <div class="rail-row"><span class="k">Focal</span><span class="v">50 mm</span></div>
+            <div class="rail-row"><span class="k">EV</span><span class="v">+0.3</span></div>
+            <div class="rail-row"><span class="k">WB</span><span class="v">3200 K</span></div>
+          </div>
+        </div>
+        <div class="rail-section">
+          <div class="rail-label">Histogram</div>
+          <div class="hist"></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="empty-state empty-filter">
+      <div class="empty-icon">⌀</div>
+      <div class="empty-eyebrow">No matches</div>
+      <div class="empty-title">No images in the <em>★</em> filter</div>
+      <div class="empty-action"><kbd>1</kbd> for all · <kbd>2</kbd> for unrated</div>
+    </div>
+
+    <div class="strip">
+      <div class="thumb" data-rate="keep"></div><div class="thumb lrc-rated" data-rate="keep"></div>
+      <div class="thumb" data-rate="reject"></div><div class="thumb" data-rate="keep"></div>
+      <div class="thumb"></div><div class="thumb" data-rate="fav"></div>
+      <div class="thumb" data-rate="reject"></div><div class="thumb active lrc-rated" data-rate="keep"></div>
+      <div class="thumb"></div><div class="thumb" data-rate="keep"></div>
+      <div class="thumb" data-rate="reject"></div><div class="thumb"></div>
+      <div class="thumb lrc-rated" data-rate="keep"></div><div class="thumb" data-rate="keep"></div>
+      <div class="thumb"></div><div class="thumb" data-rate="reject"></div>
+      <div class="thumb"></div><div class="thumb" data-rate="keep"></div>
+      <div class="thumb" data-rate="fav"></div><div class="thumb"></div>
+    </div>
+
+    <div class="status">
+      <span class="status-fn">
+        <span class="status-fn-name">IMG_2384.CR3</span>
+        <span class="sep">·</span>
+        <span class="status-fn-meta">32 MP</span>
+      </span>
+      <span class="status-verdict keep">Keep</span>
+      <span class="scrub-indicator">Scrubbing</span>
+      <div class="overlay-cluster" title="Active overlays">
+        <button class="on" data-toggle="i" title="Info + histogram">i</button>
+        <button data-toggle="h" title="Clipping">h</button>
+        <button data-toggle="p" title="Focus peaking">p</button>
+        <button data-toggle="o" title="Thirds grid">o</button>
+        <button class="on" data-toggle="t" title="Thumbnail strip">t</button>
+      </div>
+      <span class="status-spacer"></span>
+      <span class="status-pos"><b>218</b><span class="of"> / 372</span></span>
+      <div class="filter-tabs">
+        <button class="active">All</button><button>Unrated</button>
+        <button>Keeps</button><button>★</button>
+      </div>
+      <button class="finish-btn" onclick="toggleOverlay('finish')">⌃E · 218 keeps</button>
+    </div>
+  </div>
+</div>
+
+<!-- COMPARE -->
+<div class="view-compare">
+  <div class="compare">
+    <div class="compare-body">
+      <div class="compare-stage">
+        <div class="compare-pane landscape">
+          <div class="photo-frame">
+            <img class="photo" src="https://picsum.photos/seed/portrait1/1200/800" alt="" />
+            <div class="photo-overlay thirds"></div>
+            <div class="photo-overlay clipping"></div>
+            <div class="photo-overlay peaking"></div>
+            <div class="photo-loading-overlay"></div>
+          </div>
+          <span class="compare-role champion">Champion</span>
+        </div>
+        <div class="compare-pane portrait">
+          <div class="photo-frame">
+            <img class="photo" src="https://picsum.photos/seed/portrait2/800/1200" alt="" />
+            <div class="photo-overlay thirds"></div>
+            <div class="photo-overlay clipping"></div>
+            <div class="photo-overlay peaking"></div>
+            <div class="photo-loading-overlay"></div>
+          </div>
+          <span class="compare-role challenger">Challenger</span>
+        </div>
+      </div>
+      <aside class="compare-rail">
+        <div class="compare-rail-head">
+          <span></span>
+          <span class="col-name champion">Champion</span>
+          <span class="col-name challenger">Challenger</span>
+        </div>
+        <div class="rail-section">
+          <div class="rail-label">Frame</div>
+          <div class="rail-rows">
+            <div class="cr-row"><span class="k">File</span><span class="ch-v">IMG_2381</span><span class="ch-v">IMG_2384</span></div>
+            <div class="cr-row"><span class="k">Lens</span><span class="ch-v">RF 50 / 1.2 L</span><span class="ch-v">RF 50 / 1.2 L</span></div>
+            <div class="cr-row diff"><span class="k">Time</span><span class="ch-v">19:31:42</span><span class="ch-v">19:34:12</span></div>
+            <div class="cr-row lrc diff"><span class="k">LrC rating</span><span class="ch-v" style="color:var(--accent)">★★★<span style="color:var(--surface-2)">★★</span></span><span class="ch-v" style="color:var(--muted)">—</span></div>
+          </div>
+        </div>
+        <div class="rail-section">
+          <div class="rail-label">Exposure</div>
+          <div class="rail-rows">
+            <div class="cr-row diff"><span class="k">Shutter</span><span class="ch-v">1/250 s</span><span class="ch-v">1/320 s</span></div>
+            <div class="cr-row diff"><span class="k">Aperture</span><span class="ch-v">ƒ/1.4</span><span class="ch-v">ƒ/1.8</span></div>
+            <div class="cr-row diff"><span class="k">ISO</span><span class="ch-v">800</span><span class="ch-v">1600</span></div>
+            <div class="cr-row"><span class="k">Focal</span><span class="ch-v">50 mm</span><span class="ch-v">50 mm</span></div>
+            <div class="cr-row diff"><span class="k">EV</span><span class="ch-v">+0.3</span><span class="ch-v">+0.7</span></div>
+            <div class="cr-row"><span class="k">WB</span><span class="ch-v">3200 K</span><span class="ch-v">3200 K</span></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="empty-state no-candidates">
+      <div class="empty-icon success">✓</div>
+      <div class="empty-eyebrow">Champion stands</div>
+      <div class="empty-title">All <em>24</em> challengers judged</div>
+      <div class="empty-action"><kbd>esc</kbd> to leave compare · <kbd>l</kbd> loupe · <kbd>g</kbd> grid</div>
+    </div>
+
+    <div class="strip candidates">
+      <div class="thumb pinned lrc-rated" data-rate="keep"></div>
+      <div class="strip-separator"><span>·</span></div>
+      <div class="thumb challenger active"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+      <div class="thumb"></div>
+    </div>
+
+    <div class="status">
+      <span class="status-fn">
+        <span class="status-fn-name">IMG_2384.CR3</span>
+      </span>
+      <span class="scrub-indicator">Scrubbing</span>
+      <div class="overlay-cluster" title="Active overlays">
+        <button class="on" data-toggle="i" title="Info + comparison">i</button>
+        <button data-toggle="h" title="Clipping">h</button>
+        <button data-toggle="p" title="Focus peaking">p</button>
+        <button data-toggle="o" title="Thirds grid">o</button>
+        <button class="on" data-toggle="t" title="Candidate strip">t</button>
+      </div>
+      <span class="status-spacer"></span>
+      <span class="status-pos"><b>02</b><span class="of"> / 24 candidates</span></span>
+      <button class="finish-btn" onclick="toggleOverlay('finish')">⌃E · 218 keeps</button>
+    </div>
+  </div>
+</div>
+
+<!-- GRID -->
+<div class="view-grid">
+  <div class="grid">
+    <div class="grid-stage">
+      <div class="grid-cells" id="grid-cells"></div>
+      <div class="empty-state empty-filter">
+        <div class="empty-icon">⌀</div>
+        <div class="empty-eyebrow">No matches</div>
+        <div class="empty-title">No images in the <em>★</em> filter</div>
+        <div class="empty-action"><kbd>1</kbd> for all · <kbd>2</kbd> for unrated</div>
+      </div>
+    </div>
+    <div class="status">
+      <span class="status-fn">
+        <span class="status-fn-name">IMG_2384.CR3</span>
+        <span class="sep">·</span>
+        <span class="status-fn-meta">selected</span>
+      </span>
+      <span class="status-verdict keep">Keep</span>
+      <span class="multi-counter">3 selected</span>
+      <span class="scrub-indicator">Scrubbing</span>
+      <span class="status-spacer"></span>
+      <span class="status-pos"><b>218</b><span class="of"> / 372</span></span>
+      <div class="filter-tabs">
+        <button class="active">All</button><button>Unrated</button>
+        <button>Keeps</button><button>★</button>
+      </div>
+      <button class="finish-btn" onclick="toggleOverlay('finish')">⌃E · 218 keeps</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCANNING -->
+<div class="scanning-view">
+  <div class="scan-inner">
+    <div class="scan-spinner"></div>
+    <div class="scan-eyebrow">Reading XMP sidecars</div>
+    <div class="scan-count"><b>412</b><span class="of">/ 1,842</span></div>
+    <div class="scan-path path-truncate">D:\Shoots\2026-05-28 Greg & Lou Wedding\Day 2 Reception After-Party</div>
+  </div>
+</div>
+
+<!-- SETTINGS -->
+<div class="overlay overlay-settings">
+  <div class="dialog">
+    <div class="dialog-head">
+      <span class="dialog-title">Settings</span>
+      <span class="dialog-meta">CULL 1.0</span>
+    </div>
+    <div class="dialog-body">
+
+      <div class="settings-section">
+        <div class="section-title">Storage</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Storage mode</div>
+            <div class="settings-row-help">Network turns down concurrency for slow NAS / SMB shares. Default Local for fast drives.</div>
+          </div>
+          <div class="seg">
+            <button class="active">Local</button>
+            <button>Network</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="section-title">When you start a cull</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Default filter</div>
+            <div class="settings-row-help">Starts in this filter when you open a folder.</div>
+          </div>
+          <div class="seg">
+            <button class="active">All</button>
+            <button>Unrated</button>
+            <button>Keeps</button>
+            <button>★</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Default overlays</div>
+            <div class="settings-row-help">Which overlays start on. Toggle anytime with i / h / p / o / t.</div>
+          </div>
+          <div class="chips">
+            <button class="chip on">Thumbnails</button>
+            <button class="chip">Info</button>
+            <button class="chip">Clipping</button>
+            <button class="chip">Peaking</button>
+            <button class="chip">Thirds</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Thumb strip position</div>
+            <div class="settings-row-help">Where the loupe / compare thumbnail strip sits.</div>
+          </div>
+          <div class="seg" id="thumb-pos-seg">
+            <button class="active" data-pos="bottom">Bottom</button>
+            <button data-pos="top">Top</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="section-title">File operations</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Rejected subfolder</div>
+            <div class="settings-row-help">Rejected files move into this subfolder of the source.</div>
+          </div>
+          <input class="input" type="text" value="rejected" id="rejected-input" />
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Copy keeps to</div>
+            <div class="settings-row-help">Where keepers go when you run "Copy keeps".</div>
+          </div>
+          <div class="seg" id="export-mode-seg">
+            <button class="active" data-mode="ask">Ask each time</button>
+            <button data-mode="pinned">Pinned root</button>
+          </div>
+        </div>
+        <div class="settings-row pinned-config">
+          <div>
+            <div class="settings-row-label">Pinned root</div>
+            <div class="settings-row-help">Each session writes to a subfolder under this. Subfolder name is editable in the finish dialog.</div>
+          </div>
+          <div class="pinned-control">
+            <span class="dest-tag path-truncate" id="pinned-root">E:\Exports\Wedding 2026</span>
+            <button class="finish-sec">Change</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="section-title">On launch</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Reopen last folder</div>
+            <div class="settings-row-help">Skip the home screen when CULL starts.</div>
+          </div>
+          <div class="toggle"></div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="section-title">Reset</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Reset to defaults</div>
+            <div class="settings-row-help">Restores everything in this dialog. Doesn't touch your CR3s or XMPs.</div>
+          </div>
+          <div class="reset-container" id="reset-container">
+            <button class="reset-btn" id="reset-btn">Reset</button>
+            <div class="reset-confirm">
+              <span class="reset-confirm-msg">Sure?</span>
+              <button class="reset-yes">Yes, reset</button>
+              <button class="reset-no">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div class="dialog-foot">
+      <kbd>esc</kbd> to close ·
+      <kbd>⌃ ,</kbd> to reopen
+    </div>
+  </div>
+</div>
+
+<!-- HELP overlay — four variants -->
+<div class="overlay overlay-help">
+
+  <div class="help-inner help-mode-home">
+    <div class="help-eyebrow">CULL · OVERVIEW</div>
+    <h2 class="help-title">A keyboard-first photo culler</h2>
+    <p class="help-intro">Open a folder of Canon CR3 RAW photos and judge them by keyboard. Verdicts save into Lightroom-compatible XMP sidecars next to each CR3.</p>
+    <div class="help-grid">
+      <div class="help-group">
+        <div class="help-group-title">Get started</div>
+        <div class="help-row"><span class="help-key">⌃ O</span><span class="help-desc">open folder</span></div>
+        <div class="help-row"><span class="help-key">drop</span><span class="help-desc">a folder onto window</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Three views</div>
+        <div class="help-row"><span class="help-key">L</span><span class="help-desc">loupe — single photo</span></div>
+        <div class="help-row"><span class="help-key">C</span><span class="help-desc">compare — champion vs challenger</span></div>
+        <div class="help-row"><span class="help-key">G</span><span class="help-desc">grid — contact sheet</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Always</div>
+        <div class="help-row"><span class="help-key">⌃ ,</span><span class="help-desc">settings</span></div>
+        <div class="help-row"><span class="help-key">tab (hold)</span><span class="help-desc">contextual help</span></div>
+        <div class="help-row"><span class="help-key">esc</span><span class="help-desc">back</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="help-inner help-mode-loupe">
+    <div class="help-eyebrow">CULL · LOUPE KEYS</div>
+    <h2 class="help-title">Release <em>tab</em> to dismiss</h2>
+    <div class="help-grid">
+      <div class="help-group">
+        <div class="help-group-title">Rate</div>
+        <div class="help-row"><span class="help-key">enter</span><span class="help-desc">keep</span></div>
+        <div class="help-row"><span class="help-key">backspace</span><span class="help-desc">reject</span></div>
+        <div class="help-row"><span class="help-key">f</span><span class="help-desc">favorite</span></div>
+        <div class="help-row"><span class="help-key">u</span><span class="help-desc">unrate</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Navigate</div>
+        <div class="help-row"><span class="help-key">← →</span><span class="help-desc">prev / next</span></div>
+        <div class="help-row"><span class="help-key">space (hold)</span><span class="help-desc">1:1 zoom</span></div>
+        <div class="help-row"><span class="help-key">shift+space</span><span class="help-desc">2:1 zoom</span></div>
+        <div class="help-row"><span class="help-key">1 – 4</span><span class="help-desc">filter</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Overlays</div>
+        <div class="help-row"><span class="help-key">i</span><span class="help-desc">info</span></div>
+        <div class="help-row"><span class="help-key">h</span><span class="help-desc">clipping</span></div>
+        <div class="help-row"><span class="help-key">p</span><span class="help-desc">peaking</span></div>
+        <div class="help-row"><span class="help-key">o</span><span class="help-desc">thirds</span></div>
+        <div class="help-row"><span class="help-key">t</span><span class="help-desc">thumb strip</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Switch view</div>
+        <div class="help-row"><span class="help-key">c</span><span class="help-desc">compare</span></div>
+        <div class="help-row"><span class="help-key">g</span><span class="help-desc">grid</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Session</div>
+        <div class="help-row"><span class="help-key">⌃z</span><span class="help-desc">undo</span></div>
+        <div class="help-row"><span class="help-key">⌃⇧z</span><span class="help-desc">redo</span></div>
+        <div class="help-row"><span class="help-key">⌃e</span><span class="help-desc">finish</span></div>
+        <div class="help-row"><span class="help-key">tab (hold)</span><span class="help-desc">help</span></div>
+        <div class="help-row"><span class="help-key">esc</span><span class="help-desc">back</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="help-inner help-mode-compare">
+    <div class="help-eyebrow">CULL · COMPARE KEYS</div>
+    <h2 class="help-title">Release <em>tab</em> to dismiss</h2>
+    <div class="help-grid">
+      <div class="help-group">
+        <div class="help-group-title">Decide</div>
+        <div class="help-row"><span class="help-key">enter</span><span class="help-desc">challenger wins</span></div>
+        <div class="help-row"><span class="help-key">backspace</span><span class="help-desc">reject challenger</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Navigate</div>
+        <div class="help-row"><span class="help-key">← →</span><span class="help-desc">pick challenger</span></div>
+        <div class="help-row"><span class="help-key">space (hold)</span><span class="help-desc">1:1 zoom</span></div>
+        <div class="help-row"><span class="help-key">shift+space</span><span class="help-desc">2:1 zoom</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Overlays</div>
+        <div class="help-row"><span class="help-key">i</span><span class="help-desc">info</span></div>
+        <div class="help-row"><span class="help-key">h</span><span class="help-desc">clipping</span></div>
+        <div class="help-row"><span class="help-key">p</span><span class="help-desc">peaking</span></div>
+        <div class="help-row"><span class="help-key">o</span><span class="help-desc">thirds</span></div>
+        <div class="help-row"><span class="help-key">t</span><span class="help-desc">candidate strip</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Switch view</div>
+        <div class="help-row"><span class="help-key">l</span><span class="help-desc">loupe</span></div>
+        <div class="help-row"><span class="help-key">g</span><span class="help-desc">grid</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Session</div>
+        <div class="help-row"><span class="help-key">⌃z</span><span class="help-desc">undo</span></div>
+        <div class="help-row"><span class="help-key">⌃⇧z</span><span class="help-desc">redo</span></div>
+        <div class="help-row"><span class="help-key">⌃e</span><span class="help-desc">finish</span></div>
+        <div class="help-row"><span class="help-key">tab (hold)</span><span class="help-desc">help</span></div>
+        <div class="help-row"><span class="help-key">esc</span><span class="help-desc">back</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="help-inner help-mode-grid">
+    <div class="help-eyebrow">CULL · GRID KEYS</div>
+    <h2 class="help-title">Release <em>tab</em> to dismiss</h2>
+    <div class="help-grid">
+      <div class="help-group">
+        <div class="help-group-title">Rate</div>
+        <div class="help-row"><span class="help-key">enter</span><span class="help-desc">keep selected</span></div>
+        <div class="help-row"><span class="help-key">backspace</span><span class="help-desc">reject selected</span></div>
+        <div class="help-row"><span class="help-key">f</span><span class="help-desc">favorite</span></div>
+        <div class="help-row"><span class="help-key">u</span><span class="help-desc">unrate</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Navigate</div>
+        <div class="help-row"><span class="help-key">← →</span><span class="help-desc">prev / next</span></div>
+        <div class="help-row"><span class="help-key">↑ ↓</span><span class="help-desc">row up / down</span></div>
+        <div class="help-row"><span class="help-key">1 – 4</span><span class="help-desc">filter</span></div>
+        <div class="help-row"><span class="help-key">click</span><span class="help-desc">open in loupe</span></div>
+        <div class="help-row"><span class="help-key">⇧+click</span><span class="help-desc">select range</span></div>
+        <div class="help-row"><span class="help-key">⌃+click</span><span class="help-desc">add to selection</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Switch view</div>
+        <div class="help-row"><span class="help-key">l</span><span class="help-desc">loupe</span></div>
+        <div class="help-row"><span class="help-key">c</span><span class="help-desc">compare</span></div>
+      </div>
+      <div class="help-group">
+        <div class="help-group-title">Session</div>
+        <div class="help-row"><span class="help-key">⌃z</span><span class="help-desc">undo</span></div>
+        <div class="help-row"><span class="help-key">⌃⇧z</span><span class="help-desc">redo</span></div>
+        <div class="help-row"><span class="help-key">⌃e</span><span class="help-desc">finish</span></div>
+        <div class="help-row"><span class="help-key">tab (hold)</span><span class="help-desc">help</span></div>
+        <div class="help-row"><span class="help-key">esc</span><span class="help-desc">back</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- FINISH -->
+<div class="overlay overlay-finish">
+  <div class="finish-dialog">
+    <div class="dialog-head">
+      <span class="dialog-title">Finish session</span>
+      <span class="dialog-meta">Greg & Lou · Day 2</span>
+    </div>
+
+    <div class="finish-summary">
+      <div class="finish-stat">
+        <div class="finish-stat-label">Keeps</div>
+        <div class="finish-stat-value keep" id="keeps-count">218</div>
+        <div class="finish-stat-sub"><span class="star">★</span> 12 favorites</div>
+      </div>
+      <div class="finish-stat">
+        <div class="finish-stat-label">Rejects</div>
+        <div class="finish-stat-value reject" id="rejects-count">109</div>
+      </div>
+    </div>
+
+    <div class="finish-unrated">
+      <span class="warn-icon">⚠</span>
+      <span><b>45 unrated</b> will stay in the source untouched.</span>
+    </div>
+
+    <div class="finish-actions">
+
+      <div class="finish-action move-rejects" id="move-rejects-action">
+        <div class="finish-action-label">Move rejects</div>
+        <div class="finish-action-help">Moves the <span id="rejects-count-inline">109</span> rejected CR3s + their XMP sidecars into a <b id="rejected-folder-name">rejected</b><span style="font-family:monospace; color:var(--muted)">/</span> subfolder in the source.</div>
+        <div class="finish-action-row">
+          <div class="confirm-container" id="move-confirm-container">
+            <button class="finish-pri confirm-trigger move-rejects-btn" id="move-rejects-btn">Move rejects</button>
+            <div class="move-confirm">
+              <span class="confirm-msg">Sure? This moves <span id="reject-count-confirm">109</span> files.</span>
+              <button class="finish-pri confirm-yes" id="move-rejects-yes">Yes, move</button>
+              <button class="finish-sec confirm-no">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div class="finish-progress">
+          <span class="finish-progress-label"><b>47</b> / 109 moved</span>
+          <div class="finish-progress-bar"><div class="finish-progress-fill" style="width: 43%"></div></div>
+          <button class="finish-sec">Cancel</button>
+        </div>
+      </div>
+
+      <div class="finish-action copy-keeps">
+        <div class="finish-action-label">Copy keeps</div>
+        <div class="finish-action-help">Copies the <span id="keeps-count-inline">218</span> keepers + their XMP sidecars.</div>
+        <div class="folder-exists-banner">
+          <span class="warn-icon">⚠</span><span>A folder with this name already exists at your pinned root. Rename it in the field below, or click <b>Confirm (merge)</b> to copy into the existing one.</span>
+        </div>
+        <div class="finish-action-row" id="copy-keeps-row" data-mode="ask">
+          <div class="variant-ask">
+            <!-- stage 1: before the picker -->
+            <button class="finish-pri copy-keeps-btn ask-default-btn">Pick destination</button>
+            <!-- stage 2: after the picker returns -->
+            <span class="picked-label">Will copy to</span>
+            <span class="dest-tag path-truncate picked-path">E:\Exports\Wedding 2026\Greg-Lou-Day2</span>
+            <button class="finish-sec ask-change-btn">Change</button>
+            <button class="finish-pri copy-keeps-btn ask-copy-btn">Copy keeps</button>
+          </div>
+          <div class="variant-pinned">
+            <div class="dest-path-edit">
+              <span class="dest-root" id="dest-root-display">E:\Exports\</span><input class="dest-sub" id="dest-sub" value="Greg-Lou-Day2-keeps" spellcheck="false" />
+            </div>
+            <button class="finish-pri copy-keeps-btn-pinned">Copy keeps</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="dialog-foot">
+      <kbd>esc</kbd> to close · neither button auto-runs
+    </div>
+  </div>
+</div>
+
+<!-- QUIT GUARD -->
+<div class="overlay overlay-quit">
+  <div class="quit-dialog">
+    <div class="dialog-head">
+      <span class="dialog-title">Saves failed</span>
+      <span class="dialog-meta">unsaved verdicts</span>
+    </div>
+    <div class="quit-body">
+      <p>CULL couldn't write some XMP sidecars after retrying. If you quit now, those verdicts will be lost.</p>
+      <div class="quit-stat">
+        <span class="num">3</span><span class="lbl">verdicts unsaved</span>
+      </div>
+    </div>
+    <div class="quit-actions">
+      <button class="finish-sec" onclick="toggleOverlay('')">Quit anyway</button>
+      <button class="finish-pri" onclick="toggleOverlay('')">Retry saves</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  /* ---- build grid ---- */
+  const cells = document.getElementById('grid-cells');
+  const ratings = [
+    'keep','keep','reject','keep','','fav','reject','keep','','keep',
+    'reject','','keep','keep','','reject','','keep','fav','',
+    'keep','','reject','keep','keep','','keep','reject','','fav',
+    'keep','keep','','reject','keep','','reject','keep','','keep',
+    'keep','','keep','reject','','fav','keep','',''
+  ];
+  const ACTIVE_IDX = 17;
+  const SKELETON_IDXS = [40, 41, 44, 47];
+  const LRC_RATED = new Set([1, 7, 12, 25, 33]);
+  const PORTRAIT_IDXS = new Set([2, 8, 13, 19, 24, 31, 36, 42]);
+  const MULTI_SELECTED = new Set([17, 18, 20]);
+
+  ratings.forEach((r, i) => {
+    const c = document.createElement('div');
+    c.className = 'grid-cell';
+    c.dataset.idx = i;
+    if (SKELETON_IDXS.includes(i)) {
+      c.classList.add('skeleton');
+      c.dataset.fn = `IMG_2${(400+i).toString()}.CR3`;
+    } else if (r) {
+      c.dataset.rate = r;
+    }
+    if (LRC_RATED.has(i)) c.classList.add('lrc-rated');
+    if (PORTRAIT_IDXS.has(i)) c.classList.add('portrait');
+    if (i === ACTIVE_IDX) c.classList.add('active');
+    if (MULTI_SELECTED.has(i)) c.classList.add('multi-selected');
+
+    const photo = document.createElement('div');
+    photo.className = 'cell-photo';
+    // Use Picsum for non-skeleton cells (seeded for variety)
+    if (!SKELETON_IDXS.includes(i)) {
+      photo.style.backgroundImage = `url('https://picsum.photos/seed/cull-cell-${i % 12}/400/267')`;
+    }
+    c.appendChild(photo);
+
+    const tint = document.createElement('div');
+    tint.className = 'multi-tint';
+    c.appendChild(tint);
+
+    const fn = document.createElement('span');
+    fn.className = 'cell-fn';
+    fn.textContent = `IMG_2${(400+i).toString()}.CR3`;
+    c.appendChild(fn);
+
+    cells.appendChild(c);
+  });
+
+  /* ---- view tabs ---- */
+  document.querySelectorAll('.view-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      document.body.dataset.view = tab;
+      document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b === btn));
+      document.getElementById('brand-mode').textContent = tab.toUpperCase();
+      updateToggleVisibility();
+    });
+  });
+
+  /* ---- per-view toggle visibility (strict) ---- */
+  function updateToggleVisibility() {
+    const view = document.body.dataset.view;
+    document.querySelectorAll('.state-tab[data-views]').forEach(btn => {
+      const views = btn.dataset.views.split(',');
+      btn.style.display = views.includes(view) ? '' : 'none';
+    });
+  }
+
+  /* ---- overlay tabs ---- */
+  function toggleOverlay(name) {
+    const current = document.body.dataset.overlay;
+    document.body.dataset.overlay = current === name ? '' : name;
+    document.querySelectorAll('.overlay-tab').forEach(b => {
+      b.classList.toggle('active', b.dataset.overlay === document.body.dataset.overlay);
+    });
+  }
+  document.querySelectorAll('.overlay-tab').forEach(btn => {
+    btn.addEventListener('click', () => toggleOverlay(btn.dataset.overlay));
+  });
+
+  /* ---- state toggles ---- */
+  document.querySelectorAll('.state-tab[data-state]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const state = btn.dataset.state;
+      const attr = `data-${state}`;
+      const current = document.body.getAttribute(attr);
+      const next = current === 'on' ? '' : 'on';
+      document.body.setAttribute(attr, next);
+      btn.classList.toggle('on', next === 'on');
+      if (state === 'longfn') applyLongFn(next === 'on');
+      if (state === 'no-rejects' || state === 'no-keeps') applyCounts();
+      if (state === 'folder-exists') applyCopyKeepsLabel();
+      if (state === 'empty-filter' && next === 'on') {
+        document.querySelectorAll('.filter-tabs').forEach(tabs => {
+          tabs.querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 3));
+        });
+      }
+    });
+  });
+
+  /* ---- save state ---- */
+  document.querySelectorAll('[data-save-state]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const state = btn.dataset.saveState;
+      const current = document.body.dataset.save;
+      const next = current === state ? '' : state;
+      document.body.dataset.save = next;
+      document.querySelectorAll('[data-save-state]').forEach(b => {
+        b.classList.toggle('on', document.body.dataset.save === b.dataset.saveState);
+      });
+    });
+  });
+
+  /* ---- reset all states ---- */
+  document.getElementById('reset-all-states').addEventListener('click', () => {
+    ['scanning','no-recents','empty-filter','no-candidates','portrait','lrc','longfn',
+     'scrubbing','finishing','folder-exists','drag-over','no-rejects','no-keeps',
+     'loading-photo','multi','external-change','picked']
+      .forEach(s => document.body.removeAttribute(`data-${s}`));
+    document.body.dataset.save = '';
+    document.querySelectorAll('.state-tab').forEach(b => b.classList.remove('on'));
+    applyLongFn(false);
+    applyCounts();
+    applyCopyKeepsLabel();
+  });
+
+  /* ---- long filename swap ---- */
+  const SHORT_FN = "IMG_2384.CR3";
+  const LONG_FN  = "2026-05-28_19-34-12_Greg-Lou-Reception-A0218.CR3";
+  function applyLongFn(on) {
+    document.querySelectorAll('.status-fn-name').forEach(el => {
+      el.textContent = on ? LONG_FN : SHORT_FN;
+    });
+    document.querySelectorAll('.grid-cell').forEach(cell => {
+      const idx = parseInt(cell.dataset.idx);
+      const num = (400 + idx).toString();
+      const short = `IMG_2${num}.CR3`;
+      const long  = `2026-05-28_19-34-12_Greg-Lou-Reception-IMG_2${num}.CR3`;
+      const name = on ? long : short;
+      if (cell.classList.contains('skeleton')) cell.dataset.fn = name;
+      const fn = cell.querySelector('.cell-fn');
+      if (fn) fn.textContent = name;
+    });
+  }
+
+  /* ---- counts swap ---- */
+  const KEEPS = 218, REJECTS = 109;
+  function applyCounts() {
+    const noR = document.body.getAttribute('data-no-rejects') === 'on';
+    const noK = document.body.getAttribute('data-no-keeps')   === 'on';
+    const keeps = noK ? 0 : KEEPS;
+    const rejects = noR ? 0 : REJECTS;
+    document.getElementById('keeps-count').textContent = keeps;
+    document.getElementById('rejects-count').textContent = rejects;
+    document.getElementById('rejects-count-inline').textContent = rejects;
+    document.getElementById('keeps-count-inline').textContent = keeps;
+    document.getElementById('reject-count-confirm').textContent = rejects;
+    document.querySelectorAll('.move-rejects-btn').forEach(b => { b.disabled = noR; });
+    document.querySelectorAll('.copy-keeps-btn, .copy-keeps-btn-pinned').forEach(b => { b.disabled = noK; });
+    document.querySelectorAll('.finish-btn').forEach(b => {
+      b.textContent = `⌃E · ${keeps} keeps`;
+    });
+  }
+
+  /* ---- folder-exists: only pinned-variant button text swaps; ask variant uses CSS swap ---- */
+  function applyCopyKeepsLabel() {
+    const exists = document.body.getAttribute('data-folder-exists') === 'on';
+    document.querySelectorAll('.copy-keeps-btn-pinned').forEach(b => {
+      if (exists) {
+        if (!b.dataset.orig) b.dataset.orig = b.textContent;
+        b.textContent = 'Confirm (merge)';
+      } else if (b.dataset.orig) {
+        b.textContent = b.dataset.orig;
+        delete b.dataset.orig;
+      }
+    });
+  }
+
+  /* ---- verdict flash (keep / reject / fav) ---- */
+  document.querySelectorAll('[data-flash]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.flash;
+      if (!['loupe','compare'].includes(document.body.dataset.view)) {
+        document.body.dataset.view = 'loupe';
+        document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'loupe'));
+        document.getElementById('brand-mode').textContent = 'LOUPE';
+        updateToggleVisibility();
+      }
+      document.body.dataset.overlay = '';
+      document.querySelectorAll('.overlay-tab').forEach(b => b.classList.remove('active'));
+      requestAnimationFrame(() => {
+        document.querySelectorAll('.view-loupe .photo-frame, .view-compare .photo-frame').forEach(frame => {
+          frame.classList.remove('flash-keep', 'flash-reject', 'flash-fav');
+          void frame.offsetWidth;
+          frame.classList.add(`flash-${kind}`);
+          setTimeout(() => frame.classList.remove(`flash-${kind}`), 400);
+        });
+      });
+    });
+  });
+
+  /* ---- path middle-truncation ---- */
+  function middleTruncate(el) {
+    const full = el.dataset.full || el.textContent.trim();
+    el.dataset.full = full;
+    el.title = full;
+    el.textContent = full;
+    if (el.scrollWidth <= el.clientWidth) return;
+    let lo = 4, hi = full.length;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      const halfA = Math.ceil((mid - 1) / 2);
+      const halfB = mid - 1 - halfA;
+      el.textContent = full.slice(0, halfA) + '…' + full.slice(full.length - halfB);
+      if (el.scrollWidth <= el.clientWidth) lo = mid; else hi = mid - 1;
+    }
+    const halfA = Math.ceil((lo - 1) / 2);
+    const halfB = lo - 1 - halfA;
+    el.textContent = full.slice(0, halfA) + '…' + full.slice(full.length - halfB);
+  }
+  function truncateAll() {
+    document.querySelectorAll('.path-truncate').forEach(middleTruncate);
+  }
+  window.addEventListener('load', truncateAll);
+  window.addEventListener('resize', () => {
+    document.querySelectorAll('.path-truncate').forEach(el => {
+      if (el.dataset.full) el.textContent = el.dataset.full;
+    });
+    requestAnimationFrame(truncateAll);
+  });
+  new MutationObserver(truncateAll).observe(document.body, { attributes: true, attributeFilter: ['data-export-mode'] });
+
+  /* ---- esc closes overlay ---- */
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.body.dataset.overlay) {
+      document.body.dataset.overlay = '';
+      document.querySelectorAll('.overlay-tab').forEach(b => b.classList.remove('active'));
+    }
+  });
+
+  /* ---- overlay chip toggles drive real body classes ---- */
+  document.querySelectorAll('[data-toggle]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.classList.toggle('on');
+      const key = btn.dataset.toggle;
+      const on = btn.classList.contains('on');
+      document.querySelectorAll(`[data-toggle="${key}"]`).forEach(b => b.classList.toggle('on', on));
+      if (key === 'i') document.body.classList.toggle('info-on', on);
+      if (key === 'h') document.body.classList.toggle('clipping-on', on);
+      if (key === 'p') document.body.classList.toggle('peaking-on', on);
+      if (key === 'o') document.body.classList.toggle('thirds-on', on);
+      if (key === 't') document.body.classList.toggle('thumbs-off', !on);
+    });
+  });
+
+  /* ---- settings: rejected folder name → finish (live, silent failsafe) ---- */
+  const rejectedInput = document.getElementById('rejected-input');
+  const rejectedOut   = document.getElementById('rejected-folder-name');
+  const REJECTED_DEFAULT = 'rejected';
+  function sanitizeName(v) { return v.replace(/[<>:"/\\|?*]/g, '').slice(0, 32); }
+  rejectedInput.addEventListener('input', () => {
+    const raw = rejectedInput.value;
+    const safe = sanitizeName(raw);
+    if (raw !== safe) rejectedInput.value = safe;
+    const v = safe.trim();
+    rejectedInput.classList.toggle('invalid', !v);
+    rejectedOut.textContent = v || REJECTED_DEFAULT;
+  });
+  rejectedInput.addEventListener('blur', () => {
+    if (!rejectedInput.value.trim()) {
+      rejectedInput.value = REJECTED_DEFAULT;
+      rejectedInput.classList.remove('invalid');
+      rejectedInput.classList.add('flash-restore');
+      setTimeout(() => rejectedInput.classList.remove('flash-restore'), 900);
+      rejectedOut.textContent = REJECTED_DEFAULT;
+    }
+  });
+
+  /* ---- subfolder editor (silent failsafe) ---- */
+  const destSub = document.getElementById('dest-sub');
+  const DEST_SUB_DEFAULT = 'Greg-Lou-Day2-keeps';
+  destSub.addEventListener('input', () => {
+    const raw = destSub.value;
+    const safe = sanitizeName(raw);
+    if (raw !== safe) destSub.value = safe;
+    destSub.classList.toggle('invalid', !safe.trim());
+  });
+  destSub.addEventListener('blur', () => {
+    if (!destSub.value.trim()) {
+      destSub.value = DEST_SUB_DEFAULT;
+      destSub.classList.remove('invalid');
+    }
+  });
+
+  /* ---- export mode segment ---- */
+  const exportSeg = document.getElementById('export-mode-seg');
+  const copyKeepsRow = document.getElementById('copy-keeps-row');
+  exportSeg.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      exportSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      const mode = btn.dataset.mode;
+      copyKeepsRow.dataset.mode = mode;
+      document.body.dataset.exportMode = mode;
+    });
+  });
+
+  /* ---- thumb strip position segment ---- */
+  const thumbSeg = document.getElementById('thumb-pos-seg');
+  thumbSeg.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      thumbSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      document.body.dataset.thumbsPos = btn.dataset.pos;
+    });
+  });
+
+  /* ---- other segs / chips / toggles (visual only) ---- */
+  document.querySelectorAll('.seg').forEach(seg => {
+    if (seg.id === 'export-mode-seg' || seg.id === 'thumb-pos-seg') return;
+    seg.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      });
+    });
+  });
+  document.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => chip.classList.toggle('on'));
+  });
+  document.querySelectorAll('.toggle').forEach(t => {
+    t.addEventListener('click', () => t.classList.toggle('on'));
+  });
+
+  /* ---- filter tabs ---- */
+  document.querySelectorAll('.filter-tabs').forEach(tabs => {
+    tabs.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      });
+    });
+  });
+
+  /* ---- reset confirm ---- */
+  const resetContainer = document.getElementById('reset-container');
+  document.getElementById('reset-btn').addEventListener('click', () => {
+    resetContainer.classList.add('confirming');
+  });
+  document.querySelector('.reset-no').addEventListener('click', () => {
+    resetContainer.classList.remove('confirming');
+  });
+  document.querySelector('.reset-yes').addEventListener('click', () => {
+    resetContainer.classList.remove('confirming');
+  });
+
+  /* ---- move rejects: two-step confirm ---- */
+  const moveContainer = document.getElementById('move-confirm-container');
+  document.getElementById('move-rejects-btn').addEventListener('click', () => {
+    if (document.body.getAttribute('data-no-rejects') === 'on') return;
+    moveContainer.classList.add('confirming');
+  });
+  document.querySelector('#move-confirm-container .confirm-no').addEventListener('click', () => {
+    moveContainer.classList.remove('confirming');
+  });
+  document.querySelector('#move-rejects-yes').addEventListener('click', () => {
+    moveContainer.classList.remove('confirming');
+    document.body.setAttribute('data-finishing', 'on');
+    document.querySelector('[data-state="finishing"]').classList.add('on');
+  });
+
+  /* ---- init ---- */
+  updateToggleVisibility();
+</script>
+
+</body>
+</html>
