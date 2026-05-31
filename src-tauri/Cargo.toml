@@ -1,0 +1,53 @@
+[package]
+name = "cull"
+version = "0.1.0"
+description = "Keyboard-fast culling for Canon CR3 RAW photos"
+authors = ["Olive"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "cull_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+memchr = "2" # SIMD byte scan for finding JPEG EOI in the embedded full-res stream
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[dev-dependencies]
+# Only used by cr3.rs tests to validate our EXIF-orientation injection against an
+# independent EXIF parser. Not on the runtime path: previews are oriented by
+# splicing an EXIF tag (no decode/re-encode), so the webview rotates them.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+# Optimize dependency crates even in dev builds, AND give our own crate opt-level 1
+# so the hot byte-scan loops (JPEG extent detection) aren't interpreted at -O0 in
+# `tauri dev`. deps stay at 3; cull at 1 keeps incremental compiles quick.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Shipped binary: maximize speed/size. No panic=abort — a panic inside a
+# spawn_blocking decode task must unwind so the command returns an error (and the
+# UI shows "preview failed") instead of taking the whole app down on one bad file.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+

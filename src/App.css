@@ -1,0 +1,1629 @@
+html,
+body,
+#root,
+.cull-app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100vh;
+  background: #000;
+  overflow: hidden;
+  color: #d4d4d8;
+  font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+  user-select: none;
+}
+
+.cull-app {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── status bar ───────────────────────────────────────────── */
+.cull-statusbar {
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* extra right padding leaves room for the fixed window controls */
+  padding: 0 148px 0 24px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #52525b;
+  border-bottom: 1px solid #18181b;
+}
+
+/* ── custom window controls (borderless window) ───────────── */
+.cull-wincontrols {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  height: 36px;
+}
+
+.cull-winbtn {
+  width: 44px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: #71717a;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+
+.cull-winbtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e4e4e7;
+}
+
+/* These are mouse-only chrome buttons; a lingering focus ring after click looks
+   like a stray white outline once the user goes back to keyboard. Suppress it
+   (we also blur() on click so focus doesn't sit on the button at all). */
+.cull-winbtn:focus,
+.cull-winbtn:focus-visible {
+  outline: none;
+}
+
+.cull-winbtn--close:hover {
+  background: #ef4444;
+  color: #fff;
+}
+
+.cull-statusbar__left,
+.cull-statusbar__right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.cull-statusbar__brandblock {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.cull-statusbar__brand {
+  color: #52525b;
+  letter-spacing: 0.18em;
+}
+
+.cull-statusbar__brand-sep {
+  color: #27272a;
+  font-size: 11px;
+}
+
+/* Current view name — LOUPE / COMPARE / GRID. Sits inside the brand block so
+   the user always knows what view they're in without scanning the indicators. */
+.cull-statusbar__brand-mode {
+  color: #d4d4d8;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  font-weight: 500;
+}
+
+.cull-statusbar__filename {
+  color: #d4d4d8;
+}
+
+/* ── status-bar chips ─────────────────────────────────────────
+   One single style for every "this overlay is on" indicator in the
+   status bar. The label is the full word for what the toggle does
+   (info / peaking / thirds / clipping / sort). Zoom keeps its amber
+   variant since it's a transient mode, not a togglable overlay. */
+.cull-statusbar__chip {
+  padding: 1px 7px;
+  border: 1px solid #3f3f46;
+  border-radius: 3px;
+  background: #18181b;
+  color: #d4d4d8;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.cull-statusbar__chip--zoom {
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.cull-statusbar__chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cull-statusbar__right span.is-active {
+  color: #d4d4d8;
+}
+
+/* Position counter "N / M" — hard width-locked. The statusbar's right cluster
+   is right-anchored by justify-content: space-between, so any width change in
+   the counter pushes the segmented filter sideways. Use width (not min-width)
+   at the worst-case digit count (5 + " / " + 5 = 13ch) so the box never
+   shrinks or grows with content. tabular-nums keeps the digits monospaced. */
+.cull-statusbar__count {
+  display: inline-block;
+  width: 13ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── filter segmented control ────────────────────────────────
+   The four filters (all / unrated / keeps / ★) live in a single shell
+   so they read as a related group. The active one fills with a quiet
+   panel colour and bumps its label brightness — same shape, just lit. */
+.cull-filterseg {
+  display: inline-flex;
+  align-items: stretch;
+  padding: 2px;
+  border: 1px solid #27272a;
+  border-radius: 6px;
+  background: #0a0a0a;
+  gap: 1px;
+}
+
+.cull-filterseg__opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #52525b;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.cull-filterseg__opt:hover:not(.is-active) {
+  color: #a1a1aa;
+}
+
+.cull-filterseg__opt.is-active {
+  background: #1f1f23;
+  color: #f4f4f5;
+  box-shadow: inset 0 0 0 1px #2a2a2e;
+}
+
+.cull-filterseg__opt:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(244, 244, 245, 0.25);
+}
+
+.cull-filterseg__key {
+  color: #3f3f46;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.cull-filterseg__opt.is-active .cull-filterseg__key {
+  color: #71717a;
+}
+
+.cull-filterseg__label {
+  text-transform: lowercase;
+}
+
+.cull-filterseg__count {
+  color: #3f3f46;
+  font-variant-numeric: tabular-nums;
+}
+
+.cull-filterseg__opt.is-active .cull-filterseg__count {
+  color: #a1a1aa;
+}
+
+.cull-filterseg__opt--keep.is-active {
+  color: #34d399;
+}
+
+.cull-filterseg__opt--fav.is-active {
+  color: #fbbf24;
+}
+
+/* ── stage ────────────────────────────────────────────────── */
+.cull-stage {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cull-image-area {
+  flex: 1 1 auto;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  padding: 16px 24px 24px;
+}
+
+.cull-image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+/* loading state: a full-bleed, heavily-blurred thumbnail (blurhash look) behind a
+   centered spinner. Fills the stage; sharpens to the real image on arrival. */
+.cull-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Blurred thumbnail scaled UP to fill the stage and letterboxed to the rect the
+   real image will occupy (object-fit: contain). The thumb is small intrinsically,
+   so we force the element box to fill the container and let object-fit do the
+   letterboxing — otherwise max-width/height would leave it at native (tiny) size. */
+.cull-loading__blur {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: blur(14px) brightness(0.78);
+}
+
+/* Centered via auto margins on an inset:0 box so the cull-spin rotate() owns the
+   transform — a translate(-50%,-50%) centering transform gets overwritten each
+   animation frame, which is what made the spinner "orbit" instead of spin. */
+.cull-loading__spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 42px;
+  height: 42px;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fafafa;
+  border-radius: 9999px;
+  animation: cull-spin 700ms linear infinite;
+  box-shadow: 0 2px 18px rgba(0, 0, 0, 0.65);
+}
+
+/* clipping mask overlay (Phase C) — sized/positioned to the measured image rect */
+.cull-clip-overlay {
+  position: absolute;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+/* focus peaking overlay — same geometry as the clip overlay; yellow stipple on
+   high-contrast edges (in-focus regions). Computed from the JPEG, cached per path. */
+.cull-peaking-overlay {
+  position: absolute;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+/* Composition rule-of-thirds grid (O). Stretched to the image rect via SVG with
+   non-uniform scaling, so the 33/67 % lines land exactly on the photo. */
+.cull-composition-overlay {
+  position: absolute;
+  pointer-events: none;
+}
+
+.cull-composition-overlay line {
+  stroke: rgba(255, 255, 255, 0.95);
+  stroke-width: 1.2;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.85));
+  vector-effect: non-scaling-stroke;
+}
+
+
+.cull-statusbar__finish {
+  appearance: none;
+  background: #1c1917;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  color: #fbbf24;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 10px;
+  margin: 0 4px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.cull-statusbar__finish:hover {
+  background: #f59e0b;
+  color: #0a0a0a;
+}
+
+.cull-statusbar__finish:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.45);
+}
+
+/* ── buttons ──────────────────────────────────────────────── */
+.cull-pick-button {
+  background: transparent;
+  color: #d4d4d8;
+  border: 1px solid #3f3f46;
+  padding: 14px 32px;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 120ms ease-out, color 120ms ease-out;
+}
+
+.cull-pick-button:hover:not(:disabled) {
+  border-color: #d4d4d8;
+  color: #ffffff;
+}
+
+/* Disabled state: muted, no hover affordance — the click would just bounce. */
+.cull-pick-button:disabled {
+  cursor: default;
+  color: #52525b;
+  border-color: #27272a;
+  background: transparent;
+}
+
+.cull-pick-button--ghost {
+  border-color: #27272a;
+  color: #a1a1aa;
+}
+
+.cull-pick-button--primary {
+  border-color: #d4d4d8;
+  color: #fafafa;
+}
+
+.cull-pick-button--primary:hover:not(:disabled) {
+  background: #fafafa;
+  color: #000;
+}
+
+/* ── chrome phases: start / loading / staged ──────────────── */
+.cull-app--chrome {
+  align-items: center;
+  justify-content: center;
+}
+
+.cull-chrome {
+  flex: 1 1 auto;
+  align-self: stretch; /* fill the window so the whole top is a drag region */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  text-align: center;
+  background: radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.045), transparent 62%);
+}
+
+/* ── landing hero (start screen) ──────────────────────────── */
+.cull-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  animation: cull-hero-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* culling motif: a kept frame (green check) beside a tossed one (red ✗) */
+.cull-hero__cards {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 10px;
+}
+
+.cull-hero__card {
+  width: 104px;
+  height: 70px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #202026, #2c2c33 55%, #161619);
+  border: 1px solid #3f3f46;
+}
+
+.cull-hero__card--keep {
+  border-color: rgba(16, 185, 129, 0.55);
+  box-shadow: 0 0 30px rgba(16, 185, 129, 0.16);
+}
+
+.cull-hero__card--reject {
+  transform: rotate(7deg);
+  opacity: 0.5;
+  filter: grayscale(0.6);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.cull-hero__title {
+  font-size: 86px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  line-height: 1;
+  margin: 0;
+  padding-left: 0.2em; /* optically center the tracked text */
+  color: #fafafa;
+  text-shadow: 0 0 70px rgba(255, 255, 255, 0.14);
+}
+
+.cull-hero__tagline {
+  font-size: 11px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: #71717a;
+}
+
+/* last-session recap, shown on the home screen after finishing a cull */
+.cull-hero__summary {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border: 1px solid #27272a;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cull-hero__summary-label {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #52525b;
+}
+
+.cull-hero__summary-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: #a1a1aa;
+}
+
+.cull-hero__summary-pct {
+  color: #d4d4d8;
+}
+
+.cull-hero__summary-stats .cull-count--keep {
+  color: #34d399;
+}
+
+.cull-hero__summary-stats .cull-count--fav {
+  color: #fbbf24;
+}
+
+.cull-hero__cta {
+  margin-top: 12px;
+  padding: 16px 44px;
+  font-size: 13px;
+}
+
+.cull-hero__how {
+  margin-top: 18px;
+  max-width: 440px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: #8a8a93;
+}
+
+/* Floating gear in the top-left of the chrome screens (home / loading /
+   staged). Stays out of the way of the title-bar drag region but is always
+   one click away. Mirror of WindowControls on the right edge. */
+.cull-settings-fab {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  width: 46px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: #52525b;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.cull-settings-fab:hover {
+  color: #fafafa;
+  background: #18181b;
+}
+
+.cull-settings-fab:focus-visible {
+  outline: none;
+  color: #fafafa;
+  background: #18181b;
+}
+
+/* Status-bar gear (cull view). Tucked between the finish chip and the right
+   window controls — same visual weight as the finish chip when present, but
+   small and quiet when absent. */
+.cull-statusbar__gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  margin-left: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: #52525b;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.cull-statusbar__gear:hover {
+  color: #fafafa;
+  background: #18181b;
+}
+
+.cull-statusbar__gear:focus-visible {
+  outline: none;
+  color: #fafafa;
+  background: #18181b;
+}
+
+@keyframes cull-hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cull-chrome__error {
+  max-width: 520px;
+}
+
+.cull-chrome__status {
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #a1a1aa;
+}
+
+.cull-chrome__folder {
+  color: #d4d4d8;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.cull-chrome__sub {
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #52525b;
+}
+
+.cull-spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid #27272a;
+  border-top-color: #a1a1aa;
+  border-radius: 9999px;
+  animation: cull-spin 700ms linear infinite;
+}
+
+@keyframes cull-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cull-progress {
+  width: 420px;
+  max-width: 60vw;
+  height: 4px;
+  background: #27272a;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.cull-progress__fill {
+  height: 100%;
+  background: #d4d4d8;
+  border-radius: 9999px;
+  transition: width 150ms ease-out;
+}
+
+/* indeterminate shimmer before the first per-file progress event lands */
+.cull-progress__indeterminate {
+  height: 100%;
+  width: 35%;
+  background: #d4d4d8;
+  border-radius: 9999px;
+  animation: cull-indeterminate 1s ease-in-out infinite;
+}
+
+@keyframes cull-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.cull-staged__check {
+  font-size: 40px;
+  line-height: 1;
+  color: #10b981;
+}
+
+.cull-staged__count {
+  font-size: 22px;
+  letter-spacing: 0.1em;
+  color: #fafafa;
+}
+
+.cull-staged__folder {
+  font-size: 12px;
+  color: #71717a;
+  margin-bottom: 8px;
+}
+
+.cull-staged__actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.cull-statusbar__saving {
+  color: #71717a;
+}
+
+.cull-statusbar__unsaved {
+  color: #ef4444;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cull-statusbar__unsaved:hover {
+  color: #f87171;
+  text-decoration: underline;
+}
+
+/* ── quit guard (close blocked while ratings are saving/failed) ── */
+.cull-quitguard {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cull-quitguard__box {
+  max-width: 480px;
+  padding: 28px 32px;
+  background: #0a0a0a;
+  border: 1px solid #27272a;
+  text-align: center;
+}
+
+.cull-quitguard__title {
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #d4d4d8;
+  margin-bottom: 12px;
+}
+
+.cull-quitguard__title--warn {
+  color: #ef4444;
+}
+
+.cull-quitguard__body {
+  font-size: 12px;
+  line-height: 1.65;
+  color: #a1a1aa;
+  margin-bottom: 24px;
+}
+
+.cull-quitguard__actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.cull-quitguard__hint {
+  margin-top: 16px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #52525b;
+}
+
+/* ── settings dialog ──────────────────────────────────────────
+   Shares the modal chrome with the quit-guard / actions dialogs (full-bleed
+   backdrop + centered card), but the body lays out as stacked rows. Help
+   text under each row has a FIXED min-height so toggling the active value
+   doesn't shift content below — crucial when the body grows past one row. */
+.cull-settings {
+  width: 560px;
+  max-width: 90vw;
+}
+
+.cull-settings__title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: #d4d4d8;
+  font-size: 13px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.cull-settings__row {
+  padding: 18px 0;
+  border-top: 1px solid #18181b;
+  text-align: left;
+}
+
+.cull-settings__row:first-of-type {
+  border-top: 0;
+}
+
+.cull-settings__row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.cull-settings__row-name {
+  color: #d4d4d8;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: lowercase;
+}
+
+/* Fixed min-height so toggling the segmented control doesn't reflow rows
+   below. Two-line cap is ~36 px at this font; we pad a bit for safety. */
+.cull-settings__row-help {
+  margin-top: 10px;
+  min-height: 44px;
+  color: #8a8a93;
+  font-size: 12px;
+  line-height: 1.55;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.cull-settings__row-control {
+  flex: 0 0 auto;
+}
+
+.cull-settings__seg {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  background: #0a0a0a;
+  gap: 2px;
+}
+
+.cull-settings__seg-opt {
+  appearance: none;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #71717a;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+  white-space: nowrap;
+}
+
+.cull-settings__seg-opt:hover:not(.is-active) {
+  color: #d4d4d8;
+}
+
+.cull-settings__seg-opt.is-active {
+  background: #1f1f23;
+  color: #fafafa;
+  box-shadow: inset 0 0 0 1px #2a2a2e;
+}
+
+.cull-settings__seg-opt:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(244, 244, 245, 0.25);
+}
+
+.cull-settings__seg.is-disabled,
+.cull-settings__seg-opt:disabled {
+  cursor: progress;
+}
+
+.cull-settings__seg.is-disabled .cull-settings__seg-opt {
+  color: #52525b;
+}
+
+/* Scrollable inner body — the dialog can get tall with many settings. The
+   modal frame (title / actions / hint) stays fixed; only the rows scroll. */
+.cull-settings__scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 4px -6px 0;
+  padding: 0 6px;
+  scrollbar-width: thin;
+}
+
+.cull-settings__section {
+  padding-top: 6px;
+}
+
+.cull-settings__section + .cull-settings__section {
+  margin-top: 6px;
+}
+
+.cull-settings__section-title {
+  color: #71717a;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 14px 0 0;
+  border-top: 1px solid #18181b;
+}
+
+.cull-settings__section:first-of-type .cull-settings__section-title {
+  border-top: 0;
+  padding-top: 4px;
+}
+
+/* Row variant inside a section: no top border (the section owns the divider).
+   Keeps the visual rhythm of label + control + help intact. */
+.cull-settings__section .cull-settings__row {
+  border-top: 0;
+  padding: 12px 0;
+}
+
+/* ── Inline text input for things like "rejected subfolder" ──────────── */
+.cull-settings__text {
+  appearance: none;
+  background: #0a0a0a;
+  border: 1px solid #27272a;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: #fafafa;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  width: 200px;
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+
+.cull-settings__text:focus {
+  border-color: #52525b;
+}
+
+/* ── On/off check chips for grouping booleans in one row ────────────── */
+.cull-settings__checks {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cull-settings__check {
+  appearance: none;
+  padding: 5px 11px;
+  border: 1px solid #27272a;
+  border-radius: 5px;
+  background: #0a0a0a;
+  color: #71717a;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.cull-settings__check:hover:not(.is-active) {
+  color: #d4d4d8;
+  border-color: #3f3f46;
+}
+
+.cull-settings__check.is-active {
+  background: #1f1f23;
+  color: #fafafa;
+  border-color: #3f3f46;
+}
+
+.cull-settings__check:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(244, 244, 245, 0.25);
+}
+
+/* ── Export-folder control (toggle + pinned path + browse) ──────────── */
+.cull-settings__export {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.cull-settings__export-pinned {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cull-settings__path {
+  font-family: inherit;
+  font-size: 11px;
+  color: #a1a1aa;
+  background: #0a0a0a;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 4px 8px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cull-settings__browse {
+  appearance: none;
+  background: transparent;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  padding: 4px 10px;
+  color: #d4d4d8;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.cull-settings__browse:hover {
+  background: #1f1f23;
+  color: #fafafa;
+}
+
+/* ── Reset button (two-click confirm) ──────────────────────────────── */
+.cull-settings__reset {
+  appearance: none;
+  background: transparent;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  padding: 6px 14px;
+  color: #d4d4d8;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  white-space: nowrap;
+}
+
+.cull-settings__reset:hover {
+  border-color: #d4d4d8;
+  color: #fafafa;
+}
+
+.cull-settings__reset.is-armed {
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+
+.cull-settings__reset.is-armed:hover {
+  background: #ef4444;
+  color: #0a0a0a;
+}
+
+/* Small keycap visual for the hint at the bottom of the dialog. */
+.cull-quitguard__hint kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 0 1px;
+  border: 1px solid #3f3f46;
+  border-radius: 3px;
+  background: #18181b;
+  color: #d4d4d8;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: none;
+}
+
+/* Act-on-cull dialog (Ctrl+E) — finish actions: move rejects, copy keeps */
+.cull-actions {
+  max-width: 600px;
+}
+
+.cull-actions__keep {
+  color: #34d399;
+}
+
+.cull-actions__fav {
+  color: #fbbf24;
+}
+
+.cull-actions__row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.cull-actions__result {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #71717a;
+  text-align: center;
+}
+
+.cull-actions__result--err {
+  color: #f87171;
+}
+
+.cull-actions__pending {
+  margin: 12px 0 4px;
+  padding: 8px 12px;
+  border: 1px solid #3f3f46;
+  border-radius: 6px;
+  background: #18181b;
+  color: #a1a1aa;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.cull-actions__pending--err {
+  border-color: #7f1d1d;
+  background: #1a0e0e;
+  color: #f87171;
+}
+
+.cull-quitguard__danger {
+  border-color: #7f1d1d;
+  color: #ef4444;
+}
+
+.cull-quitguard__danger:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #000;
+}
+
+/* ── messages ─────────────────────────────────────────────── */
+.cull-message {
+  color: #71717a;
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  text-align: center;
+  max-width: 640px;
+  padding: 0 24px;
+  line-height: 1.8;
+}
+
+.cull-message__title {
+  color: #ef4444;
+  margin-bottom: 16px;
+}
+
+.cull-message__body {
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #a1a1aa;
+  white-space: pre-wrap;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px;
+  border: 1px solid #27272a;
+  margin: 16px 0;
+}
+
+.cull-message__hint {
+  color: #52525b;
+  font-size: 10px;
+}
+
+/* ── EXIF overlay ─────────────────────────────────────────── */
+.cull-exif {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+  max-width: 320px;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid #27272a;
+  padding: 12px 14px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.cull-exif__filename {
+  color: #d4d4d8;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #27272a;
+}
+
+.cull-exif__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #a1a1aa;
+}
+
+.cull-exif__row--dim {
+  color: #71717a;
+}
+
+/* RGB histogram beneath the EXIF readout (transparent PNG over the panel bg) */
+.cull-histogram {
+  display: block;
+  width: 100%;
+  height: 54px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #27272a;
+  image-rendering: auto;
+}
+
+/* ── rating dot (persistent, top-right) ───────────────────── */
+.cull-rating-dot {
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.cull-persistent-dot {
+  position: absolute;
+  top: 16px;
+  right: 24px;
+  z-index: 20;
+  animation: cull-fade-in 200ms ease-out;
+}
+
+/* ── feedback popup (bottom-right, flashes on rate) ───────── */
+.cull-feedback {
+  position: absolute;
+  bottom: 32px;
+  right: 32px;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.cull-feedback__circle {
+  width: 48px;
+  height: 48px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: cull-feedback-pop 320ms ease-out forwards;
+}
+
+@keyframes cull-feedback-pop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  25% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+  75% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+}
+
+@keyframes cull-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ── thumbnail strip ──────────────────────────────────────── */
+/* Thumb strip background is fully opaque on purpose — backdrop-filter forces
+   the GPU to re-blur every paint, and the strip repaints on every nav step
+   (scrollIntoView at 30Hz). The cost compounds with image decode and shows up
+   as visible stutter during a held scrub. Solid black solves it; the strip
+   isn't meant to be see-through anyway. */
+.cull-thumbs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  overflow-x: auto;
+  background: #0a0a0a;
+  border-top: 1px solid #18181b;
+  scrollbar-width: none;
+}
+
+.cull-thumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.cull-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  cursor: pointer;
+  transition: opacity 150ms ease-out;
+}
+
+.cull-thumb__frame {
+  width: 88px;
+  height: 60px;
+  box-sizing: border-box;
+  /* A constant-width border (not an outline) frames the current cell. An outline
+     sits outside the box and gets clipped by the strip's scroll container
+     (overflow-x:auto forces overflow-y to clip), which cut the top/bottom of the
+     highlight. A border is part of the box, so it's always fully drawn. */
+  border: 2px solid transparent;
+  overflow: hidden;
+  background: #0a0a0a;
+}
+
+.cull-thumb__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cull-thumb__placeholder {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #111 25%, #161616 50%, #111 75%);
+}
+
+.cull-thumb__dot {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+}
+
+/* ── contact-sheet grid (G) ───────────────────────────────────────────────── */
+.cull-grid {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  background: #000;
+  scrollbar-width: thin;
+}
+
+.cull-grid__inner {
+  position: relative;
+}
+
+.cull-grid__cell {
+  cursor: pointer;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.cull-grid__cell.is-reject .cull-grid__img {
+  filter: grayscale(0.85) brightness(0.6);
+}
+
+/* Frame wraps the img OR the placeholder, so the current-cell outline can be
+   on a node that always exists (not the img, which only renders once loaded). */
+.cull-grid__frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  outline: 1px solid transparent;
+  transition: outline-color 100ms ease-out;
+}
+
+.cull-grid__cell.is-current .cull-grid__frame {
+  outline: 2px solid #fafafa;
+}
+
+.cull-grid__img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #0a0a0a;
+}
+
+/* Grid cell placeholder while the thumbnail loads from the NAS. The gradient
+   shimmer is the same blackish range so it doesn't fight the loaded image when
+   it pops in; the filename gives the cell a sense of identity instead of
+   reading as dead space. */
+.cull-grid__placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  box-sizing: border-box;
+  background: linear-gradient(110deg, #111 8%, #1c1c1c 18%, #111 33%);
+  background-size: 220% 100%;
+  animation: cull-grid-shimmer 1.6s linear infinite;
+}
+
+.cull-grid__placeholder-name {
+  color: #3f3f46;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-align: center;
+  word-break: break-all;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  /* Don't overflow if the filename is long — fade with a clip rather than wrap forever. */
+  max-height: 100%;
+  overflow: hidden;
+}
+
+@keyframes cull-grid-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.cull-grid__dot {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+}
+
+/* ── keyboard help overlay (Tab-hold) ─────────────────────── */
+.cull-help {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.95);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.cull-help__inner {
+  width: 100%;
+  max-width: 760px;
+  padding: 40px 48px;
+}
+
+.cull-help__eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #52525b;
+  margin-bottom: 4px;
+}
+
+.cull-help__title {
+  font-size: 22px;
+  font-weight: 400;
+  color: #f4f4f5;
+  letter-spacing: -0.01em;
+  margin: 0 0 32px;
+}
+
+.cull-help__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px 48px;
+}
+
+.cull-help__group {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #52525b;
+  border-bottom: 1px solid #27272a;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.cull-help__row {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  font-size: 12px;
+  white-space: nowrap;
+  margin-bottom: 8px;
+}
+
+.cull-help__key {
+  flex: 0 0 140px;
+  color: #fcd34d;
+  font-weight: 600;
+}
+
+.cull-help__desc {
+  color: #a1a1aa;
+}
+
+/* ── compare mode (Phase D) ───────────────────────────────── */
+.cull-cmp {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 16px 12px;
+  gap: 8px;
+}
+
+
+.cull-cmp__panels {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 12px;
+  min-height: 0;
+}
+
+.cull-cmp-panel {
+  flex: 1 1 0;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+/* The frame is a separate inset child, not an outline. An outline (any offset)
+   on this overflow:hidden panel got clipped at the panel/window edges — cutting
+   the top/bottom/outer sides. A child at inset:0 with a border is painted ABOVE
+   the image and lives inside the panel's clip box, so all four sides always show. */
+.cull-cmp-frame {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+.cull-cmp-panel.is-champion .cull-cmp-frame {
+  border-color: #10b981; /* green — the running keeper */
+}
+
+.cull-cmp-panel.is-challenger .cull-cmp-frame {
+  border-color: #f59e0b; /* amber — the contender */
+}
+
+.cull-cmp-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.cull-cmp-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.cull-cmp-label {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #a1a1aa;
+}
+
+.cull-cmp-label.is-champion {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.18);
+}
+
+.cull-cmp-label.is-challenger {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.15);
+}
+
+/* ── compare-mode strip: pinned champion + scrolling unrated candidates ───── */
+.cull-cmp-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  background: rgba(0, 0, 0, 0.85);
+  border-top: 1px solid #18181b;
+}
+
+/* Champion pinned at the left as a fixed reference (left-aligned rather than at
+   the 1/3 mark — the empty third looked unbalanced and starved the candidate
+   strip, which is the part that wants the room). */
+.cull-cmp-strip__champion {
+  flex: 0 0 auto;
+}
+
+.cull-cmp-strip__sep {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #3f3f46;
+  margin: 0 16px;
+}
+
+.cull-cmp-strip__candidates {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cull-cmp-strip__candidates::-webkit-scrollbar {
+  display: none;
+}
