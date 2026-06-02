@@ -1,7 +1,6 @@
-import { memo, useEffect, useMemo, type ReactNode } from "react";
+import { memo, useEffect, type ReactNode } from "react";
 import { Check, Star, X as XIcon } from "lucide-react";
 import type { Img, Rating } from "../types";
-import { blurhashToDataUrl, type BlurInfo } from "../utils/bundle";
 import { hasLrcRating } from "../utils/ratingColor";
 
 /**
@@ -25,8 +24,6 @@ type ThumbCellProps = {
   lrcRating?: number | null;
   dimmed: boolean;
   url: string | undefined;
-  /** Per-image blurhash placeholder, shown before the thumbnail JPEG loads. */
-  blur?: BlurInfo;
   loadThumbnail: (path: string, index?: number) => void;
   onPick: (index: number) => void;
   /** Role variant in compare mode — adds a champagne outline + role badge. */
@@ -47,7 +44,6 @@ export const ThumbCell = memo(function ThumbCell({
   lrcRating,
   dimmed,
   url,
-  blur,
   loadThumbnail,
   onPick,
   roleVariant,
@@ -55,11 +51,6 @@ export const ThumbCell = memo(function ThumbCell({
   useEffect(() => {
     loadThumbnail(img.path, index);
   }, [img.path, index, loadThumbnail]);
-  // Decode the blurhash placeholder once (cells are virtualised, so few mount).
-  const blurUrl = useMemo(
-    () => (blur ? blurhashToDataUrl(blur.hash, blur.w / blur.h) : null),
-    [blur],
-  );
 
   // Reject cells get an opacity drop unless they're the current cell.
   const isReject = rating === "reject";
@@ -108,8 +99,6 @@ export const ThumbCell = memo(function ThumbCell({
       <div className={frameClass} style={{ outlineColor }}>
         {url ? (
           <img className="cull-thumb__img" src={url} alt="" />
-        ) : blurUrl ? (
-          <img className="cull-thumb__img" src={blurUrl} alt="" style={{ filter: "blur(1px)" }} />
         ) : (
           <div className="cull-thumb__placeholder" />
         )}

@@ -10,7 +10,6 @@ import {
 } from "react";
 import { Check, Star, X as XIcon } from "lucide-react";
 import type { Img, ImageMetadata, Rating } from "../types";
-import { blurhashToDataUrl, type BlurInfo } from "../utils/bundle";
 import { stripExt } from "../utils/path";
 import { hasLrcRating } from "../utils/ratingColor";
 
@@ -60,7 +59,6 @@ export const GridView = memo(function GridView({
   cols,
   ratings,
   thumbnails,
-  blurhashes,
   metadata,
   selectedIndices,
   loadThumbnail,
@@ -75,8 +73,6 @@ export const GridView = memo(function GridView({
   cols: number;
   ratings: Record<number, Rating>;
   thumbnails: Record<string, string>;
-  /** Per-image blurhash placeholders, shown before each cell's thumbnail loads. */
-  blurhashes?: Record<string, BlurInfo>;
   /** Optional metadata map — only the `lrcRating` field is read here, for the
    * tiny corner badge that flags pre-existing LrC ratings. */
   metadata?: Record<string, ImageMetadata>;
@@ -183,7 +179,6 @@ export const GridView = memo(function GridView({
             rating={ratings[images[idx].id]}
             lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
             url={thumbnails[images[idx].path]}
-            blur={blurhashes?.[images[idx].path]}
             loadThumbnail={loadThumbnail}
             onPick={onPick}
             top={row * rowH}
@@ -205,7 +200,6 @@ const GridCell = memo(function GridCell({
   rating,
   lrcRating,
   url,
-  blur,
   loadThumbnail,
   onPick,
   top,
@@ -220,7 +214,6 @@ const GridCell = memo(function GridCell({
   rating: Rating | undefined;
   lrcRating: number | null;
   url: string | undefined;
-  blur?: BlurInfo;
   loadThumbnail: (path: string, index?: number) => void;
   onPick: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   top: number;
@@ -242,12 +235,6 @@ const GridCell = memo(function GridCell({
   const shimmerDelayMs = useMemo(
     () => (Date.now() - SHIMMER_EPOCH_MS) % SHIMMER_DURATION_MS,
     [],
-  );
-  // Decode the blurhash placeholder once (cells are virtualised, so only the
-  // viewport's worth decode at a time).
-  const blurUrl = useMemo(
-    () => (blur ? blurhashToDataUrl(blur.hash, blur.w / blur.h) : null),
-    [blur],
   );
   const isReject = rating === "reject";
   // Verdict glyph as a Lucide SVG icon (not Unicode) so it centers cleanly
@@ -289,8 +276,6 @@ const GridCell = memo(function GridCell({
       <div className="cull-grid__frame">
         {url ? (
           <img className="cull-grid__img" src={url} alt="" />
-        ) : blurUrl ? (
-          <img className="cull-grid__img" src={blurUrl} alt="" style={{ filter: "blur(2px)" }} />
         ) : (
           <div
             className="cull-grid__placeholder"

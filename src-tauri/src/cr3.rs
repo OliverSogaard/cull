@@ -568,9 +568,8 @@ pub fn read_bundle(path: &str) -> std::io::Result<Bundle> {
 }
 
 /// What one thumbnail read yields: the (EXIF-oriented) THMB JPEG, the
-/// orientation, a BlurHash placeholder string, and the DISPLAY pixel dimensions
-/// (orientation-adjusted) so the UI can set the correct aspect ratio for a frame
-/// before any raster decodes.
+/// orientation, and the DISPLAY pixel dimensions (orientation-adjusted) so the
+/// UI can set the correct aspect ratio for a frame before any raster decodes.
 pub struct Thumbnail {
     pub jpeg: Vec<u8>,
     /// Read by tests (assert thumb/preview orientation agree); the production
@@ -578,9 +577,6 @@ pub struct Thumbnail {
     /// dims below are orientation-adjusted.
     #[allow(dead_code)]
     pub orientation: u32,
-    /// ~25-char BlurHash of the thumbnail, rotated to display orientation.
-    /// `None` if decode/encode failed (UI falls back to no placeholder).
-    pub blurhash: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
 }
@@ -595,54 +591,10 @@ fn display_dims(orient: u32, pw: Option<u32>, ph: Option<u32>) -> (Option<u32>, 
     }
 }
 
-/// Build an RGBA buffer from decoded RGB, rotating to the DISPLAY orientation so
-/// a portrait frame's placeholder isn't transposed. Handles the four Canon
-/// orientations (1/3/6/8); the rare mirrored ones fall through as un-rotated
-/// (best-effort — a slightly-off blur is harmless).
-fn oriented_rgba(rgb: &[u8], w: usize, h: usize, orient: u32) -> (Vec<u8>, usize, usize) {
-    let (ew, eh) = match orient {
-        5 | 6 | 7 | 8 => (h, w),
-        _ => (w, h),
-    };
-    let mut out = vec![0u8; ew * eh * 4];
-    for y in 0..h {
-        for x in 0..w {
-            let si = (y * w + x) * 3;
-            let (dx, dy) = match orient {
-                3 => (w - 1 - x, h - 1 - y), // 180°
-                6 => (h - 1 - y, x),         // 90° CW
-                8 => (y, w - 1 - x),         // 90° CCW
-                _ => (x, y),                 // normal
-            };
-            let di = (dy * ew + dx) * 4;
-            out[di] = rgb[si];
-            out[di + 1] = rgb[si + 1];
-            out[di + 2] = rgb[si + 2];
-            out[di + 3] = 255;
-        }
-    }
-    (out, ew, eh)
-}
-
-/// BlurHash the embedded THMB, rotated to display orientation. Best-effort:
-/// returns `None` on any decode/encode failure. Sub-millisecond on a 160×120
-/// thumbnail; runs only on the (lazy) thumbnail read path, never in analyze.
-fn thumbnail_blurhash(thmb_jpeg: &[u8], orient: u32) -> Option<String> {
-    let mut dec = zune_jpeg::JpegDecoder::new(thmb_jpeg);
-    let rgb = dec.decode().ok()?;
-    let (w, h) = dec.dimensions()?;
-    // Require interleaved 8-bit RGB (the THMB is colour); bail otherwise.
-    if w == 0 || h == 0 || rgb.len() < w * h * 3 {
-        return None;
-    }
-    let (rgba, ew, eh) = oriented_rgba(&rgb, w, h, orient);
-    blurhash::encode(4, 3, ew as u32, eh as u32, &rgba).ok()
-}
-
-/// Extract the filmstrip thumbnail + orientation + a BlurHash placeholder + the
-/// display dimensions. THMB lives in moov near the file start, so this reads a
-/// small head, growing only if an unusually large moov spills past it. Used for
-/// strip cells outside the preview-prefetch window.
+/// Extract the filmstrip thumbnail + orientation + the display dimensions. THMB
+/// lives in moov near the file start, so this reads a small head, growing only
+/// if an unusually large moov spills past it. Used for strip cells outside the
+/// preview-prefetch window.
 pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
     const HEAD: usize = 1 << 20; // moov (with THMB) virtually always fits in 1 MiB
     const MOOV_SCAN_CAP: usize = 64 << 20; // bound the hunt on malformed input (OOM/DoS)
@@ -653,30 +605,12 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
     // The moov head already holds the CMT TIFF, so the EXIF pixel dims come free.
     let meta = metadata_from_prefix(&buf);
     let (width, height) = display_dims(orient, meta.pixel_width, meta.pixel_height);
-    let blurhash = thumbnail_blurhash(&raw, orient);
     Ok(Thumbnail {
         jpeg: with_exif_orientation(raw, orient),
         orientation: orient,
-        blurhash,
         width,
         height,
     })
-}
-
-/// Just the BlurHash + display dimensions for one CR3 — no JPEG output. Used by
-/// the background warm pass that pre-populates placeholders for the whole shoot
-/// (grid / strip / loupe-load), so it skips the THMB orientation-splice + the
-/// (unneeded) JPEG transfer. Same moov-head read as [`read_thumbnail`].
-pub fn read_thumbnail_meta(path: &str) -> std::io::Result<(Option<String>, Option<u32>, Option<u32>)> {
-    const HEAD: usize = 1 << 20;
-    const MOOV_SCAN_CAP: usize = 64 << 20;
-    let (mut buf, mut f, flen) = read_head(path, HEAD)?;
-    while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 2 << 20, flen)? {}
-    let orient = orientation(&buf);
-    let meta = metadata_from_prefix(&buf);
-    let (width, height) = display_dims(orient, meta.pixel_width, meta.pixel_height);
-    let blurhash = thumbnail_from_prefix(&buf).and_then(|raw| thumbnail_blurhash(&raw, orient));
-    Ok((blurhash, width, height))
 }
 
 // ── Native EXIF + AF metadata (replaces the exiftool subprocess) ─────────────
@@ -955,29 +889,6 @@ mod tests {
         assert_eq!(display_dims(3, Some(6000), Some(4000)), (Some(6000), Some(4000)));
         assert_eq!(display_dims(6, Some(6000), Some(4000)), (Some(4000), Some(6000)));
         assert_eq!(display_dims(8, Some(6000), Some(4000)), (Some(4000), Some(6000)));
-    }
-
-    /// oriented_rgba swaps dims for 90°/270°, keeps them otherwise, and maps the
-    /// top-left source pixel to the correct rotated corner (so a portrait
-    /// placeholder isn't transposed).
-    #[test]
-    fn oriented_rgba_rotation() {
-        // 2×1 image: (0,0)=red, (1,0)=green.
-        let rgb = [255u8, 0, 0, 0, 255, 0];
-        let red = [255u8, 0, 0, 255];
-
-        let (out1, w1, h1) = oriented_rgba(&rgb, 2, 1, 1);
-        assert_eq!((w1, h1), (2, 1), "normal keeps dims");
-        assert_eq!(&out1[0..4], &red, "(0,0) stays top-left");
-
-        let (out6, w6, h6) = oriented_rgba(&rgb, 2, 1, 6);
-        assert_eq!((w6, h6), (1, 2), "90°CW swaps dims");
-        assert_eq!(out6.len(), 1 * 2 * 4);
-        // 90° CW: source (0,0) → dest (h-1-0, 0) = (0,0) in the 1×2 output.
-        assert_eq!(&out6[0..4], &red);
-
-        let (_, w8, h8) = oriented_rgba(&rgb, 2, 1, 8);
-        assert_eq!((w8, h8), (1, 2), "270° swaps dims");
     }
 
     // Exercises read_bundle over every .CR3 in a directory, validating each and

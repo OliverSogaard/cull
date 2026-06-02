@@ -1,6 +1,5 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import type { Feedback, Img, ImageMetadata, PreviewEntry, Rating } from "../types";
-import { blurhashToDataUrl, type BlurInfo } from "../utils/bundle";
 import { CompareExifRail } from "./ExifRail";
 import { RatingDot } from "./RatingDot";
 
@@ -31,7 +30,6 @@ export function CompareView({
   clipMasks,
   peakingMasks,
   thumbnails,
-  blurhashes,
   ratings,
   exifVisible,
   clippingVisible,
@@ -51,7 +49,6 @@ export function CompareView({
   clipMasks: Record<string, string>;
   peakingMasks: Record<string, string>;
   thumbnails: Record<string, string>;
-  blurhashes?: Record<string, BlurInfo>;
   ratings: Record<number, Rating>;
   exifVisible: boolean;
   clippingVisible: boolean;
@@ -80,7 +77,6 @@ export function CompareView({
             role="champion"
             previewUrl={previewUrlOf(previews, champion.path)}
             thumbUrl={thumbnails[champion.path]}
-            blur={blurhashes?.[champion.path]}
             rating={ratings[champion.id]}
             isZooming={isZooming}
             zoomLevel={zoomLevel}
@@ -101,7 +97,6 @@ export function CompareView({
             role="challenger"
             previewUrl={previewUrlOf(previews, challenger.path)}
             thumbUrl={thumbnails[challenger.path]}
-            blur={blurhashes?.[challenger.path]}
             rating={ratings[challenger.id]}
             isZooming={isZooming}
             zoomLevel={zoomLevel}
@@ -138,7 +133,6 @@ const ComparePanel = memo(function ComparePanel({
   role,
   previewUrl,
   thumbUrl,
-  blur,
   rating,
   isZooming,
   zoomLevel,
@@ -156,7 +150,6 @@ const ComparePanel = memo(function ComparePanel({
   role: "champion" | "challenger";
   previewUrl: string | undefined;
   thumbUrl: string | undefined;
-  blur?: BlurInfo;
   rating: Rating | undefined;
   isZooming: boolean;
   zoomLevel: 1 | 2;
@@ -184,19 +177,9 @@ const ComparePanel = memo(function ComparePanel({
   const [nonce, setNonce] = useState(0);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const isChampion = role === "champion";
-  // Decode the per-image blurhash once; drive the frame aspect ratio from the
-  // authoritative display dims (not the frozen full-preview naturalSize), so the
-  // pane is correctly shaped the instant it appears — not "too small" while
-  // loading. Mirrors the loupe.
-  const blurUrl = useMemo(
-    () => (blur ? blurhashToDataUrl(blur.hash, blur.w / blur.h) : null),
-    [blur],
-  );
-  const photoAr = blur
-    ? `${blur.w} / ${blur.h}`
-    : naturalSize
-      ? `${naturalSize.w} / ${naturalSize.h}`
-      : undefined;
+  const photoAr = naturalSize
+    ? `${naturalSize.w} / ${naturalSize.h}`
+    : undefined;
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -253,17 +236,13 @@ const ComparePanel = memo(function ComparePanel({
             same pattern. While the full preview loads, the <img> falls back
             to the thumbnail so the matte never goes blank. While scrubbing,
             we show the thumbnail without the spinner overlay. */}
-        {(previewUrl && !scrubbing) || blurUrl || thumbUrl ? (
+        {(previewUrl && !scrubbing) || thumbUrl ? (
           <img
             ref={imgRef}
             className="cull-cmp-img"
-            src={
-              previewUrl && !scrubbing ? previewUrl : blurUrl ? blurUrl : thumbUrl!
-            }
+            src={previewUrl && !scrubbing ? previewUrl : thumbUrl!}
             alt=""
             onLoad={(e) => {
-              // Only the FULL preview's natural size feeds naturalSize (used for
-              // the 1:1 zoom math). The frame aspect ratio comes from `blur` dims.
               if (previewUrl && !scrubbing) {
                 setNonce((n) => n + 1);
                 setNaturalSize({
@@ -276,14 +255,10 @@ const ComparePanel = memo(function ComparePanel({
               transform: isZooming ? `scale(${zoomZ})` : undefined,
               transformOrigin: `${originX}% ${originY}%`,
               transition: "transform 200ms ease-out",
-              // Blurhash placeholder (correct aspect, already blurred) → light
-              // blur; the THMB fallback (only when no hash yet) → heavy blur.
               filter:
                 previewUrl && !scrubbing
                   ? undefined
-                  : blurUrl
-                    ? "blur(6px) brightness(0.82)"
-                    : "blur(14px) brightness(0.78)",
+                  : "blur(14px) brightness(0.78)",
             }}
           />
         ) : null}

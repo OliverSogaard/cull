@@ -1,8 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import type { Img, ImageMetadata, Rating } from "../types";
 import { CELL_STRIDE, STRIP_RADIUS, ThumbCell } from "./ThumbCell";
-import type { BlurInfo } from "../utils/bundle";
-
 /**
  * The loupe's bottom filmstrip. Renders every image in the staged set, but
  * virtualised: only a window of `STRIP_RADIUS` cells around the cursor is live,
@@ -21,7 +19,6 @@ export function ThumbStrip({
   ratings,
   visibleIndices,
   thumbnails,
-  blurhashes,
   metadata,
   loadThumbnail,
   onPick,
@@ -31,8 +28,6 @@ export function ThumbStrip({
   ratings: Record<number, Rating>;
   visibleIndices: number[];
   thumbnails: Record<string, string>;
-  /** Per-image blurhash placeholders, shown before each thumbnail JPEG loads. */
-  blurhashes?: Record<string, BlurInfo>;
   /** Optional metadata map; only `lrcRating` is read here for the corner badge. */
   metadata?: Record<string, ImageMetadata>;
   loadThumbnail: (path: string, index?: number) => void;
@@ -66,7 +61,6 @@ export function ThumbStrip({
             lrcRating={metadata?.[img.path]?.lrcRating ?? null}
             dimmed={!visibleSet.has(i)}
             url={thumbnails[img.path]}
-            blur={blurhashes?.[img.path]}
             loadThumbnail={loadThumbnail}
             onPick={onPick}
           />

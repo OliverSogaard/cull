@@ -40,11 +40,8 @@ import { PERFORMANCE_PROFILES } from "./types/settings";
 import {
   fetchBundle,
   fetchThumbnail,
-  fetchBlurhash,
-  blurhashToDataUrl,
-  type BlurInfo,
+  type ImageDims,
 } from "./utils/bundle";
-import { loadBlurCache, saveBlurCache } from "./utils/blurhashCache";
 import { passesFilter } from "./utils/filter";
 import { formatRelativeTime, middleTruncate } from "./utils/format";
 import { basename } from "./utils/path";
@@ -69,20 +66,6 @@ const PAN_LIMIT = 40; // max % offset from the AF point
 // the display paints (no stutter; self-throttles on a slow frame). ~33ms ≈ 30
 // images/s, the fastest that still feels smooth.
 const NAV_REPEAT_MS = 33;
-
-/** Decode a BlurHash to a data URL, cached process-wide by hash. Deliberately a
- * plain function, NOT a hook: the loupe's `curBlur` is computed AFTER the
- * component's `if (phase !== "culling") return …` early return, so using
- * `useMemo` there changed the hook count between the home and culling phases and
- * crashed React (black screen on entering the loupe). */
-const blurDecodeCache = new Map<string, string | null>();
-function decodeBlurCached(info: BlurInfo | undefined): string | undefined {
-  if (!info) return undefined;
-  if (!blurDecodeCache.has(info.hash)) {
-    blurDecodeCache.set(info.hash, blurhashToDataUrl(info.hash, info.w / info.h));
-  }
-  return blurDecodeCache.get(info.hash) ?? undefined;
-}
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>("start");
@@ -168,19 +151,9 @@ export default function App() {
   const requestedPreviews = useRef<Set<string>>(new Set());
   const [metadata, setMetadata] = useState<Record<string, ImageMetadata>>({});
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
-  // Per-image BlurHash placeholder data: the hash + DISPLAY dims (orientation-
-  // adjusted). Populated by the thumbnail pool AND a background warm pass, so
-  // EVERY frame (grid / strip / loupe-load) has a correctly-shaped placeholder,
-  // not just thumbnails that happen to have loaded. The frame aspect ratio comes
-  // from these authoritative EXIF dims (not the frozen full-preview naturalSize),
-  // and the ~25-byte hash decodes to a data URL lazily, per-component. The ref
-  // mirror lets the warm pass + loaders skip already-known paths without
-  // re-subscribing.
-  const [blurhashes, setBlurhashes] = useState<Record<string, BlurInfo>>({});
-  const blurhashesRef = useRef(blurhashes);
-  useEffect(() => {
-    blurhashesRef.current = blurhashes;
-  }, [blurhashes]);
+  // Per-image display dimensions (orientation-adjusted), populated from
+  // fetchThumbnail's width/height. Used only for the loupe --photo-ar CSS var.
+  const [imageDims, setImageDims] = useState<Record<string, ImageDims>>({});
   const requestedThumbs = useRef<Set<string>>(new Set());
 
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -417,7 +390,7 @@ export default function App() {
   const loadThumbnailRaw = useCallback((path: string, onSettle: () => void) => {
     requestedThumbs.current.add(path);
     fetchThumbnail(path)
-      .then(({ url, blurhash, width, height }) => {
+      .then(({ url, width, height }) => {
         setThumbnails((t) => {
           if (t[path]) {
             URL.revokeObjectURL(url);
@@ -425,11 +398,10 @@ export default function App() {
           }
           return { ...t, [path]: url };
         });
-        // Store the hash + DISPLAY dims so every consumer (loupe / strip / grid)
-        // can place a correctly-shaped blurhash and read the aspect ratio.
-        if (blurhash && width && height) {
-          setBlurhashes((b) =>
-            b[path] ? b : { ...b, [path]: { hash: blurhash, w: width, h: height } },
+        // Store DISPLAY dims for the loupe --photo-ar aspect placeholder.
+        if (width && height) {
+          setImageDims((d) =>
+            d[path] ? d : { ...d, [path]: { w: width, h: height } },
           );
         }
       })
@@ -507,80 +479,6 @@ export default function App() {
     },
     [pumpBundles],
   );
-
-  // Background BlurHash warm pass: after a folder opens, progressively fetch the
-  // hash + display dims for EVERY frame (cursor-outward priority) so the grid,
-  // strip, and loupe/compare load placeholders are correctly shaped for the whole
-  // shoot — without blocking the (mtime fast-path) analyze. Low concurrency so it
-  // never starves the on-screen thumbnail/preview reads on a NAS. Cancels +
-  // restarts when the staged set changes (new folder). Results are batch-flushed
-  // (~250ms) so 5k tiny updates don't thrash React.
-  useEffect(() => {
-    if (phase !== "culling" || images.length === 0 || !folder) return;
-    let cancelled = false;
-    // Everything we know for this folder (persisted cache + warmed this session) —
-    // used to skip already-known frames and to persist back.
-    const known: Record<string, BlurInfo> = { ...loadBlurCache(folder) };
-    let dirty = false;
-    // Instant population from the persisted cache (CR3s are immutable, so a
-    // path-keyed cache never goes stale). Live entries win — don't clobber fresher.
-    if (Object.keys(known).length > 0) {
-      setBlurhashes((prev) => ({ ...known, ...prev }));
-    }
-    const pending: Record<string, BlurInfo> = {};
-    let flushTimer: number | null = null;
-    const flush = () => {
-      flushTimer = null;
-      const keys = Object.keys(pending);
-      if (cancelled || keys.length === 0) return;
-      setBlurhashes((prev) => {
-        const next = { ...prev };
-        for (const k of keys) next[k] = pending[k];
-        return next;
-      });
-      for (const k of keys) delete pending[k];
-    };
-    const scheduleFlush = () => {
-      if (flushTimer == null) flushTimer = window.setTimeout(flush, 250);
-    };
-    const persist = () => {
-      if (dirty) saveBlurCache(folder, { ...blurhashesRef.current, ...known });
-    };
-    // Cursor-outward order so the visible area fills first.
-    const center = currentIndexRef.current;
-    const order = images.map((_, i) => i).sort((a, b) => Math.abs(a - center) - Math.abs(b - center));
-    let cursor = 0;
-    const WARM_CONCURRENCY = 4;
-    const worker = async (): Promise<void> => {
-      while (!cancelled) {
-        const oi = cursor++;
-        if (oi >= order.length) return;
-        const path = images[order[oi]].path;
-        if (known[path] || blurhashesRef.current[path] || pending[path]) continue;
-        try {
-          const { blurhash, width, height } = await fetchBlurhash(path);
-          if (!cancelled && blurhash && width && height) {
-            const info = { hash: blurhash, w: width, h: height };
-            known[path] = info;
-            pending[path] = info;
-            dirty = true;
-            scheduleFlush();
-          }
-        } catch {
-          // skip — a frame without a placeholder just shows the shimmer.
-        }
-      }
-    };
-    void Promise.all(Array.from({ length: WARM_CONCURRENCY }, () => worker())).then(() => {
-      flush();
-      persist();
-    });
-    return () => {
-      cancelled = true;
-      if (flushTimer != null) clearTimeout(flushTimer);
-      persist(); // persist progress on folder change / unmount
-    };
-  }, [phase, images, folder]);
 
   // Enqueue one filmstrip thumbnail (deduped). `index` drives nearest-first order.
   const loadThumbnail = useCallback(
@@ -2866,20 +2764,14 @@ export default function App() {
   const hiResTx = imgRect ? (originX / 100) * imgRect.width * (1 - zoomZ) : 0;
   const hiResTy = imgRect ? (originY / 100) * imgRect.height * (1 - zoomZ) : 0;
 
-  // Frame aspect ratio: prefer the per-image DISPLAY dims (authoritative EXIF,
-  // available the moment the thumbnail loads — so correct even mid-scrub) over
-  // the full preview's naturalSize (which freezes on the last settled frame, the
-  // root of the "scrub locks to the first frame's shape" bug).
-  const curBlurInfo = current ? blurhashes[current.path] : undefined;
-  const photoAr = curBlurInfo
-    ? `${curBlurInfo.w} / ${curBlurInfo.h}`
+  // Frame aspect ratio: prefer the EXIF display dims (available once the
+  // thumbnail loads) over the frozen full-preview naturalSize.
+  const curDims = current ? imageDims[current.path] : undefined;
+  const photoAr = curDims
+    ? `${curDims.w} / ${curDims.h}`
     : naturalSize
       ? `${naturalSize.w} / ${naturalSize.h}`
       : undefined;
-  // Placeholder while scrubbing / before the full preview decodes: the per-image
-  // blurhash (correct aspect, already blurred). Decoded once per hash (memoised
-  // so the warm pass updating OTHER frames never re-decodes the current one).
-  const curBlur = decodeBlurCached(curBlurInfo);
 
   const singleModeBody = (
       <div className="cull-stage">
@@ -2922,11 +2814,9 @@ export default function App() {
                 src={
                   currentPreview?.status === "ready" && !scrubbing
                     ? currentPreview.url
-                    : curBlur
-                      ? curBlur
-                      : current && thumbnails[current.path]
-                        ? thumbnails[current.path]
-                        : undefined
+                    : current && thumbnails[current.path]
+                      ? thumbnails[current.path]
+                      : undefined
                 }
                 alt=""
                 onLoad={(e) => {
@@ -2950,9 +2840,7 @@ export default function App() {
                   filter:
                     currentPreview?.status === "ready" && !scrubbing
                       ? undefined
-                      : curBlur
-                        ? "blur(6px) brightness(0.82)"
-                        : "blur(14px) brightness(0.78)",
+                      : "blur(14px) brightness(0.78)",
                 }}
               />
               {/* Spinner overlay only when the full preview is loading AND
@@ -3308,7 +3196,7 @@ export default function App() {
               championIndex={championIndex}
               challengerIndex={challengerIndex}
               thumbnails={thumbnails}
-              blurhashes={blurhashes}
+
               metadata={metadata}
               loadThumbnail={loadThumbnail}
               onPickChallenger={pickChallengerFromStrip}
@@ -3323,7 +3211,6 @@ export default function App() {
             clipMasks={clipMasks}
             peakingMasks={peakingMasks}
             thumbnails={thumbnails}
-            blurhashes={blurhashes}
             ratings={ratings}
             exifVisible={exifVisible}
             clippingVisible={clippingVisible}
@@ -3342,7 +3229,7 @@ export default function App() {
               championIndex={championIndex}
               challengerIndex={challengerIndex}
               thumbnails={thumbnails}
-              blurhashes={blurhashes}
+
               metadata={metadata}
               loadThumbnail={loadThumbnail}
               onPickChallenger={pickChallengerFromStrip}
@@ -3362,7 +3249,6 @@ export default function App() {
             cols={gridCols}
             ratings={ratings}
             thumbnails={thumbnails}
-            blurhashes={blurhashes}
             metadata={metadata}
             selectedIndices={selectedIndices}
             loadThumbnail={loadThumbnail}
@@ -3383,7 +3269,7 @@ export default function App() {
               ratings={ratings}
               visibleIndices={visibleIndices}
               thumbnails={thumbnails}
-              blurhashes={blurhashes}
+
               metadata={metadata}
               loadThumbnail={loadThumbnail}
               onPick={pickFromStrip}
@@ -3397,7 +3283,7 @@ export default function App() {
               ratings={ratings}
               visibleIndices={visibleIndices}
               thumbnails={thumbnails}
-              blurhashes={blurhashes}
+
               metadata={metadata}
               loadThumbnail={loadThumbnail}
               onPick={pickFromStrip}

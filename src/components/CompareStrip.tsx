@@ -1,8 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Img, ImageMetadata } from "../types";
 import { CELL_STRIDE, STRIP_RADIUS, ThumbCell } from "./ThumbCell";
-import type { BlurInfo } from "../utils/bundle";
-
 /**
  * Compare-mode strip: pinned champion + scrolling unrated candidates.
  *
@@ -19,7 +17,6 @@ export function CompareStrip({
   championIndex,
   challengerIndex,
   thumbnails,
-  blurhashes,
   metadata,
   loadThumbnail,
   onPickChallenger,
@@ -29,8 +26,6 @@ export function CompareStrip({
   championIndex: number;
   challengerIndex: number;
   thumbnails: Record<string, string>;
-  /** Per-image blurhash placeholders, shown before each thumbnail JPEG loads. */
-  blurhashes?: Record<string, BlurInfo>;
   /** Optional metadata map; only `lrcRating` is used here, for the corner ★ badge. */
   metadata?: Record<string, ImageMetadata>;
   loadThumbnail: (path: string, index?: number) => void;
@@ -64,7 +59,6 @@ export function CompareStrip({
             lrcRating={metadata?.[champion.path]?.lrcRating ?? null}
             dimmed={false}
             url={thumbnails[champion.path]}
-            blur={blurhashes?.[champion.path]}
             loadThumbnail={loadThumbnail}
             onPick={() => {}}
           />
@@ -84,7 +78,6 @@ export function CompareStrip({
             lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
             dimmed={false}
             url={thumbnails[images[idx].path]}
-            blur={blurhashes?.[images[idx].path]}
             loadThumbnail={loadThumbnail}
             onPick={onPickChallenger}
           />

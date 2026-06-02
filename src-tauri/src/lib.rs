@@ -34,7 +34,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bundle::read_bundle,
             bundle::extract_thumbnail,
-            bundle::extract_blurhash,
             scan::scan_folder,
             scan::analyze_folder,
             xmp::write_xmp_rating,
