@@ -586,7 +586,7 @@ pub struct Thumbnail {
 /// transposed, so swap.
 fn display_dims(orient: u32, pw: Option<u32>, ph: Option<u32>) -> (Option<u32>, Option<u32>) {
     match orient {
-        5 | 6 | 7 | 8 => (ph, pw),
+        5..=8 => (ph, pw),
         _ => (pw, ph),
     }
 }
