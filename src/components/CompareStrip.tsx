@@ -1,15 +1,16 @@
-import { useLayoutEffect, useRef } from "react";
+// src/components/CompareStrip.tsx
 import type { Img, ImageMetadata } from "../types";
-import { CELL_STRIDE, STRIP_RADIUS, ThumbCell } from "./ThumbCell";
+import { ThumbCell } from "./ThumbCell";
+import { FilmStrip } from "./strip/FilmStrip";
+import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
+
 /**
  * Compare-mode strip: pinned champion + scrolling unrated candidates.
  *
- * Only UNRATED frames appear here (rated ones aren't rendered at all). The
- * champion is pinned on the left with a green outline as a fixed reference;
- * then a separator dot; then the candidate filmstrip, which scrolls to keep
- * the (amber-outlined) challenger centered as it changes — so a challenger
- * far away in capture order stays easy to track. Virtualised like
- * {@link ThumbStrip}: only a window of cells around the challenger is live.
+ * Only UNRATED frames appear in the candidate list (rated ones aren't rendered).
+ * The champion is pinned on the left as a fixed reference; then a separator dot;
+ * then the candidate filmstrip, virtualized via {@link FilmStrip}, scrolling to
+ * keep the (amber-outlined) challenger centered as it changes.
  */
 export function CompareStrip({
   images,
@@ -27,19 +28,7 @@ export function CompareStrip({
   metadata?: Record<string, ImageMetadata>;
   onPickChallenger: (index: number) => void;
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const cpos = candidates.indexOf(challengerIndex);
-
-  useLayoutEffect(() => {
-    const el = scrollRef.current?.querySelector(`[data-idx="${challengerIndex}"]`);
-    el?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
-  }, [challengerIndex]);
-
-  const first = Math.max(0, cpos - STRIP_RADIUS);
-  const last = Math.min(candidates.length, cpos + STRIP_RADIUS + 1);
-  const leftPad = first * CELL_STRIDE;
-  const rightPad = (candidates.length - last) * CELL_STRIDE;
-
   const champion = images[championIndex];
 
   return (
@@ -59,23 +48,31 @@ export function CompareStrip({
         )}
       </div>
       <div className="cull-cmp-strip__sep" aria-hidden />
-      <div className="cull-cmp-strip__candidates" ref={scrollRef}>
-        {leftPad > 0 && <div style={{ flex: `0 0 ${leftPad}px` }} aria-hidden />}
-        {candidates.slice(first, last).map((idx) => (
-          <ThumbCell
-            key={images[idx].id}
-            img={images[idx]}
-            index={idx}
-            isCurrent={idx === challengerIndex}
-            roleVariant={idx === challengerIndex ? "challenger" : undefined}
-            rating={undefined}
-            lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
-            dimmed={false}
-            onPick={onPickChallenger}
-          />
-        ))}
-        {rightPad > 0 && <div style={{ flex: `0 0 ${rightPad}px` }} aria-hidden />}
-      </div>
+      <FilmStrip
+        className="cull-cmp-strip__candidates"
+        count={candidates.length}
+        stride={CELL_STRIDE}
+        cellWidth={CELL_W}
+        trackHeight={CELL_H}
+        centerOffset={cpos}
+        buffer={STRIP_BUFFER}
+        keyForItem={(i) => images[candidates[i]].id}
+        renderItem={(i) => {
+          const idx = candidates[i];
+          return (
+            <ThumbCell
+              img={images[idx]}
+              index={idx}
+              isCurrent={idx === challengerIndex}
+              roleVariant={idx === challengerIndex ? "challenger" : undefined}
+              rating={undefined}
+              lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
+              dimmed={false}
+              onPick={onPickChallenger}
+            />
+          );
+        }}
+      />
     </footer>
   );
 }
