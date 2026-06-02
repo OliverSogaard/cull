@@ -5,16 +5,6 @@ import { hasLrcRating } from "../utils/ratingColor";
 import { useImage } from "../image/useImage";
 import { shimmerPhaseMs } from "../utils/shimmer";
 
-/**
- * Strip virtualization knobs. Both the loupe strip and the compare candidate
- * strip render at most this many cells around the cursor; the missing cells on
- * either side are reproduced as transparent spacers (`CELL_STRIDE` wide each)
- * so the scrollbar still represents the full list.
- */
-export const STRIP_RADIUS = 100;
-
-/** Per-cell horizontal stride: 76 px frame + 4 px gap (see CSS). */
-export const CELL_STRIDE = 80;
 
 type ThumbCellProps = {
   img: Img;
@@ -93,7 +83,6 @@ export const ThumbCell = memo(function ThumbCell({
 
   return (
     <div
-      data-idx={index}
       className="cull-thumb"
       onClick={() => onPick(index)}
       style={{ opacity: cellOpacity }}
