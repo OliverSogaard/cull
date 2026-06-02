@@ -15,6 +15,7 @@
  *  5. 15 000-entry thumb LRU cap (smoke-tested with a small cap shim).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 
 // ── Mock @tauri-apps/api/core before importing imageStore ──────────────────
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -27,6 +28,9 @@ const origCreate = globalThis.URL.createObjectURL;
 const origRevoke = globalThis.URL.revokeObjectURL;
 
 beforeEach(() => {
+  // Fully reset the shared invoke mock between tests so a deferred
+  // mockImplementation from one test cannot leak into the next.
+  vi.mocked(invoke).mockReset();
   urlCounter = 0;
   liveUrls.clear();
   globalThis.URL.createObjectURL = vi.fn((_blob: Blob) => {
@@ -80,6 +84,45 @@ async function getStore() {
   // singleton. Instead we call hardReset() between tests.
   const mod = await import("./imageStore");
   return mod.imageStore;
+}
+
+/** Import the ImageStore CLASS so each test can build an isolated instance
+ *  (fresh generation/counters, optional small LRU cap). */
+async function getStoreClass() {
+  const mod = await import("./imageStore");
+  return mod.ImageStore;
+}
+
+// ── Deferred fetch control ──────────────────────────────────────────────────
+//
+// `fetchThumbnail`/`fetchBundle` both do `await invoke(...)` then synchronously
+// parse the ArrayBuffer and (on success) call URL.createObjectURL. By making the
+// `invoke` mock return a promise we resolve/reject by hand, we can start a load,
+// run reset()/evict() while it is in flight, THEN settle the original load and
+// assert it does not corrupt the new session.
+
+type Deferred = {
+  resolve: (buf: ArrayBuffer) => void;
+  reject: (err: unknown) => void;
+};
+
+/** Queue an `invoke` mock that hands out one controllable deferred per call,
+ *  in call order. Returns the array the deferreds land in. */
+function deferredInvoke(mockInvoke: ReturnType<typeof vi.fn>): Deferred[] {
+  const deferreds: Deferred[] = [];
+  mockInvoke.mockImplementation(() => {
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      deferreds.push({ resolve, reject });
+    });
+  });
+  return deferreds;
+}
+
+/** Let the microtask queue drain so awaited continuations run. */
+async function flush() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -258,5 +301,288 @@ describe("imageStore", () => {
     store.hardReset();
     expect(() => store.setCursor(5)).not.toThrow();
     expect(() => store.setGridRange(0, 30)).not.toThrow();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Concurrency / generation-accounting regression tests (C1, C3, C4, I6, LRU).
+// These use a deferred `invoke` so we can interleave reset()/evict() with a
+// load that is still in flight.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("imageStore — generation & concurrency", () => {
+  it("C1/C4: stale-generation thumb load revokes its blob and does NOT write into the new session", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+    const deferreds = deferredInvoke(mockInvoke);
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/foo/stale.cr3";
+    store.reset([path]);
+
+    // Start the on-demand thumb load (now in flight, awaiting the deferred).
+    store.requestThumbFor(path);
+    await flush();
+    expect(deferreds.length).toBe(1);
+
+    // Folder switch while the old load is still in flight.
+    store.reset(["/bar/new.cr3"]);
+
+    // NOW settle the old-generation fetch.
+    const createdBefore = vi.mocked(URL.createObjectURL).mock.calls.length;
+    deferreds[0].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+
+    // (a) A blob WAS created by the old fetch, but it must have been revoked.
+    const createdAfter = vi.mocked(URL.createObjectURL).mock.calls.length;
+    expect(createdAfter).toBe(createdBefore + 1);
+    const staleUrl = vi.mocked(URL.createObjectURL).mock.results[createdAfter - 1]
+      .value as string;
+    expect(liveUrls.has(staleUrl)).toBe(false); // revoked
+
+    // (b) It did NOT populate thumbs for the old path in the new session.
+    expect(store.snapshot(path).stage).toBe("shimmer");
+  });
+
+  it("C1: counters never go negative — concurrency cap is still respected after an interrupted load", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+
+    // Instrument the mock, tracking in-flight PER SESSION (keyed by path prefix
+    // — "/a/" = first folder, "/b/" = second). A pending load only resolves when
+    // the test chooses, so we can interleave a folder switch mid-flight.
+    const live: Record<string, number> = { "/a/": 0, "/b/": 0 };
+    const maxLive: Record<string, number> = { "/a/": 0, "/b/": 0 };
+    type Pend = { sess: string; resolve: (buf: ArrayBuffer) => void };
+    const pending: Pend[] = [];
+    mockInvoke.mockImplementation((_cmd, args) => {
+      const p = (args as { path: string }).path;
+      const sess = p.slice(0, 3); // "/a/" or "/b/"
+      live[sess]++;
+      maxLive[sess] = Math.max(maxLive[sess], live[sess]);
+      return new Promise<ArrayBuffer>((resolve) => {
+        pending.push({
+          sess,
+          resolve: (buf) => {
+            live[sess]--;
+            resolve(buf);
+          },
+        });
+      });
+    });
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    // network profile: small, clear caps. Total concurrent thumb-ish fetches
+    // across the on-demand + background lanes is thumbConcurrency + bgFill.
+    const prof = PERFORMANCE_PROFILES.network;
+    store.setProfile(prof);
+    const totalCap = prof.thumbConcurrency + prof.backgroundFillConcurrency;
+
+    const firstPaths = Array.from({ length: 12 }, (_, i) => `/a/${i}.cr3`);
+    store.reset(firstPaths);
+    for (const p of firstPaths) store.requestThumbFor(p);
+    await flush();
+    // First session respected its cap.
+    expect(maxLive["/a/"]).toBeLessThanOrEqual(totalCap);
+
+    // Folder switch mid-flight (first session's loads are STILL pending). This
+    // zeroes the counters. If the OLD finallys later decrement the NEW counters
+    // they'd go negative → the new session would over-pump beyond the cap.
+    const secondPaths = Array.from({ length: 12 }, (_, i) => `/b/${i}.cr3`);
+    store.reset(secondPaths);
+    for (const p of secondPaths) store.requestThumbFor(p);
+    await flush();
+
+    // Settle ALL stale (first-session) loads now. Their gen-scoped finally must
+    // NOT touch the second session's counters.
+    for (const pend of pending.filter((x) => x.sess === "/a/")) {
+      pend.resolve(makeThumbnailBuf(10, 10));
+    }
+    await flush();
+
+    // Drain the second session one load at a time. Each completion may pump a
+    // replacement; the NEW session's live in-flight must never exceed the cap —
+    // the proof no counter went negative.
+    let guard = 0;
+    while (pending.some((x) => x.sess === "/b/") && guard++ < 200) {
+      const idx = pending.findIndex((x) => x.sess === "/b/");
+      const [pend] = pending.splice(idx, 1);
+      pend.resolve(makeThumbnailBuf(10, 10));
+      await flush();
+      expect(live["/b/"]).toBeLessThanOrEqual(totalCap);
+    }
+    expect(maxLive["/b/"]).toBeLessThanOrEqual(totalCap);
+  });
+
+  it("C4: a path mid-thumb-load when reset() runs is re-scheduled and eventually loads in the new session", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+    const deferreds = deferredInvoke(mockInvoke);
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/keep/same.cr3";
+    store.reset([path]);
+    store.requestThumbFor(path);
+    await flush();
+    expect(deferreds.length).toBe(1); // first (old-gen) fetch in flight
+
+    // reset() to a NEW session that still contains `path` (bg-fill should pick
+    // it up). Old requestedThumb must have been cleared (C4) so it's not
+    // permanently excluded.
+    store.reset([path]);
+    await flush();
+
+    // The bg-fill of the new session should have launched a fetch for `path`.
+    expect(deferreds.length).toBeGreaterThanOrEqual(2);
+
+    // Settle the old fetch (stale → revoked, no write) and the new fetch.
+    deferreds[0].resolve(makeThumbnailBuf(800, 600));
+    deferreds[deferreds.length - 1].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+
+    // Path now has its thumb in the new session — not stuck on shimmer.
+    expect(store.snapshot(path).stage).toBe("thumb");
+  });
+
+  it("LRU: small cap evicts the oldest thumb (revoked + back to shimmer)", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+    const deferreds = deferredInvoke(mockInvoke);
+
+    const Store = await getStoreClass();
+    const store = new Store({ thumbLruCap: 2 });
+    const paths = ["/lru/a.cr3", "/lru/b.cr3", "/lru/c.cr3"];
+    // Empty path-set so background-fill stays inert — we sequence loads by hand
+    // (otherwise all three load at once and the cap evicts before we can read).
+    store.reset([]);
+
+    // Load a, then b (fills the cap of 2), resolving one at a time.
+    store.requestThumbFor(paths[0]);
+    await flush();
+    deferreds[0].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+    expect(store.snapshot(paths[0]).stage).toBe("thumb");
+    const urlA = store.snapshot(paths[0]).url!;
+    expect(liveUrls.has(urlA)).toBe(true);
+
+    store.requestThumbFor(paths[1]);
+    await flush();
+    deferreds[1].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+    expect(store.snapshot(paths[1]).stage).toBe("thumb");
+    expect(liveUrls.has(urlA)).toBe(true); // a survived (size === cap)
+
+    // Load c → size 3 > cap 2 → oldest (a) evicted + revoked.
+    store.requestThumbFor(paths[2]);
+    await flush();
+    deferreds[2].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+    expect(store.snapshot(paths[2]).stage).toBe("thumb");
+
+    expect(liveUrls.has(urlA)).toBe(false); // a's url revoked
+    expect(store.snapshot(paths[0]).stage).toBe("shimmer"); // a back to shimmer
+  });
+
+  it("error: full fetch rejects but thumb is preserved — stage 'thumb' + error set", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/err/x.cr3";
+    // Empty path-set → no background-fill phantom invoke; the test fully
+    // controls the call sequence (thumb then full).
+    store.reset([]);
+
+    // First call (thumb) resolves, second call (full) rejects.
+    mockInvoke
+      .mockResolvedValueOnce(makeThumbnailBuf(800, 600))
+      .mockRejectedValueOnce(new Error("nas timeout"));
+
+    store.requestThumbFor(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "thumb", {
+      timeout: 2000,
+    });
+
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.snapshot(path).error !== undefined, {
+      timeout: 2000,
+    });
+
+    const snap = store.snapshot(path);
+    expect(snap.stage).toBe("thumb"); // full error doesn't blank the thumb
+    expect(snap.error).toBe("nas timeout");
+    expect(snap.url).toBeDefined();
+  });
+
+  it("I6: transient thumb failure clears requestedThumb so a retry succeeds", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/flaky/t.cr3";
+    // Empty path-set → no background-fill phantom invoke.
+    store.reset([]);
+
+    // First attempt rejects, second resolves.
+    mockInvoke
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValueOnce(makeThumbnailBuf(800, 600));
+
+    store.requestThumbFor(path);
+    // Wait for the first (failed) attempt to settle and clear requestedThumb.
+    await flush();
+    await flush();
+    expect(store.snapshot(path).stage).toBe("shimmer");
+
+    // Retry — requestedThumb was cleared, so this is NOT an early-return no-op.
+    store.requestThumbFor(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "thumb", {
+      timeout: 2000,
+    });
+    expect(store.snapshot(path).stage).toBe("thumb");
+  });
+
+  it("C3: evict-then-re-request mid-flight does NOT start a duplicate loadFull", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+    const deferreds = deferredInvoke(mockInvoke);
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/single/a.cr3";
+    // Empty path-set → no background-fill thumb fetch; the only invoke will be
+    // the full-res fetchBundle, so deferreds maps 1:1 to loadFull calls.
+    store.reset([]);
+
+    // Request full A → one loadFull in flight.
+    store.registerWantFull(path);
+    await flush();
+    expect(deferreds.length).toBe(1);
+
+    // Evict A while its loadFull is still in flight (loading, not ready → no
+    // revoke; requestedFull retained because it's in fullInFlightPaths).
+    store.evictFull(path);
+
+    // Re-request A. Must NOT spawn a second fetch.
+    store.registerWantFull(path);
+    await flush();
+    expect(deferreds.length).toBe(1); // still exactly ONE NAS fetch
+
+    // Settle the single in-flight load; no url is revoked while referenced.
+    deferreds[0].resolve(makeBundleBuf());
+    await flush();
+    const snap = store.snapshot(path);
+    // It resolved to a live full url.
+    if (snap.stage === "full") {
+      expect(snap.url).toBeDefined();
+      expect(liveUrls.has(snap.url!)).toBe(true);
+    }
+    // Exactly one fetch total — the core assertion.
+    expect(deferreds.length).toBe(1);
   });
 });
