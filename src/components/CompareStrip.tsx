@@ -16,19 +16,15 @@ export function CompareStrip({
   candidates,
   championIndex,
   challengerIndex,
-  thumbnails,
   metadata,
-  loadThumbnail,
   onPickChallenger,
 }: {
   images: Img[];
   candidates: number[];
   championIndex: number;
   challengerIndex: number;
-  thumbnails: Record<string, string>;
   /** Optional metadata map; only `lrcRating` is used here, for the corner ★ badge. */
   metadata?: Record<string, ImageMetadata>;
-  loadThumbnail: (path: string, index?: number) => void;
   onPickChallenger: (index: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -58,8 +54,6 @@ export function CompareStrip({
             rating={undefined}
             lrcRating={metadata?.[champion.path]?.lrcRating ?? null}
             dimmed={false}
-            url={thumbnails[champion.path]}
-            loadThumbnail={loadThumbnail}
             onPick={() => {}}
           />
         )}
@@ -77,8 +71,6 @@ export function CompareStrip({
             rating={undefined}
             lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
             dimmed={false}
-            url={thumbnails[images[idx].path]}
-            loadThumbnail={loadThumbnail}
             onPick={onPickChallenger}
           />
         ))}

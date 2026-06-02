@@ -4,7 +4,6 @@ import {
   useLayoutEffect,
   useMemo,
   useState,
-  type MutableRefObject,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -12,6 +11,7 @@ import { Check, Star, X as XIcon } from "lucide-react";
 import type { Img, ImageMetadata, Rating } from "../types";
 import { stripExt } from "../utils/path";
 import { hasLrcRating } from "../utils/ratingColor";
+import { useImage } from "../image/useImage";
 
 /** Visible rows above and below the viewport that we still render. */
 const GRID_BUFFER_ROWS = 2;
@@ -45,12 +45,11 @@ export const GRID_CELL_TARGET = 168;
  *
  * ## Viewport reporting
  *
- * The currently-visible image-index range is written into `viewportRangeRef`
- * (read by the read pool's `pumpThumbs` outside the React tree) so visible
- * cells get thumbnail load priority over off-screen entries left in the queue
- * by a scroll/jump. `onViewportPump` re-pumps the queue when the range moves,
- * even if no new cells got queued (a pure scroll won't trigger React renders
- * for already-mounted cells).
+ * The currently-visible image-index range is reported via `onViewportChange`
+ * (wired to `imageStore.setGridRange` in App) so the store prioritises
+ * background thumbnail fill for cells the user is actually looking at. It fires
+ * whenever the visible range moves, even on a pure scroll (which won't trigger
+ * React renders for already-mounted cells).
  */
 export const GridView = memo(function GridView({
   images,
@@ -58,21 +57,17 @@ export const GridView = memo(function GridView({
   currentIndex,
   cols,
   ratings,
-  thumbnails,
   metadata,
   selectedIndices,
-  loadThumbnail,
   onPick,
   containerRef,
-  viewportRangeRef,
-  onViewportPump,
+  onViewportChange,
 }: {
   images: Img[];
   visibleIndices: number[];
   currentIndex: number;
   cols: number;
   ratings: Record<number, Rating>;
-  thumbnails: Record<string, string>;
   /** Optional metadata map — only the `lrcRating` field is read here, for the
    * tiny corner badge that flags pre-existing LrC ratings. */
   metadata?: Record<string, ImageMetadata>;
@@ -80,11 +75,10 @@ export const GridView = memo(function GridView({
    * set get the champagne tint + accent outline; a plain click clears the
    * set on the App side and falls back to the single-cell selection. */
   selectedIndices?: Set<number>;
-  loadThumbnail: (path: string, index?: number) => void;
   onPick: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   containerRef: RefObject<HTMLDivElement | null>;
-  viewportRangeRef: MutableRefObject<{ first: number; last: number } | null>;
-  onViewportPump: () => void;
+  /** Reports the visible absolute image-index range to App (→ setGridRange). */
+  onViewportChange: (first: number, last: number) => void;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
@@ -154,13 +148,9 @@ export const GridView = memo(function GridView({
   const viewportFirst = cells.length > 0 ? cells[0].idx : -1;
   const viewportLast = cells.length > 0 ? cells[cells.length - 1].idx : -1;
   useEffect(() => {
-    if (viewportFirst === -1) {
-      viewportRangeRef.current = null;
-      return;
-    }
-    viewportRangeRef.current = { first: viewportFirst, last: viewportLast };
-    onViewportPump();
-  }, [viewportFirst, viewportLast, viewportRangeRef, onViewportPump]);
+    if (viewportFirst === -1) return;
+    onViewportChange(viewportFirst, viewportLast);
+  }, [viewportFirst, viewportLast, onViewportChange]);
 
   return (
     <div
@@ -178,8 +168,6 @@ export const GridView = memo(function GridView({
             isMultiSelected={selectedIndices?.has(idx) ?? false}
             rating={ratings[images[idx].id]}
             lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
-            url={thumbnails[images[idx].path]}
-            loadThumbnail={loadThumbnail}
             onPick={onPick}
             top={row * rowH}
             left={col * cellW}
@@ -199,8 +187,6 @@ const GridCell = memo(function GridCell({
   isMultiSelected,
   rating,
   lrcRating,
-  url,
-  loadThumbnail,
   onPick,
   top,
   left,
@@ -213,17 +199,17 @@ const GridCell = memo(function GridCell({
   isMultiSelected: boolean;
   rating: Rating | undefined;
   lrcRating: number | null;
-  url: string | undefined;
-  loadThumbnail: (path: string, index?: number) => void;
   onPick: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   top: number;
   left: number;
   width: number;
   height: number;
 }) {
-  useEffect(() => {
-    loadThumbnail(img.path, index);
-  }, [img.path, index, loadThumbnail]);
+  // Grid cells render thumbnails only; the store self-schedules the thumb on
+  // mount (and prioritises by the reported grid viewport) and re-renders this
+  // cell when it lands. `shimmer` → placeholder; otherwise show the thumb.
+  const img2 = useImage(img.path, { wantFull: false });
+  const url = img2.stage === "shimmer" ? undefined : img2.url;
   // Pin the shimmer phase ONCE at mount. We used to compute this inline in
   // JSX (`Date.now() - epoch`), which re-evaluated on every parent re-render
   // and reset the CSS animation each time → visible glitch / stutter.

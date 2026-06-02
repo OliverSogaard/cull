@@ -30,6 +30,7 @@ import type { PerformanceProfile } from "../types/settings";
 import { PERFORMANCE_PROFILES } from "../types/settings";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
 import type { ImageDims } from "../utils/bundle";
+import type { ImageMetadata } from "../types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,13 @@ export class ImageStore {
   private generation = 0;
   // ── Performance profile ────────────────────────────────────────────────
   private profile: PerformanceProfile = PERFORMANCE_PROFILES.local;
+  // ── Metadata sink ──────────────────────────────────────────────────────
+  // The full-res bundle read also returns the image's EXIF metadata (camera /
+  // lens / AF point / pixel dims). The store doesn't own metadata state — it
+  // hands each freshly-read `meta` to this callback so App can merge it into
+  // its `metadata` map (consumed by the EXIF rail, AF-point zoom origin, and
+  // the status-bar MP). Set once via `setMetaSink`.
+  private metaSink: ((path: string, meta: ImageMetadata) => void) | undefined;
   // ── Tunables ─────────────────────────────────────────────────────────────
   private readonly thumbLruCap: number;
 
@@ -111,6 +119,15 @@ export class ImageStore {
     this.pumpThumbs();
     this.pumpFull();
     this.pumpBg();
+  }
+
+  /**
+   * Register the metadata sink. The store calls it with (path, meta) whenever a
+   * full-res bundle read yields EXIF metadata. App uses this to keep its
+   * `metadata` map fed now that the old `loadImageRaw` path is gone.
+   */
+  setMetaSink(sink: (path: string, meta: ImageMetadata) => void): void {
+    this.metaSink = sink;
   }
 
   /**
@@ -289,6 +306,11 @@ export class ImageStore {
     if (this.requestedThumb.has(path) || this.thumbs.has(path)) return;
     this.thumbQueue.push(path);
     this.pumpThumbs();
+  }
+
+  /** The thumb blob URL for a path if loaded, regardless of full-res state. */
+  thumbUrl(path: string): string | undefined {
+    return this.thumbs.get(path)?.url;
   }
 
   subscribe(path: string, cb: () => void): () => void {
@@ -475,6 +497,8 @@ export class ImageStore {
       const thumbEntry = this.thumbs.get(path);
       const dims: ImageDims = thumbEntry?.dims ?? UNKNOWN_DIMS;
       this.fulls.set(path, { status: "ready", url: result.previewUrl, dims });
+      // Surface EXIF metadata to App (camera / lens / AF point / pixel dims).
+      if (result.meta) this.metaSink?.(path, result.meta);
       this.invalidate(path);
       // I3: also recenter the keep-window on the CURSOR (not just-loaded), so
       // eviction tracks where the user is, not where the last load happened.

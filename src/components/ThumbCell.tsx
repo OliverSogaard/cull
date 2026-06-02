@@ -1,7 +1,8 @@
-import { memo, useEffect, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { Check, Star, X as XIcon } from "lucide-react";
 import type { Img, Rating } from "../types";
 import { hasLrcRating } from "../utils/ratingColor";
+import { useImage } from "../image/useImage";
 
 /**
  * Strip virtualization knobs. Both the loupe strip and the compare candidate
@@ -23,8 +24,6 @@ type ThumbCellProps = {
    * top-left when present and not just CULL's own favorite stamp. */
   lrcRating?: number | null;
   dimmed: boolean;
-  url: string | undefined;
-  loadThumbnail: (path: string, index?: number) => void;
   onPick: (index: number) => void;
   /** Role variant in compare mode — adds a champagne outline + role badge. */
   roleVariant?: "champion" | "challenger";
@@ -43,14 +42,13 @@ export const ThumbCell = memo(function ThumbCell({
   rating,
   lrcRating,
   dimmed,
-  url,
-  loadThumbnail,
   onPick,
   roleVariant,
 }: ThumbCellProps) {
-  useEffect(() => {
-    loadThumbnail(img.path, index);
-  }, [img.path, index, loadThumbnail]);
+  // Strip cells only ever need the thumbnail; the store self-schedules the
+  // thumb fetch on mount and re-renders this cell when it lands.
+  const img2 = useImage(img.path, { wantFull: false });
+  const url = img2.stage === "shimmer" ? undefined : img2.url;
 
   // Reject cells get an opacity drop unless they're the current cell.
   const isReject = rating === "reject";

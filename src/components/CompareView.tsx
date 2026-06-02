@@ -1,16 +1,8 @@
 import { memo, useLayoutEffect, useRef, useState } from "react";
-import type { Feedback, Img, ImageMetadata, PreviewEntry, Rating } from "../types";
+import type { Feedback, Img, ImageMetadata, Rating } from "../types";
 import { CompareExifRail } from "./ExifRail";
 import { RatingDot } from "./RatingDot";
-
-/** Read `previewUrl` from a path's pool entry, or `undefined` if not ready. */
-function previewUrlOf(
-  previews: Record<string, PreviewEntry>,
-  path: string,
-): string | undefined {
-  const e = previews[path];
-  return e?.status === "ready" ? e.url : undefined;
-}
+import { useImage } from "../image/useImage";
 
 /**
  * Compare mode: champion (left, green) vs challenger (right, amber).
@@ -25,11 +17,9 @@ export function CompareView({
   images,
   championIndex,
   challengerIndex,
-  previews,
   metadata,
   clipMasks,
   peakingMasks,
-  thumbnails,
   ratings,
   exifVisible,
   clippingVisible,
@@ -44,11 +34,9 @@ export function CompareView({
   images: Img[];
   championIndex: number;
   challengerIndex: number;
-  previews: Record<string, PreviewEntry>;
   metadata: Record<string, ImageMetadata>;
   clipMasks: Record<string, string>;
   peakingMasks: Record<string, string>;
-  thumbnails: Record<string, string>;
   ratings: Record<number, Rating>;
   exifVisible: boolean;
   clippingVisible: boolean;
@@ -75,8 +63,7 @@ export function CompareView({
         <div className="cull-cmp__panels">
           <ComparePanel
             role="champion"
-            previewUrl={previewUrlOf(previews, champion.path)}
-            thumbUrl={thumbnails[champion.path]}
+            path={champion.path}
             rating={ratings[champion.id]}
             isZooming={isZooming}
             zoomLevel={zoomLevel}
@@ -95,8 +82,7 @@ export function CompareView({
           />
           <ComparePanel
             role="challenger"
-            previewUrl={previewUrlOf(previews, challenger.path)}
-            thumbUrl={thumbnails[challenger.path]}
+            path={challenger.path}
             rating={ratings[challenger.id]}
             isZooming={isZooming}
             zoomLevel={zoomLevel}
@@ -131,8 +117,7 @@ export function CompareView({
 
 const ComparePanel = memo(function ComparePanel({
   role,
-  previewUrl,
-  thumbUrl,
+  path,
   rating,
   isZooming,
   zoomLevel,
@@ -148,8 +133,7 @@ const ComparePanel = memo(function ComparePanel({
   scrubbing,
 }: {
   role: "champion" | "challenger";
-  previewUrl: string | undefined;
-  thumbUrl: string | undefined;
+  path: string;
   rating: Rating | undefined;
   isZooming: boolean;
   zoomLevel: 1 | 2;
@@ -177,9 +161,22 @@ const ComparePanel = memo(function ComparePanel({
   const [nonce, setNonce] = useState(0);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const isChampion = role === "champion";
-  const photoAr = naturalSize
-    ? `${naturalSize.w} / ${naturalSize.h}`
-    : undefined;
+
+  // This panel owns the full-res request for its image (the loupe's `wantFull`
+  // is owned by App). The intermediate thumb stage shows first; the full lands
+  // on top. Source/dims come from the store via useImage now.
+  const img = useImage(path, { wantFull: true });
+  // Show the full preview only once it's ready AND we're not scrubbing past it.
+  const showFull = img.stage === "full" && !scrubbing;
+  const displaySrc = showFull ? img.url : img.stage !== "shimmer" ? img.url : undefined;
+
+  // Frame aspect ratio: prefer the orientation-correct THMB display dims (known
+  // as soon as the thumb lands) over the frozen full-preview naturalSize.
+  const photoAr = img.dims
+    ? `${img.dims.w} / ${img.dims.h}`
+    : naturalSize
+      ? `${naturalSize.w} / ${naturalSize.h}`
+      : undefined;
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -208,7 +205,7 @@ const ComparePanel = memo(function ComparePanel({
     const ro = new ResizeObserver(measure);
     if (panelRef.current) ro.observe(panelRef.current);
     return () => ro.disconnect();
-  }, [previewUrl, nonce]);
+  }, [displaySrc, nonce]);
 
   const oneToOneScale = naturalSize && rect ? naturalSize.w / rect.width : 5;
   const zoomZ = isZooming ? zoomLevel * oneToOneScale : 1;
@@ -236,14 +233,16 @@ const ComparePanel = memo(function ComparePanel({
             same pattern. While the full preview loads, the <img> falls back
             to the thumbnail so the matte never goes blank. While scrubbing,
             we show the thumbnail without the spinner overlay. */}
-        {(previewUrl && !scrubbing) || thumbUrl ? (
+        {displaySrc ? (
           <img
             ref={imgRef}
             className="cull-cmp-img"
-            src={previewUrl && !scrubbing ? previewUrl : thumbUrl!}
+            src={displaySrc}
             alt=""
             onLoad={(e) => {
-              if (previewUrl && !scrubbing) {
+              // Only the FULL preview sets naturalSize (drives the 1:1 zoom math);
+              // the thumb fallback must not, or the matte/zoom would shrink to it.
+              if (showFull) {
                 setNonce((n) => n + 1);
                 setNaturalSize({
                   w: e.currentTarget.naturalWidth,
@@ -255,14 +254,11 @@ const ComparePanel = memo(function ComparePanel({
               transform: isZooming ? `scale(${zoomZ})` : undefined,
               transformOrigin: `${originX}% ${originY}%`,
               transition: "transform 200ms ease-out",
-              filter:
-                previewUrl && !scrubbing
-                  ? undefined
-                  : "blur(14px) brightness(0.78)",
+              filter: showFull ? undefined : "blur(14px) brightness(0.78)",
             }}
           />
         ) : null}
-        {!previewUrl && !scrubbing && (
+        {!showFull && !scrubbing && (
           <div className="cull-photo-frame__spinner-wrap" aria-hidden>
             <div className="cull-loading__spinner" />
           </div>

@@ -15,7 +15,6 @@ import type {
   NavEntry,
   NavSite,
   Phase,
-  PreviewEntry,
   Rating,
   SessionSummary,
   UndoAction,
@@ -29,7 +28,6 @@ import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { SettingsDialog } from "./components/SettingsDialog";
-import { STRIP_RADIUS } from "./components/ThumbCell";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { WindowControls } from "./components/WindowControls";
 
@@ -37,11 +35,8 @@ import { useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
 import { PERFORMANCE_PROFILES } from "./types/settings";
-import {
-  fetchBundle,
-  fetchThumbnail,
-  type ImageDims,
-} from "./utils/bundle";
+import { imageStore } from "./image/imageStore";
+import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { formatRelativeTime, middleTruncate } from "./utils/format";
 import { basename } from "./utils/path";
@@ -147,14 +142,11 @@ export default function App() {
     navStackRef.current = navStack;
   }, [navStack]);
 
-  const [previews, setPreviews] = useState<Record<string, PreviewEntry>>({});
-  const requestedPreviews = useRef<Set<string>>(new Set());
+  // EXIF metadata per path. Fed by the imageStore's metadata sink (full-res
+  // bundle reads return camera/lens/AF/pixel-dims) and seeded with LrC stars
+  // from the analyze pass. Pixel URLs + display dims now live in the store
+  // (consumed via useImage); this map holds only the descriptive metadata.
   const [metadata, setMetadata] = useState<Record<string, ImageMetadata>>({});
-  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
-  // Per-image display dimensions (orientation-adjusted), populated from
-  // fetchThumbnail's width/height. Used only for the loupe --photo-ar CSS var.
-  const [imageDims, setImageDims] = useState<Record<string, ImageDims>>({});
-  const requestedThumbs = useRef<Set<string>>(new Set());
 
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
@@ -186,13 +178,6 @@ export default function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [gridVisible, compareMode]);
-
-  // Mirror gridVisible into a ref so pumpThumbs (which runs from rAF / settle
-  // callbacks, outside the React render cycle) can switch its prioritisation.
-  useEffect(() => {
-    gridVisibleRef.current = gridVisible;
-    if (!gridVisible) gridViewportRef.current = null;
-  }, [gridVisible]);
 
   // Rating-write durability. Every rating writes an .xmp sidecar; we count writes
   // in flight (savingCount) and remember any that exhausted their retries
@@ -324,173 +309,41 @@ export default function App() {
     [findUnrated],
   );
 
-  // ── Bounded NAS read pool ─────────────────────────────────────────────────
-  // A latency-bound NAS thrashes when hit with many simultaneous reads: opening a
-  // folder / jumping mounts ~200 filmstrip cells + warms previews → hundreds of
-  // reads at once, starving the on-screen image for 10–20s. So all reads go
-  // through two small bounded pools (preview bundles + tiny thumbnails), with the
-  // on-screen image dispatched first.
-  const bundleQueue = useRef<{ path: string; prio: number }[]>([]);
-  const bundleInFlight = useRef(0);
-  const bundleHighInFlight = useRef(0); // prio-0 (on-screen) bundles in flight
-  const thumbQueue = useRef<{ path: string; index: number }[]>([]);
-  const thumbInFlight = useRef(0);
-  // The whole performance profile lives in a ref so pumps + effects that
-  // run outside the React render cycle see live values when the storage
-  // setting flips. In-flight reads finish at the old caps; the new caps
-  // apply on the next pumped pick (no restart, no queue flush).
+  // ── Image loading via imageStore ──────────────────────────────────────────
+  // All pixel loading (thumbs + full-res previews), the bounded-concurrency NAS
+  // read pool, the windowed full-res cache, and blob-URL lifecycle now live in
+  // `imageStore` (driven below + consumed by `useImage` in each view). App only
+  // feeds it the storage profile, the cursor, the grid viewport, and a metadata
+  // sink — and tells it when the folder / session changes.
   const profile = PERFORMANCE_PROFILES[settings.storageMode];
-  const profileRef = useRef(profile);
+
+  // Storage-mode profile → store concurrency caps + keep-window sizes.
   useEffect(() => {
-    profileRef.current = profile;
+    imageStore.setProfile(profile);
   }, [profile]);
-  const currentIndexRef = useRef(0);
-  // Grid mode flips the thumbnail prioritisation: cells inside the current
-  // viewport (book order within the window) win over cells outside it. The
-  // viewport range is reported by GridView via a ref so pumpThumbs — which
-  // runs outside React's render cycle — can see it without re-rendering.
-  const gridVisibleRef = useRef(false);
-  const gridViewportRef = useRef<{ first: number; last: number } | null>(null);
-  // Thumbnail prioritization (nearest-first) follows what's actually on screen:
-  // the challenger in compare, the cursor otherwise.
+
+  // EXIF metadata sink: the store's full-res bundle reads return the full
+  // camera / lens / AF / pixel-dims metadata (including the LrC rating, which
+  // read_bundle fills in). The bundle meta is authoritative, so it OVERWRITES
+  // any seeded lrc-only entry — exactly as the old loadImageRaw did — otherwise
+  // a frame that had a pre-seeded LrC star would never gain its full EXIF.
   useEffect(() => {
-    currentIndexRef.current = compareMode ? challengerIndex : currentIndex;
+    imageStore.setMetaSink((path, meta) => {
+      setMetadata((m) => ({ ...m, [path]: meta }));
+    });
+  }, []);
+
+  // Cursor → drives the store's full-res keep-window + thumb/bg prioritisation
+  // (nearest-first). Follows the challenger in compare, the cursor otherwise.
+  useEffect(() => {
+    imageStore.setCursor(compareMode ? challengerIndex : currentIndex);
   }, [currentIndex, compareMode, challengerIndex]);
 
-  // One file open yields the full-res preview + metadata (see read_bundle); the
-  // bundle pool calls this. Thumbnails are loaded separately so the fast thumbnail
-  // read isn't blocked by this 12 MB read (that's what feeds the blur placeholder).
-  const loadImageRaw = useCallback((path: string, onSettle: () => void) => {
-    requestedPreviews.current.add(path);
-    setPreviews((p) => ({ ...p, [path]: { status: "loading" } }));
-    fetchBundle(path)
-      .then(({ previewUrl, meta }) => {
-        setPreviews((p) => {
-          const existing = p[path];
-          if (existing && existing.status === "ready") {
-            // A concurrent load (e.g. across an evict-then-reload window) already
-            // populated this path. Don't clobber its URL — that would leak the
-            // blob; drop the just-fetched duplicate instead. Mirrors the
-            // thumbnail loader's guard.
-            if (existing.url !== previewUrl) URL.revokeObjectURL(previewUrl);
-            return p;
-          }
-          return { ...p, [path]: { status: "ready", url: previewUrl } };
-        });
-        if (meta) setMetadata((m) => ({ ...m, [path]: meta }));
-      })
-      .catch((e) => {
-        setPreviews((p) => ({ ...p, [path]: { status: "error", error: String(e) } }));
-        requestedPreviews.current.delete(path);
-      })
-      .finally(onSettle);
+  // Grid viewport range → store background-fill prioritisation (visible cells
+  // first). Wired to GridView's onViewportChange.
+  const handleGridViewport = useCallback((first: number, last: number) => {
+    imageStore.setGridRange(first, last);
   }, []);
-
-  // Small thumbnail-only read; the thumbnail pool calls this.
-  const loadThumbnailRaw = useCallback((path: string, onSettle: () => void) => {
-    requestedThumbs.current.add(path);
-    fetchThumbnail(path)
-      .then(({ url, width, height }) => {
-        setThumbnails((t) => {
-          if (t[path]) {
-            URL.revokeObjectURL(url);
-            return t;
-          }
-          return { ...t, [path]: url };
-        });
-        // Store DISPLAY dims for the loupe --photo-ar aspect placeholder.
-        if (width && height) {
-          setImageDims((d) =>
-            d[path] ? d : { ...d, [path]: { w: width, h: height } },
-          );
-        }
-      })
-      .catch(() => requestedThumbs.current.delete(path))
-      .finally(onSettle);
-  }, []);
-
-  const pumpBundles = useCallback(() => {
-    while (bundleInFlight.current < profileRef.current.bundleConcurrency && bundleQueue.current.length > 0) {
-      let bi = 0; // lowest prio number = highest priority
-      for (let i = 1; i < bundleQueue.current.length; i++) {
-        if (bundleQueue.current[i].prio < bundleQueue.current[bi].prio) bi = i;
-      }
-      // Hold prefetch (prio ≥ 1) while an on-screen frame (prio 0) is still in
-      // flight, so the current image gets the NAS to itself (full bandwidth)
-      // instead of sharing it with prefetch reads.
-      if (bundleQueue.current[bi].prio >= 1 && bundleHighInFlight.current > 0) break;
-      const { path, prio } = bundleQueue.current.splice(bi, 1)[0];
-      if (requestedPreviews.current.has(path)) continue;
-      bundleInFlight.current += 1;
-      if (prio < 1) bundleHighInFlight.current += 1;
-      loadImageRaw(path, () => {
-        bundleInFlight.current -= 1;
-        if (prio < 1) bundleHighInFlight.current -= 1;
-        pumpBundles();
-      });
-    }
-  }, [loadImageRaw]);
-
-  const pumpThumbs = useCallback(() => {
-    while (thumbInFlight.current < profileRef.current.thumbConcurrency && thumbQueue.current.length > 0) {
-      const gridMode = gridVisibleRef.current;
-      const c = currentIndexRef.current;
-      const vp = gridMode ? gridViewportRef.current : null;
-      // Pass 1: cells inside the current grid viewport, lowest absolute index
-      // first (book order within the visible window). The queue can carry
-      // off-screen entries left over from before a scroll/jump — those wait.
-      let bi = -1;
-      if (vp) {
-        for (let i = 0; i < thumbQueue.current.length; i++) {
-          const idx = thumbQueue.current[i].index;
-          if (idx >= vp.first && idx <= vp.last) {
-            if (bi === -1 || idx < thumbQueue.current[bi].index) bi = i;
-          }
-        }
-      }
-      // Pass 2: nothing in the viewport (or not in grid mode). Loupe/compare
-      // pick nearest-the-cursor; grid falls back to lowest-index book order.
-      if (bi === -1) {
-        bi = 0;
-        for (let i = 1; i < thumbQueue.current.length; i++) {
-          const better = gridMode
-            ? thumbQueue.current[i].index < thumbQueue.current[bi].index
-            : Math.abs(thumbQueue.current[i].index - c) <
-              Math.abs(thumbQueue.current[bi].index - c);
-          if (better) bi = i;
-        }
-      }
-      const { path } = thumbQueue.current.splice(bi, 1)[0];
-      if (requestedThumbs.current.has(path)) continue;
-      thumbInFlight.current += 1;
-      loadThumbnailRaw(path, () => {
-        thumbInFlight.current -= 1;
-        pumpThumbs();
-      });
-    }
-  }, [loadThumbnailRaw]);
-
-  // Replace the bundle queue with a fresh window around the cursor (dropping stale,
-  // not-yet-started entries), then pump. In-flight reads keep running.
-  const scheduleBundles = useCallback(
-    (items: { path: string; prio: number }[]) => {
-      bundleQueue.current = items.filter((it) => !requestedPreviews.current.has(it.path));
-      pumpBundles();
-    },
-    [pumpBundles],
-  );
-
-  // Enqueue one filmstrip thumbnail (deduped). `index` drives nearest-first order.
-  const loadThumbnail = useCallback(
-    (path: string, index = 0) => {
-      if (requestedThumbs.current.has(path) || thumbQueue.current.some((t) => t.path === path)) {
-        return;
-      }
-      thumbQueue.current.push({ path, index });
-      pumpThumbs();
-    },
-    [pumpThumbs],
-  );
 
   /**
    * Scan a known folder path and stage its CR3s. Same logic as `pickFolder`
@@ -640,6 +493,10 @@ export default function App() {
       setImages(sorted);
       setRatings(restoredRatings);
       setMetadata((prev) => ({ ...seededMeta, ...prev }));
+      // Point the image store at the (sorted) culling set: revoke any prior
+      // full-res blobs, keep thumbs, and kick off background thumb fill in
+      // cursor-outward / grid-viewport order. Same array we just set.
+      imageStore.reset(sorted.map((im) => im.path));
 
       // Refresh the home-screen recents entry with the restored rated count
       // straight off the sidecar pass — so reopening home shows "327 / 372"
@@ -698,16 +555,8 @@ export default function App() {
   // Esc out of review → discard the in-memory session and return Home. Ratings
   // live on in the .xmp sidecars, so reopening the folder restores them.
   const resetSession = useCallback(() => {
-    setPreviews((prev) => {
-      Object.values(prev).forEach((e) => e.status === "ready" && URL.revokeObjectURL(e.url));
-      return {};
-    });
-    setThumbnails((prev) => {
-      Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
-      return {};
-    });
-    requestedPreviews.current.clear();
-    requestedThumbs.current.clear();
+    // Session end: revoke ALL blob URLs (thumbs + full-res) and clear the store.
+    imageStore.hardReset();
     setImages([]);
     setMetadata({});
     setRatings({});
@@ -828,46 +677,19 @@ export default function App() {
     [keptPaths, actionBusy, settings.exportFolder.mode],
   );
 
-  // curReady gates the hi-res zoom warm-up on the CURRENT image's readiness only
-  // (not the whole previews map), so an unrelated prefetch landing doesn't reset it.
-  const curPath = images[currentIndex]?.path;
-  const curReady = curPath ? previews[curPath]?.status === "ready" : false;
-
-  // Drive the bundle pool from the cursor: the current frame is priority 0 (loads
-  // first), the prefetch window follows by distance. A fast thumbnail read is
-  // kicked alongside so the blurred placeholder can paint while the bundle loads.
-  useEffect(() => {
-    if (images.length === 0 || currentIndex >= images.length) return;
-    const cur = images[currentIndex].path;
-    loadThumbnail(cur, currentIndex); // nearest-first → placeholder paints quickly
-
-    // While scrubbing OR in the grid, don't fetch full-res — scrubbing flies past
-    // frames it never decodes, and grid renders thumbnails (the full-res would be
-    // a wasted ~40 MB NAS read per frame). The current frame's full-res is
-    // scheduled on release / on grid-close (those re-run this effect via deps).
-    if (scrubbing || gridVisible) return;
-
-    // In compare, the champion/challenger effect schedules bundles instead.
-    if (phase !== "culling" || compareMode) {
-      scheduleBundles([{ path: cur, prio: 0 }]);
-      return;
-    }
-    const pos = visibleIndices.indexOf(currentIndex);
-    if (pos === -1) {
-      scheduleBundles([{ path: cur, prio: 0 }]);
-      return;
-    }
-    const items = [{ path: cur, prio: 0 }];
-    const { prefetchAhead, prefetchBehind } = profile;
-    const span = Math.max(prefetchAhead, prefetchBehind);
-    for (let d = 1; d <= span; d++) {
-      if (d <= prefetchAhead && pos + d < visibleIndices.length)
-        items.push({ path: images[visibleIndices[pos + d]].path, prio: d });
-      if (d <= prefetchBehind && pos - d >= 0)
-        items.push({ path: images[visibleIndices[pos - d]].path, prio: d + 0.5 });
-    }
-    scheduleBundles(items);
-  }, [phase, currentIndex, visibleIndices, images, compareMode, scrubbing, gridVisible, scheduleBundles, loadThumbnail, profile]);
+  // Loupe main-image subscription. Lives at App scope (unconditional — rules of
+  // hooks) because the hi-res warm effect + the overlay-retrigger effects below
+  // need its stage, and the loupe render block consumes its url/dims/error.
+  // `wantFull` only while NOT scrubbing: a scrub flies past frames it never
+  // decodes, so we want just the (blurred) thumb mid-scrub; full loads on
+  // release (scrubbing flips false → wantFull true → store fetches the full).
+  const cur = useImage(
+    !gridVisible && !compareMode ? images[currentIndex]?.path ?? "" : "",
+    { wantFull: !gridVisible && !compareMode && !!images[currentIndex] && !scrubbing },
+  );
+  // curReady gates the hi-res zoom warm-up on the CURRENT image's full preview
+  // being ready (so an unrelated prefetch landing doesn't reset it).
+  const curReady = cur.stage === "full";
 
   // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
   // every navigation / compare toggle so rapid arrow-through never pays the heavy
@@ -890,174 +712,23 @@ export default function App() {
     // hi-res layer must drop + re-derive at the new rect (same reason as thumbsVisible).
   }, [phase, currentIndex, compareMode, curReady, thumbsVisible, exifVisible, profile.hiResSettleMs]);
 
-  // Evict previews outside a window of the cursor (in filtered/visible order, so
-  // it tracks the prefetch window) plus the active compare burst. Revoking the
-  // object URLs keeps memory flat across an arbitrarily long session; evicted
-  // paths drop out of requestedPreviews so they reload if revisited.
-  useEffect(() => {
-    if (phase !== "culling") return;
-    const keep = new Set<string>();
-    const cur = images[currentIndex]?.path;
-    if (cur) keep.add(cur);
-    const pos = visibleIndices.indexOf(currentIndex);
-    if (pos !== -1) {
-      const win = profile.previewKeep;
-      for (let d = -win; d <= win; d++) {
-        const p = pos + d;
-        if (p >= 0 && p < visibleIndices.length) keep.add(images[visibleIndices[p]].path);
-      }
-    }
-    if (compareMode) {
-      if (images[championIndex]) keep.add(images[championIndex].path);
-      if (images[challengerIndex]) keep.add(images[challengerIndex].path);
-    }
-    setPreviews((prev) => {
-      let changed = false;
-      const next: Record<string, PreviewEntry> = {};
-      for (const path in prev) {
-        if (keep.has(path)) {
-          next[path] = prev[path];
-        } else {
-          const e = prev[path];
-          if (e.status === "ready") URL.revokeObjectURL(e.url);
-          requestedPreviews.current.delete(path);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [phase, currentIndex, visibleIndices, images, compareMode, championIndex, challengerIndex, profile.previewKeep]);
+  // NOTE: preview/thumbnail eviction, the unmount blob-cleanup, and compare's
+  // full-res scheduling are all owned by `imageStore` now — its windowed
+  // full-res cache + LRU thumb cache + cursor/grid-driven background fill cover
+  // every case the old App-side effects handled, with one revoke per blob.
 
-  // Evict thumbnails outside a (wider) window in image order — the strip renders
-  // ±STRIP_RADIUS, so the keep-window must exceed it to avoid evicting visible
-  // cells. Sizes come from the performance profile so local gets a bigger cache.
-  useEffect(() => {
-    if (phase !== "culling") return;
-    const { thumbKeep, thumbKeepGrid } = profile;
-    const lo = Math.max(0, currentIndex - thumbKeep);
-    const hi = Math.min(images.length, currentIndex + thumbKeep + 1);
-    const keep = new Set<string>();
-    for (let i = lo; i < hi; i++) keep.add(images[i].path);
-    if (compareMode) {
-      if (images[championIndex]) keep.add(images[championIndex].path);
-      if (images[challengerIndex]) keep.add(images[challengerIndex].path);
-      // Keep the candidate cells the strip renders around the challenger
-      // (±STRIP_RADIUS in candidate space) so scrolling the unrated strip — which
-      // can span far in absolute index — doesn't evict-and-reload its thumbnails.
-      const cpos = compareCandidates.indexOf(challengerIndex);
-      if (cpos !== -1) {
-        const clo = Math.max(0, cpos - STRIP_RADIUS);
-        const chi = Math.min(compareCandidates.length, cpos + STRIP_RADIUS + 1);
-        for (let k = clo; k < chi; k++) keep.add(images[compareCandidates[k]].path);
-      }
-    }
-    // GRID mode: keep a wide window around the *filter-relative* position. With
-    // a sparse filter (e.g., favs scattered across a 5k-image shoot) the
-    // image-order window above keeps the wrong neighbours; this protects the
-    // cells the user actually sees on screen.
-    if (gridVisible) {
-      const fpos = visibleIndices.indexOf(currentIndex);
-      if (fpos !== -1) {
-        const flo = Math.max(0, fpos - thumbKeepGrid);
-        const fhi = Math.min(visibleIndices.length, fpos + thumbKeepGrid + 1);
-        for (let i = flo; i < fhi; i++) keep.add(images[visibleIndices[i]].path);
-      } else {
-        // Current isn't in the active filter — fall back to keeping the first
-        // chunk of the filter so the grid isn't empty.
-        for (let i = 0; i < Math.min(thumbKeepGrid, visibleIndices.length); i++) {
-          keep.add(images[visibleIndices[i]].path);
-        }
-      }
-    }
-    setThumbnails((prev) => {
-      let changed = false;
-      const next: Record<string, string> = {};
-      for (const path in prev) {
-        if (keep.has(path)) {
-          next[path] = prev[path];
-        } else {
-          URL.revokeObjectURL(prev[path]);
-          requestedThumbs.current.delete(path);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [
-    phase,
-    currentIndex,
-    images,
-    compareMode,
-    championIndex,
-    challengerIndex,
-    compareCandidates,
-    gridVisible,
-    visibleIndices,
-    profile.thumbKeep,
-    profile.thumbKeepGrid,
-  ]);
-
-  // Unmount safety net: revoke any blob URLs still outstanding when the app tears
-  // down. The eviction effects and resetSession cover the in-session cases; this
-  // covers a hard unmount so nothing is left dangling. The maps are mirrored into
-  // refs so this effect runs cleanup ONCE (on unmount) without re-subscribing as
-  // previews/thumbnails change.
-  const previewsRef = useRef(previews);
-  const thumbnailsRef = useRef(thumbnails);
-  useEffect(() => {
-    previewsRef.current = previews;
-  }, [previews]);
-  useEffect(() => {
-    thumbnailsRef.current = thumbnails;
-  }, [thumbnails]);
-  useEffect(
-    () => () => {
-      Object.values(previewsRef.current).forEach(
-        (e) => e.status === "ready" && URL.revokeObjectURL(e.url),
-      );
-      Object.values(thumbnailsRef.current).forEach((u) => URL.revokeObjectURL(u));
-    },
-    [],
+  // Compare champion/challenger subscriptions. These exist at App scope so App
+  // re-renders (and the overlay-retrigger effects below re-run) when their
+  // thumb/full pixels land. `wantFull:false` — ComparePanel itself owns the
+  // wantFull refcount for the actual full-res; these only observe.
+  const champShot = useImage(
+    compareMode && images[championIndex] ? images[championIndex].path : "",
+    { wantFull: false },
   );
-
-  // In compare mode, schedule the champion + challenger (priority 0) and a few of
-  // the nearest unrated frames each way, so cycling the challenger is instant.
-  useEffect(() => {
-    if (!compareMode) return;
-    // While scrubbing the challenger, keep the (unchanging) champion loaded but
-    // don't fetch full-res for the candidates we're flying past — the strip's
-    // thumbnails feed the challenger scrub view; full-res returns on release.
-    if (scrubbing) {
-      if (images[championIndex])
-        scheduleBundles([{ path: images[championIndex].path, prio: 0 }]);
-      if (images[challengerIndex]) loadThumbnail(images[challengerIndex].path, challengerIndex);
-      return;
-    }
-    const items: { path: string; prio: number }[] = [];
-    if (images[championIndex]) items.push({ path: images[championIndex].path, prio: 0 });
-    if (images[challengerIndex]) items.push({ path: images[challengerIndex].path, prio: 0 });
-    const neighborSpan = profile.compareNeighborPrefetch;
-    for (const dir of [1, -1] as const) {
-      let i = challengerIndex;
-      for (let n = 1; n <= neighborSpan; n++) {
-        i = findUnrated(i, dir, ratings, championIndex);
-        if (i === -1) break;
-        items.push({ path: images[i].path, prio: n });
-      }
-    }
-    scheduleBundles(items);
-  }, [
-    compareMode,
-    championIndex,
-    challengerIndex,
-    images,
-    ratings,
-    scrubbing,
-    scheduleBundles,
-    findUnrated,
-    loadThumbnail,
-    profile.compareNeighborPrefetch,
-  ]);
+  const chalShot = useImage(
+    compareMode && images[challengerIndex] ? images[challengerIndex].path : "",
+    { wantFull: false },
+  );
 
   // Auto-jump: if current falls out of the active filter, hop to the nearest
   // match (before paint, so no flash of an out-of-filter state). Suspended during
@@ -1114,8 +785,8 @@ export default function App() {
   const loadClipMask = useCallback(
     (path: string) => {
       if (requestedClipMasks.current.has(path)) return;
-      const entry = previews[path];
-      if (entry?.status !== "ready") return; // retried once the preview decodes
+      const snap = imageStore.snapshot(path);
+      if (snap.stage !== "full" || !snap.url) return; // retried once the full lands
       requestedClipMasks.current.add(path);
       const probe = new Image();
       probe.onload = () => {
@@ -1168,9 +839,9 @@ export default function App() {
         setClipMasks((prev) => ({ ...prev, [path]: canvas.toDataURL("image/png") }));
       };
       probe.onerror = () => requestedClipMasks.current.delete(path);
-      probe.src = entry.url;
+      probe.src = snap.url;
     },
-    [previews],
+    [],
   );
 
   // Ensure masks exist for the on-screen image(s) when clipping is on; clear when
@@ -1194,7 +865,12 @@ export default function App() {
     challengerIndex,
     currentIndex,
     images,
-    previews,
+    cur.stage,
+    cur.url,
+    champShot.stage,
+    champShot.url,
+    chalShot.stage,
+    chalShot.url,
     loadClipMask,
   ]);
 
@@ -1205,8 +881,8 @@ export default function App() {
   const loadPeakingMask = useCallback(
     (path: string) => {
       if (requestedPeaks.current.has(path)) return;
-      const entry = previews[path];
-      if (entry?.status !== "ready") return; // retried once the preview decodes
+      const snap = imageStore.snapshot(path);
+      if (snap.stage !== "full" || !snap.url) return; // retried once the full lands
       requestedPeaks.current.add(path);
       const probe = new Image();
       probe.onload = () => {
@@ -1256,9 +932,9 @@ export default function App() {
         setPeakingMasks((prev) => ({ ...prev, [path]: canvas.toDataURL("image/png") }));
       };
       probe.onerror = () => requestedPeaks.current.delete(path);
-      probe.src = entry.url;
+      probe.src = snap.url;
     },
-    [previews],
+    [],
   );
 
   // Mirror of the clipping effect: ensure peaking masks exist while P is on.
@@ -1281,7 +957,12 @@ export default function App() {
     challengerIndex,
     currentIndex,
     images,
-    previews,
+    cur.stage,
+    cur.url,
+    champShot.stage,
+    champShot.url,
+    chalShot.stage,
+    chalShot.url,
     loadPeakingMask,
   ]);
 
@@ -1293,7 +974,7 @@ export default function App() {
   const loadHistogram = useCallback(
     (path: string) => {
       if (requestedHistograms.current.has(path)) return;
-      const thumbUrl = thumbnails[path];
+      const thumbUrl = imageStore.thumbUrl(path);
       if (!thumbUrl) return; // retried once the thumbnail loads
       requestedHistograms.current.add(path);
       const probe = new Image();
@@ -1354,7 +1035,7 @@ export default function App() {
       probe.onerror = () => requestedHistograms.current.delete(path);
       probe.src = thumbUrl;
     },
-    [thumbnails],
+    [],
   );
 
   // Compute histograms for the on-screen image(s) while the EXIF overlay is open;
@@ -1378,7 +1059,12 @@ export default function App() {
     challengerIndex,
     currentIndex,
     images,
-    thumbnails,
+    cur.stage,
+    cur.url,
+    champShot.stage,
+    champShot.url,
+    chalShot.stage,
+    chalShot.url,
     loadHistogram,
   ]);
 
@@ -2737,7 +2423,8 @@ export default function App() {
 
   // ── Culling phase ──────────────────────────────────────────────────────────
   const current = images[currentIndex];
-  const currentPreview = current ? previews[current.path] : undefined;
+  // `cur` (the loupe's useImage result) is computed unconditionally near the
+  // top of the component. It carries the stage/url/dims/error for the loupe.
   const currentMeta = current ? metadata[current.path] : undefined;
   const currentRating = current ? ratings[current.id] : undefined;
 
@@ -2764,11 +2451,10 @@ export default function App() {
   const hiResTx = imgRect ? (originX / 100) * imgRect.width * (1 - zoomZ) : 0;
   const hiResTy = imgRect ? (originY / 100) * imgRect.height * (1 - zoomZ) : 0;
 
-  // Frame aspect ratio: prefer the EXIF display dims (available once the
-  // thumbnail loads) over the frozen full-preview naturalSize.
-  const curDims = current ? imageDims[current.path] : undefined;
-  const photoAr = curDims
-    ? `${curDims.w} / ${curDims.h}`
+  // Frame aspect ratio: prefer the orientation-correct THMB display dims (known
+  // as soon as the thumb lands, via the store) over the frozen full naturalSize.
+  const photoAr = cur.dims
+    ? `${cur.dims.w} / ${cur.dims.h}`
     : naturalSize
       ? `${naturalSize.w} / ${naturalSize.h}`
       : undefined;
@@ -2781,10 +2467,13 @@ export default function App() {
           <div className="cull-message">no images</div>
         ) : positionInFilter === -1 ? (
           <EmptyFilter filter={filter} />
-        ) : currentPreview?.status === "error" ? (
+        ) : cur.stage === "shimmer" && cur.error ? (
+          // Full-screen error only when there's NO thumb to fall back to. If a
+          // thumb exists, resolveStage keeps stage "thumb" (with error set) and
+          // we keep showing it rather than blanking the frame.
           <div className="cull-message">
             <div className="cull-message__title">preview failed</div>
-            <pre className="cull-message__body">{currentPreview.error}</pre>
+            <pre className="cull-message__body">{cur.error}</pre>
           </div>
         ) : (
           // Photo-frame stays mounted across image transitions AND across
@@ -2811,20 +2500,16 @@ export default function App() {
               <img
                 ref={imgRef}
                 className="cull-image"
-                src={
-                  currentPreview?.status === "ready" && !scrubbing
-                    ? currentPreview.url
-                    : current && thumbnails[current.path]
-                      ? thumbnails[current.path]
-                      : undefined
-                }
+                // Source comes from the store via useImage: full when ready,
+                // else the thumb, else undefined (shimmer → spinner below).
+                src={cur.url}
                 alt=""
                 onLoad={(e) => {
                   // Only update naturalSize from the FULL preview, not the
                   // thumbnail fallback — otherwise the matte would briefly
                   // shrink to the tiny thumbnail's dimensions during scrub
                   // or load.
-                  if (currentPreview?.status === "ready" && !scrubbing) {
+                  if (cur.stage === "full") {
                     setMeasureNonce((n) => n + 1);
                     setNaturalSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
                   }
@@ -2833,22 +2518,21 @@ export default function App() {
                   transform: isZooming ? `scale(${zoomZ})` : undefined,
                   transformOrigin: `${originX}% ${originY}%`,
                   transition: "transform 200ms ease-out",
-                  // Heavy blur while scrubbing or loading the thumbnail
-                  // fallback — masks the low-res thumbnail and reads as
-                  // a "settling" indicator. Drops to 0 the moment the full
-                  // preview is ready.
+                  // Heavy blur until the full preview is ready (covers the thumb
+                  // fallback during scrub / load) — masks the low-res thumbnail
+                  // and reads as a "settling" indicator. Drops to 0 on full.
                   filter:
-                    currentPreview?.status === "ready" && !scrubbing
+                    cur.stage === "full"
                       ? undefined
                       : "blur(14px) brightness(0.78)",
                 }}
               />
-              {/* Spinner overlay only when the full preview is loading AND
+              {/* Spinner overlay only when the full preview isn't ready AND
                   we're not mid-scrub. During scrub the blurred thumbnail
                   stands in for the preview, no spinner needed — adding it
                   on every step would just be visual noise as the user
                   flies past. */}
-              {currentPreview?.status !== "ready" && !scrubbing && (
+              {cur.stage !== "full" && !scrubbing && (
                 <div className="cull-photo-frame__spinner-wrap" aria-hidden>
                   <div className="cull-loading__spinner" />
                 </div>
@@ -2859,10 +2543,10 @@ export default function App() {
                   the cursor settles (HIRES_SETTLE_MS); the base image stays beneath as the
                   instant-nav fallback. Gated on the full preview being ready too —
                   the thumbnail fallback isn't worth pinning a hi-res raster of. */}
-              {hiRes && !clippingVisible && imgRect && naturalSize && currentPreview?.status === "ready" && (
+              {hiRes && !clippingVisible && imgRect && naturalSize && cur.stage === "full" && cur.url && (
                 <img
                   className="cull-image cull-image--hires"
-                  src={currentPreview.url}
+                  src={cur.url}
                   alt=""
                   aria-hidden
                   style={{
@@ -3195,10 +2879,7 @@ export default function App() {
               candidates={compareCandidates}
               championIndex={championIndex}
               challengerIndex={challengerIndex}
-              thumbnails={thumbnails}
-
               metadata={metadata}
-              loadThumbnail={loadThumbnail}
               onPickChallenger={pickChallengerFromStrip}
             />
           )}
@@ -3206,11 +2887,9 @@ export default function App() {
             images={images}
             championIndex={championIndex}
             challengerIndex={challengerIndex}
-            previews={previews}
             metadata={metadata}
             clipMasks={clipMasks}
             peakingMasks={peakingMasks}
-            thumbnails={thumbnails}
             ratings={ratings}
             exifVisible={exifVisible}
             clippingVisible={clippingVisible}
@@ -3228,10 +2907,7 @@ export default function App() {
               candidates={compareCandidates}
               championIndex={championIndex}
               challengerIndex={challengerIndex}
-              thumbnails={thumbnails}
-
               metadata={metadata}
-              loadThumbnail={loadThumbnail}
               onPickChallenger={pickChallengerFromStrip}
             />
           )}
@@ -3248,14 +2924,11 @@ export default function App() {
             currentIndex={currentIndex}
             cols={gridCols}
             ratings={ratings}
-            thumbnails={thumbnails}
             metadata={metadata}
             selectedIndices={selectedIndices}
-            loadThumbnail={loadThumbnail}
             onPick={handleGridPick}
             containerRef={gridContainerRef}
-            viewportRangeRef={gridViewportRef}
-            onViewportPump={pumpThumbs}
+            onViewportChange={handleGridViewport}
           />
           )}
           {bottomStatusBar}
@@ -3268,10 +2941,7 @@ export default function App() {
               currentIndex={currentIndex}
               ratings={ratings}
               visibleIndices={visibleIndices}
-              thumbnails={thumbnails}
-
               metadata={metadata}
-              loadThumbnail={loadThumbnail}
               onPick={pickFromStrip}
             />
           )}
@@ -3282,10 +2952,7 @@ export default function App() {
               currentIndex={currentIndex}
               ratings={ratings}
               visibleIndices={visibleIndices}
-              thumbnails={thumbnails}
-
               metadata={metadata}
-              loadThumbnail={loadThumbnail}
               onPick={pickFromStrip}
             />
           )}

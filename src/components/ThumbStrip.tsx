@@ -18,19 +18,15 @@ export function ThumbStrip({
   currentIndex,
   ratings,
   visibleIndices,
-  thumbnails,
   metadata,
-  loadThumbnail,
   onPick,
 }: {
   images: Img[];
   currentIndex: number;
   ratings: Record<number, Rating>;
   visibleIndices: number[];
-  thumbnails: Record<string, string>;
   /** Optional metadata map; only `lrcRating` is read here for the corner badge. */
   metadata?: Record<string, ImageMetadata>;
-  loadThumbnail: (path: string, index?: number) => void;
   onPick: (index: number) => void;
 }) {
   const stripRef = useRef<HTMLDivElement>(null);
@@ -60,8 +56,6 @@ export function ThumbStrip({
             rating={ratings[img.id]}
             lrcRating={metadata?.[img.path]?.lrcRating ?? null}
             dimmed={!visibleSet.has(i)}
-            url={thumbnails[img.path]}
-            loadThumbnail={loadThumbnail}
             onPick={onPick}
           />
         );

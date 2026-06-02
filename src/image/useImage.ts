@@ -8,11 +8,11 @@ export function useImage(path: string, opts: { wantFull: boolean }): Resolved {
     () => imageStore.snapshot(path),
   );
   useEffect(() => {
+    imageStore.requestThumbFor(path);
     if (opts.wantFull) {
       imageStore.registerWantFull(path);
       return () => imageStore.unregisterWantFull(path);
     }
-    imageStore.requestThumbFor(path);
     return undefined;
   }, [path, opts.wantFull]);
   return snap;
