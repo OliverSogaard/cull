@@ -63,6 +63,11 @@ const PAN_LIMIT = 40; // max % offset from the AF point
 // images/s, the fastest that still feels smooth.
 const NAV_REPEAT_MS = 33;
 
+// After the immediate first step on hold-start, wait this long before the
+// auto-repeat kicks in — so a quick tap moves exactly one image, while a
+// sustained hold pauses briefly then ramps into the ~30/s repeat above.
+const NAV_HOLD_DELAY_MS = 280;
+
 /**
  * Transparent inline-SVG data URI whose intrinsic width/height carry an aspect
  * ratio. Used as an in-flow "sizer" <img> so the photo matte is sized by the
@@ -1782,6 +1787,7 @@ export default function App() {
   const heldDirRef = useRef<0 | 1 | -1>(0);
   const navRafRef = useRef<number | null>(null);
   const lastStepTsRef = useRef(0);
+  const holdStartTsRef = useRef(0);
   const scrubbingRef = useRef(false);
 
   const stopHold = useCallback(() => {
@@ -1801,10 +1807,18 @@ export default function App() {
     if (navRafRef.current != null) cancelAnimationFrame(navRafRef.current);
     heldDirRef.current = dir;
     navStepRef.current(dir); // immediate first step — no OS initial-repeat delay
-    lastStepTsRef.current = performance.now();
+    holdStartTsRef.current = performance.now();
+    lastStepTsRef.current = holdStartTsRef.current;
+    let repeating = false; // false until the initial hold delay elapses
     const loop = (ts: number) => {
       if (heldDirRef.current === 0) return;
-      if (ts - lastStepTsRef.current >= NAV_REPEAT_MS) {
+      // First repeat waits NAV_HOLD_DELAY_MS after hold-start (so a tap = 1 step);
+      // once repeating, each subsequent step waits NAV_REPEAT_MS.
+      const due = repeating
+        ? ts - lastStepTsRef.current >= NAV_REPEAT_MS
+        : ts - holdStartTsRef.current >= NAV_HOLD_DELAY_MS;
+      if (due) {
+        repeating = true;
         lastStepTsRef.current = ts;
         const moved = navStepRef.current(heldDirRef.current as 1 | -1);
         // Blur only while actually moving. At a boundary (nothing to move to) keep
