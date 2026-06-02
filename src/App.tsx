@@ -42,13 +42,13 @@ import { formatRelativeTime, middleTruncate } from "./utils/format";
 import { basename } from "./utils/path";
 import { RATING_COLOR } from "./utils/ratingColor";
 
-// PREFETCH_AHEAD / PREFETCH_BEHIND / PREVIEW_KEEP / HIRES_SETTLE_MS / read-pool
-// caps + concurrent XMP restore all live in PERFORMANCE_PROFILES, switched by
-// the storage-mode setting. Read at point-of-use through `profile`.
-// Memory bounds for 10k-folder sessions: keep only a window of decoded blobs
-// around the cursor and revoke the rest. Previews are the full-resolution
-// embedded JPEG (~5–6 MB each), so this window (~37 held ≈ 200 MB) is the main
-// memory knob — lower it if RAM is tight, raise it for more backward-scrub cache.
+// Read concurrency, previewKeep, hi-res zoom warm-up, background-fill rate, and
+// concurrent XMP restore all live in PERFORMANCE_PROFILES, switched by the
+// storage-mode setting and pushed into the imageStore via `setProfile`.
+// Memory bounds for 10k-folder sessions are owned by the imageStore: full-res
+// blobs (~5–6 MB each) are kept only within `previewKeep` of the cursor and
+// revoked outside it, while thumbnails persist for the session under a 15k-entry
+// safety LRU. See src/image/imageStore.ts and ARCHITECTURE.md "Read pipeline".
 const FEEDBACK_MS = 320;
 // Rating-write retry schedule (ms before each retry). A rating that still fails
 // after the last attempt is surfaced as "unsaved" rather than silently dropped.
