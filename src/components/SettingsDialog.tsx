@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Filter, Settings, StorageMode, ThumbsPosition } from "../types";
 import { DEFAULT_SETTINGS } from "../types/settings";
@@ -189,6 +190,11 @@ export function SettingsDialog({
                 onChange={(v) => set("openLastFolderOnLaunch", v)}
               />
             </SettingRow>
+          </Section>
+
+          {/* ───────────── Cache ───────────── */}
+          <Section title="Cache">
+            <ThumbCacheRow />
           </Section>
 
           {/* ───────────── Reset ───────────── */}
@@ -392,6 +398,43 @@ function RejectedSubfolderInput({
         }
       }}
     />
+  );
+}
+
+/**
+ * Thumbnail cache row — shows the current on-disk cache size (bytes → MB) and
+ * a "Clear" button. Both values come from the Rust backend via IPC.
+ */
+function ThumbCacheRow() {
+  const [cacheSize, setCacheSize] = useState<number | null>(null);
+
+  useEffect(() => {
+    invoke<number>("thumb_cache_size").then(setCacheSize).catch(() => setCacheSize(null));
+  }, []);
+
+  const handleClear = async () => {
+    await invoke("clear_thumb_cache");
+    setCacheSize(await invoke<number>("thumb_cache_size").catch(() => 0));
+  };
+
+  const mbLabel =
+    cacheSize !== null
+      ? ` Currently ${Math.round(cacheSize / 1048576)} MB.`
+      : "";
+
+  return (
+    <SettingRow
+      label="Thumbnail cache"
+      help={`Low-res previews cached on disk for instant re-opens. Lives in the OS cache folder; safe to clear anytime.${mbLabel}`}
+    >
+      <button
+        type="button"
+        className="cull-pick-button"
+        onClick={handleClear}
+      >
+        Clear
+      </button>
+    </SettingRow>
   );
 }
 
