@@ -302,6 +302,25 @@ describe("imageStore", () => {
     expect(() => store.setCursor(5)).not.toThrow();
     expect(() => store.setGridRange(0, 30)).not.toThrow();
   });
+
+  it("empty-path sentinel: requestThumbFor('') and registerWantFull('') are no-ops (no invoke fired)", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+
+    const store = await getStore();
+    store.hardReset();
+
+    // These must return immediately without enqueuing any work.
+    store.requestThumbFor("");
+    store.registerWantFull("");
+    store.unregisterWantFull("");
+
+    // Drain the microtask queue — no invoke should have been called.
+    await flush();
+    expect(mockInvoke).not.toHaveBeenCalled();
+    // snapshot("") still returns a stable shimmer (unchanged).
+    expect(store.snapshot("").stage).toBe("shimmer");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

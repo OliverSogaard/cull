@@ -331,6 +331,7 @@ export default function App() {
     imageStore.setMetaSink((path, meta) => {
       setMetadata((m) => ({ ...m, [path]: meta }));
     });
+    return () => imageStore.setMetaSink(undefined);
   }, []);
 
   // Cursor → drives the store's full-res keep-window + thumb/bg prioritisation
@@ -552,6 +553,12 @@ export default function App() {
     if (!gridVisible) clearMultiSelection();
   }, [gridVisible, clearMultiSelection]);
 
+  // When leaving the grid, clear the stored grid viewport so background-fill
+  // prioritises purely by cursor distance rather than the stale grid window.
+  useEffect(() => {
+    if (!gridVisible) imageStore.clearGridRange();
+  }, [gridVisible]);
+
   // Esc out of review → discard the in-memory session and return Home. Ratings
   // live on in the .xmp sidecars, so reopening the folder restores them.
   const resetSession = useCallback(() => {
@@ -690,6 +697,10 @@ export default function App() {
   // curReady gates the hi-res zoom warm-up on the CURRENT image's full preview
   // being ready (so an unrelated prefetch landing doesn't reset it).
   const curReady = cur.stage === "full";
+  // showFull: true only when the full preview is ready AND we are not mid-scrub.
+  // A scrubbed-past frame whose full is already cached must still show as blurred
+  // during scrub — otherwise a cached full renders sharp mid-scrub.
+  const showFull = cur.stage === "full" && !scrubbing;
 
   // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
   // every navigation / compare toggle so rapid arrow-through never pays the heavy
@@ -2500,16 +2511,24 @@ export default function App() {
               <img
                 ref={imgRef}
                 className="cull-image"
-                // Source comes from the store via useImage: full when ready,
-                // else the thumb, else undefined (shimmer → spinner below).
-                src={cur.url}
+                // During a scrub prefer the thumb so we don't show/decode the
+                // sharp full even when it's already cached (showFull is false
+                // mid-scrub). When not scrubbing, cur.url is already the best
+                // available source (full or thumb per store logic).
+                src={
+                  showFull
+                    ? cur.url
+                    : scrubbing && cur.stage === "full"
+                      ? (imageStore.thumbUrl(images[currentIndex]?.path ?? "") ?? cur.url)
+                      : cur.url
+                }
                 alt=""
                 onLoad={(e) => {
                   // Only update naturalSize from the FULL preview, not the
                   // thumbnail fallback — otherwise the matte would briefly
                   // shrink to the tiny thumbnail's dimensions during scrub
-                  // or load.
-                  if (cur.stage === "full") {
+                  // or load. Gate on showFull so a scrub never updates naturalSize.
+                  if (showFull) {
                     setMeasureNonce((n) => n + 1);
                     setNaturalSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
                   }
@@ -2518,13 +2537,10 @@ export default function App() {
                   transform: isZooming ? `scale(${zoomZ})` : undefined,
                   transformOrigin: `${originX}% ${originY}%`,
                   transition: "transform 200ms ease-out",
-                  // Heavy blur until the full preview is ready (covers the thumb
-                  // fallback during scrub / load) — masks the low-res thumbnail
-                  // and reads as a "settling" indicator. Drops to 0 on full.
-                  filter:
-                    cur.stage === "full"
-                      ? undefined
-                      : "blur(14px) brightness(0.78)",
+                  // Heavy blur until showFull (full preview ready AND not scrubbing).
+                  // Keeps the settling blur visible during scrub even when the full
+                  // is already cached — masks the low-res thumbnail fallback.
+                  filter: showFull ? undefined : "blur(14px) brightness(0.78)",
                 }}
               />
               {/* Spinner overlay only when the full preview isn't ready AND

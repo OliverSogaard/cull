@@ -126,7 +126,7 @@ export class ImageStore {
    * full-res bundle read yields EXIF metadata. App uses this to keep its
    * `metadata` map fed now that the old `loadImageRaw` path is gone.
    */
-  setMetaSink(sink: (path: string, meta: ImageMetadata) => void): void {
+  setMetaSink(sink: ((path: string, meta: ImageMetadata) => void) | undefined): void {
     this.metaSink = sink;
   }
 
@@ -249,6 +249,13 @@ export class ImageStore {
     this.rescheduleBg();
   }
 
+  /** Clear the grid viewport so bg-fill prioritizes purely by cursor distance. */
+  clearGridRange(): void {
+    this.gridStart = -1;
+    this.gridEnd = -1;
+    this.rescheduleBg();
+  }
+
   private rebuildPathIndex(): void {
     this.pathIndex.clear();
     for (let i = 0; i < this.paths.length; i++) {
@@ -279,6 +286,7 @@ export class ImageStore {
   }
 
   registerWantFull(path: string): void {
+    if (!path) return;
     this.wantFull.add(path);
     if (!this.requestedFull.has(path)) {
       this.fullQueue.unshift(path); // high priority: front of queue
@@ -299,10 +307,12 @@ export class ImageStore {
   }
 
   unregisterWantFull(path: string): void {
+    if (!path) return;
     this.wantFull.delete(path);
   }
 
   requestThumbFor(path: string): void {
+    if (!path) return;
     if (this.requestedThumb.has(path) || this.thumbs.has(path)) return;
     this.thumbQueue.push(path);
     this.pumpThumbs();
