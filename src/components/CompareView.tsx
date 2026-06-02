@@ -182,7 +182,15 @@ const ComparePanel = memo(function ComparePanel({
   // This panel owns the full-res request for its image (the loupe's `wantFull`
   // is owned by App). The intermediate thumb stage shows first; the full lands
   // on top. Source/dims come from the store via useImage now.
-  const img = useImage(path, { wantFull: true });
+  //
+  // Gate the full-res request on `!scrubbing` exactly as the loupe does
+  // (App.tsx): while the challenger is scrubbing we fly past frames we never
+  // settle on, so requesting each one's full-res would fire a heavy NAS bundle
+  // read + 32 MP decode per step — periodic main-thread stalls that stutter the
+  // strip, made worse on direction reversal when evicted fulls get re-fetched.
+  // The champion passes `scrubbing={false}`, so it keeps its full as the fixed
+  // reference; the challenger's full lands the instant the scrub settles.
+  const img = useImage(path, { wantFull: !scrubbing });
   // Show the full preview only once it's ready AND we're not scrubbing past it.
   const showFull = img.stage === "full" && !scrubbing;
   const fullPainted = showFull && paintedFullUrl === img.url;
