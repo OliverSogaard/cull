@@ -234,13 +234,17 @@ export class ImageStore {
     this.gridEnd = 0;
   }
 
-  setCursor(index: number): void {
+  setCursor(index: number, scrubbing = false): void {
     this.cursor = index;
     // I3: full-res eviction is cursor-driven — recenter the keep-window on the
     // cursor even when no new full just landed (parking on a frame recenters).
     this.evictFullAround(index);
     this.rescheduleBg();
     this.pumpFull();
+    // Warm neighbours' full-res once the cursor SETTLES — so a single tap to an
+    // adjacent frame is already decoded. Never mid-scrub: a scrub flies past
+    // frames it never lands on, and prefetching each would flood the NAS.
+    if (!scrubbing) this.prefetchFullsAround(index);
   }
 
   setGridRange(start: number, end: number): void {
@@ -570,6 +574,35 @@ export class ImageStore {
       this.requestedFull.delete(path);
     }
     this.invalidate(path);
+  }
+
+  /**
+   * Prefetch full-res previews for frames within `fullPrefetchRadius` of the
+   * cursor (nearest-first), so a single tap to a neighbour shows the full
+   * immediately instead of waiting on an on-demand read. Enqueued at the BACK of
+   * the full queue, so the on-demand wantFull for the displayed frame (which
+   * unshifts to the front) always wins. Bounded by previewKeep eviction, so it
+   * never grows unbounded. Called only when the cursor is settled (see setCursor).
+   */
+  private prefetchFullsAround(centerIndex: number): void {
+    if (centerIndex < 0) return;
+    const radius = this.profile.fullPrefetchRadius;
+    if (radius <= 0) return;
+    let enqueued = false;
+    // Nearest-first so the most likely next tap (±1) decodes before ±radius.
+    for (let d = 1; d <= radius; d++) {
+      for (const idx of [centerIndex - d, centerIndex + d]) {
+        if (idx < 0 || idx >= this.paths.length) continue;
+        const path = this.paths[idx];
+        const prev = this.fulls.get(path);
+        if (prev?.status === "ready" || prev?.status === "loading") continue;
+        if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) continue;
+        if (this.fullQueue.includes(path)) continue;
+        this.fullQueue.push(path);
+        enqueued = true;
+      }
+    }
+    if (enqueued) this.pumpFull();
   }
 
   // ── Background-fill pump ────────────────────────────────────────────────

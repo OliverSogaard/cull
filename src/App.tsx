@@ -356,8 +356,8 @@ export default function App() {
   // Cursor → drives the store's full-res keep-window + thumb/bg prioritisation
   // (nearest-first). Follows the challenger in compare, the cursor otherwise.
   useEffect(() => {
-    imageStore.setCursor(compareMode ? challengerIndex : currentIndex);
-  }, [currentIndex, compareMode, challengerIndex]);
+    imageStore.setCursor(compareMode ? challengerIndex : currentIndex, scrubbing);
+  }, [currentIndex, compareMode, challengerIndex, scrubbing]);
 
   // Grid viewport range → store background-fill prioritisation (visible cells
   // first). Wired to GridView's onViewportChange.
@@ -2614,12 +2614,15 @@ export default function App() {
                   style={{ ["--shimmer-delay" as string]: `-${loupeShimmerDelay}ms` }}
                 />
               )}
-              {/* Spinner overlay shows for as long as the blur is up — i.e.
-                  whenever we're past shimmer but the full hasn't PAINTED yet
-                  (matches the `fullPainted` blur gate). At shimmer the skeleton
-                  is the indicator; during scrub the blurred thumb stands in, so
-                  a spinner there is just visual noise. */}
-              {cur.stage !== "shimmer" && !fullPainted && !scrubbing && (
+              {/* Spinner overlay shows only while the full is genuinely still
+                  loading — i.e. we have the thumb but not yet the full. Once the
+                  store HAS the full (cur.stage === "full"), we skip it even
+                  though `fullPainted` lags a frame or two behind: for a cached
+                  full that gap would flash the spinner for ~0.1s over an image
+                  that's already there. The blur fade alone covers the paint gap.
+                  At shimmer the skeleton is the indicator; during scrub the
+                  blurred thumb stands in, so a spinner there is just noise. */}
+              {cur.stage === "thumb" && !scrubbing && (
                 <div className="cull-photo-frame__spinner-wrap" aria-hidden>
                   <div className="cull-loading__spinner" />
                 </div>

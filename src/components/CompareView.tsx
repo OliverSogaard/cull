@@ -304,7 +304,10 @@ const ComparePanel = memo(function ComparePanel({
             style={{ ["--shimmer-delay" as string]: `-${shimmerDelay}ms` }}
           />
         )}
-        {img.stage !== "shimmer" && !fullPainted && !scrubbing && (
+        {/* Spinner only while the full is still loading (thumb stage); once the
+            store has the full, skip it so a cached full doesn't flash the
+            spinner for ~0.1s before paint. Mirrors the loupe (App.tsx). */}
+        {img.stage === "thumb" && !scrubbing && (
           <div className="cull-photo-frame__spinner-wrap" aria-hidden>
             <div className="cull-loading__spinner" />
           </div>

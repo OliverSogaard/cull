@@ -112,6 +112,10 @@ export type PerformanceProfile = {
   concurrentRestore: boolean;
   /** Max simultaneous background-fill thumbnail reads (book-order sweep). */
   backgroundFillConcurrency: number;
+  /** Full-res previews to prefetch on each side of the cursor once it settles,
+   *  so a single tap to a neighbour is already decoded (no on-demand wait). Kept
+   *  ≤ previewKeep so prefetched fulls aren't immediately evicted. 0 disables. */
+  fullPrefetchRadius: number;
 };
 
 export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
@@ -122,6 +126,7 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     hiResSettleMs: 150,
     concurrentRestore: false,
     backgroundFillConcurrency: 2,
+    fullPrefetchRadius: 3,
   },
   local: {
     bundleConcurrency: 12,
@@ -130,5 +135,6 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     hiResSettleMs: 50,
     concurrentRestore: true,
     backgroundFillConcurrency: 8,
+    fullPrefetchRadius: 6,
   },
 };
