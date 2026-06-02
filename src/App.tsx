@@ -734,6 +734,18 @@ export default function App() {
     setNaturalSize(null);
   }, [currentIndex]);
 
+  // If we LAND on (or settle on) a frame whose full-res is already ready
+  // (prefetched / cached), mark it painted at once so the thumb→full blur is
+  // skipped — there is no low-res for THIS frame on screen that could flash, so
+  // the full appears sharp immediately. Deliberately keyed ONLY on navigation /
+  // scrub-settle, NOT on cur.url: a full that ARRIVES while we sit on the thumb
+  // must still gate on the <img> onLoad below, or the low-res would flash sharp
+  // for ~0.1s before the full paints (the behaviour fullPainted was added for).
+  useLayoutEffect(() => {
+    if (showFull && cur.url) setPaintedFullUrl(cur.url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentIndex, scrubbing]);
+
   // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
   // every navigation / compare toggle so rapid arrow-through never pays the heavy
   // native-resolution decode. Also resets when the thumbnail strip toggles: that
