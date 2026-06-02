@@ -2528,7 +2528,7 @@ body,
   height: 70px;
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 8px 0;
   gap: 4px;
   overflow-x: auto;
   overflow-y: hidden;

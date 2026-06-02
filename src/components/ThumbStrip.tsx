@@ -1,17 +1,16 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+// src/components/ThumbStrip.tsx
+import { useMemo } from "react";
 import type { Img, ImageMetadata, Rating } from "../types";
-import { CELL_STRIDE, STRIP_RADIUS, ThumbCell } from "./ThumbCell";
+import { ThumbCell } from "./ThumbCell";
+import { FilmStrip } from "./strip/FilmStrip";
+import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
+
 /**
- * The loupe's bottom filmstrip. Renders every image in the staged set, but
- * virtualised: only a window of `STRIP_RADIUS` cells around the cursor is live,
- * padded by spacers reproducing the full scroll width on either side. Cells
- * outside the active filter are dimmed (not hidden) so the user can see
- * what's around them in capture order.
- *
- * Scroll behaviour is deliberately INSTANT (`behavior: "auto"`). Smooth
- * scrolling can't keep up with the hold-to-scrub cadence — overlapping
- * animations stutter and visibly skip cells — so instant re-centering at the
- * step rate is what reads as fluid scrolling.
+ * The loupe's filmstrip. Renders every image in the staged set, virtualized via
+ * {@link FilmStrip}: only ~viewport+buffer cells around the cursor are live.
+ * Cells outside the active filter are dimmed (not hidden) so the user can see
+ * what's around them in capture order. Centering is an instant scrollLeft write
+ * (smooth scrolling can't keep up with hold-to-scrub).
  */
 export function ThumbStrip({
   images,
@@ -29,38 +28,29 @@ export function ThumbStrip({
   metadata?: Record<string, ImageMetadata>;
   onPick: (index: number) => void;
 }) {
-  const stripRef = useRef<HTMLDivElement>(null);
   const visibleSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
 
-  useLayoutEffect(() => {
-    const el = stripRef.current?.querySelector(`[data-idx="${currentIndex}"]`);
-    el?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
-  }, [currentIndex]);
-
-  const first = Math.max(0, currentIndex - STRIP_RADIUS);
-  const last = Math.min(images.length, currentIndex + STRIP_RADIUS + 1);
-  const leftPad = first * CELL_STRIDE;
-  const rightPad = (images.length - last) * CELL_STRIDE;
-
   return (
-    <footer className="cull-thumbs" ref={stripRef}>
-      {leftPad > 0 && <div style={{ flex: `0 0 ${leftPad}px` }} aria-hidden />}
-      {images.slice(first, last).map((img, k) => {
-        const i = first + k;
-        return (
-          <ThumbCell
-            key={img.id}
-            img={img}
-            index={i}
-            isCurrent={i === currentIndex}
-            rating={ratings[img.id]}
-            lrcRating={metadata?.[img.path]?.lrcRating ?? null}
-            dimmed={!visibleSet.has(i)}
-            onPick={onPick}
-          />
-        );
-      })}
-      {rightPad > 0 && <div style={{ flex: `0 0 ${rightPad}px` }} aria-hidden />}
-    </footer>
+    <FilmStrip
+      className="cull-thumbs"
+      count={images.length}
+      stride={CELL_STRIDE}
+      cellWidth={CELL_W}
+      trackHeight={CELL_H}
+      centerOffset={currentIndex}
+      buffer={STRIP_BUFFER}
+      keyForItem={(i) => images[i].id}
+      renderItem={(i) => (
+        <ThumbCell
+          img={images[i]}
+          index={i}
+          isCurrent={i === currentIndex}
+          rating={ratings[images[i].id]}
+          lrcRating={metadata?.[images[i].path]?.lrcRating ?? null}
+          dimmed={!visibleSet.has(i)}
+          onPick={onPick}
+        />
+      )}
+    />
   );
 }
