@@ -9,11 +9,14 @@
 //! untouched, and there is no decode/re-encode, so the embedded JPEG's quality
 //! is preserved bit-for-bit.
 
+use std::sync::Arc;
 use std::time::Instant;
 use tauri::ipc::Response;
+use tauri::State;
 
 use crate::cr3;
 use crate::meta::ImageMetadata;
+use crate::thumb_cache::ThumbCache;
 use crate::xmp::read_lrc_rating;
 
 /// Binary frame returned by [`read_bundle`]: a small JSON header (metadata +
@@ -82,24 +85,37 @@ struct ThumbHeader {
 
 /// Tiny embedded thumbnail (160×120), already EXIF-oriented, plus display
 /// dimensions, for filmstrip cells and the loading / scrub placeholder. Loaded
-/// through the frontend's bounded thumb pool.
+/// through the frontend's bounded thumb pool. Results are served from the
+/// on-disk LRU cache when available; misses are written to the cache.
 #[tauri::command]
-pub(crate) async fn extract_thumbnail(path: String) -> Result<Response, String> {
+pub(crate) async fn extract_thumbnail(path: String, cache: State<'_, Arc<ThumbCache>>) -> Result<Response, String> {
+    let cache = Arc::clone(&cache);
     let framed = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let t = cr3::read_thumbnail(&path).map_err(|e| format!("cr3 thumbnail: {e}"))?;
-        let header = ThumbHeader {
-            width: t.width,
-            height: t.height,
-            jpeg_len: t.jpeg.len() as u32,
+        let (jpeg, w, h) = match cache.get(&path) {
+            Some(hit) => hit,
+            None => {
+                let t = cr3::read_thumbnail(&path).map_err(|e| format!("cr3 thumbnail: {e}"))?;
+                cache.put(&path, &t.jpeg, t.width, t.height);
+                (t.jpeg, t.width, t.height)
+            }
         };
+        let header = ThumbHeader { width: w, height: h, jpeg_len: jpeg.len() as u32 };
         let header_json = serde_json::to_vec(&header).map_err(|e| format!("thumb header: {e}"))?;
-        let mut out = Vec::with_capacity(4 + header_json.len() + t.jpeg.len());
+        let mut out = Vec::with_capacity(4 + header_json.len() + jpeg.len());
         out.extend_from_slice(&(header_json.len() as u32).to_le_bytes());
         out.extend_from_slice(&header_json);
-        out.extend_from_slice(&t.jpeg);
+        out.extend_from_slice(&jpeg);
         Ok(out)
-    })
-    .await
-    .map_err(|e| format!("thumbnail task failed: {e}"))??;
+    }).await.map_err(|e| format!("thumbnail task failed: {e}"))??;
     Ok(Response::new(framed))
+}
+
+#[tauri::command]
+pub(crate) async fn clear_thumb_cache(cache: State<'_, Arc<ThumbCache>>) -> Result<(), String> {
+    cache.clear(); Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn thumb_cache_size(cache: State<'_, Arc<ThumbCache>>) -> Result<u64, String> {
+    Ok(cache.size_bytes())
 }

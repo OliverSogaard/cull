@@ -24,16 +24,26 @@ mod cr3;
 mod file_ops;
 mod meta;
 mod scan;
+mod thumb_cache;
 mod xmp;
+
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let dir = app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir());
+            app.manage(std::sync::Arc::new(thumb_cache::ThumbCache::new(dir.join("thumbs"))));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             bundle::read_bundle,
             bundle::extract_thumbnail,
+            bundle::clear_thumb_cache,
+            bundle::thumb_cache_size,
             scan::scan_folder,
             scan::analyze_folder,
             xmp::write_xmp_rating,
