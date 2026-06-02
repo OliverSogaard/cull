@@ -120,6 +120,8 @@ export type PerformanceProfile = {
   hiResSettleMs: number;
   /** Parallel-restore XMP sidecars during analyze (sent to the backend). */
   concurrentRestore: boolean;
+  /** Max simultaneous background-fill thumbnail reads (book-order sweep). */
+  backgroundFillConcurrency: number;
 };
 
 export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
@@ -134,6 +136,7 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     compareNeighborPrefetch: 3,
     hiResSettleMs: 150,
     concurrentRestore: false,
+    backgroundFillConcurrency: 2,
   },
   local: {
     bundleConcurrency: 12,
@@ -146,5 +149,6 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     compareNeighborPrefetch: 6,
     hiResSettleMs: 50,
     concurrentRestore: true,
+    backgroundFillConcurrency: 8,
   },
 };
