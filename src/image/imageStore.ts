@@ -542,6 +542,11 @@ export class ImageStore {
     const keep = this.profile.previewKeep;
     for (const [p, state] of this.fulls) {
       if (state?.status !== "ready") continue;
+      // Never evict a full that something is actively displaying (loupe current,
+      // or BOTH compare panes). In compare the cursor follows the challenger, so
+      // without this the champion — far from the cursor — would be evicted and
+      // re-fetched on every challenger step, thrashing it back to a blurred load.
+      if (this.wantFull.has(p)) continue;
       const idx = this.indexOf(p);
       if (idx === -1) continue;
       if (Math.abs(idx - centerIndex) > keep) {
