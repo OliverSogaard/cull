@@ -9,7 +9,7 @@ const LOW_WATER: u64 = CAP_BYTES * 9 / 10;
 pub struct ThumbCache { dir: PathBuf, index: Mutex<Index> }
 #[derive(Default)]
 struct Index { entries: HashMap<String, Entry>, total: u64, tick: u64 }
-struct Entry { mtime: i64, size: u64, used: u64 }
+struct Entry { size: u64, used: u64 }
 
 fn key_for(path: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
@@ -34,7 +34,7 @@ impl ThumbCache {
                         if let Some(key) = e.file_name().to_str().map(|s| s.to_string()) {
                             index.total += meta.len();
                             index.tick += 1;
-                            index.entries.insert(key, Entry { mtime: 0, size: meta.len(), used: index.tick });
+                            index.entries.insert(key, Entry { size: meta.len(), used: index.tick });
                         }
                     }
                 }
@@ -44,24 +44,27 @@ impl ThumbCache {
     }
     pub fn get(&self, src_path: &str) -> Option<(Vec<u8>, Option<u32>, Option<u32>)> {
         let key = key_for(src_path);
-        let mtime = mtime_of(src_path)?;
-        {
-            let mut idx = self.index.lock().ok()?;
-            let entry = idx.entries.get(&key)?;
-            if entry.mtime != mtime { return None; }
-            idx.tick += 1; let tick = idx.tick;
-            if let Some(e) = idx.entries.get_mut(&key) { e.used = tick; }
-        }
+        let src_mtime = mtime_of(src_path)?;
+        // Must be tracked by the index (size/LRU). Cheap existence check.
+        { let idx = self.index.lock().ok()?; if !idx.entries.contains_key(&key) { return None; } }
         let bytes = std::fs::read(self.dir.join(&key)).ok()?;
-        if bytes.len() < 8 { return None; }
-        let w = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
-        let h = u32::from_le_bytes(bytes[4..8].try_into().ok()?);
-        Some((bytes[8..].to_vec(), opt_dim(w), opt_dim(h)))
+        if bytes.len() < 16 { return None; }
+        let stored_mtime = i64::from_le_bytes(bytes[0..8].try_into().ok()?);
+        if stored_mtime != src_mtime { return None; } // source changed → stale, treat as miss
+        let w = u32::from_le_bytes(bytes[8..12].try_into().ok()?);
+        let h = u32::from_le_bytes(bytes[12..16].try_into().ok()?);
+        // Fresh hit → bump LRU recency.
+        if let Ok(mut idx) = self.index.lock() {
+            idx.tick += 1; let t = idx.tick;
+            if let Some(e) = idx.entries.get_mut(&key) { e.used = t; }
+        }
+        Some((bytes[16..].to_vec(), opt_dim(w), opt_dim(h)))
     }
     pub fn put(&self, src_path: &str, jpeg: &[u8], w: Option<u32>, h: Option<u32>) {
         let Some(mtime) = mtime_of(src_path) else { return };
         let key = key_for(src_path);
-        let mut buf = Vec::with_capacity(8 + jpeg.len());
+        let mut buf = Vec::with_capacity(16 + jpeg.len());
+        buf.extend_from_slice(&mtime.to_le_bytes());
         buf.extend_from_slice(&w.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(&h.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(jpeg);
@@ -70,7 +73,7 @@ impl ThumbCache {
         let mut idx = match self.index.lock() { Ok(g) => g, Err(_) => return };
         if let Some(old) = idx.entries.remove(&key) { idx.total = idx.total.saturating_sub(old.size); }
         idx.tick += 1; let used = idx.tick; idx.total += size;
-        idx.entries.insert(key, Entry { mtime, size, used });
+        idx.entries.insert(key, Entry { size, used });
         if idx.total > CAP_BYTES { self.evict_locked(&mut idx); }
     }
     fn evict_locked(&self, idx: &mut Index) {
@@ -134,6 +137,21 @@ mod tests {
         assert!(cache.size_bytes() > 0);
         cache.clear();
         assert_eq!(cache.size_bytes(), 0); assert!(cache.get(&src).is_none());
+        let _ = std::fs::remove_dir_all(&work);
+    }
+    #[test]
+    fn survives_reopen() {
+        let work = tmp("reopen"); std::fs::create_dir_all(&work).unwrap();
+        let dir = work.join("cache");
+        let src = src_file(&work, "a.cr3", b"cr3");
+        {
+            let cache = ThumbCache::new(dir.clone());
+            cache.put(&src, b"\xFF\xD8jpeg", Some(6000), Some(4000));
+        } // drop cache → simulate app close
+        let reopened = ThumbCache::new(dir); // new instance, same dir → app restart
+        let (jpeg, w, h) = reopened.get(&src).expect("hit after reopen");
+        assert_eq!(jpeg, b"\xFF\xD8jpeg");
+        assert_eq!((w, h), (Some(6000), Some(4000)));
         let _ = std::fs::remove_dir_all(&work);
     }
 }
