@@ -1,8 +1,9 @@
-import { memo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import { Check, Star, X as XIcon } from "lucide-react";
 import type { Img, Rating } from "../types";
 import { hasLrcRating } from "../utils/ratingColor";
 import { useImage } from "../image/useImage";
+import { shimmerPhaseMs } from "../utils/shimmer";
 
 /**
  * Strip virtualization knobs. Both the loupe strip and the compare candidate
@@ -49,6 +50,9 @@ export const ThumbCell = memo(function ThumbCell({
   // thumb fetch on mount and re-renders this cell when it lands.
   const img2 = useImage(img.path, { wantFull: false });
   const url = img2.stage === "shimmer" ? undefined : img2.url;
+  // Shimmer phase pinned at mount so this cell syncs with every other shimmer.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const shimmerDelay = useMemo(() => shimmerPhaseMs(), []);
 
   // Reject cells get an opacity drop unless they're the current cell.
   const isReject = rating === "reject";
@@ -94,11 +98,17 @@ export const ThumbCell = memo(function ThumbCell({
       onClick={() => onPick(index)}
       style={{ opacity: cellOpacity }}
     >
-      <div className={frameClass} style={{ outlineColor }}>
+      <div
+        className={frameClass}
+        style={{ ["--thumb-outline" as string]: outlineColor }}
+      >
         {url ? (
           <img className="cull-thumb__img" src={url} alt="" />
         ) : (
-          <div className="cull-thumb__placeholder" />
+          <div
+            className="cull-thumb__placeholder"
+            style={{ ["--shimmer-delay" as string]: `-${shimmerDelay}ms` }}
+          />
         )}
         {/* When the cell has a compare role, the role badge subsumes the
             LrC badge into its label ("champion ★" / "challenger ★") so the

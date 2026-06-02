@@ -21,6 +21,7 @@ import type {
 } from "./types";
 import "./App.css";
 
+import { shimmerPhaseMs } from "./utils/shimmer";
 import { CompareStrip } from "./components/CompareStrip";
 import { CompareView } from "./components/CompareView";
 import { ExifRail } from "./components/ExifRail";
@@ -61,6 +62,15 @@ const PAN_LIMIT = 40; // max % offset from the AF point
 // the display paints (no stutter; self-throttles on a slow frame). ~33ms ≈ 30
 // images/s, the fastest that still feels smooth.
 const NAV_REPEAT_MS = 33;
+
+/**
+ * Transparent inline-SVG data URI whose intrinsic width/height carry an aspect
+ * ratio. Used as an in-flow "sizer" <img> so the photo matte is sized by the
+ * KNOWN display ratio — never by whatever pixels happen to be decoded (the THMB
+ * is tiny; a mid-decode full is 0). Renders nothing.
+ */
+const sizerSrc = (w: number, h: number) =>
+  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%2F%3E`;
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>("start");
@@ -217,6 +227,10 @@ export default function App() {
   // full-resolution raster, so the zoom composites from already-sharp pixels.
   const [hiRes, setHiRes] = useState(false);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  // The full-preview blob URL that has actually finished decoding (its onLoad
+  // fired). Keeps the low-res blurred until the full has PAINTED — not merely
+  // when the stage flips to "full" — so the low-res never flashes sharp first.
+  const [paintedFullUrl, setPaintedFullUrl] = useState<string | null>(null);
   const hiResTimer = useRef<number | null>(null);
 
   const [clippingVisible, setClippingVisible] = useState(false);
@@ -701,6 +715,19 @@ export default function App() {
   // A scrubbed-past frame whose full is already cached must still show as blurred
   // during scrub — otherwise a cached full renders sharp mid-scrub.
   const showFull = cur.stage === "full" && !scrubbing;
+  // True only once the CURRENT full preview has decoded+painted (its onLoad
+  // fired for this url); until then we keep showing the blurred low-res.
+  const fullPainted = showFull && paintedFullUrl === cur.url;
+  // Phase for the loupe matte shimmer, pinned per image so every shimmer syncs.
+  const loupeShimmerDelay = useMemo(() => shimmerPhaseMs(), [currentIndex]);
+
+  // Reset the measured full-res size on every navigation, so a fresh image's
+  // shimmer never inherits the PREVIOUS image's aspect (a vertical matte while
+  // landing on a horizontal). Until dims are known the matte is a neutral
+  // square; the new full's onLoad re-sets this.
+  useEffect(() => {
+    setNaturalSize(null);
+  }, [currentIndex]);
 
   // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
   // every navigation / compare toggle so rapid arrow-through never pays the heavy
@@ -785,7 +812,9 @@ export default function App() {
     const ro = new ResizeObserver(measure);
     if (stageRef.current) ro.observe(stageRef.current);
     return () => ro.disconnect();
-  }, [phase, images, currentIndex, measureNonce, scrubbing]);
+    // cur.stage/cur.dims: the sizer reflows the frame when dims arrive (thumb
+    // stage); the RO is on the stage (which doesn't resize), so re-measure here.
+  }, [phase, images, currentIndex, measureNonce, scrubbing, cur.stage, cur.dims]);
 
   // Compute a clipping mask PNG for one image's preview (cached by path). Scans
   // pixels for true clipping and paints diagonal stripes (red 45° highlights /
@@ -2462,13 +2491,19 @@ export default function App() {
   const hiResTx = imgRect ? (originX / 100) * imgRect.width * (1 - zoomZ) : 0;
   const hiResTy = imgRect ? (originY / 100) * imgRect.height * (1 - zoomZ) : 0;
 
-  // Frame aspect ratio: prefer the orientation-correct THMB display dims (known
-  // as soon as the thumb lands, via the store) over the frozen full naturalSize.
-  const photoAr = cur.dims
-    ? `${cur.dims.w} / ${cur.dims.h}`
-    : naturalSize
-      ? `${naturalSize.w} / ${naturalSize.h}`
-      : undefined;
+  // Frame size source: the orientation-correct THMB display dims (w/h > 1 guards
+  // the {1,1} UNKNOWN sentinel), else the current full's measured naturalSize
+  // ({1,1}-THMB edge case), else a NEUTRAL SQUARE while the aspect is unknown.
+  // naturalSize is reset on navigation (below), so it never leaks the previous
+  // image's aspect into a fresh shimmer. Drives BOTH --photo-ar and the sizer.
+  const frameDims =
+    cur.dims && cur.dims.w > 1 && cur.dims.h > 1
+      ? cur.dims
+      // Large square (not 1×1): the sizer fills the matte by clamping its
+      // intrinsic size DOWN to the stage, so the fallback must EXCEED the stage
+      // — a square fills the stage height (width = height), like a portrait.
+      : (naturalSize ?? { w: 10000, h: 10000 });
+  const photoAr = `${frameDims.w} / ${frameDims.h}`;
 
   const singleModeBody = (
       <div className="cull-stage">
@@ -2502,12 +2537,19 @@ export default function App() {
                   ? ` cull-photo-frame--flash-${feedback.rating === "favorite" ? "fav" : feedback.rating}`
                   : ""
               }`}
-              style={
-                photoAr
-                  ? ({ ["--photo-ar" as string]: photoAr } as React.CSSProperties)
-                  : undefined
-              }
+              style={{ ["--photo-ar" as string]: photoAr } as React.CSSProperties}
             >
+              {/* Sizer: an in-flow transparent replaced element whose intrinsic
+                  dims equal the KNOWN display ratio (frameDims). It alone sizes
+                  the matte (replaced-element contain), so the frame never shrinks
+                  to the tiny THMB pixels and never collapses while the full <img>
+                  decodes (intrinsic 0). The pixels below are an absolute overlay. */}
+              <img
+                className="cull-photo-frame__sizer"
+                src={sizerSrc(frameDims.w, frameDims.h)}
+                alt=""
+                aria-hidden
+              />
               <img
                 ref={imgRef}
                 className="cull-image"
@@ -2531,24 +2573,39 @@ export default function App() {
                   if (showFull) {
                     setMeasureNonce((n) => n + 1);
                     setNaturalSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
+                    setPaintedFullUrl(cur.url ?? null);
                   }
                 }}
                 style={{
                   transform: isZooming ? `scale(${zoomZ})` : undefined,
                   transformOrigin: `${originX}% ${originY}%`,
-                  transition: "transform 200ms ease-out",
-                  // Heavy blur until showFull (full preview ready AND not scrubbing).
-                  // Keeps the settling blur visible during scrub even when the full
-                  // is already cached — masks the low-res thumbnail fallback.
-                  filter: showFull ? undefined : "blur(14px) brightness(0.78)",
+                  transition: "transform 200ms ease-out, filter 200ms ease-out",
+                  // object-fit: cover for the low-res — the THMB's ~4:3 shape would
+                  // letterbox SMALLER than the 3:2 matte under contain; cover fills
+                  // it (the crop is invisible under the blur). contain for the full.
+                  objectFit: fullPainted ? "contain" : "cover",
+                  // Blur until the full has actually PAINTED (fullPainted), not
+                  // merely when the stage flips to "full" — so the low-res never
+                  // flashes sharp before the full appears. Transition fades focus in.
+                  filter: fullPainted ? undefined : "blur(14px) brightness(0.78)",
                 }}
               />
-              {/* Spinner overlay only when the full preview isn't ready AND
-                  we're not mid-scrub. During scrub the blurred thumbnail
-                  stands in for the preview, no spinner needed — adding it
-                  on every step would just be visual noise as the user
-                  flies past. */}
-              {cur.stage !== "full" && !scrubbing && (
+              {/* First load: a skeleton shimmer fills the (now definitely-
+                  sized) matte so the frame reads at the photo's true size
+                  instead of collapsing to nothing while we wait on disk. */}
+              {cur.stage === "shimmer" && (
+                <div
+                  className="cull-photo-frame__shimmer"
+                  aria-hidden
+                  style={{ ["--shimmer-delay" as string]: `-${loupeShimmerDelay}ms` }}
+                />
+              )}
+              {/* Spinner overlay shows for as long as the blur is up — i.e.
+                  whenever we're past shimmer but the full hasn't PAINTED yet
+                  (matches the `fullPainted` blur gate). At shimmer the skeleton
+                  is the indicator; during scrub the blurred thumb stands in, so
+                  a spinner there is just visual noise. */}
+              {cur.stage !== "shimmer" && !fullPainted && !scrubbing && (
                 <div className="cull-photo-frame__spinner-wrap" aria-hidden>
                   <div className="cull-loading__spinner" />
                 </div>

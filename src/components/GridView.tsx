@@ -12,22 +12,10 @@ import type { Img, ImageMetadata, Rating } from "../types";
 import { stripExt } from "../utils/path";
 import { hasLrcRating } from "../utils/ratingColor";
 import { useImage } from "../image/useImage";
+import { shimmerPhaseMs } from "../utils/shimmer";
 
 /** Visible rows above and below the viewport that we still render. */
 const GRID_BUFFER_ROWS = 2;
-
-/**
- * Shared epoch for the skeleton-shimmer animation. Every grid placeholder
- * derives its `animation-delay` from this, so cells that mount at different
- * times (as the user scrolls / the viewport reveals more cells) all land on
- * the SAME phase of the loop — the grid pulses as one, not staggered.
- *
- * Negative delays are well-defined in CSS — they advance the animation by
- * that much. So setting delay = -(epoch elapsed % duration) snaps every cell
- * to "we've been running since the module loaded", regardless of mount time.
- */
-const SHIMMER_EPOCH_MS = Date.now();
-const SHIMMER_DURATION_MS = 1400; // must match the CSS @keyframes timing
 
 /**
  * Target cell width — App's outer ResizeObserver picks `cols = floor(width /
@@ -218,10 +206,7 @@ const GridCell = memo(function GridCell({
   // smoothly. The math still snaps to the shared SHIMMER_EPOCH_MS so cells
   // mounted at different times stay in phase with each other.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shimmerDelayMs = useMemo(
-    () => (Date.now() - SHIMMER_EPOCH_MS) % SHIMMER_DURATION_MS,
-    [],
-  );
+  const shimmerDelayMs = useMemo(() => shimmerPhaseMs(), []);
   const isReject = rating === "reject";
   // Verdict glyph as a Lucide SVG icon (not Unicode) so it centers cleanly
   // inside the 18px dot — Unicode metrics drift across system fonts.
@@ -272,7 +257,7 @@ const GridCell = memo(function GridCell({
             // stable value — recomputing on every render restarts the CSS
             // animation, which read as a stutter.
             style={{
-              animationDelay: `-${shimmerDelayMs}ms`,
+              ["--shimmer-delay" as string]: `-${shimmerDelayMs}ms`,
             }}
           >
             <span className="cull-grid__placeholder-name">{stripExt(img.filename)}</span>

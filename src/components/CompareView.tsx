@@ -1,4 +1,5 @@
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { shimmerPhaseMs } from "../utils/shimmer";
 import type { Feedback, Img, ImageMetadata, Rating } from "../types";
 import { CompareExifRail } from "./ExifRail";
 import { RatingDot } from "./RatingDot";
@@ -13,6 +14,11 @@ import { useImage } from "../image/useImage";
  * rect.width`, so 1:1 means "one image pixel per screen pixel" even though the
  * two panels may be different sizes.
  */
+/** Transparent inline-SVG sizer (see App.tsx): carries an aspect ratio via its
+ *  intrinsic width/height so the matte is sized by the known ratio, not pixels. */
+const sizerSrc = (w: number, h: number) =>
+  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%2F%3E`;
+
 export function CompareView({
   images,
   championIndex,
@@ -160,7 +166,18 @@ const ComparePanel = memo(function ComparePanel({
   } | null>(null);
   const [nonce, setNonce] = useState(0);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  // Full-res blob URL that has actually decoded — keeps the low-res blurred
+  // until the full has PAINTED, so it never flashes sharp first (see App.tsx).
+  const [paintedFullUrl, setPaintedFullUrl] = useState<string | null>(null);
   const isChampion = role === "champion";
+  // Shimmer phase pinned per image so this pane's shimmer syncs with the others.
+  const shimmerDelay = useMemo(() => shimmerPhaseMs(), [path]);
+  // Reset measured size when the pane's image changes (challenger scroll), so a
+  // fresh image's shimmer never inherits the previous one's aspect (neutral
+  // square until its dims are known).
+  useEffect(() => {
+    setNaturalSize(null);
+  }, [path]);
 
   // This panel owns the full-res request for its image (the loupe's `wantFull`
   // is owned by App). The intermediate thumb stage shows first; the full lands
@@ -168,15 +185,17 @@ const ComparePanel = memo(function ComparePanel({
   const img = useImage(path, { wantFull: true });
   // Show the full preview only once it's ready AND we're not scrubbing past it.
   const showFull = img.stage === "full" && !scrubbing;
+  const fullPainted = showFull && paintedFullUrl === img.url;
   const displaySrc = showFull ? img.url : img.stage !== "shimmer" ? img.url : undefined;
 
   // Frame aspect ratio: prefer the orientation-correct THMB display dims (known
   // as soon as the thumb lands) over the frozen full-preview naturalSize.
-  const photoAr = img.dims
-    ? `${img.dims.w} / ${img.dims.h}`
-    : naturalSize
-      ? `${naturalSize.w} / ${naturalSize.h}`
-      : undefined;
+  const frameDims =
+    img.dims && img.dims.w > 1 && img.dims.h > 1
+      ? img.dims
+      // Large square so the sizer clamps DOWN to fill the pane (see App.tsx).
+      : (naturalSize ?? { w: 10000, h: 10000 });
+  const photoAr = `${frameDims.w} / ${frameDims.h}`;
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -205,7 +224,9 @@ const ComparePanel = memo(function ComparePanel({
     const ro = new ResizeObserver(measure);
     if (panelRef.current) ro.observe(panelRef.current);
     return () => ro.disconnect();
-  }, [displaySrc, nonce]);
+    // img.stage/img.dims: the sizer reflows the frame when dims arrive; the RO
+    // is on the panel (which doesn't resize when the inner frame does).
+  }, [displaySrc, nonce, img.stage, img.dims]);
 
   const oneToOneScale = naturalSize && rect ? naturalSize.w / rect.width : 5;
   const zoomZ = isZooming ? zoomLevel * oneToOneScale : 1;
@@ -223,12 +244,18 @@ const ComparePanel = memo(function ComparePanel({
               }`
             : ""
         }`}
-        style={
-          photoAr
-            ? ({ ["--photo-ar" as string]: photoAr } as React.CSSProperties)
-            : undefined
-        }
+        style={{ ["--photo-ar" as string]: photoAr } as React.CSSProperties}
       >
+        {/* Sizer: in-flow transparent replaced element at the KNOWN display
+            ratio (frameDims) — it alone sizes the matte, so the frame never
+            shrinks to the THMB pixels or collapses while the full decodes. The
+            pixels below are an absolute overlay of the content box. */}
+        <img
+          className="cull-cmp-photo-frame__sizer"
+          src={sizerSrc(frameDims.w, frameDims.h)}
+          alt=""
+          aria-hidden
+        />
         {/* Photo-frame stays mounted across transitions — see App.tsx for the
             same pattern. While the full preview loads, the <img> falls back
             to the thumbnail so the matte never goes blank. While scrubbing,
@@ -248,17 +275,28 @@ const ComparePanel = memo(function ComparePanel({
                   w: e.currentTarget.naturalWidth,
                   h: e.currentTarget.naturalHeight,
                 });
+                setPaintedFullUrl(img.url ?? null);
               }
             }}
             style={{
               transform: isZooming ? `scale(${zoomZ})` : undefined,
               transformOrigin: `${originX}% ${originY}%`,
-              transition: "transform 200ms ease-out",
-              filter: showFull ? undefined : "blur(14px) brightness(0.78)",
+              transition: "transform 200ms ease-out, filter 200ms ease-out",
+              // cover for the low-res (THMB ~4:3 would letterbox smaller under
+              // contain); contain for the full. Blur until the full has PAINTED.
+              objectFit: fullPainted ? "contain" : "cover",
+              filter: fullPainted ? undefined : "blur(14px) brightness(0.78)",
             }}
           />
         ) : null}
-        {!showFull && !scrubbing && (
+        {img.stage === "shimmer" && (
+          <div
+            className="cull-photo-frame__shimmer"
+            aria-hidden
+            style={{ ["--shimmer-delay" as string]: `-${shimmerDelay}ms` }}
+          />
+        )}
+        {img.stage !== "shimmer" && !fullPainted && !scrubbing && (
           <div className="cull-photo-frame__spinner-wrap" aria-hidden>
             <div className="cull-loading__spinner" />
           </div>
