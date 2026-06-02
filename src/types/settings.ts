@@ -12,8 +12,8 @@ import type { Filter } from "./rating";
 
 /**
  * Where the cull folder lives. Drives a "performance profile" — read
- * concurrency, prefetch window, preview cache size, hi-res zoom warm-up, and
- * XMP-restore parallelism — see {@link PERFORMANCE_PROFILES}.
+ * concurrency, background-fill rate, full-res cache window, hi-res zoom
+ * warm-up, and XMP-restore parallelism — see {@link PERFORMANCE_PROFILES}.
  *
  * - `local` (default) — assumes the photos are on this computer (or a fast
  *   directly-attached drive). Aggressive prefetch + high concurrency.
@@ -94,28 +94,18 @@ export const DEFAULT_SETTINGS: Settings = {
 export const SETTINGS_STORAGE_KEY = "cull:settings:v1";
 
 /**
- * Performance knobs that change with {@link StorageMode}. All read by the
- * pump functions through refs (so flipping the mode takes effect on the next
- * pumped read — no restart). One source of truth for every tunable so adding
- * a third profile later is a single edit per row.
+ * Performance knobs that change with {@link StorageMode}. Pushed into the
+ * imageStore via `setProfile` when the mode flips (in-flight reads finish at
+ * the old numbers; new reads use the new ones — no restart). One source of
+ * truth for every tunable so adding a third profile later is a single edit.
  */
 export type PerformanceProfile = {
   /** Max simultaneous full-preview reads. */
   bundleConcurrency: number;
   /** Max simultaneous thumbnail reads. */
   thumbConcurrency: number;
-  /** Prefetch window: how many frames ahead to warm the bundle pool with. */
-  prefetchAhead: number;
-  /** Prefetch window: how many frames behind to keep warm. */
-  prefetchBehind: number;
-  /** Decoded-preview ring buffer size, each side of the cursor. */
+  /** Full-res ring buffer size, each side of the cursor (windowed eviction). */
   previewKeep: number;
-  /** Thumbnail cache window in image-index space, each side of cursor. */
-  thumbKeep: number;
-  /** Thumbnail cache window in *filter-index* space, used while grid is open. */
-  thumbKeepGrid: number;
-  /** Number of unrated candidates each direction to warm while in compare. */
-  compareNeighborPrefetch: number;
   /** Cursor must rest this long before the full-res zoom layer warms. */
   hiResSettleMs: number;
   /** Parallel-restore XMP sidecars during analyze (sent to the backend). */
@@ -128,12 +118,7 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
   network: {
     bundleConcurrency: 3,
     thumbConcurrency: 4,
-    prefetchAhead: 10,
-    prefetchBehind: 5,
     previewKeep: 18,
-    thumbKeep: 160,
-    thumbKeepGrid: 600,
-    compareNeighborPrefetch: 3,
     hiResSettleMs: 150,
     concurrentRestore: false,
     backgroundFillConcurrency: 2,
@@ -141,12 +126,7 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
   local: {
     bundleConcurrency: 12,
     thumbConcurrency: 16,
-    prefetchAhead: 20,
-    prefetchBehind: 10,
     previewKeep: 30,
-    thumbKeep: 320,
-    thumbKeepGrid: 1200,
-    compareNeighborPrefetch: 6,
     hiResSettleMs: 50,
     concurrentRestore: true,
     backgroundFillConcurrency: 8,

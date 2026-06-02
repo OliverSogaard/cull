@@ -17,72 +17,72 @@ Design notes for the non-obvious parts of CULL. Source comments cover the
 
 ## Read pipeline
 
-Two bounded pools — one for previews, one for thumbnails — sit between the
-UI and disk:
+Each image resolves through three display stages — **shimmer → thumb → full**
+— with precedence full > thumb > shimmer. An evicted full falls back to its
+thumb, never back to shimmer. `src/image/stage.ts` is the pure heart of this:
+`resolveStage(ImageState) → Resolved { stage, url, dims, error }`. It has no
+I/O and no React — given which of {thumb, full} are present it returns what to
+paint, so the rule set is unit-tested in isolation.
+
+`src/image/imageStore.ts` is a framework-agnostic subscription store, consumed
+via `useSyncExternalStore` in `src/image/useImage.ts`:
 
 ```
-UI (loadThumbnail / scheduleBundles)
-  ↓ enqueue
-bounded queue (deduped by path)
-  ↓ pump picks by priority
-spawn_blocking → cr3::read_bundle / cr3::read_thumbnail
-  ↓ JPEG bytes + parsed EXIF
-React state (previews / thumbnails / metadata records keyed by path)
+view → useImage(path, { wantFull })
+  ↓ subscribe + request
+imageStore (priority queue, bounded concurrency)
+  ↓ on-demand thumb/full preempt book-order background fill
+fetchThumbnail / fetchBundle → spawn_blocking → cr3 / thumb_cache
+  ↓ blob URL + dims + EXIF
+per-path ImageState → resolveStage → stable Resolved snapshot
 ```
 
-### Why bounded
+A component calls `useImage(path, { wantFull })` and gets back the current
+`Resolved` for that path; the store handles fetching, caching, eviction, and
+blob-URL lifecycle. `wantFull: false` (grid + strips) requests only the thumb;
+`wantFull: true` (loupe + compare panes) also drives the full-res preview.
+
+### What the store owns
+
+- **All-session in-memory THMB cache** — thumb blob URLs persist for the whole
+  session (a ~15 000-entry LRU is only a safety cap for monster shoots), so
+  revisiting any frame is instant.
+- **Windowed full-res cache** — full-res blobs are heavy, so they're kept only
+  within `previewKeep` of the cursor and revoked outside it; memory stays flat
+  across an arbitrarily long session. Eviction is cursor-driven, so parking on
+  a frame recenters the window even when nothing new loads.
+- **Generation-based cancellation** — `reset(paths)` (folder change) keeps
+  thumbs but revokes all fulls and bumps a generation counter; `hardReset()`
+  (session end) revokes everything. In-flight reads from a superseded
+  generation can't write into the new session or leak a blob — every async
+  completion is gen-guarded, and the in-flight counters are gen-scoped so an
+  interrupted folder switch can't drive concurrency past the cap.
+- **Blob-URL lifecycle** — every `createObjectURL` has exactly one
+  `revokeObjectURL` (LRU eviction, window eviction, full-replaced-by-fresher,
+  reset, hardReset, stale-generation arrival). The views never touch blob URLs.
+
+### Why bounded, and the background fill
 
 A naïve folder-open would hit storage with ~200 simultaneous reads (one per
 visible filmstrip cell). On a fast local drive that's fine; on a NAS it
-triggers slow-path heuristics and stalls everything. The pools cap
-concurrency at numbers tuned empirically per storage mode (see settings).
+triggers slow-path heuristics and stalls everything. So the store runs one
+priority order through bounded pools: on-demand thumb and full requests
+(what's on screen) always preempt a **book-order background fill** that warms
+the rest of the shoot's thumbnails. Background fill has its own small
+concurrency knob (`backgroundFillConcurrency`, network = 2, local = 8) so it
+stays NAS-polite and never starves on-screen reads. Cursor moves and grid
+scrolling re-prioritize the queue toward the viewport; leaving the grid clears
+its range so prefetch follows the loupe cursor.
 
-### Why two pools
+### On-disk thumbnail cache
 
-Thumbnails are cheap, and the user wants them *now* for the placeholder blur.
-Preview bundles are heavy and prefetched. One shared pool would let a fat
-preview block a dozen instant thumbnails.
-
-### Priority
-
-`bundleQueue` is a slice of explicit `{ path, prio }` entries. `prio 0` is
-the on-screen image. Prefetch entries take `prio = distance` from the
-cursor, asymmetric (ahead is cheaper than behind). The pump picks the
-lowest `prio` each iteration. One extra rule: prefetch reads are held while
-any `prio 0` read is in flight, so the on-screen frame always gets storage
-to itself.
-
-`thumbQueue` picks by:
-
-- **Loupe / compare:** nearest-to-cursor first. In compare the "cursor" is
-  the challenger, not the loupe cursor.
-- **Grid:** *book order within the visible viewport*. The viewport range is
-  reported into a ref by `GridView` after every layout; `pumpThumbs` prefers
-  in-viewport cells (lowest-index first) before falling back to out-of-
-  viewport entries left over from a scroll. Without this priority, a
-  scroll-to-row-80 starves visible cells while the queue churns through
-  rows 0–10 left from the initial mount.
-
-### Eviction
-
-Memory is bounded by a sliding window around the cursor. We revoke blob URLs
-for paths outside the window so a 10k-image session doesn't grow forever.
-
-Three windows coexist:
-
-- **Image-order window** (`THUMB_KEEP` ±N of `currentIndex`). The loupe
-  filmstrip renders cells in image-index order, so this protects what's on
-  screen.
-- **Compare candidates window** (`STRIP_RADIUS` ±N around the challenger in
-  candidate-index space). The candidate strip's order isn't image order, so
-  the image-window above doesn't protect it.
-- **Grid filter-relative window** (`THUMB_KEEP_GRID` ±N of the cursor in
-  `visibleIndices`). With a sparse filter (e.g. favorites scattered across
-  a 5k-image shoot), the image-order window keeps the wrong neighbours —
-  jumping fav→fav would thrash just-loaded cells.
-
-All three apply additively when relevant. `gridVisible && compareMode` can't
-happen — sites are mutually exclusive (see "Site navigation" below).
+`src-tauri/src/thumb_cache.rs` sits behind `extract_thumbnail`: a 500 MB LRU
+on-disk cache in the OS cache dir. Each cache file stores the source mtime in
+its header, so a hit survives an app relaunch (a new `ThumbCache` over the same
+dir re-serves it) yet still misses if the source CR3 changed. This is what
+makes a close-and-reopen of a folder shimmer once and then paint instantly. The
+`clear_thumb_cache` / `thumb_cache_size` commands back the Settings "Thumbnail
+cache" control.
 
 ## Rating writes (XMP sidecars)
 
@@ -205,19 +205,16 @@ Defaults to `local`; flip to `network` for NAS / SMB / SSHFS.
 
 | | `network` | `local` (default) |
 | --- | --- | --- |
-| Bundle pool concurrency | 3 | 12 |
-| Thumb pool concurrency | 4 | 16 |
-| Prefetch ahead / behind | 10 / 5 | 20 / 10 |
-| Preview keep window (each side) | 18 | 30 |
-| Thumb keep — image space / grid space | 160 / 600 | 320 / 1200 |
-| Compare candidate prefetch (each side) | 3 | 6 |
+| Full-preview concurrency | 3 | 12 |
+| Thumbnail concurrency | 4 | 16 |
+| Background-fill concurrency | 2 | 8 |
+| Full-res keep window (each side) | 18 | 30 |
 | Hi-res zoom warm-up | 150 ms | 50 ms |
 | XMP-restore on analyze | sequential | 4-thread scoped pool |
 
-The whole profile is held in one ref (`profileRef`) so the pump functions
-and effect-level consumers see live values when the storage setting
-flips — in-flight reads finish at the old numbers; the new numbers apply
-on the next pumped pick. The backend takes the same hint as
+The whole profile is pushed into the imageStore via `setProfile` when the
+storage setting flips — in-flight reads finish at the old numbers; new reads
+use the new ones, no restart. The backend takes the same hint as
 `concurrent_restore: bool` on `analyze_folder`; defaulted to `false` so an
 older or missing frontend can't accidentally trigger parallel sidecar
 reads on a NAS.

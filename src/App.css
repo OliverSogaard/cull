@@ -615,19 +615,6 @@ body,
   overflow: hidden;
 }
 
-/* Content-clip box — exactly the image area inside the matte. overflow:hidden
-   lives HERE (not on the frame), so 1:1 zoom clips to the image and the matte
-   border stays visible, and the overlays + hi-res layer (positioned inset:0 /
-   0,0 relative to THIS box) align to the displayed photo exactly. */
-.cull-photo-clip {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  line-height: 0;
-  border-radius: 1px;
-}
-
 .cull-image {
   display: block;
   width: 100%;
@@ -688,22 +675,6 @@ body,
   z-index: 3;
 }
 
-/* loading state: full-bleed blurred thumbnail + spinner. */
-.cull-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.cull-loading__blur {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  filter: blur(14px) brightness(0.78);
-}
-
 .cull-loading__spinner {
   position: absolute;
   inset: 0;
@@ -717,8 +688,8 @@ body,
   box-shadow: 0 2px 18px rgba(0, 0, 0, 0.65);
 }
 
-/* Clipping mask overlay. Lives inside .cull-photo-clip and fills it exactly
-   (inset:0 + width/height:100% = the displayed image). CRITICAL: an absolutely
+/* Clipping mask overlay. Lives inside .cull-photo-frame, inset by the 10px
+   matte so it fills the displayed image exactly. CRITICAL: an absolutely
    positioned <img> with width:auto resolves to its INTRINSIC (working-canvas)
    size and ignores the right/bottom insets — which is why the mask used to
    render at native size, top-left-anchored, and looked shifted. Explicit
