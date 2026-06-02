@@ -34,12 +34,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bundle::read_bundle,
             bundle::extract_thumbnail,
+            bundle::extract_blurhash,
             scan::scan_folder,
             scan::analyze_folder,
             xmp::write_xmp_rating,
             xmp::clear_xmp_rating,
             file_ops::move_rejects_to_subfolder,
             file_ops::copy_keeps_to_export,
+            file_ops::path_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

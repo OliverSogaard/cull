@@ -13,6 +13,7 @@
 //! reflects shoot order — CULL relies on directory mtimes elsewhere for this.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Outcome of a batch file operation.
 #[derive(serde::Serialize, Default)]
@@ -21,8 +22,33 @@ pub(crate) struct FileOpResult {
     completed: u32,
     /// Destination already existed OR source no longer exists.
     skipped: u32,
-    /// Per-file error messages, capped at [`FILE_OP_ERROR_CAP`].
+    /// Per-file error messages, capped at [`FILE_OP_ERROR_CAP`] for IPC size.
     errors: Vec<String>,
+    /// Total errors encountered — may exceed `errors.len()`, which is capped.
+    /// The UI shows this so a capped list never reads as "only N failed".
+    error_count: u32,
+}
+
+/// Unique sequence for atomic-copy temp files (paired with the pid) so two
+/// concurrent or retried copies to the same destination never collide.
+static COPY_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Copy atomically: write to a unique temp sibling in the destination directory,
+/// then rename over the final name. A failed or interrupted copy leaves only the
+/// temp (which we remove) — never a truncated file at the destination, and never
+/// a half-file that a re-run would then skip as "already there".
+fn atomic_copy(src: &Path, dest: &Path) -> std::io::Result<()> {
+    let seq = COPY_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let tmp_name = match dest.file_name().and_then(|n| n.to_str()) {
+        Some(n) => format!(".{n}.{pid}.{seq}.culltmp"),
+        None => format!(".culltmp.{pid}.{seq}"),
+    };
+    let tmp = dest.with_file_name(tmp_name);
+    std::fs::copy(src, &tmp)?;
+    std::fs::rename(&tmp, dest).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// Cap the per-batch error list — a folder full of failures shouldn't balloon
@@ -78,20 +104,45 @@ fn batch_files(
                 let src_xmp = src.with_extension("xmp");
                 if src_xmp.exists() {
                     if let Some(xmp_name) = src_xmp.file_name() {
-                        let _ = op_one(&src_xmp, &dest_dir.join(xmp_name), &op);
+                        let dest_xmp = dest_dir.join(xmp_name);
+                        // Mirror the CR3 collision guard: never overwrite a
+                        // sidecar already present at the destination (a lone
+                        // existing .xmp could carry the user's edits).
+                        if !dest_xmp.exists() {
+                            let _ = op_one(&src_xmp, &dest_xmp, &op);
+                        }
                     }
                 }
                 result.completed += 1;
             }
             Err(e) => {
-                result.errors.push(format!("{}: {e}", src.display()));
-                if result.errors.len() >= FILE_OP_ERROR_CAP {
-                    break;
+                result.error_count += 1;
+                // Cap only the STORED messages (to bound the IPC response) — keep
+                // processing the rest of the batch so a run of early failures
+                // never silently skips the remaining keeps/rejects.
+                if result.errors.len() < FILE_OP_ERROR_CAP {
+                    result.errors.push(format!("{}: {e}", src.display()));
                 }
             }
         }
     }
     result
+}
+
+/// Cheap existence check the finish dialog uses (pinned mode) to surface the
+/// "folder already exists" warning before the user commits the copy. Backend
+/// is `Path::exists`, so this matches whatever the filesystem says — a
+/// follow-up copy that lands in an existing folder is then a *merge*, not an
+/// overwrite (`batch_files` skips destination collisions).
+///
+/// On a slow NAS we don't want every keystroke to fire a probe, so the
+/// frontend debounces calls; the backend itself is plain sync I/O.
+#[tauri::command]
+pub(crate) async fn path_exists(path: String) -> Result<bool, String> {
+    // Spawn-blocking so a slow NAS stat doesn't stall the async runtime.
+    tauri::async_runtime::spawn_blocking(move || Ok(Path::new(&path).exists()))
+        .await
+        .map_err(|e| format!("path_exists task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -123,9 +174,9 @@ pub(crate) async fn copy_keeps_to_export(
         let dest_dir = Path::new(&dest).to_path_buf();
         std::fs::create_dir_all(&dest_dir)
             .map_err(|e| format!("create {}: {e}", dest_dir.display()))?;
-        Ok(batch_files(&paths, &dest_dir, |s, d| {
-            std::fs::copy(s, d).map(|_| ())
-        }))
+        // atomic_copy (temp + rename) so a cross-device or interrupted copy can
+        // never leave a truncated file at the destination.
+        Ok(batch_files(&paths, &dest_dir, atomic_copy))
     })
     .await
     .map_err(|e| format!("copy task failed: {e}"))?
@@ -194,6 +245,51 @@ mod tests {
         assert_eq!(fs::read(dest.join("a.cr3")).unwrap(), b"DEST");
 
         let _ = fs::remove_dir_all(&work);
+    }
+
+    /// batch_files: a sidecar already present at the destination is never
+    /// overwritten, even when the CR3 itself does copy (the .xmp could hold the
+    /// user's edits). Regression for the collision-guard bypass.
+    #[test]
+    fn batch_does_not_overwrite_existing_sidecar() {
+        let work = tmp_dir("batch-no-overwrite-xmp");
+        let src = work.join("b.cr3");
+        let src_xmp = work.join("b.xmp");
+        fs::write(&src, b"cr3").unwrap();
+        fs::write(&src_xmp, b"NEW").unwrap();
+        let dest = work.join("out");
+        fs::create_dir_all(&dest).unwrap();
+        // Destination has a lone sidecar (no CR3) carrying user data.
+        fs::write(dest.join("b.xmp"), b"USER_EDITS").unwrap();
+
+        let r = batch_files(
+            &[src.to_string_lossy().to_string()],
+            &dest,
+            |s, d| fs::copy(s, d).map(|_| ()),
+        );
+        assert_eq!(r.completed, 1, "CR3 copied (no CR3 collision)");
+        // The pre-existing sidecar is preserved, not clobbered.
+        assert_eq!(fs::read(dest.join("b.xmp")).unwrap(), b"USER_EDITS");
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// path_exists: backed by Path::exists. Returns true for an existing dir
+    /// (so the finish-dialog "folder already exists" banner fires), false for
+    /// a non-existent path. Tested against the same primitive the command
+    /// uses; the Tauri wrapper just spawn-blocks it.
+    #[test]
+    fn path_exists_matches_filesystem() {
+        let work = tmp_dir("path-exists");
+        let dest = work.join("already_here");
+        // Doesn't exist yet.
+        assert!(!std::path::Path::new(&dest).exists());
+        std::fs::create_dir_all(&dest).unwrap();
+        // Now it does.
+        assert!(std::path::Path::new(&dest).exists());
+        // Non-existent sibling path still false.
+        let absent = work.join("not_yet");
+        assert!(!std::path::Path::new(&absent).exists());
+        let _ = std::fs::remove_dir_all(&work);
     }
 
     /// batch_files: error list caps so a huge failure folder can't balloon.

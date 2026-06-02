@@ -1,3 +1,23 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · design tokens
+   ──────────────────────────────────────────────────────────── */
+:root {
+  --bg: #0c0c0d;
+  --surface: #16161a;
+  --surface-2: #1d1d22;
+  --matte: #1a1a1e;
+  --border: #28282e;
+  --border-soft: rgba(40, 40, 46, 0.5);
+  --text: #ededed;
+  --text-2: #a3a3aa;
+  --muted: #6c6c74;
+  --accent: #d4af6a;
+  --accent-soft: rgba(212, 175, 106, 0.15);
+  --ok: #9ec5a4;
+  --bad: #c87f7f;
+  --fav: #d4af6a;
+}
+
 html,
 body,
 #root,
@@ -6,10 +26,13 @@ body,
   padding: 0;
   width: 100%;
   height: 100vh;
-  background: #000;
+  background: var(--bg);
   overflow: hidden;
-  color: #d4d4d8;
-  font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--text);
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  font-size: 14px;
+  font-feature-settings: "ss01", "cv11", "cv10";
+  -webkit-font-smoothing: antialiased;
   user-select: none;
 }
 
@@ -18,19 +41,97 @@ body,
   flex-direction: column;
 }
 
-/* ── status bar ───────────────────────────────────────────── */
+/* ── status bar ───────────────────────────────────────────────
+   Status bar lives at the BOTTOM of the cull views (border-top).
+   The chrome / brand row at the top is rendered separately as
+   .cull-statusbar--top — same 36px height but visually a title bar. */
 .cull-statusbar {
-  flex: 0 0 36px;
+  flex: 0 0 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* extra right padding leaves room for the fixed window controls */
-  padding: 0 148px 0 24px;
+  padding: 0 18px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  gap: 18px;
+}
+
+/* The top chrome row — brand + window controls. 36px, sits above
+   the cull view, with border-bottom (status bar is at the bottom). */
+.cull-statusbar--top {
+  flex: 0 0 36px;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 148px 0 14px;
   font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #52525b;
-  border-bottom: 1px solid #18181b;
+  letter-spacing: 0.04em;
+}
+
+/* ── save-status pill (top chrome) ────────────────────────────
+   XMP save indicator next to the brand block. Three states driven
+   purely from the existing savingCount / failedWrites state. */
+.cull-save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 16px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--muted);
+  cursor: default;
+  transition: background 200ms;
+  user-select: none;
+}
+
+.cull-save-status__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  opacity: 0.45;
+}
+
+/* idle = "saved" — keeps the base styles above */
+
+.cull-save-status--saving {
+  color: var(--accent);
+}
+
+.cull-save-status--saving .cull-save-status__dot {
+  background: var(--accent);
+  opacity: 1;
+  animation: cull-save-pulse 0.9s infinite;
+}
+
+.cull-save-status--failed {
+  color: var(--bad);
+  background: rgba(200, 127, 127, 0.12);
+  cursor: pointer;
+}
+
+.cull-save-status--failed .cull-save-status__dot {
+  background: var(--bad);
+  opacity: 1;
+}
+
+.cull-save-status--failed:hover {
+  background: rgba(200, 127, 127, 0.2);
+}
+
+.cull-save-status--failed:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+@keyframes cull-save-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
 }
 
 /* ── custom window controls (borderless window) ───────────── */
@@ -51,26 +152,23 @@ body,
   justify-content: center;
   background: transparent;
   border: none;
-  color: #71717a;
+  color: var(--text-2);
   cursor: pointer;
   transition: background 120ms ease-out, color 120ms ease-out;
 }
 
 .cull-winbtn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #e4e4e7;
+  background: var(--surface-2);
+  color: var(--text);
 }
 
-/* These are mouse-only chrome buttons; a lingering focus ring after click looks
-   like a stray white outline once the user goes back to keyboard. Suppress it
-   (we also blur() on click so focus doesn't sit on the button at all). */
 .cull-winbtn:focus,
 .cull-winbtn:focus-visible {
   outline: none;
 }
 
 .cull-winbtn--close:hover {
-  background: #ef4444;
+  background: var(--bad);
   color: #fff;
 }
 
@@ -78,59 +176,275 @@ body,
 .cull-statusbar__right {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 14px;
 }
 
 .cull-statusbar__brandblock {
   display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  font-weight: 500;
 }
 
 .cull-statusbar__brand {
-  color: #52525b;
+  color: var(--accent);
   letter-spacing: 0.18em;
 }
 
 .cull-statusbar__brand-sep {
-  color: #27272a;
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
-/* Current view name — LOUPE / COMPARE / GRID. Sits inside the brand block so
-   the user always knows what view they're in without scanning the indicators. */
+/* Current view name — LOUPE / COMPARE / GRID. */
 .cull-statusbar__brand-mode {
-  color: #d4d4d8;
-  font-size: 11px;
-  letter-spacing: 0.22em;
+  color: var(--text-2);
+  font-size: 12px;
+  letter-spacing: 0.18em;
   font-weight: 500;
 }
 
 .cull-statusbar__filename {
-  color: #d4d4d8;
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cull-statusbar__filename-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+.cull-statusbar__filename-sep {
+  color: var(--border);
+  flex-shrink: 0;
+}
+
+.cull-statusbar__filename-meta {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.cull-statusbar__spacer {
+  flex: 1 1 auto;
+}
+
+/* Verdict pill — colored 14px circle with glyph (✓ / ✕ / ★) preceding the
+   uppercase label (Keep / Reject / Fav). Mockup .status-verdict. */
+.cull-statusbar__verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* Glyph element — colored 14px circle that holds a centered Lucide SVG icon
+   (✓ / ✕ / ★). SVG is intrinsically centered, so flex centering plus the
+   icon's own viewBox lands the glyph in the visual middle of the circle —
+   no font-metric drift like the previous Unicode-glyph rendering. */
+.cull-statusbar__verdict-glyph {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.cull-statusbar__verdict--keep {
+  color: var(--ok);
+}
+
+.cull-statusbar__verdict--keep .cull-statusbar__verdict-glyph {
+  background: var(--ok);
+}
+
+.cull-statusbar__verdict--reject {
+  color: var(--bad);
+}
+
+.cull-statusbar__verdict--reject .cull-statusbar__verdict-glyph {
+  background: var(--bad);
+}
+
+.cull-statusbar__verdict--fav {
+  color: var(--fav);
+}
+
+.cull-statusbar__verdict--fav .cull-statusbar__verdict-glyph {
+  background: var(--fav);
+}
+
+/* Overlay cluster — five circular i / h / p / o / t toggle chips. Each is
+   transparent off, champagne (accent-soft bg + accent border + accent text)
+   when on. Mockup .overlay-cluster. */
+.cull-statusbar__overlay-cluster {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+  margin-left: -4px;
+  flex-shrink: 0;
+}
+
+.cull-statusbar__ov {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.cull-statusbar__ov:hover {
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.cull-statusbar__ov.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cull-statusbar__ov:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Scrubbing indicator — champagne pulse with an animated arrow prefix.
+   Surfaced while a held-arrow scrub is in flight. Mockup .scrub-indicator. */
+.cull-statusbar__scrub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cull-statusbar__scrub::before {
+  content: "⟶";
+  font-size: 11px;
+  animation: cull-scrub-flash 0.5s infinite;
+}
+
+@keyframes cull-scrub-flash {
+  0%, 100% { opacity: 1; transform: translateX(0); }
+  50% { opacity: 0.4; transform: translateX(2px); }
+}
+
+/* Position counter "N / M" — mockup .status-pos. Lives on the right cluster.
+   Tabular-numeric, with the slash + total muted, and a fixed width so the row
+   doesn't pan when the number changes from one to three digits. */
+.cull-statusbar__pos {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-block;
+  width: 12ch;
+  text-align: right;
+}
+
+.cull-statusbar__pos b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cull-statusbar__pos .of {
+  color: var(--muted);
+}
+
+/* Filter tabs — text-only pills with an active underline. Mockup .filter-tabs. */
+.cull-filter-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border-left: 1px solid var(--border);
+  padding-left: 18px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.cull-filter-tabs button {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 4px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  cursor: pointer;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  border-bottom: 1px solid transparent;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.cull-filter-tabs button:hover:not(.is-active) {
+  color: var(--text-2);
+}
+
+.cull-filter-tabs button.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.cull-filter-tabs button:focus-visible {
+  outline: none;
+  color: var(--text);
 }
 
 /* ── status-bar chips ─────────────────────────────────────────
-   One single style for every "this overlay is on" indicator in the
-   status bar. The label is the full word for what the toggle does
-   (info / peaking / thirds / clipping / sort). Zoom keeps its amber
-   variant since it's a transient mode, not a togglable overlay. */
+   Overlay indicator chips in the status bar. */
 .cull-statusbar__chip {
-  padding: 1px 7px;
-  border: 1px solid #3f3f46;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
   border-radius: 3px;
-  background: #18181b;
-  color: #d4d4d8;
-  font-family: inherit;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   white-space: nowrap;
 }
 
 .cull-statusbar__chip--zoom {
-  border-color: #f59e0b;
-  color: #fbbf24;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .cull-statusbar__chips {
@@ -140,96 +454,99 @@ body,
 }
 
 .cull-statusbar__right span.is-active {
-  color: #d4d4d8;
+  color: var(--text);
 }
 
-/* Position counter "N / M" — hard width-locked. The statusbar's right cluster
-   is right-anchored by justify-content: space-between, so any width change in
-   the counter pushes the segmented filter sideways. Use width (not min-width)
-   at the worst-case digit count (5 + " / " + 5 = 13ch) so the box never
-   shrinks or grows with content. tabular-nums keeps the digits monospaced. */
+/* Position counter "N / M" — hard width-locked, mono digits. */
 .cull-statusbar__count {
   display: inline-block;
   width: 13ch;
   text-align: right;
+  font-family: 'JetBrains Mono', monospace;
   font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* "N selected" multi-select counter chip — pinned next to the position
+   counter while the grid has a multi-selection. Champagne pill (soft accent
+   background, accent text) to match the mockup's .multi-counter. */
+.cull-statusbar__multi {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  margin-left: 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 /* ── filter segmented control ────────────────────────────────
-   The four filters (all / unrated / keeps / ★) live in a single shell
-   so they read as a related group. The active one fills with a quiet
-   panel colour and bumps its label brightness — same shape, just lit. */
+   Tab-style filter row (mockup uses border-bottom under active). */
 .cull-filterseg {
   display: inline-flex;
   align-items: stretch;
-  padding: 2px;
-  border: 1px solid #27272a;
-  border-radius: 6px;
-  background: #0a0a0a;
-  gap: 1px;
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+  gap: 0;
 }
 
 .cull-filterseg__opt {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 9px;
+  padding: 4px 12px;
   border: 0;
-  border-radius: 4px;
   background: transparent;
-  color: #52525b;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: color 0.12s ease, border-color 0.12s ease;
+  border-bottom: 1px solid transparent;
 }
 
 .cull-filterseg__opt:hover:not(.is-active) {
-  color: #a1a1aa;
+  color: var(--text-2);
 }
 
 .cull-filterseg__opt.is-active {
-  background: #1f1f23;
-  color: #f4f4f5;
-  box-shadow: inset 0 0 0 1px #2a2a2e;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 .cull-filterseg__opt:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(244, 244, 245, 0.25);
+  color: var(--text);
 }
 
 .cull-filterseg__key {
-  color: #3f3f46;
+  color: var(--border);
   font-size: 9px;
   letter-spacing: 0.1em;
 }
 
 .cull-filterseg__opt.is-active .cull-filterseg__key {
-  color: #71717a;
-}
-
-.cull-filterseg__label {
-  text-transform: lowercase;
+  color: var(--accent);
 }
 
 .cull-filterseg__count {
-  color: #3f3f46;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
 .cull-filterseg__opt.is-active .cull-filterseg__count {
-  color: #a1a1aa;
-}
-
-.cull-filterseg__opt--keep.is-active {
-  color: #34d399;
-}
-
-.cull-filterseg__opt--fav.is-active {
-  color: #fbbf24;
+  color: var(--accent);
 }
 
 /* ── stage ────────────────────────────────────────────────── */
@@ -241,6 +558,17 @@ body,
   overflow: hidden;
 }
 
+/* Loupe body: photo stage and (optional) EXIF rail are siblings in a row.
+   The rail is a 290px column on the right; the stage shrinks accordingly when
+   info is on. Mockup .loupe-body. */
+.cull-loupe-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  min-width: 0;
+}
+
 .cull-image-area {
   flex: 1 1 auto;
   position: relative;
@@ -248,21 +576,119 @@ body,
   align-items: center;
   justify-content: center;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
-  padding: 16px 24px 24px;
+  padding: 48px 56px;
+  background: var(--bg);
+}
+
+/* Photo matte frame — paper-style padding around the image. The matte sizes
+   to the loaded photo's natural aspect ratio via the `--photo-ar` custom
+   property (set from JS in App.tsx using naturalWidth/naturalHeight). With
+   the matte matching the image, `object-fit: contain` on .cull-image becomes
+   a no-op and the overlays (clipping/peaking/thirds, inset 14px) cover the
+   actual image area exactly. Fallback 3/2 used until the image loads. */
+.cull-photo-frame {
+  position: relative;
+  padding: 10px;
+  background: var(--matte);
+  border-radius: 2px;
+  box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6);
+  /* content-box so aspect-ratio sizes the CONTENT box (where the image lives),
+     not the padded border box. Then content-box AR == image AR, object-fit:contain
+     is a true no-op, and the overlays (inset 14px) cover the image exactly — the
+     border-box version letterboxed the image inside the content box, so overlays
+     overhung it. max-* subtract the 28px total padding so the padded frame still
+     fits the stage. */
+  box-sizing: content-box;
+  aspect-ratio: var(--photo-ar, 3 / 2);
+  max-width: calc(100% - 20px);
+  max-height: calc(100% - 20px);
+  /* Center inside the stage when the stage is bigger than the matte. */
+  margin: auto;
+  /* Pin to the larger of width-fit or height-fit (whichever yields the
+     stage-bound size at our aspect ratio). max-width / max-height clamp this. */
+  width: auto;
+  height: auto;
+  flex: 0 0 auto;
+  line-height: 0;
+  overflow: hidden;
+}
+
+/* Content-clip box — exactly the image area inside the matte. overflow:hidden
+   lives HERE (not on the frame), so 1:1 zoom clips to the image and the matte
+   border stays visible, and the overlays + hi-res layer (positioned inset:0 /
+   0,0 relative to THIS box) align to the displayed photo exactly. */
+.cull-photo-clip {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  line-height: 0;
+  border-radius: 1px;
 }
 
 .cull-image {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
   display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* NEVER clip — portrait images show side matte */
+  border-radius: 1px;
+  background-color: var(--matte);
 }
 
-/* loading state: a full-bleed, heavily-blurred thumbnail (blurhash look) behind a
-   centered spinner. Fills the stage; sharpens to the real image on arrival. */
+/* Verdict flash — momentary colored wash over the photo (inside the matte
+   padding) when a rating fires. The pseudo-element re-creates itself each
+   time the class flips because the animation runs once and the state
+   self-clears via Feedback's timer. */
+.cull-photo-frame--flash-keep::after,
+.cull-photo-frame--flash-reject::after,
+.cull-photo-frame--flash-fav::after {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border-radius: 1px;
+  z-index: 5;
+  pointer-events: none;
+  animation: cull-flash-pulse 380ms ease-out forwards;
+}
+
+.cull-photo-frame--flash-keep::after {
+  background: rgba(158, 197, 164, 0.45);
+  box-shadow: inset 0 0 0 3px rgba(158, 197, 164, 0.7);
+}
+
+.cull-photo-frame--flash-reject::after {
+  background: rgba(200, 127, 127, 0.45);
+  box-shadow: inset 0 0 0 3px rgba(200, 127, 127, 0.7);
+}
+
+.cull-photo-frame--flash-fav::after {
+  background: rgba(212, 175, 106, 0.45);
+  box-shadow: inset 0 0 0 3px rgba(212, 175, 106, 0.7);
+}
+
+@keyframes cull-flash-pulse {
+  0% { opacity: 0; }
+  25% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Spinner-only overlay rendered INSIDE the photo-frame while the full-res
+   preview is still loading and the inner <img> is showing the thumbnail
+   fallback. Pinned absolutely to the matte's content area so it sits over
+   the image, not the matte border. */
+.cull-photo-frame__spinner-wrap {
+  position: absolute;
+  inset: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* loading state: full-bleed blurred thumbnail + spinner. */
 .cull-loading {
   position: absolute;
   inset: 0;
@@ -271,10 +697,6 @@ body,
   justify-content: center;
 }
 
-/* Blurred thumbnail scaled UP to fill the stage and letterboxed to the rect the
-   real image will occupy (object-fit: contain). The thumb is small intrinsically,
-   so we force the element box to fill the container and let object-fit do the
-   letterboxing — otherwise max-width/height would leave it at native (tiny) size. */
 .cull-loading__blur {
   width: 100%;
   height: 100%;
@@ -282,47 +704,70 @@ body,
   filter: blur(14px) brightness(0.78);
 }
 
-/* Centered via auto margins on an inset:0 box so the cull-spin rotate() owns the
-   transform — a translate(-50%,-50%) centering transform gets overwritten each
-   animation frame, which is what made the spinner "orbit" instead of spin. */
 .cull-loading__spinner {
   position: absolute;
   inset: 0;
   margin: auto;
   width: 42px;
   height: 42px;
-  border: 3px solid rgba(255, 255, 255, 0.25);
-  border-top-color: #fafafa;
+  border: 3px solid var(--surface-2);
+  border-top-color: var(--accent);
   border-radius: 9999px;
   animation: cull-spin 700ms linear infinite;
   box-shadow: 0 2px 18px rgba(0, 0, 0, 0.65);
 }
 
-/* clipping mask overlay (Phase C) — sized/positioned to the measured image rect */
+/* Clipping mask overlay. Lives inside .cull-photo-clip and fills it exactly
+   (inset:0 + width/height:100% = the displayed image). CRITICAL: an absolutely
+   positioned <img> with width:auto resolves to its INTRINSIC (working-canvas)
+   size and ignores the right/bottom insets — which is why the mask used to
+   render at native size, top-left-anchored, and looked shifted. Explicit
+   100%/100% + object-fit:fill (the img default) stretches the mask onto the
+   image. `!important` position keeps it out of flow regardless. */
 .cull-clip-overlay {
-  position: absolute;
+  position: absolute !important;
+  /* Frame-relative content box (the image area), inset by the 10px matte.
+     Explicit width/height — NOT auto: an absolutely-positioned replaced <img>
+     with width:auto renders at its intrinsic (working-canvas) size and ignores
+     the right/bottom insets, which was the overlay-misalignment bug. Explicit
+     content-box size + object-fit:fill (the img default) stretches the mask
+     exactly onto the displayed image. */
+  left: 10px;
+  top: 10px;
+  width: calc(100% - 20px);
+  height: calc(100% - 20px);
   pointer-events: none;
   image-rendering: pixelated;
+  z-index: 4;
 }
 
-/* focus peaking overlay — same geometry as the clip overlay; yellow stipple on
-   high-contrast edges (in-focus regions). Computed from the JPEG, cached per path. */
+/* Focus peaking overlay — same sizing as clipping. Layered above the
+   clipping mask so peaking lines remain visible over a clipping pattern. */
 .cull-peaking-overlay {
-  position: absolute;
+  position: absolute !important;
+  left: 10px;
+  top: 10px;
+  width: calc(100% - 20px);
+  height: calc(100% - 20px);
   pointer-events: none;
   image-rendering: pixelated;
+  z-index: 5;
 }
 
-/* Composition rule-of-thirds grid (O). Stretched to the image rect via SVG with
-   non-uniform scaling, so the 33/67 % lines land exactly on the photo. */
+/* Composition rule-of-thirds grid (O). Fills the clip box. */
 .cull-composition-overlay {
-  position: absolute;
+  position: absolute !important;
+  left: 10px;
+  top: 10px;
+  width: calc(100% - 20px);
+  height: calc(100% - 20px);
   pointer-events: none;
+  z-index: 6;
 }
 
 .cull-composition-overlay line {
-  stroke: rgba(255, 255, 255, 0.95);
-  stroke-width: 1.2;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1;
   filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.85));
   vector-effect: non-scaling-stroke;
 }
@@ -330,206 +775,402 @@ body,
 
 .cull-statusbar__finish {
   appearance: none;
-  background: #1c1917;
-  border: 1px solid #f59e0b;
-  border-radius: 4px;
-  color: #fbbf24;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  color: var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  padding: 2px 10px;
-  margin: 0 4px;
+  padding: 5px 14px;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
 
 .cull-statusbar__finish:hover {
-  background: #f59e0b;
-  color: #0a0a0a;
+  background: var(--accent);
+  color: #1a1408;
 }
 
 .cull-statusbar__finish:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.45);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 /* ── buttons ──────────────────────────────────────────────── */
 .cull-pick-button {
   background: transparent;
-  color: #d4d4d8;
-  border: 1px solid #3f3f46;
-  padding: 14px 32px;
-  font-family: inherit;
-  font-size: 12px;
-  letter-spacing: 0.25em;
-  text-transform: uppercase;
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 12px 24px;
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.05em;
   cursor: pointer;
-  transition: border-color 120ms ease-out, color 120ms ease-out;
+  border-radius: 3px;
+  transition: border-color 120ms ease-out, color 120ms ease-out, background 120ms ease-out;
 }
 
 .cull-pick-button:hover:not(:disabled) {
-  border-color: #d4d4d8;
-  color: #ffffff;
+  border-color: var(--text-2);
+  color: var(--text);
+  background: var(--surface-2);
 }
 
-/* Disabled state: muted, no hover affordance — the click would just bounce. */
 .cull-pick-button:disabled {
   cursor: default;
-  color: #52525b;
-  border-color: #27272a;
+  color: var(--muted);
+  border-color: var(--border-soft);
   background: transparent;
 }
 
 .cull-pick-button--ghost {
-  border-color: #27272a;
-  color: #a1a1aa;
+  border-color: var(--border-soft);
+  color: var(--text-2);
 }
 
 .cull-pick-button--primary {
-  border-color: #d4d4d8;
-  color: #fafafa;
+  background: var(--accent);
+  color: #1a1408;
+  border-color: var(--accent);
+  font-weight: 500;
 }
 
 .cull-pick-button--primary:hover:not(:disabled) {
-  background: #fafafa;
-  color: #000;
+  background: #e8c182;
+  border-color: #e8c182;
+  color: #1a1408;
 }
 
 /* ── chrome phases: start / loading / staged ──────────────── */
 .cull-app--chrome {
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-start;
 }
 
 .cull-chrome {
   flex: 1 1 auto;
-  align-self: stretch; /* fill the window so the whole top is a drag region */
+  align-self: stretch;
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 20px;
-  text-align: center;
-  background: radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.045), transparent 62%);
+  padding: 80px 60px;
+}
+
+/* While a folder is being dragged over the window, dim the chrome content
+   behind the dashed champagne drop indicator. */
+.cull-chrome.is-drag-over > :not(.cull-drag-indicator) {
+  opacity: 0.35;
+  transition: opacity 200ms ease-out;
+}
+
+/* Champagne dashed overlay matching the mockup's .drag-indicator. Pointer
+   events disabled so the drop still lands on the underlying window. */
+.cull-drag-indicator {
+  position: absolute;
+  inset: 20px;
+  background: rgba(212, 175, 106, 0.07);
+  border: 2px dashed var(--accent);
+  border-radius: 6px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  pointer-events: none;
+}
+
+.cull-drag-indicator__arrow {
+  font-size: 36px;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.cull-drag-indicator__text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 
 /* ── landing hero (start screen) ──────────────────────────── */
 .cull-hero {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 16px;
+  align-items: flex-start;
+  text-align: left;
+  max-width: 620px;
+  width: 100%;
   animation: cull-hero-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* culling motif: a kept frame (green check) beside a tossed one (red ✗) */
-.cull-hero__cards {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  margin-bottom: 10px;
-}
-
-.cull-hero__card {
-  width: 104px;
-  height: 70px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #202026, #2c2c33 55%, #161619);
-  border: 1px solid #3f3f46;
-}
-
-.cull-hero__card--keep {
-  border-color: rgba(16, 185, 129, 0.55);
-  box-shadow: 0 0 30px rgba(16, 185, 129, 0.16);
-}
-
-.cull-hero__card--reject {
-  transform: rotate(7deg);
-  opacity: 0.5;
-  filter: grayscale(0.6);
-  border-color: rgba(239, 68, 68, 0.4);
+.cull-hero__eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 16px;
 }
 
 .cull-hero__title {
-  font-size: 86px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  line-height: 1;
-  margin: 0;
-  padding-left: 0.2em; /* optically center the tracked text */
-  color: #fafafa;
-  text-shadow: 0 0 70px rgba(255, 255, 255, 0.14);
+  font-size: 56px;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  font-weight: 500;
+  margin: 0 0 20px;
+  color: var(--text);
+  text-align: left;
+  text-shadow: none;
+  padding: 0;
 }
 
-.cull-hero__tagline {
+.cull-hero__title em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.cull-hero__sub {
+  font-size: 17px;
+  color: var(--text-2);
+  line-height: 1.55;
+  margin: 0 0 44px;
+  max-width: 500px;
+}
+
+.cull-hero__cta-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 0;
+}
+
+.cull-hero__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  background: var(--accent);
+  color: #1a1408;
+  border: none;
+  border-radius: 4px;
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 200ms;
+}
+
+.cull-hero__cta:hover:not(:disabled) {
+  background: #e8c182;
+}
+
+.cull-hero__cta:disabled {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+.cull-hero__cta-key {
+  font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
-  letter-spacing: 0.34em;
-  text-transform: uppercase;
-  color: #71717a;
+  padding: 2px 7px;
+  background: rgba(26, 20, 8, 0.18);
+  border-radius: 2px;
+  letter-spacing: 0.05em;
 }
 
-/* last-session recap, shown on the home screen after finishing a cull */
+.cull-hero__drop-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+/* Last-session recap on the home screen after finishing a cull */
 .cull-hero__summary {
-  margin-top: 18px;
+  margin-top: 36px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 12px 20px;
-  border: 1px solid #27272a;
-  background: rgba(255, 255, 255, 0.02);
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 4px;
+  width: 100%;
+  max-width: 500px;
+  box-sizing: border-box;
 }
 
 .cull-hero__summary-label {
+  font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: #52525b;
+  color: var(--muted);
 }
 
 .cull-hero__summary-stats {
   display: flex;
   align-items: center;
   gap: 16px;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
-  letter-spacing: 0.05em;
-  color: #a1a1aa;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
 }
 
 .cull-hero__summary-pct {
-  color: #d4d4d8;
+  color: var(--text);
 }
 
 .cull-hero__summary-stats .cull-count--keep {
-  color: #34d399;
+  color: var(--ok);
 }
 
 .cull-hero__summary-stats .cull-count--fav {
-  color: #fbbf24;
-}
-
-.cull-hero__cta {
-  margin-top: 12px;
-  padding: 16px 44px;
-  font-size: 13px;
+  color: var(--fav);
 }
 
 .cull-hero__how {
-  margin-top: 18px;
-  max-width: 440px;
+  margin-top: 70px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  gap: 28px;
+  font-family: 'Inter', sans-serif;
   font-size: 12px;
-  line-height: 1.65;
-  color: #8a8a93;
+  color: var(--muted);
+  max-width: 500px;
 }
 
-/* Floating gear in the top-left of the chrome screens (home / loading /
-   staged). Stays out of the way of the title-bar drag region but is always
-   one click away. Mirror of WindowControls on the right edge. */
+/* ── home recents list ──────────────────────────────────────
+   Mockup's .home-recent: sits below the CTA row, has a small
+   uppercase "Recent" label with a divider, then up to RECENTS_CAP
+   rows of path + count + relative time. */
+.cull-recent {
+  margin-top: 68px;
+  width: 100%;
+  max-width: 620px;
+  align-self: stretch;
+}
+
+.cull-recent__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cull-recent__items {
+  display: flex;
+  flex-direction: column;
+}
+
+.cull-recent__item {
+  display: grid;
+  grid-template-columns: 1fr 110px 100px;
+  gap: 20px;
+  align-items: baseline;
+  padding: 13px 0;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-soft);
+  transition: color 150ms ease;
+  outline: none;
+}
+
+.cull-recent__item:last-child {
+  border-bottom: none;
+}
+
+.cull-recent__item:hover .cull-recent__path,
+.cull-recent__item:focus-visible .cull-recent__path {
+  color: var(--accent);
+}
+
+.cull-recent__path {
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: color 150ms ease;
+  min-width: 0;
+}
+
+.cull-recent__count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cull-recent__count b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cull-recent__of {
+  color: var(--muted);
+}
+
+.cull-recent__done {
+  color: var(--ok);
+  margin-left: 2px;
+}
+
+.cull-recent__time {
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cull-recent__empty {
+  padding: 22px 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.cull-recent__kbd {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: var(--surface);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-2);
+  margin: 0 2px;
+}
+
+.cull-hero__how-key {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  background: var(--surface);
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-right: 8px;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+
+/* Floating gear in the top-left of the chrome screens. */
 .cull-settings-fab {
   position: fixed;
   top: 0;
@@ -542,25 +1183,23 @@ body,
   justify-content: center;
   background: transparent;
   border: 0;
-  color: #52525b;
+  color: var(--muted);
   cursor: pointer;
   transition: color 0.12s ease, background 0.12s ease;
 }
 
 .cull-settings-fab:hover {
-  color: #fafafa;
-  background: #18181b;
+  color: var(--text);
+  background: var(--surface-2);
 }
 
 .cull-settings-fab:focus-visible {
   outline: none;
-  color: #fafafa;
-  background: #18181b;
+  color: var(--text);
+  background: var(--surface-2);
 }
 
-/* Status-bar gear (cull view). Tucked between the finish chip and the right
-   window controls — same visual weight as the finish chip when present, but
-   small and quiet when absent. */
+/* Status-bar gear */
 .cull-statusbar__gear {
   display: inline-flex;
   align-items: center;
@@ -571,20 +1210,20 @@ body,
   background: transparent;
   border: 0;
   border-radius: 4px;
-  color: #52525b;
+  color: var(--muted);
   cursor: pointer;
   transition: color 0.12s ease, background 0.12s ease;
 }
 
 .cull-statusbar__gear:hover {
-  color: #fafafa;
-  background: #18181b;
+  color: var(--text);
+  background: var(--surface-2);
 }
 
 .cull-statusbar__gear:focus-visible {
   outline: none;
-  color: #fafafa;
-  background: #18181b;
+  color: var(--text);
+  background: var(--surface-2);
 }
 
 @keyframes cull-hero-in {
@@ -603,30 +1242,31 @@ body,
 }
 
 .cull-chrome__status {
-  font-size: 12px;
-  letter-spacing: 0.2em;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #a1a1aa;
+  color: var(--accent);
 }
 
 .cull-chrome__folder {
-  color: #d4d4d8;
+  color: var(--text);
   text-transform: none;
   letter-spacing: 0.02em;
 }
 
 .cull-chrome__sub {
-  font-size: 10px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: #52525b;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
 }
 
 .cull-spinner {
-  width: 32px;
-  height: 32px;
-  border: 2px solid #27272a;
-  border-top-color: #a1a1aa;
+  width: 36px;
+  height: 36px;
+  border: 2px solid var(--surface-2);
+  border-top-color: var(--accent);
   border-radius: 9999px;
   animation: cull-spin 700ms linear infinite;
 }
@@ -641,24 +1281,23 @@ body,
   width: 420px;
   max-width: 60vw;
   height: 4px;
-  background: #27272a;
-  border-radius: 9999px;
+  background: var(--surface-2);
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .cull-progress__fill {
   height: 100%;
-  background: #d4d4d8;
-  border-radius: 9999px;
+  background: var(--accent);
+  border-radius: 2px;
   transition: width 150ms ease-out;
 }
 
-/* indeterminate shimmer before the first per-file progress event lands */
 .cull-progress__indeterminate {
   height: 100%;
   width: 35%;
-  background: #d4d4d8;
-  border-radius: 9999px;
+  background: var(--accent);
+  border-radius: 2px;
   animation: cull-indeterminate 1s ease-in-out infinite;
 }
 
@@ -674,18 +1313,20 @@ body,
 .cull-staged__check {
   font-size: 40px;
   line-height: 1;
-  color: #10b981;
+  color: var(--ok);
 }
 
 .cull-staged__count {
+  font-family: 'JetBrains Mono', monospace;
   font-size: 22px;
-  letter-spacing: 0.1em;
-  color: #fafafa;
+  letter-spacing: 0.04em;
+  color: var(--text);
 }
 
 .cull-staged__folder {
+  font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
-  color: #71717a;
+  color: var(--muted);
   margin-bottom: 8px;
 }
 
@@ -696,175 +1337,384 @@ body,
 }
 
 .cull-statusbar__saving {
-  color: #71717a;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
 }
 
 .cull-statusbar__unsaved {
-  color: #ef4444;
-  font-weight: 600;
+  color: var(--bad);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
   cursor: pointer;
+  letter-spacing: 0.06em;
 }
 
 .cull-statusbar__unsaved:hover {
-  color: #f87171;
+  color: #d49090;
   text-decoration: underline;
 }
 
-/* ── quit guard (close blocked while ratings are saving/failed) ── */
+/* ── quit guard / overlay base ─────────────────────────────── */
 .cull-quitguard {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.82);
+  background: rgba(8, 8, 10, 0.7);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 40px;
 }
 
 .cull-quitguard__box {
   max-width: 480px;
-  padding: 28px 32px;
-  background: #0a0a0a;
-  border: 1px solid #27272a;
-  text-align: center;
+  width: 100%;
+  padding: 26px 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-align: left;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
 }
 
 .cull-quitguard__title {
-  font-size: 13px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #d4d4d8;
+  font-size: 16px;
+  letter-spacing: -0.005em;
+  font-weight: 500;
+  color: var(--text);
   margin-bottom: 12px;
 }
 
 .cull-quitguard__title--warn {
-  color: #ef4444;
+  color: var(--bad);
 }
 
 .cull-quitguard__body {
-  font-size: 12px;
-  line-height: 1.65;
-  color: #a1a1aa;
-  margin-bottom: 24px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-2);
+  margin-bottom: 22px;
 }
 
 .cull-quitguard__actions {
   display: flex;
-  gap: 12px;
-  justify-content: center;
+  gap: 10px;
+  justify-content: flex-end;
   flex-wrap: wrap;
 }
 
 .cull-quitguard__hint {
   margin-top: 16px;
-  font-size: 11px;
-  letter-spacing: 0.18em;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #52525b;
+  color: var(--muted);
 }
 
-/* ── settings dialog ──────────────────────────────────────────
-   Shares the modal chrome with the quit-guard / actions dialogs (full-bleed
-   backdrop + centered card), but the body lays out as stacked rows. Help
-   text under each row has a FIXED min-height so toggling the active value
-   doesn't shift content below — crucial when the body grows past one row. */
+/* ── settings dialog ──────────────────────────────────────── */
+.cull-settings-overlay {
+  /* The overlay is just the dimmed background — the dialog itself owns its
+     own surface + border. Keep .cull-quitguard's blur and dimming. */
+}
+
 .cull-settings {
-  width: 560px;
-  max-width: 90vw;
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 100%;
+  max-width: 540px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
 }
 
+.cull-settings__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 22px 26px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+.cull-settings__head-title {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.005em;
+}
+
+.cull-settings__head-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cull-settings__body {
+  padding: 8px 26px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  scrollbar-width: thin;
+  max-height: 60vh;
+}
+
+.cull-settings__foot {
+  padding: 14px 26px;
+  border-top: 1px solid var(--border-soft);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.cull-settings__foot kbd {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 2px;
+  color: var(--text-2);
+  font-family: inherit;
+  margin: 0 4px;
+}
+
+/* Invisible click-shim — keeps backdrop click within the dialog only;
+   for now this is a no-op so clicks on body don't dismiss. */
+.cull-settings__close-shim {
+  display: none;
+}
+
+/* Legacy class names kept so other call sites don't break — title-meta is
+   referenced by FinishDialog. */
 .cull-settings__title {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 6px;
-  color: #d4d4d8;
-  font-size: 13px;
-  letter-spacing: 0.28em;
+  padding: 22px 26px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+.cull-settings__title-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+  color: var(--muted);
 }
 
 .cull-settings__row {
-  padding: 18px 0;
-  border-top: 1px solid #18181b;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: center;
+  padding: 0;
   text-align: left;
 }
 
-.cull-settings__row:first-of-type {
-  border-top: 0;
+.cull-settings__row-text {
+  min-width: 0;
 }
 
 .cull-settings__row-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto;
   gap: 24px;
+  align-items: center;
 }
 
 .cull-settings__row-name {
-  color: #d4d4d8;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: lowercase;
+  color: var(--text);
+  font-size: 13.5px;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
-/* Fixed min-height so toggling the segmented control doesn't reflow rows
-   below. Two-line cap is ~36 px at this font; we pad a bit for safety. */
 .cull-settings__row-help {
-  margin-top: 10px;
-  min-height: 44px;
-  color: #8a8a93;
-  font-size: 12px;
-  line-height: 1.55;
-  letter-spacing: 0.02em;
+  margin-top: 2px;
+  min-height: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  letter-spacing: 0;
   text-transform: none;
+  max-width: 280px;
 }
 
 .cull-settings__row-control {
   flex: 0 0 auto;
 }
 
+/* Chip — on/off pill for default overlay set. */
+.cull-settings__chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.cull-settings__chip {
+  appearance: none;
+  padding: 5px 9px;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.cull-settings__chip:hover:not(.is-on) {
+  color: var(--text);
+  border-color: var(--text-2);
+}
+
+.cull-settings__chip.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.cull-settings__chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Knob-style toggle (mockup .toggle). */
+.cull-settings__toggle {
+  width: 36px;
+  height: 20px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background 150ms;
+  padding: 0;
+  appearance: none;
+}
+
+.cull-settings__toggle::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 150ms, background 150ms;
+}
+
+.cull-settings__toggle.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.cull-settings__toggle.is-on::after {
+  transform: translateX(16px);
+  background: var(--accent);
+}
+
+.cull-settings__toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Pinned-root config row — indented under the Copy keeps segment with a
+   champagne left border, matching the mockup .pinned-config. */
+.cull-settings__pinned-config {
+  position: relative;
+  padding-left: 14px;
+  border-left: 2px solid var(--accent-soft);
+}
+
+.cull-settings__pinned-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.cull-settings__pinned-path {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 5px 10px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cull-settings__seg {
   display: inline-flex;
-  padding: 3px;
-  border: 1px solid #27272a;
-  border-radius: 8px;
-  background: #0a0a0a;
-  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px;
+  gap: 0;
 }
 
 .cull-settings__seg-opt {
   appearance: none;
-  padding: 7px 16px;
+  padding: 5px 12px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 2px;
   background: transparent;
-  color: #71717a;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: lowercase;
+  color: var(--text-2);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
   white-space: nowrap;
 }
 
 .cull-settings__seg-opt:hover:not(.is-active) {
-  color: #d4d4d8;
+  color: var(--text);
 }
 
 .cull-settings__seg-opt.is-active {
-  background: #1f1f23;
-  color: #fafafa;
-  box-shadow: inset 0 0 0 1px #2a2a2e;
+  background: var(--accent);
+  color: #1a1408;
+  font-weight: 500;
 }
 
 .cull-settings__seg-opt:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(244, 244, 245, 0.25);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .cull-settings__seg.is-disabled,
@@ -873,70 +1723,87 @@ body,
 }
 
 .cull-settings__seg.is-disabled .cull-settings__seg-opt {
-  color: #52525b;
-}
-
-/* Scrollable inner body — the dialog can get tall with many settings. The
-   modal frame (title / actions / hint) stays fixed; only the rows scroll. */
-.cull-settings__scroll {
-  max-height: 60vh;
-  overflow-y: auto;
-  margin: 4px -6px 0;
-  padding: 0 6px;
-  scrollbar-width: thin;
+  color: var(--muted);
 }
 
 .cull-settings__section {
-  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 18px;
+}
+
+.cull-settings__section:first-of-type {
+  padding-top: 8px;
 }
 
 .cull-settings__section + .cull-settings__section {
-  margin-top: 6px;
+  margin-top: 0;
 }
 
 .cull-settings__section-title {
-  color: #71717a;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent);
   font-size: 10px;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   text-align: left;
-  padding: 14px 0 0;
-  border-top: 1px solid #18181b;
+  padding: 0;
+  border-top: 0;
 }
 
 .cull-settings__section:first-of-type .cull-settings__section-title {
-  border-top: 0;
-  padding-top: 4px;
+  padding-top: 0;
 }
 
-/* Row variant inside a section: no top border (the section owns the divider).
-   Keeps the visual rhythm of label + control + help intact. */
 .cull-settings__section .cull-settings__row {
   border-top: 0;
-  padding: 12px 0;
+  padding: 0;
 }
 
-/* ── Inline text input for things like "rejected subfolder" ──────────── */
+/* Text input */
 .cull-settings__text {
   appearance: none;
-  background: #0a0a0a;
-  border: 1px solid #27272a;
-  border-radius: 6px;
-  padding: 7px 10px;
-  color: #fafafa;
-  font: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   width: 200px;
   outline: none;
-  transition: border-color 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 
 .cull-settings__text:focus {
-  border-color: #52525b;
+  border-color: var(--accent);
 }
 
-/* ── On/off check chips for grouping booleans in one row ────────────── */
+/* Silent failsafe states for free-text inputs: red border while empty,
+   champagne flash when blur restores the default value. */
+.cull-settings__text.is-invalid {
+  border-color: var(--bad);
+  background: rgba(200, 127, 127, 0.06);
+}
+
+.cull-settings__text.is-flash {
+  animation: cull-flash-restore 0.9s ease-out;
+}
+
+@keyframes cull-flash-restore {
+  0% {
+    background: rgba(212, 175, 106, 0.25);
+    border-color: var(--accent);
+  }
+  100% {
+    background: var(--bg);
+    border-color: var(--border);
+  }
+}
+
+/* Chips */
 .cull-settings__checks {
   display: inline-flex;
   gap: 6px;
@@ -947,35 +1814,35 @@ body,
 .cull-settings__check {
   appearance: none;
   padding: 5px 11px;
-  border: 1px solid #27272a;
-  border-radius: 5px;
-  background: #0a0a0a;
-  color: #71717a;
-  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-family: 'Inter', sans-serif;
   font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: lowercase;
+  letter-spacing: 0;
+  text-transform: none;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
 .cull-settings__check:hover:not(.is-active) {
-  color: #d4d4d8;
-  border-color: #3f3f46;
+  color: var(--text);
+  border-color: var(--text-2);
 }
 
 .cull-settings__check.is-active {
-  background: #1f1f23;
-  color: #fafafa;
-  border-color: #3f3f46;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .cull-settings__check:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(244, 244, 245, 0.25);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-/* ── Export-folder control (toggle + pinned path + browse) ──────────── */
+/* Export-folder control */
 .cull-settings__export {
   display: flex;
   flex-direction: column;
@@ -990,14 +1857,14 @@ body,
 }
 
 .cull-settings__path {
-  font-family: inherit;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
-  color: #a1a1aa;
-  background: #0a0a0a;
-  border: 1px solid #27272a;
-  border-radius: 4px;
-  padding: 4px 8px;
-  max-width: 260px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 5px 10px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1006,217 +1873,556 @@ body,
 .cull-settings__browse {
   appearance: none;
   background: transparent;
-  border: 1px solid #3f3f46;
-  border-radius: 4px;
-  padding: 4px 10px;
-  color: #d4d4d8;
-  font: inherit;
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 5px 12px;
+  color: var(--text-2);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
 
 .cull-settings__browse:hover {
-  background: #1f1f23;
-  color: #fafafa;
+  background: var(--surface-2);
+  color: var(--text);
 }
 
-/* ── Reset button (two-click confirm) ──────────────────────────────── */
+/* Reset button */
 .cull-settings__reset {
   appearance: none;
   background: transparent;
-  border: 1px solid #3f3f46;
-  border-radius: 4px;
-  padding: 6px 14px;
-  color: #d4d4d8;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: lowercase;
+  border: 1px solid var(--bad);
+  border-radius: 3px;
+  padding: 7px 16px;
+  color: var(--bad);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
   white-space: nowrap;
 }
 
 .cull-settings__reset:hover {
-  border-color: #d4d4d8;
-  color: #fafafa;
+  background: rgba(200, 127, 127, 0.1);
 }
 
 .cull-settings__reset.is-armed {
-  border-color: #ef4444;
-  color: #fca5a5;
+  background: var(--bad);
+  color: #fff;
+  border-color: var(--bad);
 }
 
 .cull-settings__reset.is-armed:hover {
-  background: #ef4444;
-  color: #0a0a0a;
+  background: #d49090;
 }
 
-/* Small keycap visual for the hint at the bottom of the dialog. */
+/* Inline two-step reset confirm: "Sure?" + Yes, reset / Cancel */
+.cull-settings__reset-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.cull-settings__reset-msg {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--bad);
+  letter-spacing: 0.04em;
+  margin-right: 2px;
+}
+
+.cull-settings__reset-confirm .cull-pick-button {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Small keycap visual. */
 .cull-quitguard__hint kbd {
   display: inline-block;
-  padding: 1px 5px;
-  margin: 0 1px;
-  border: 1px solid #3f3f46;
-  border-radius: 3px;
-  background: #18181b;
-  color: #d4d4d8;
-  font: inherit;
+  padding: 2px 6px;
+  margin: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: inherit;
   font-size: 10px;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   text-transform: none;
 }
 
-/* Act-on-cull dialog (Ctrl+E) — finish actions: move rejects, copy keeps */
+/* ── finish (act-on-cull) dialog ──────────────────────────── */
 .cull-actions {
-  max-width: 600px;
+  max-width: 520px;
+  padding: 0;
+}
+
+/* Two-stat summary grid (keeps + rejects) */
+.cull-actions__summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  margin-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cull-actions__stat {
+  padding: 16px 20px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cull-actions__stat-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cull-actions__stat-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.cull-actions__stat-value.is-keep {
+  color: var(--ok);
+}
+
+.cull-actions__stat-value.is-reject {
+  color: var(--bad);
+}
+
+.cull-actions__stat-value.is-zero {
+  color: var(--muted);
+}
+
+.cull-actions__stat-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--fav);
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .cull-actions__keep {
-  color: #34d399;
+  color: var(--ok);
 }
 
 .cull-actions__fav {
-  color: #fbbf24;
+  color: var(--fav);
+}
+
+/* Unrated banner — champagne left-border note */
+.cull-actions__unrated {
+  margin: 14px 26px 0;
+  padding: 10px 14px;
+  background: rgba(212, 175, 106, 0.07);
+  border-left: 3px solid var(--accent);
+  border-radius: 2px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  line-height: 1.45;
+}
+
+.cull-actions__unrated-icon {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.cull-actions__rows {
+  padding: 22px 26px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
 }
 
 .cull-actions__row {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  margin: 10px 0;
+  gap: 8px;
+  margin: 0;
 }
 
-.cull-actions__result {
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #71717a;
-  text-align: center;
+.cull-actions__row-label {
+  font-size: 13.5px;
+  color: var(--text);
 }
 
-.cull-actions__result--err {
-  color: #f87171;
-}
-
-.cull-actions__pending {
-  margin: 12px 0 4px;
-  padding: 8px 12px;
-  border: 1px solid #3f3f46;
-  border-radius: 6px;
-  background: #18181b;
-  color: #a1a1aa;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  text-align: center;
+.cull-actions__row-help {
+  font-size: 11.5px;
+  color: var(--muted);
   line-height: 1.5;
 }
 
+.cull-actions__result {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.cull-actions__result--err {
+  color: var(--bad);
+}
+
+.cull-actions__pending {
+  margin: 14px 26px 0;
+  padding: 10px 14px;
+  background: rgba(212, 175, 106, 0.07);
+  border-left: 3px solid var(--accent);
+  border-radius: 2px;
+  color: var(--text-2);
+  font-size: 11.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  line-height: 1.45;
+}
+
 .cull-actions__pending--err {
-  border-color: #7f1d1d;
-  background: #1a0e0e;
-  color: #f87171;
+  background: rgba(200, 127, 127, 0.08);
+  border-left-color: var(--bad);
+  color: var(--bad);
+}
+
+/* Pinned-mode "folder already exists" banner. Sits between the row-help text
+   and the dest-edit input, in dim red, matching the mockup's
+   .folder-exists-banner. Only renders when path_exists returns true; the
+   primary button label also swaps to "Confirm (merge)" so the action is
+   self-explanatory. */
+.cull-finish__folder-exists {
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: rgba(200, 127, 127, 0.08);
+  border-left: 3px solid var(--bad);
+  border-radius: 2px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.45;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.cull-finish__folder-exists-icon {
+  color: var(--bad);
+  flex-shrink: 0;
+}
+
+/* ── finish dialog: pinned-root edit row ──────────────────────
+   Mockup .dest-path-edit / .dest-root / .dest-sub: a single combined
+   field showing `<muted root sep><editable subfolder>` with a primary
+   Copy button trailing. Border lights up when the input has focus. */
+.cull-finish__dest-edit {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cull-finish__dest-edit > :first-child,
+.cull-finish__dest-edit .cull-finish__dest-sub {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+}
+
+.cull-finish__dest-edit:focus-within .cull-finish__dest-root,
+.cull-finish__dest-edit:focus-within .cull-finish__dest-sub {
+  border-color: var(--accent);
+}
+
+.cull-finish__dest-root {
+  display: inline-flex;
+  align-items: center;
+  border-right: 0;
+  border-radius: 3px 0 0 3px;
+  padding: 7px 0 7px 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  transition: border-color 0.12s ease;
+}
+
+.cull-finish__dest-sub {
+  appearance: none;
+  outline: none;
+  border-left: 0;
+  border-radius: 0 3px 3px 0;
+  padding: 7px 10px 7px 0;
+  color: var(--text);
+  flex: 1 1 auto;
+  min-width: 80px;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.cull-finish__dest-sub.is-invalid {
+  color: var(--bad);
+  border-color: var(--bad);
+  background: rgba(200, 127, 127, 0.06);
+}
+
+.cull-finish__dest-sub.is-flash {
+  animation: cull-flash-restore 0.9s ease-out;
+}
+
+.cull-finish__dest-cta {
+  flex-shrink: 0;
+}
+
+/* ── finish dialog: ask-each-time stage-2 picked row ──────────
+   Mockup .picked-label + .picked-path: `WILL COPY TO  <path>  [Change]
+   [Copy keeps]`. Wraps gracefully if the path is too long. */
+.cull-finish__picked {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.cull-finish__picked-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.cull-finish__picked-path {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Move-rejects inline confirm row (Sure? message + Yes / Cancel buttons).
+   Mockup .move-confirm. */
+.cull-finish__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.cull-finish__confirm-msg {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--bad);
+  letter-spacing: 0.04em;
+  margin-right: 2px;
+}
+
+.cull-finish__confirm-yes {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+
+.cull-finish__confirm-yes:hover:not(:disabled) {
+  background: #d49090;
+  border-color: #d49090;
+  color: #fff;
+}
+
+/* Move-rejects progress row (label + breathing accent bar). Mockup
+   .finish-progress. The bar is indeterminate because the backend op is
+   batched, but a "moving N…" label still gives the user feedback. */
+.cull-finish__progress {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.cull-finish__progress-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  min-width: 110px;
+  flex-shrink: 0;
+}
+
+.cull-finish__progress-label b {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.cull-finish__progress-bar {
+  flex: 1 1 auto;
+  height: 4px;
+  background: var(--surface-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.cull-finish__progress-fill {
+  width: 60%;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: cull-finish-progress-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes cull-finish-progress-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .cull-quitguard__danger {
-  border-color: #7f1d1d;
-  color: #ef4444;
+  border-color: var(--bad);
+  color: var(--bad);
 }
 
 .cull-quitguard__danger:hover {
-  background: #ef4444;
-  border-color: #ef4444;
-  color: #000;
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+
+/* ── empty-state (no filter matches) ──────────────────────────
+   Loupe + Grid render this when the active filter has zero matches.
+   Mirrors the mockup's .empty-state.empty-filter: round icon, eyebrow,
+   headline with the missing filter highlighted in accent, and small
+   kbd-style key hints to switch out. */
+.cull-empty-state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.cull-empty-state__icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.cull-empty-state__eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cull-empty-state__title {
+  font-family: 'Inter', sans-serif;
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.cull-empty-state__title em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.cull-empty-state__hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.cull-empty-state__hint kbd {
+  background: var(--surface);
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-2);
+  font-family: inherit;
+  margin: 0 2px;
 }
 
 /* ── messages ─────────────────────────────────────────────── */
 .cull-message {
-  color: #71717a;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   text-align: center;
   max-width: 640px;
   padding: 0 24px;
-  line-height: 1.8;
+  line-height: 1.7;
 }
 
 .cull-message__title {
-  color: #ef4444;
+  color: var(--bad);
   margin-bottom: 16px;
 }
 
 .cull-message__body {
+  font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   text-transform: none;
   letter-spacing: 0;
-  color: #a1a1aa;
+  color: var(--text-2);
   white-space: pre-wrap;
   text-align: left;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface);
   padding: 12px;
-  border: 1px solid #27272a;
+  border: 1px solid var(--border);
+  border-radius: 3px;
   margin: 16px 0;
 }
 
 .cull-message__hint {
-  color: #52525b;
+  color: var(--muted);
   font-size: 10px;
 }
 
-/* ── EXIF overlay ─────────────────────────────────────────── */
-.cull-exif {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-  z-index: 10;
-  max-width: 320px;
-  background: rgba(0, 0, 0, 0.78);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid #27272a;
-  padding: 12px 14px;
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.cull-exif__filename {
-  color: #d4d4d8;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #27272a;
-}
-
-.cull-exif__grid {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  color: #a1a1aa;
-}
-
-.cull-exif__row--dim {
-  color: #71717a;
-}
-
-/* RGB histogram beneath the EXIF readout (transparent PNG over the panel bg) */
-.cull-histogram {
-  display: block;
-  width: 100%;
-  height: 54px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #27272a;
-  image-rendering: auto;
-}
-
-/* ── rating dot (persistent, top-right) ───────────────────── */
+/* ── rating dot ───────────────────────────────────────────── */
 .cull-rating-dot {
   border-radius: 9999px;
   display: flex;
@@ -1227,13 +2433,13 @@ body,
 
 .cull-persistent-dot {
   position: absolute;
-  top: 16px;
-  right: 24px;
+  top: 30px;
+  right: 30px;
   z-index: 20;
   animation: cull-fade-in 200ms ease-out;
 }
 
-/* ── feedback popup (bottom-right, flashes on rate) ───────── */
+/* ── feedback popup ───────────────────────────────────────── */
 .cull-feedback {
   position: absolute;
   bottom: 32px;
@@ -1283,20 +2489,26 @@ body,
 }
 
 /* ── thumbnail strip ──────────────────────────────────────── */
-/* Thumb strip background is fully opaque on purpose — backdrop-filter forces
-   the GPU to re-blur every paint, and the strip repaints on every nav step
-   (scrollIntoView at 30Hz). The cost compounds with image decode and shows up
-   as visible stutter during a held scrub. Solid black solves it; the strip
-   isn't meant to be see-through anyway. */
 .cull-thumbs {
   flex: 0 0 auto;
+  height: 70px;
   display: flex;
   align-items: center;
-  padding: 14px 16px;
+  padding: 8px 12px;
+  gap: 4px;
   overflow-x: auto;
-  background: #0a0a0a;
-  border-top: 1px solid #18181b;
+  overflow-y: hidden;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
   scrollbar-width: none;
+}
+
+/* When the strip is positioned at the TOP of the loupe / compare body, swap
+   the border so the line still sits between the strip and the photo stage. */
+.cull-app[data-thumbs-pos="top"] .cull-thumbs,
+.cull-app[data-thumbs-pos="top"] .cull-cmp-strip {
+  border-top: none;
+  border-bottom: 1px solid var(--border);
 }
 
 .cull-thumbs::-webkit-scrollbar {
@@ -1305,325 +2517,759 @@ body,
 
 .cull-thumb {
   position: relative;
-  flex: 0 0 auto;
-  margin-right: 6px;
+  flex: 0 0 76px;
+  height: 54px;
   cursor: pointer;
   transition: opacity 150ms ease-out;
 }
 
 .cull-thumb__frame {
-  width: 88px;
-  height: 60px;
+  width: 76px;
+  height: 54px;
   box-sizing: border-box;
-  /* A constant-width border (not an outline) frames the current cell. An outline
-     sits outside the box and gets clipped by the strip's scroll container
-     (overflow-x:auto forces overflow-y to clip), which cut the top/bottom of the
-     highlight. A border is part of the box, so it's always fully drawn. */
-  border: 2px solid transparent;
+  border-radius: 1px;
+  /* Outline (not border) for current-cell: matches mockup look; we offset to
+     -1.5px so it sits inside the box and isn't clipped by the strip scroll. */
+  outline: 1.5px solid transparent;
+  outline-offset: -1.5px;
   overflow: hidden;
-  background: #0a0a0a;
+  background: linear-gradient(135deg, #2a2018 0%, #1a1410 100%);
+  /* No transition — the outline must follow state instantly, not animate
+     into view (it was reading as the outline waiting on the image fetch). */
 }
 
 .cull-thumb__img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain; /* NEVER clip — portrait shows side matte */
   display: block;
+  background-color: var(--matte);
 }
 
 .cull-thumb__placeholder {
   width: 100%;
   height: 100%;
-  background: linear-gradient(135deg, #111 25%, #161616 50%, #111 75%);
+  background: linear-gradient(135deg, #2a2018 0%, #1a1410 100%);
 }
 
+/* Verdict glyph dot — bottom right; holds a Lucide SVG icon (Check / X / Star)
+   for intrinsic centering. Unicode glyphs in system fonts varied wildly in
+   their visual centerline on Windows, so the SVG path is now load-bearing. */
 .cull-thumb__dot {
   position: absolute;
-  bottom: 4px;
-  right: 4px;
+  bottom: 3px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.6);
 }
 
-/* ── contact-sheet grid (G) ───────────────────────────────────────────────── */
+.cull-thumb__dot--keep   { background: var(--ok); }
+.cull-thumb__dot--reject { background: var(--bad); }
+.cull-thumb__dot--fav    { background: var(--fav); }
+
+/* Pre-existing LrC star badge in the thumb-strip / compare-strip cell —
+   a tiny champagne ★ pinned top-left with a dark translucent pill, so the
+   user can tell at a glance which frames already carry an LrC rating. Only
+   rendered for real user ratings (ThumbCell filters out CULL's own fav 1★).
+   Star is a Lucide SVG; the badge centers it via flex (no font metrics). */
+.cull-thumb__lrc-badge {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 2px 3px;
+  border-radius: 1px;
+  z-index: 2;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+/* ── contact-sheet grid (G) ───────────────────────────────── */
 .cull-grid {
   flex: 1 1 auto;
   overflow-y: auto;
+  overflow-x: hidden; /* hard-stop horizontal scrollbar */
   min-height: 0;
-  background: #000;
+  background: var(--bg);
   scrollbar-width: thin;
+  padding: 20px 24px;
 }
 
 .cull-grid__inner {
   position: relative;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .cull-grid__cell {
   cursor: pointer;
-  padding: 4px;
+  padding: 3px;
   box-sizing: border-box;
 }
 
-.cull-grid__cell.is-reject .cull-grid__img {
-  filter: grayscale(0.85) brightness(0.6);
+.cull-grid__cell.is-reject {
+  opacity: 0.5;
 }
 
-/* Frame wraps the img OR the placeholder, so the current-cell outline can be
-   on a node that always exists (not the img, which only renders once loaded). */
+.cull-grid__cell.is-reject.is-current {
+  opacity: 1;
+}
+
+/* Frame wraps the img OR the placeholder. */
 .cull-grid__frame {
   position: relative;
   width: 100%;
   height: 100%;
-  outline: 1px solid transparent;
-  transition: outline-color 100ms ease-out;
+  border-radius: 2px;
+  outline: 3px solid transparent;
+  outline-offset: 2px;
+  /* No transition — the outline must follow `is-current` instantly, not
+     animate. The lag was reading as the outline waiting on the image fetch. */
+  overflow: hidden;
+  background: transparent;
 }
 
 .cull-grid__cell.is-current .cull-grid__frame {
-  outline: 2px solid #fafafa;
+  outline-color: var(--accent);
 }
 
 .cull-grid__img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: contain; /* NEVER clip — portrait shows side matte */
   display: block;
-  background: #0a0a0a;
+  background: var(--matte);
 }
 
-/* Grid cell placeholder while the thumbnail loads from the NAS. The gradient
-   shimmer is the same blackish range so it doesn't fight the loaded image when
-   it pops in; the filename gives the cell a sense of identity instead of
-   reading as dead space. */
+/* Skeleton shimmer placeholder. */
 .cull-grid__placeholder {
   width: 100%;
   height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 6px 8px;
   box-sizing: border-box;
-  background: linear-gradient(110deg, #111 8%, #1c1c1c 18%, #111 33%);
-  background-size: 220% 100%;
-  animation: cull-grid-shimmer 1.6s linear infinite;
+  background-color: var(--surface);
+  background-image: linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.04) 75%
+  );
+  background-size: 200% 100%;
+  background-position: 0 0;
+  animation: cull-grid-shimmer 1.4s linear infinite;
 }
 
 .cull-grid__placeholder-name {
-  color: #3f3f46;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
-  letter-spacing: 0.08em;
-  text-align: center;
+  letter-spacing: 0.04em;
+  text-align: left;
   word-break: break-all;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
-  /* Don't overflow if the filename is long — fade with a clip rather than wrap forever. */
-  max-height: 100%;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 @keyframes cull-grid-shimmer {
-  from {
-    background-position: 100% 0;
-  }
   to {
-    background-position: -100% 0;
+    background-position: -200% 0;
   }
 }
 
+/* Verdict dot in grid — 18px, holds a Lucide SVG icon (Check / X / Star).
+   See `.cull-thumb__dot` for why we don't use Unicode glyphs anymore. */
 .cull-grid__dot {
   position: absolute;
-  bottom: 8px;
-  right: 8px;
-}
-
-/* ── keyboard help overlay (Tab-hold) ─────────────────────── */
-.cull-help {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(0, 0, 0, 0.95);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  bottom: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55);
+  z-index: 3;
+}
+
+.cull-grid__dot--keep   { background: var(--ok); }
+.cull-grid__dot--reject { background: var(--bad); }
+.cull-grid__dot--fav    { background: var(--fav); }
+
+/* Pre-existing LrC star badge in the grid (champagne ★ top-left on a dark
+   translucent pill). Same idea as the strip badge, scaled up for the larger
+   grid cells. GridView / ExifRail filter out CULL's own favorite 1★.
+   Star is a Lucide SVG icon; flex centers it inside the pill. */
+.cull-grid__lrc-badge {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 3px 5px;
+  border-radius: 2px;
+  z-index: 3;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+/* Multi-select tint — solid champagne overlay; the accent outline takes over
+   the cell's own outline. Reject opacity is suppressed when selected so a
+   rejected cell can still show its selection state without fading out. */
+.cull-grid__multi-tint {
+  position: absolute;
+  inset: 3px; /* match .cull-grid__cell padding so it sits inside the frame */
+  background: rgba(212, 175, 106, 0.42);
+  border-radius: 2px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.cull-grid__cell.is-multi-selected .cull-grid__frame {
+  outline-color: var(--accent);
+}
+
+.cull-grid__cell.is-multi-selected.is-reject {
+  opacity: 1;
+}
+
+/* Hover-revealed filename pill at bottom-left of each loaded grid cell.
+   Mockup .cell-fn. */
+.cull-grid__fn {
+  display: none;
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.78);
+  padding: 2px 6px;
+  border-radius: 2px;
+  z-index: 4;
+  max-width: calc(100% - 36px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
+.cull-grid__cell:hover .cull-grid__fn {
+  display: block;
+}
+
+/* ── help overlay ─────────────────────────────────────────── */
+.cull-help {
+  position: fixed;
+  inset: 36px 0 0 0;
+  z-index: 150;
+  background: rgba(8, 8, 10, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 40px;
   pointer-events: none;
 }
 
 .cull-help__inner {
   width: 100%;
-  max-width: 760px;
-  padding: 40px 48px;
+  max-width: 880px;
+  padding: 0;
 }
 
 .cull-help__eyebrow {
-  font-size: 10px;
-  letter-spacing: 0.3em;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #52525b;
-  margin-bottom: 4px;
+  color: var(--accent);
+  margin-bottom: 10px;
 }
 
 .cull-help__title {
-  font-size: 22px;
+  font-family: 'Inter', sans-serif;
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.015em;
+  margin: 0 0 36px;
+}
+
+.cull-help__title em {
+  font-style: normal;
+  color: var(--muted);
   font-weight: 400;
-  color: #f4f4f5;
-  letter-spacing: -0.01em;
-  margin: 0 0 32px;
 }
 
 .cull-help__grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 32px 48px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 28px 36px;
 }
 
 .cull-help__group {
+  font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #52525b;
-  border-bottom: 1px solid #27272a;
-  padding-bottom: 8px;
-  margin-bottom: 12px;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .cull-help__row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
   align-items: baseline;
-  gap: 16px;
   font-size: 12px;
   white-space: nowrap;
   margin-bottom: 8px;
 }
 
 .cull-help__key {
-  flex: 0 0 140px;
-  color: #fcd34d;
-  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  font-weight: 400;
 }
 
 .cull-help__desc {
-  color: #a1a1aa;
+  font-family: 'Inter', sans-serif;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: normal;
 }
 
-/* ── compare mode (Phase D) ───────────────────────────────── */
+/* ── compare mode ─────────────────────────────────────────── */
 .cull-cmp {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 8px 16px 12px;
-  gap: 8px;
+  padding: 0;
+  gap: 0;
+  background: var(--bg);
 }
 
+/* Compare body: panels (1fr 1fr grid) and optional rail in a flex row.
+   The rail is a fixed-width column on the right that shrinks the panels area
+   when info is on, matching the mockup .compare-body. */
+.cull-cmp-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  min-width: 0;
+}
 
 .cull-cmp__panels {
   flex: 1 1 auto;
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
   min-height: 0;
+  min-width: 0;
+  padding: 32px 56px 26px;
 }
 
 .cull-cmp-panel {
   flex: 1 1 0;
   position: relative;
   min-width: 0;
-  overflow: hidden;
+  min-height: 0;
+  /* No overflow:hidden — the role chip sits BELOW the photo frame and
+     was being clipped. The frame itself has overflow:hidden so the image
+     never escapes. */
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #000;
+  gap: 16px;
+  background: var(--bg);
 }
 
-/* The frame is a separate inset child, not an outline. An outline (any offset)
-   on this overflow:hidden panel got clipped at the panel/window edges — cutting
-   the top/bottom/outer sides. A child at inset:0 with a border is painted ABOVE
-   the image and lives inside the panel's clip box, so all four sides always show. */
+/* Photo matte frame inside each compare pane. Sizes to the image's natural
+   aspect ratio via the `--photo-ar` custom property (set from JS in
+   CompareView.tsx per pane). The matte matches the image so overlays inset
+   14px cover the actual photo area. Role chip sits below — we reserve ~50px
+   of vertical room. Fallback 3/2 used until the image loads. */
+.cull-cmp-photo-frame {
+  position: relative;
+  padding: 10px;
+  background: var(--matte);
+  border-radius: 2px;
+  box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6);
+  /* content-box: see .cull-photo-frame — sizes the content box so overlays
+     (inset 14px) match the image exactly instead of the letterboxed border box. */
+  box-sizing: content-box;
+  aspect-ratio: var(--photo-ar, 3 / 2);
+  max-width: calc(100% - 20px);
+  /* Reserve ~50px below for the role chip + subtract the 20px frame padding. */
+  max-height: calc(100% - 70px);
+  width: auto;
+  height: auto;
+  margin: 0;
+  flex: 0 0 auto;
+  line-height: 0;
+  overflow: hidden;
+}
+
+/* The frame outline removed — Editorial direction uses no role-color frames.
+   Role chip below the photo identifies champion vs challenger instead. */
 .cull-cmp-frame {
-  position: absolute;
-  inset: 0;
-  box-sizing: border-box;
-  border: 2px solid rgba(255, 255, 255, 0.12);
-  pointer-events: none;
-}
-
-.cull-cmp-panel.is-champion .cull-cmp-frame {
-  border-color: #10b981; /* green — the running keeper */
-}
-
-.cull-cmp-panel.is-challenger .cull-cmp-frame {
-  border-color: #f59e0b; /* amber — the contender */
+  display: none;
 }
 
 .cull-cmp-img {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* NEVER clip — portrait shows side matte */
   display: block;
+  border-radius: 1px;
+  background-color: var(--matte);
 }
 
+/* Verdict chip pinned to the top-right of the compare photo frame — same
+   8px corner offset on both panels so it reads as a small "this side is
+   already rated" marker. Holds a RatingDot (colored circle + Lucide SVG
+   glyph), so centering is intrinsic. */
 .cull-cmp-dot {
   position: absolute;
   top: 8px;
   right: 8px;
+  z-index: 2;
 }
 
+/* Role chip below the photo — champion filled, challenger hollow. */
 .cull-cmp-label {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  font-size: 9px;
-  letter-spacing: 0.15em;
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  padding: 2px 6px;
-  background: rgba(0, 0, 0, 0.4);
-  color: #a1a1aa;
+  font-weight: 500;
+  flex-shrink: 0;
 }
 
 .cull-cmp-label.is-champion {
-  color: #34d399;
-  background: rgba(16, 185, 129, 0.18);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }
 
 .cull-cmp-label.is-challenger {
-  color: #fbbf24;
-  background: rgba(245, 158, 11, 0.15);
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border);
 }
 
-/* ── compare-mode strip: pinned champion + scrolling unrated candidates ───── */
+/* ── compare-mode strip ───────────────────────────────────── */
 .cull-cmp-strip {
   flex: 0 0 auto;
+  height: 70px;
   display: flex;
   align-items: center;
-  padding: 14px 16px;
-  background: rgba(0, 0, 0, 0.85);
-  border-top: 1px solid #18181b;
+  padding: 8px 12px;
+  gap: 4px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  overflow-y: hidden;
 }
 
-/* Champion pinned at the left as a fixed reference (left-aligned rather than at
-   the 1/3 mark — the empty third looked unbalanced and starved the candidate
-   strip, which is the part that wants the room). */
 .cull-cmp-strip__champion {
   flex: 0 0 auto;
 }
 
+/* Mid-dot separator between champion and challenger candidates. */
 .cull-cmp-strip__sep {
   flex: 0 0 auto;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #3f3f46;
-  margin: 0 16px;
+  width: 18px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background: transparent;
+  margin: 0 4px;
+  user-select: none;
+}
+
+.cull-cmp-strip__sep::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 1px;
+  background: var(--border);
+  transform: translateX(-50%);
+}
+
+.cull-cmp-strip__sep::after {
+  content: "·";
+  position: relative;
+  background: var(--bg);
+  color: var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 3px 4px;
+  line-height: 1;
 }
 
 .cull-cmp-strip__candidates {
   flex: 1 1 auto;
   display: flex;
   align-items: center;
+  gap: 4px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
 }
 
 .cull-cmp-strip__candidates::-webkit-scrollbar {
   display: none;
+}
+
+/* Champion cell pinned styling in compare strip (champagne outline). */
+.cull-thumb--champion .cull-thumb__frame {
+  outline-color: var(--accent);
+  outline-width: 2px;
+}
+
+.cull-thumb--challenger .cull-thumb__frame {
+  outline-color: var(--accent);
+  outline-width: 2px;
+}
+
+/* Tiny role label pill (champion / challenger) at top-left of the thumb in
+   compare-mode. Sits on top of the photo via a translucent black pill so it
+   reads against any image. Uses inline-flex so the optional Lucide ★ icon
+   (LrC flag) sits on the text mid-line, not riding above it. */
+.cull-thumb__role-badge {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 1px 4px;
+  border-radius: 1px;
+  z-index: 2;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.cull-thumb__role-badge-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 7px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.cull-thumb__role-badge--champion {
+  color: var(--accent);
+}
+
+.cull-thumb__role-badge--challenger {
+  color: var(--text);
+}
+
+/* ── EXIF rail (right side of loupe / compare body) ───────── */
+.cull-exif-rail {
+  flex: 0 0 290px;
+  width: 290px;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  padding: 40px 32px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  scrollbar-width: thin;
+}
+
+/* Compare rail is wider (two columns of values). */
+.cull-exif-rail--compare {
+  flex: 0 0 340px;
+  width: 340px;
+  padding: 32px 24px;
+  gap: 28px;
+}
+
+.cull-exif-rail__section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cull-exif-rail__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.cull-exif-rail__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.cull-exif-rail__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cull-exif-rail__k {
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.cull-exif-rail__v {
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-word;
+}
+
+.cull-exif-rail__v--dim {
+  color: var(--muted);
+}
+
+.cull-exif-rail__lrc {
+  letter-spacing: 0.04em;
+  font-size: 13px;
+  line-height: 1;
+  font-family: -apple-system, "Segoe UI Symbol", system-ui, sans-serif;
+}
+
+.cull-exif-rail__lrc-filled {
+  color: var(--accent);
+}
+
+.cull-exif-rail__lrc-dim {
+  color: var(--surface-2);
+}
+
+.cull-exif-rail__hist {
+  height: 70px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cull-exif-rail__hist img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.cull-exif-rail__hist-placeholder {
+  position: absolute;
+  inset: 0;
+}
+
+/* Compare rail two-column comparison. Champion / Challenger heading row +
+   each row has three slots: key (90px) + champion value + challenger value. */
+.cull-cr-rail__head {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.cull-cr-rail__col {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.cull-cr-rail__col--champion {
+  color: var(--accent);
+}
+
+.cull-cr-rail__col--challenger {
+  color: var(--text-2);
+}
+
+.cull-cr-rail__row {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 5px 0;
+}
+
+.cull-cr-rail__row .cull-cr-rail__k {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cull-cr-rail__row .cull-cr-rail__v {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.cull-cr-rail__row.is-diff .cull-cr-rail__v {
+  color: var(--accent);
+}
+
+.cull-cr-rail__row.is-diff .cull-cr-rail__k::before {
+  content: "•";
+  margin-right: 5px;
+  color: var(--accent);
 }

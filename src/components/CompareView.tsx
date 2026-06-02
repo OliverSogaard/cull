@@ -1,7 +1,7 @@
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Feedback, Img, ImageMetadata, PreviewEntry, Rating } from "../types";
-import { stripExt } from "../utils/path";
-import { ExifPanel } from "./ExifPanel";
+import { blurhashToDataUrl, type BlurInfo } from "../utils/bundle";
+import { CompareExifRail } from "./ExifRail";
 import { RatingDot } from "./RatingDot";
 
 /** Read `previewUrl` from a path's pool entry, or `undefined` if not ready. */
@@ -29,9 +29,9 @@ export function CompareView({
   previews,
   metadata,
   clipMasks,
-  histograms,
   peakingMasks,
   thumbnails,
+  blurhashes,
   ratings,
   exifVisible,
   clippingVisible,
@@ -49,9 +49,9 @@ export function CompareView({
   previews: Record<string, PreviewEntry>;
   metadata: Record<string, ImageMetadata>;
   clipMasks: Record<string, string>;
-  histograms: Record<string, string>;
   peakingMasks: Record<string, string>;
   thumbnails: Record<string, string>;
+  blurhashes?: Record<string, BlurInfo>;
   ratings: Record<number, Rating>;
   exifVisible: boolean;
   clippingVisible: boolean;
@@ -74,49 +74,61 @@ export function CompareView({
 
   return (
     <div className="cull-cmp">
-      <div className="cull-cmp__panels">
-        <ComparePanel
-          role="champion"
-          img={champion}
-          previewUrl={previewUrlOf(previews, champion.path)}
-          thumbUrl={thumbnails[champion.path]}
-          metadata={metadata[champion.path]}
-          rating={ratings[champion.id]}
-          isZooming={isZooming}
-          zoomLevel={zoomLevel}
-          originX={originX}
-          originY={originY}
-          exifVisible={exifVisible}
-          clippingVisible={clippingVisible}
-          clipMaskUrl={clipMasks[champion.path]}
-          peakingVisible={peakingVisible}
-          peakingMaskUrl={peakingMasks[champion.path]}
-          compositionVisible={compositionVisible}
-          histogramUrl={histograms[champion.path]}
-          suppressRating={!!(feedback && feedback.imageId === champion.id)}
-          scrubbing={false}
-        />
-        <ComparePanel
-          role="challenger"
-          img={challenger}
-          previewUrl={previewUrlOf(previews, challenger.path)}
-          thumbUrl={thumbnails[challenger.path]}
-          metadata={metadata[challenger.path]}
-          rating={ratings[challenger.id]}
-          isZooming={isZooming}
-          zoomLevel={zoomLevel}
-          originX={originX}
-          originY={originY}
-          exifVisible={exifVisible}
-          clippingVisible={clippingVisible}
-          clipMaskUrl={clipMasks[challenger.path]}
-          peakingVisible={peakingVisible}
-          peakingMaskUrl={peakingMasks[challenger.path]}
-          compositionVisible={compositionVisible}
-          histogramUrl={histograms[challenger.path]}
-          suppressRating={!!(feedback && feedback.imageId === challenger.id)}
-          scrubbing={scrubbing}
-        />
+      <div className="cull-cmp-body">
+        <div className="cull-cmp__panels">
+          <ComparePanel
+            role="champion"
+            previewUrl={previewUrlOf(previews, champion.path)}
+            thumbUrl={thumbnails[champion.path]}
+            blur={blurhashes?.[champion.path]}
+            rating={ratings[champion.id]}
+            isZooming={isZooming}
+            zoomLevel={zoomLevel}
+            originX={originX}
+            originY={originY}
+            clippingVisible={clippingVisible}
+            clipMaskUrl={clipMasks[champion.path]}
+            peakingVisible={peakingVisible}
+            peakingMaskUrl={peakingMasks[champion.path]}
+            compositionVisible={compositionVisible}
+            suppressRating={!!(feedback && feedback.imageId === champion.id)}
+            flashRating={
+              feedback && feedback.imageId === champion.id ? feedback.rating : null
+            }
+            scrubbing={false}
+          />
+          <ComparePanel
+            role="challenger"
+            previewUrl={previewUrlOf(previews, challenger.path)}
+            thumbUrl={thumbnails[challenger.path]}
+            blur={blurhashes?.[challenger.path]}
+            rating={ratings[challenger.id]}
+            isZooming={isZooming}
+            zoomLevel={zoomLevel}
+            originX={originX}
+            originY={originY}
+            clippingVisible={clippingVisible}
+            clipMaskUrl={clipMasks[challenger.path]}
+            peakingVisible={peakingVisible}
+            peakingMaskUrl={peakingMasks[challenger.path]}
+            compositionVisible={compositionVisible}
+            suppressRating={!!(feedback && feedback.imageId === challenger.id)}
+            flashRating={
+              feedback && feedback.imageId === challenger.id ? feedback.rating : null
+            }
+            scrubbing={scrubbing}
+          />
+        </div>
+        {exifVisible && (
+          <CompareExifRail
+            championName={champion.filename}
+            challengerName={challenger.filename}
+            championMeta={metadata[champion.path]}
+            challengerMeta={metadata[challenger.path]}
+            championRating={ratings[champion.id]}
+            challengerRating={ratings[challenger.id]}
+          />
+        )}
       </div>
     </div>
   );
@@ -124,44 +136,41 @@ export function CompareView({
 
 const ComparePanel = memo(function ComparePanel({
   role,
-  img,
   previewUrl,
   thumbUrl,
-  metadata,
+  blur,
   rating,
   isZooming,
   zoomLevel,
   originX,
   originY,
-  exifVisible,
   clippingVisible,
   clipMaskUrl,
   peakingVisible,
   peakingMaskUrl,
   compositionVisible,
-  histogramUrl,
   suppressRating,
+  flashRating,
   scrubbing,
 }: {
   role: "champion" | "challenger";
-  img: Img;
   previewUrl: string | undefined;
   thumbUrl: string | undefined;
-  metadata: ImageMetadata | undefined;
+  blur?: BlurInfo;
   rating: Rating | undefined;
   isZooming: boolean;
   zoomLevel: 1 | 2;
   /** Shared with the other pane (the champion's AF + the global pan offset). */
   originX: number;
   originY: number;
-  exifVisible: boolean;
   clippingVisible: boolean;
   clipMaskUrl: string | undefined;
   peakingVisible: boolean;
   peakingMaskUrl: string | undefined;
   compositionVisible: boolean;
-  histogramUrl: string | undefined;
   suppressRating: boolean;
+  /** When set, this rating's color pulses briefly over the photo (verdict flash). */
+  flashRating: Rating | null;
   scrubbing: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -175,6 +184,19 @@ const ComparePanel = memo(function ComparePanel({
   const [nonce, setNonce] = useState(0);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const isChampion = role === "champion";
+  // Decode the per-image blurhash once; drive the frame aspect ratio from the
+  // authoritative display dims (not the frozen full-preview naturalSize), so the
+  // pane is correctly shaped the instant it appears — not "too small" while
+  // loading. Mirrors the loupe.
+  const blurUrl = useMemo(
+    () => (blur ? blurhashToDataUrl(blur.hash, blur.w / blur.h) : null),
+    [blur],
+  );
+  const photoAr = blur
+    ? `${blur.w} / ${blur.h}`
+    : naturalSize
+      ? `${naturalSize.w} / ${naturalSize.h}`
+      : undefined;
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -213,108 +235,123 @@ const ComparePanel = memo(function ComparePanel({
       className={`cull-cmp-panel ${isChampion ? "is-champion" : "is-challenger"}`}
       ref={panelRef}
     >
-      {previewUrl && !scrubbing ? (
-        <img
-          ref={imgRef}
-          className="cull-cmp-img"
-          src={previewUrl}
-          alt=""
-          onLoad={(e) => {
-            setNonce((n) => n + 1);
-            setNaturalSize({
-              w: e.currentTarget.naturalWidth,
-              h: e.currentTarget.naturalHeight,
-            });
-          }}
-          style={{
-            transform: isZooming ? `scale(${zoomZ})` : undefined,
-            transformOrigin: `${originX}% ${originY}%`,
-            transition: "transform 200ms ease-out",
-          }}
-        />
-      ) : (
-        // Scrub OR not-yet-loaded: heavy-blurred thumbnail (same look as
-        // single view). Spinner only once settled (not scrubbing) and still
-        // loading — so the challenger matches the loupe loading standard.
-        <div className="cull-loading">
-          {thumbUrl && <img className="cull-loading__blur" src={thumbUrl} alt="" aria-hidden />}
-          {!scrubbing && <div className="cull-loading__spinner" />}
-        </div>
-      )}
+      <div
+        className={`cull-cmp-photo-frame${
+          flashRating
+            ? ` cull-photo-frame--flash-${
+                flashRating === "favorite" ? "fav" : flashRating
+              }`
+            : ""
+        }`}
+        style={
+          photoAr
+            ? ({ ["--photo-ar" as string]: photoAr } as React.CSSProperties)
+            : undefined
+        }
+      >
+        {/* Photo-frame stays mounted across transitions — see App.tsx for the
+            same pattern. While the full preview loads, the <img> falls back
+            to the thumbnail so the matte never goes blank. While scrubbing,
+            we show the thumbnail without the spinner overlay. */}
+        {(previewUrl && !scrubbing) || blurUrl || thumbUrl ? (
+          <img
+            ref={imgRef}
+            className="cull-cmp-img"
+            src={
+              previewUrl && !scrubbing ? previewUrl : blurUrl ? blurUrl : thumbUrl!
+            }
+            alt=""
+            onLoad={(e) => {
+              // Only the FULL preview's natural size feeds naturalSize (used for
+              // the 1:1 zoom math). The frame aspect ratio comes from `blur` dims.
+              if (previewUrl && !scrubbing) {
+                setNonce((n) => n + 1);
+                setNaturalSize({
+                  w: e.currentTarget.naturalWidth,
+                  h: e.currentTarget.naturalHeight,
+                });
+              }
+            }}
+            style={{
+              transform: isZooming ? `scale(${zoomZ})` : undefined,
+              transformOrigin: `${originX}% ${originY}%`,
+              transition: "transform 200ms ease-out",
+              // Blurhash placeholder (correct aspect, already blurred) → light
+              // blur; the THMB fallback (only when no hash yet) → heavy blur.
+              filter:
+                previewUrl && !scrubbing
+                  ? undefined
+                  : blurUrl
+                    ? "blur(6px) brightness(0.82)"
+                    : "blur(14px) brightness(0.78)",
+            }}
+          />
+        ) : null}
+        {!previewUrl && !scrubbing && (
+          <div className="cull-photo-frame__spinner-wrap" aria-hidden>
+            <div className="cull-loading__spinner" />
+          </div>
+        )}
 
-      {clippingVisible && !scrubbing && clipMaskUrl && rect && (
-        <img
-          className="cull-clip-overlay"
-          src={clipMaskUrl}
-          alt=""
-          style={{
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-            transform: isZooming ? `scale(${zoomZ})` : undefined,
-            transformOrigin: `${originX}% ${originY}%`,
-            transition: "transform 200ms ease-out",
-          }}
-        />
-      )}
+        {/* Overlays — positioning + sizing comes from the CSS rule
+            (`position: absolute !important; inset: 14px`), NOT inline
+            style. That keeps them out of flow no matter what, so they
+            cannot influence the photo-frame's intrinsic size when toggled. */}
+        {clippingVisible && !scrubbing && clipMaskUrl && (
+          <img
+            className="cull-clip-overlay"
+            src={clipMaskUrl}
+            alt=""
+            style={{
+              transform: isZooming ? `scale(${zoomZ})` : undefined,
+              transformOrigin: `${originX}% ${originY}%`,
+              transition: "transform 200ms ease-out",
+            }}
+          />
+        )}
 
-      {peakingVisible && !scrubbing && peakingMaskUrl && rect && (
-        <img
-          className="cull-peaking-overlay"
-          src={peakingMaskUrl}
-          alt=""
-          style={{
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-            transform: isZooming ? `scale(${zoomZ})` : undefined,
-            transformOrigin: `${originX}% ${originY}%`,
-            transition: "transform 200ms ease-out",
-            pointerEvents: "none",
-          }}
-        />
-      )}
+        {peakingVisible && !scrubbing && peakingMaskUrl && (
+          <img
+            className="cull-peaking-overlay"
+            src={peakingMaskUrl}
+            alt=""
+            style={{
+              transform: isZooming ? `scale(${zoomZ})` : undefined,
+              transformOrigin: `${originX}% ${originY}%`,
+              transition: "transform 200ms ease-out",
+            }}
+          />
+        )}
 
-      {compositionVisible && !isZooming && rect && (
-        <svg
-          className="cull-composition-overlay"
-          style={{
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-          }}
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          aria-hidden
-        >
-          <line x1="33.333" y1="0" x2="33.333" y2="100" />
-          <line x1="66.667" y1="0" x2="66.667" y2="100" />
-          <line x1="0" y1="33.333" x2="100" y2="33.333" />
-          <line x1="0" y1="66.667" x2="100" y2="66.667" />
-        </svg>
-      )}
+        {compositionVisible && !isZooming && (
+          <svg
+            className="cull-composition-overlay"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden
+          >
+            <line x1="33.333" y1="0" x2="33.333" y2="100" />
+            <line x1="66.667" y1="0" x2="66.667" y2="100" />
+            <line x1="0" y1="33.333" x2="100" y2="33.333" />
+            <line x1="0" y1="66.667" x2="100" y2="66.667" />
+          </svg>
+        )}
 
-      {exifVisible && (
-        <ExifPanel filename={img.filename} metadata={metadata} histogramUrl={histogramUrl} />
-      )}
+        {rating && !suppressRating && (
+          <div className="cull-cmp-dot">
+            <RatingDot rating={rating} size="md" />
+          </div>
+        )}
+      </div>
 
-      {rating && !suppressRating && (
-        <div className="cull-cmp-dot">
-          <RatingDot rating={rating} size="md" />
-        </div>
-      )}
-
+      {/* Role chip centered below the photo — champagne filled for champion,
+          hollow for challenger. Just the role name; the filename is in the
+          status bar / EXIF rail, no need to repeat it here. */}
       <div
         className={`cull-cmp-label ${isChampion ? "is-champion" : "is-challenger"}`}
       >
-        {isChampion ? "CHAMPION" : "CHALLENGER"} · {stripExt(img.filename)}
+        {isChampion ? "Champion" : "Challenger"}
       </div>
-
-      {/* Inset border frame, painted above the image — never clipped (see CSS). */}
-      <div className="cull-cmp-frame" aria-hidden />
     </div>
   );
 });

@@ -35,6 +35,9 @@ export type ExportFolderMode =
   | { mode: "remember" }
   | { mode: "pinned"; path: string };
 
+/** Where the loupe / compare thumbnail strip sits relative to the photo. */
+export type ThumbsPosition = "bottom" | "top";
+
 export type Settings = {
   // — Storage —
   storageMode: StorageMode;
@@ -52,6 +55,8 @@ export type Settings = {
   defaultPeakingVisible: boolean;
   /** Default visibility of the thirds grid (o). */
   defaultCompositionVisible: boolean;
+  /** Where the loupe / compare thumbnail strip sits (bottom or top). */
+  thumbsPosition: ThumbsPosition;
 
   // — File operations —
   /** Subfolder name that "move rejects" creates inside the cull folder. */
@@ -77,6 +82,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultClippingVisible: false,
   defaultPeakingVisible: false,
   defaultCompositionVisible: false,
+  thumbsPosition: "bottom",
 
   rejectedSubfolder: "_rejected",
   exportFolder: { mode: "remember" },

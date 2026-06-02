@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatDimensions,
-  formatDrive,
   formatExposureBias,
-  formatFileSize,
+  formatRelativeTime,
   formatShutter,
   formatWhiteBalance,
+  middleTruncate,
 } from "./format";
 
 describe("formatShutter", () => {
@@ -24,6 +23,8 @@ describe("formatShutter", () => {
     expect(formatShutter(null)).toBeNull();
     expect(formatShutter(0)).toBeNull();
     expect(formatShutter(-0.001)).toBeNull();
+    expect(formatShutter(NaN)).toBeNull();
+    expect(formatShutter(Infinity)).toBeNull();
   });
 });
 
@@ -56,49 +57,96 @@ describe("formatWhiteBalance", () => {
   });
 });
 
-describe("formatDrive", () => {
-  it("maps Canon single-shot enum values", () => {
-    for (const v of [0, 6, 9]) expect(formatDrive(v)).toBe("single");
+describe("formatRelativeTime", () => {
+  const now = new Date("2026-05-31T12:00:00Z");
+
+  it("returns 'just now' under a minute", () => {
+    expect(formatRelativeTime(new Date(now.getTime() - 10_000).toISOString(), now)).toBe("just now");
+    expect(formatRelativeTime(new Date(now.getTime() - 59_000).toISOString(), now)).toBe("just now");
   });
 
-  it("maps Canon continuous-shot enum values", () => {
-    for (const v of [1, 3, 4, 5, 8, 10]) expect(formatDrive(v)).toBe("continuous");
+  it("returns minutes ago under an hour", () => {
+    expect(formatRelativeTime(new Date(now.getTime() - 60_000).toISOString(), now)).toBe(
+      "1 minute ago",
+    );
+    expect(formatRelativeTime(new Date(now.getTime() - 30 * 60_000).toISOString(), now)).toBe(
+      "30 minutes ago",
+    );
   });
 
-  it("returns null for unknown enum values and missing", () => {
-    expect(formatDrive(2)).toBeNull();
-    expect(formatDrive(99)).toBeNull();
-    expect(formatDrive(null)).toBeNull();
+  it("returns hours ago under a day", () => {
+    expect(
+      formatRelativeTime(new Date(now.getTime() - 2 * 60 * 60_000).toISOString(), now),
+    ).toBe("2 hours ago");
+    expect(formatRelativeTime(new Date(now.getTime() - 60 * 60_000).toISOString(), now)).toBe(
+      "1 hour ago",
+    );
+  });
+
+  it("returns 'yesterday' between 24 and 48 hours", () => {
+    expect(formatRelativeTime(new Date(now.getTime() - 25 * 3600_000).toISOString(), now)).toBe(
+      "yesterday",
+    );
+  });
+
+  it("returns days ago under a week", () => {
+    expect(formatRelativeTime(new Date(now.getTime() - 3 * 86400_000).toISOString(), now)).toBe(
+      "3 days ago",
+    );
+  });
+
+  it("returns 'last week' at 1w and weeks ago up to 4w", () => {
+    expect(formatRelativeTime(new Date(now.getTime() - 7 * 86400_000).toISOString(), now)).toBe(
+      "last week",
+    );
+    expect(formatRelativeTime(new Date(now.getTime() - 21 * 86400_000).toISOString(), now)).toBe(
+      "3 weeks ago",
+    );
+  });
+
+  it("falls back to localized date past five weeks", () => {
+    const long = new Date(now.getTime() - 365 * 86400_000).toISOString();
+    const out = formatRelativeTime(long, now);
+    expect(out).not.toBeNull();
+    // localized form is locale-specific; we just check it's not one of the
+    // relative buckets above.
+    expect(out).not.toMatch(/(ago|yesterday|just now|last week)/i);
+  });
+
+  it("clamps future timestamps (clock skew) to 'just now'", () => {
+    expect(formatRelativeTime(new Date(now.getTime() + 60_000).toISOString(), now)).toBe(
+      "just now",
+    );
+  });
+
+  it("returns null for unparseable input", () => {
+    expect(formatRelativeTime("not-a-date", now)).toBeNull();
+    expect(formatRelativeTime("", now)).toBeNull();
   });
 });
 
-describe("formatDimensions", () => {
-  it("formats WxH and megapixels", () => {
-    expect(formatDimensions(6000, 4000)).toBe("6000 × 4000 · 24 MP");
-    expect(formatDimensions(1620, 1080)).toBe("1620 × 1080 · 2 MP");
+describe("middleTruncate", () => {
+  it("returns short inputs verbatim", () => {
+    expect(middleTruncate("short", 20)).toBe("short");
+    expect(middleTruncate("exactly20chars-aaaaa", 20)).toBe("exactly20chars-aaaaa");
   });
 
-  it("returns null when either is missing or zero", () => {
-    expect(formatDimensions(null, 1000)).toBeNull();
-    expect(formatDimensions(1000, null)).toBeNull();
-    expect(formatDimensions(0, 1000)).toBeNull();
-  });
-});
-
-describe("formatFileSize", () => {
-  it("shows one decimal under 100 MB", () => {
-    expect(formatFileSize(12 * 1048576)).toBe("12.0 MB");
-    expect(formatFileSize(99 * 1048576)).toBe("99.0 MB");
+  it("places an ellipsis in the middle", () => {
+    const out = middleTruncate("abcdefghijklmnopqrstuvwxyz", 10);
+    expect(out).toContain("…");
+    expect(out.length).toBe(10);
+    expect(out.startsWith("a")).toBe(true);
+    expect(out.endsWith("z")).toBe(true);
   });
 
-  it("drops the decimal at 100 MB and above", () => {
-    expect(formatFileSize(100 * 1048576)).toBe("100 MB");
-    expect(formatFileSize(134 * 1048576)).toBe("134 MB");
-  });
-
-  it("returns null for null, zero, or negative bytes", () => {
-    expect(formatFileSize(null)).toBeNull();
-    expect(formatFileSize(0)).toBeNull();
-    expect(formatFileSize(-1)).toBeNull();
+  it("keeps both ends visible in a path-like string", () => {
+    const path = "C:\\Shoots\\2026-05-28 Greg & Lou\\Day 2 Reception";
+    const out = middleTruncate(path, 30);
+    expect(out.length).toBe(30);
+    expect(out.startsWith("C:\\")).toBe(true);
+    // the tail must contain the final word — middle-truncation keeps
+    // ceil((max-1)/2) head + floor((max-1)/2) tail chars.
+    expect(out).toContain("Reception");
+    expect(out).toContain("…");
   });
 });

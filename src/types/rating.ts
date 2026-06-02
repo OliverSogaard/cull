@@ -1,3 +1,5 @@
+import type { NavEntry } from "./nav";
+
 /**
  * Rating model — the three states CULL writes (plus the absence of any rating).
  * Mirrors the strings the Rust backend writes into XMP sidecars (`keep` /
@@ -32,5 +34,12 @@ export type UndoAction = {
     championIndex: number;
     challengerIndex: number;
     currentIndex: number;
+    /**
+     * Nav back-stack at record time. An undo that restores compare mode also
+     * restores this stack, so ESC afterwards pops the entry the user actually
+     * came from — the action's auto-exit may have popped it. Optional: only
+     * compare-origin actions snapshot it.
+     */
+    navStack?: NavEntry[];
   };
 };

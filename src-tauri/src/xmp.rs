@@ -26,6 +26,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// xmpDM namespace URI — the one LrC writes pick/good flags into.
 const XMPDM_NS: &str = "http://ns.adobe.com/xmp/1.0/DynamicMedia/";
 
+/// CULL's private namespace. Holds the favorite marker `cull:fav` so CULL can
+/// always tell its own favorite stamp from a user's Lightroom star rating —
+/// the two used to collide at `xmp:Rating="1"`, which silently destroyed user
+/// stars. LrC and other tools preserve unknown namespaces, so this is inert to
+/// everything except CULL.
+const CULL_NS: &str = "http://ns.cull.photo/1.0/";
+
 /// Process-wide unique sequence for atomic-write temp files, shared by every
 /// sidecar writer (write + clear) so two overlapping operations on the same
 /// sidecar — e.g. a fast re-rate, or an unrate racing a prior write — can never
@@ -36,10 +43,23 @@ static XMP_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Atomic sidecar write: write a temp sibling, then rename over the target.
 /// Survives a crash/power-loss mid-write.
 fn atomic_write_xmp(xmp_path: &Path, contents: &str) -> Result<(), String> {
+    use std::io::Write;
     let seq = XMP_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp_path = xmp_path.with_extension(format!("xmp.{seq}.tmp"));
-    std::fs::write(&tmp_path, contents.as_bytes()).map_err(|e| format!("write tmp xmp: {e}"))?;
-    std::fs::rename(&tmp_path, xmp_path).map_err(|e| format!("rename xmp: {e}"))?;
+    // Write + flush + fsync the temp so its bytes are durable on disk BEFORE the
+    // rename — otherwise a power loss right after the rename can leave the new
+    // directory entry pointing at an unflushed (zero/garbage) file.
+    {
+        let mut f = std::fs::File::create(&tmp_path).map_err(|e| format!("create tmp xmp: {e}"))?;
+        f.write_all(contents.as_bytes())
+            .map_err(|e| format!("write tmp xmp: {e}"))?;
+        f.sync_all().map_err(|e| format!("sync tmp xmp: {e}"))?;
+    }
+    std::fs::rename(&tmp_path, xmp_path).map_err(|e| {
+        // Don't leave the temp sibling behind if the rename failed.
+        let _ = std::fs::remove_file(&tmp_path);
+        format!("rename xmp: {e}")
+    })?;
     Ok(())
 }
 
@@ -86,14 +106,10 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
         Err(e) => return Err(format!("read existing xmp: {e}")),
     };
 
-    let by_cull = existing.contains("Cull");
-    let stripped = {
-        let s = remove_desc_attr(&existing, "xmpDM:pick");
-        let s = remove_desc_attr(&s, "xmpDM:good");
-        remove_fav_star(&s) // drops only the 1★, never a user's 2–5★
-    };
+    let authored = authored_by_cull(&existing);
+    let stripped = strip_cull_fields(&existing);
 
-    if by_cull && !xmp_has_user_content(&stripped) {
+    if authored && !xmp_has_user_content(&stripped) {
         match std::fs::remove_file(&xmp_path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -121,23 +137,102 @@ pub(crate) fn read_xmp_rating(cr3_path: &str) -> Option<String> {
     classify_xmp(&content)
 }
 
+/// Read the user's Lightroom Classic 1–5★ star rating from a CR3's sidecar.
+///
+/// Returns `Some(n)` for `n ∈ 1..=5` and `None` for absent / zero / unparseable.
+/// This is the RAW `xmp:Rating` value — including the lone 1★ that CULL itself
+/// writes for its favorite mark. Disambiguating "user's pre-existing LrC rating"
+/// vs "CULL's favorite stamp" needs the CULL rating too (a 1★ on a CULL-favorite
+/// is just CULL's flag, not a pre-existing user rating); the frontend already
+/// has both fields and applies that rule when rendering badges.
+pub(crate) fn read_lrc_rating(cr3_path: &str) -> Option<u8> {
+    let xmp = Path::new(cr3_path).with_extension("xmp");
+    let content = std::fs::read_to_string(&xmp).ok()?;
+    parse_lrc_rating(&content)
+}
+
+/// Same as [`read_lrc_rating`] but works on a sidecar string in memory.
+fn parse_lrc_rating(content: &str) -> Option<u8> {
+    let n = parse_xmp_rating(content)?;
+    if (1..=5).contains(&n) {
+        Some(n as u8)
+    } else {
+        None
+    }
+}
+
 // ── XMP string transforms ─────────────────────────────────────────────────
 // Everything below is pure on a `&str` so the test suite can exercise it
 // without touching the filesystem.
 
 /// Apply a rating to a sidecar string, preserving everything else.
+///
+/// Favorite handling never confuses CULL's mark with a user star (see [`CULL_NS`]):
+///   - favorite on a frame with no user star → write the courtesy 1★ +
+///     `cull:fav="star"` (CULL owns the star; safe to remove on demote).
+///   - favorite on a frame that already has a user 1–5★ → leave the star
+///     untouched and mark `cull:fav="flag"` (favorite rides the user's star).
+///   - keep/reject → drop `cull:fav`, and remove the 1★ only when CULL owned it.
 fn apply_rating_to_xmp(xmp: &str, rating: &str) -> Result<String, String> {
-    let (pick, good, fav) = match rating {
-        "keep" => ("1", "true", false),
-        "reject" => ("-1", "false", false),
-        "favorite" => ("1", "true", true),
+    let (pick, good) = match rating {
+        "keep" => ("1", "true"),
+        "reject" => ("-1", "false"),
+        "favorite" => ("1", "true"),
         other => return Err(format!("unknown rating: {other}")),
     };
     let mut out = ensure_xmpdm_ns(xmp);
     out = set_desc_attr(&out, "xmpDM:pick", pick);
     out = set_desc_attr(&out, "xmpDM:good", good);
-    out = if fav { set_rating(&out, 1) } else { remove_fav_star(&out) };
+
+    if rating == "favorite" {
+        out = ensure_cull_ns(&out);
+        let star = parse_xmp_rating(&out);
+        let cull_owns_star = cull_fav_value(&out).as_deref() == Some("star");
+        if star.is_none() || star == Some(0) || cull_owns_star {
+            // No pre-existing user star (or CULL already owns it): (re)write the
+            // courtesy 1★ and record that CULL authored it.
+            out = set_rating(&out, 1);
+            out = set_desc_attr(&out, "cull:fav", "star");
+        } else {
+            // A real user star (1–5) is present — NEVER overwrite it. Favorite
+            // is flag-only; the user's star stays as their rating.
+            out = set_desc_attr(&out, "cull:fav", "flag");
+        }
+    } else if cull_owned_fav_star(&out) {
+        out = remove_desc_attr(&out, "cull:fav");
+        out = remove_fav_star(&out); // CULL's own 1★ only; never a user star
+    } else {
+        out = remove_desc_attr(&out, "cull:fav");
+    }
     Ok(out)
+}
+
+/// True when the sidecar's `xmp:Rating="1"` was authored by CULL as a favorite
+/// stamp (and is therefore safe to remove on demote/unrate). Either the explicit
+/// `cull:fav="star"` marker, or a legacy CULL-authored favorite that predates
+/// the marker (CULL CreatorTool + a lone 1★). A user's star — including a
+/// genuine 1★ from Lightroom — returns false and is never touched.
+fn cull_owned_fav_star(xmp: &str) -> bool {
+    match cull_fav_value(xmp).as_deref() {
+        Some("star") => true,
+        Some(_) => false, // "flag": the star is the user's
+        None => authored_by_cull(xmp) && parse_xmp_rating(xmp) == Some(1),
+    }
+}
+
+/// Pure core of unrate: strip CULL's pick/good flags + favorite marker from a
+/// sidecar string, removing the visible 1★ only when CULL owned it. A user's
+/// 2–5★ (and a genuine 1★) is preserved.
+fn strip_cull_fields(existing: &str) -> String {
+    let cull_owns_star = cull_owned_fav_star(existing);
+    let s = remove_desc_attr(existing, "xmpDM:pick");
+    let s = remove_desc_attr(&s, "xmpDM:good");
+    let s = remove_desc_attr(&s, "cull:fav");
+    if cull_owns_star {
+        remove_fav_star(&s)
+    } else {
+        s
+    }
 }
 
 /// Ensure the xmpDM namespace is declared on `rdf:Description`. LrC sidecars
@@ -148,6 +243,34 @@ fn ensure_xmpdm_ns(xmp: &str) -> String {
         return xmp.to_string();
     }
     insert_after_about(xmp, &format!("\n    xmlns:xmpDM=\"{XMPDM_NS}\""))
+}
+
+/// Ensure CULL's private namespace is declared on `rdf:Description` before we
+/// write a `cull:fav` attribute into it.
+fn ensure_cull_ns(xmp: &str) -> String {
+    if xmp.contains("xmlns:cull=") {
+        return xmp.to_string();
+    }
+    insert_after_about(xmp, &format!("\n    xmlns:cull=\"{CULL_NS}\""))
+}
+
+/// Read CULL's private favorite marker: `Some("star")` (CULL also wrote the
+/// visible 1★, safe to strip on demote), `Some("flag")` (favorite rides on a
+/// user star we must never touch), or `None` (not a marker-tagged favorite).
+fn cull_fav_value(xmp: &str) -> Option<String> {
+    let needle = "cull:fav=\"";
+    let s = xmp.find(needle)? + needle.len();
+    let rel = xmp[s..].find('"')?;
+    Some(xmp[s..s + rel].to_string())
+}
+
+/// True when CULL authored this sidecar (vs an LrC/third-party sidecar CULL only
+/// annotated). Gates destructive cleanup. Tighter than a bare "Cull" substring
+/// so a stray keyword/path/person-name can't trip it into deleting user data.
+fn authored_by_cull(xmp: &str) -> bool {
+    xmp.contains("CreatorTool=\"Cull")
+        || xmp.contains("x:xmptk=\"Cull")
+        || xmp.contains("xmlns:cull=")
 }
 
 /// Set (replace or insert) an `rdf:Description` attribute, preserving LrC's
@@ -192,12 +315,20 @@ fn remove_desc_attr(xmp: &str, attr: &str) -> String {
     out
 }
 
-/// Insert a string right after `rdf:about=""` — the one anchor present in
-/// every `rdf:Description`. XML attribute order is irrelevant, so this is safe.
+/// Insert a string right after the `rdf:about="…"` attribute — the one anchor
+/// present in every `rdf:Description`. Handles both the empty form LrC/CULL write
+/// (`rdf:about=""`) and a non-empty form (`rdf:about="uuid:…"`) that some tools
+/// emit; matching only the empty literal used to make every attribute write
+/// silently no-op on those sidecars. XML attribute order is irrelevant, so
+/// inserting here is safe.
 fn insert_after_about(xmp: &str, ins: &str) -> String {
-    if let Some(pos) = xmp.find("rdf:about=\"\"") {
-        let at = pos + "rdf:about=\"\"".len();
-        return format!("{}{}{}", &xmp[..at], ins, &xmp[at..]);
+    let needle = "rdf:about=\"";
+    if let Some(pos) = xmp.find(needle) {
+        let inner = pos + needle.len();
+        if let Some(rel) = xmp[inner..].find('"') {
+            let at = inner + rel + 1; // just past the closing quote
+            return format!("{}{}{}", &xmp[..at], ins, &xmp[at..]);
+        }
     }
     xmp.to_string()
 }
@@ -277,7 +408,13 @@ fn xmp_has_user_content(xmp: &str) -> bool {
     const MARKERS: [&str; 9] = [
         "xmp:Label", "dc:", "lr:", "crs:", "photoshop:", "tiff:", "exif:", "aux:", "xmpMM:",
     ];
-    MARKERS.iter().any(|m| xmp.contains(m))
+    if MARKERS.iter().any(|m| xmp.contains(m)) {
+        return true;
+    }
+    // A surviving 1–5★ is the user's edit-pass rating — never delete a sidecar
+    // that still carries one, even if nothing else marks it as user data. (CULL's
+    // own favorite star is already stripped before this check via strip_cull_fields.)
+    matches!(parse_xmp_rating(xmp), Some(n) if (1..=5).contains(&n))
 }
 
 /// A fresh CULL sidecar skeleton (no rating yet): the xmp + xmpDM namespaces
@@ -307,7 +444,14 @@ fn classify_xmp(content: &str) -> Option<String> {
     match parse_attr_i32(content, "xmpDM:pick") {
         Some(p) if p < 0 => return Some("reject".to_string()),
         Some(p) if p > 0 => {
-            return Some(if star == Some(1) { "favorite" } else { "keep" }.to_string());
+            // Favorite is CULL's private marker when present (so a favorite on an
+            // already-starred frame still reads as favorite). Fallback for
+            // sidecars without the marker — including LrC-authored ones that
+            // round-trip a flagged 1★ — keep the historical "pick + lone 1★ =
+            // favorite" rule. Detection is read-only, so this ambiguity is safe;
+            // the destructive paths gate on cull_owned_fav_star instead.
+            let fav = cull_fav_value(content).is_some() || star == Some(1);
+            return Some(if fav { "favorite" } else { "keep" }.to_string());
         }
         Some(_) => return None, // pick == 0 → explicitly unflagged
         None => {}
@@ -412,9 +556,71 @@ mod tests {
     #[test]
     fn unrate_strips_to_deletable() {
         let fav = apply_rating_to_xmp(&fresh_xmp(), "favorite").unwrap();
-        let stripped = remove_fav_star(&remove_desc_attr(&remove_desc_attr(&fav, "xmpDM:pick"), "xmpDM:good"));
+        let stripped = strip_cull_fields(&fav);
         assert_eq!(classify_xmp(&stripped), None);
         assert!(!xmp_has_user_content(&stripped), "pure CULL sidecar → deletable");
+    }
+
+    /// CRITICAL regression (favorite over a user star): favoriting a frame that
+    /// already carries a user 2–5★ must NOT overwrite that star. The favorite is
+    /// recorded flag-only via cull:fav, and the frame still reads as favorite.
+    #[test]
+    fn favorite_never_clobbers_user_2to5_star() {
+        for n in [2, 3, 4, 5] {
+            let starred = set_rating(&fresh_xmp(), n);
+            let fav = apply_rating_to_xmp(&starred, "favorite").unwrap();
+            assert_eq!(parse_xmp_rating(&fav), Some(n), "user {n}★ preserved through favorite");
+            assert_eq!(classify_xmp(&fav).as_deref(), Some("favorite"), "still reads favorite at {n}★");
+            assert!(fav.contains("cull:fav=\"flag\""), "favorite is flag-only at {n}★");
+            // Demoting the flag-only favorite leaves the user's star intact.
+            let keep = apply_rating_to_xmp(&fav, "keep").unwrap();
+            assert_eq!(parse_xmp_rating(&keep), Some(n), "user {n}★ survives favorite→keep");
+        }
+    }
+
+    /// CRITICAL regression (genuine user 1★): a real 1★ from Lightroom (LrC
+    /// CreatorTool, no CULL marker) must survive keep / reject / unrate — CULL
+    /// must not mistake it for its own favorite stamp and delete it.
+    #[test]
+    fn genuine_user_one_star_survives_all_paths() {
+        let lrc = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Adobe XMP Core\">\n \
+<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n  \
+<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Description>\n \
+</rdf:RDF>\n</x:xmpmeta>";
+        assert!(!authored_by_cull(lrc), "LrC sidecar is not CULL-authored");
+        let keep = apply_rating_to_xmp(lrc, "keep").unwrap();
+        assert_eq!(parse_xmp_rating(&keep), Some(1), "user 1★ survives keep");
+        let reject = apply_rating_to_xmp(lrc, "reject").unwrap();
+        assert_eq!(parse_xmp_rating(&reject), Some(1), "user 1★ survives reject");
+        // Unrate (pure core): strip CULL fields, the user's 1★ stays and keeps
+        // the sidecar from being deleted as litter.
+        let stripped = strip_cull_fields(&keep);
+        assert_eq!(parse_xmp_rating(&stripped), Some(1), "user 1★ survives unrate");
+        assert!(xmp_has_user_content(&stripped), "surviving 1★ blocks sidecar deletion");
+    }
+
+    /// CULL's own favorite (courtesy 1★ + cull:fav="star") IS removable on demote
+    /// — only its own stamp, never a user star.
+    #[test]
+    fn cull_favorite_star_removable_on_demote() {
+        let fav = apply_rating_to_xmp(&fresh_xmp(), "favorite").unwrap();
+        assert!(fav.contains("cull:fav=\"star\""), "CULL-owned star marker");
+        assert_eq!(parse_xmp_rating(&fav), Some(1));
+        let keep = apply_rating_to_xmp(&fav, "keep").unwrap();
+        assert_eq!(parse_xmp_rating(&keep), None, "CULL's own 1★ removed on demote");
+        assert!(!keep.contains("cull:fav"), "favorite marker cleared");
+        assert_eq!(classify_xmp(&keep).as_deref(), Some("keep"));
+    }
+
+    /// insert_after_about handles a non-empty rdf:about (some tools emit one);
+    /// the rating write must not silently no-op on those sidecars.
+    #[test]
+    fn writes_into_nonempty_rdf_about() {
+        let xmp = "<rdf:Description rdf:about=\"uuid:abc-123\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\n  </rdf:Description>";
+        let out = apply_rating_to_xmp(xmp, "reject").unwrap();
+        assert_eq!(parse_attr_i32(&out, "xmpDM:pick"), Some(-1), "rating actually landed");
+        assert!(out.contains("rdf:about=\"uuid:abc-123\""), "about value untouched");
     }
 
     /// Re-applying the same rating is idempotent on the resulting bytes.
@@ -444,6 +650,44 @@ mod tests {
         ] {
             let content = std::fs::read_to_string(dir.join(file)).unwrap();
             assert_eq!(classify_xmp(&content).as_deref(), want, "{file}");
+        }
+    }
+
+    /// LrC star parse: 1–5 round-trip, 0 / negative / missing → None.
+    #[test]
+    fn parses_lrc_rating_from_xmp() {
+        // Attribute form (LrC style).
+        for n in 1..=5u8 {
+            let xmp = format!("rdf:about=\"\" xmp:Rating=\"{n}\"");
+            assert_eq!(parse_lrc_rating(&xmp), Some(n));
+        }
+        // 0 / negative / missing → None (not a user rating).
+        assert_eq!(parse_lrc_rating("xmp:Rating=\"0\""), None);
+        assert_eq!(parse_lrc_rating("xmp:Rating=\"-1\""), None);
+        assert_eq!(parse_lrc_rating("no rating here"), None);
+        // Element form (older sidecars).
+        assert_eq!(parse_lrc_rating("<xmp:Rating>3</xmp:Rating>"), Some(3));
+    }
+
+    /// LrC rating reads back what LrC 15.3 wrote on real sample files. CULL's
+    /// favorite stamp also lands as `1` here — disambiguating CULL-fav vs
+    /// pre-existing 1★ is the frontend's job (it has the CULL rating too).
+    #[test]
+    fn reads_lrc_rating_from_real_sidecars() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../sample_cr3s/sample_LrCFlaggedCR3s");
+        if !dir.exists() {
+            eprintln!("[cull] skipping real-LrC star test: {} absent", dir.display());
+            return;
+        }
+        for (file, want) in [
+            ("Default.xmp", None),
+            ("KeepFlagged.xmp", None),
+            ("RejectFalgged.xmp", None),
+            ("Fav1Star.xmp", Some(1u8)),
+        ] {
+            let content = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(parse_lrc_rating(&content), want, "{file}");
         }
     }
 }

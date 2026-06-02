@@ -2,16 +2,33 @@ import {
   memo,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useState,
   type MutableRefObject,
+  type ReactNode,
   type RefObject,
 } from "react";
-import type { Img, Rating } from "../types";
+import { Check, Star, X as XIcon } from "lucide-react";
+import type { Img, ImageMetadata, Rating } from "../types";
+import { blurhashToDataUrl, type BlurInfo } from "../utils/bundle";
 import { stripExt } from "../utils/path";
-import { RatingDot } from "./RatingDot";
+import { hasLrcRating } from "../utils/ratingColor";
 
 /** Visible rows above and below the viewport that we still render. */
 const GRID_BUFFER_ROWS = 2;
+
+/**
+ * Shared epoch for the skeleton-shimmer animation. Every grid placeholder
+ * derives its `animation-delay` from this, so cells that mount at different
+ * times (as the user scrolls / the viewport reveals more cells) all land on
+ * the SAME phase of the loop — the grid pulses as one, not staggered.
+ *
+ * Negative delays are well-defined in CSS — they advance the animation by
+ * that much. So setting delay = -(epoch elapsed % duration) snaps every cell
+ * to "we've been running since the module loaded", regardless of mount time.
+ */
+const SHIMMER_EPOCH_MS = Date.now();
+const SHIMMER_DURATION_MS = 1400; // must match the CSS @keyframes timing
 
 /**
  * Target cell width — App's outer ResizeObserver picks `cols = floor(width /
@@ -36,13 +53,16 @@ export const GRID_CELL_TARGET = 168;
  * even if no new cells got queued (a pure scroll won't trigger React renders
  * for already-mounted cells).
  */
-export function GridView({
+export const GridView = memo(function GridView({
   images,
   visibleIndices,
   currentIndex,
   cols,
   ratings,
   thumbnails,
+  blurhashes,
+  metadata,
+  selectedIndices,
   loadThumbnail,
   onPick,
   containerRef,
@@ -55,8 +75,17 @@ export function GridView({
   cols: number;
   ratings: Record<number, Rating>;
   thumbnails: Record<string, string>;
+  /** Per-image blurhash placeholders, shown before each cell's thumbnail loads. */
+  blurhashes?: Record<string, BlurInfo>;
+  /** Optional metadata map — only the `lrcRating` field is read here, for the
+   * tiny corner badge that flags pre-existing LrC ratings. */
+  metadata?: Record<string, ImageMetadata>;
+  /** Absolute image indices currently in the multi-selection. Cells in this
+   * set get the champagne tint + accent outline; a plain click clears the
+   * set on the App side and falls back to the single-cell selection. */
+  selectedIndices?: Set<number>;
   loadThumbnail: (path: string, index?: number) => void;
-  onPick: (index: number) => void;
+  onPick: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   containerRef: RefObject<HTMLDivElement | null>;
   viewportRangeRef: MutableRefObject<{ first: number; last: number } | null>;
   onViewportPump: () => void;
@@ -70,7 +99,12 @@ export function GridView({
     if (!el) return;
     const update = () => {
       setViewportH(el.clientHeight);
-      setContainerW(el.clientWidth);
+      // clientWidth includes padding; subtract horizontal padding so cells
+      // fit within the content area (no horizontal scrollbar).
+      const cs = window.getComputedStyle(el);
+      const padL = parseFloat(cs.paddingLeft) || 0;
+      const padR = parseFloat(cs.paddingRight) || 0;
+      setContainerW(Math.max(0, el.clientWidth - padL - padR));
     };
     update();
     const ro = new ResizeObserver(update);
@@ -145,8 +179,11 @@ export function GridView({
             img={images[idx]}
             index={idx}
             isCurrent={idx === currentIndex}
+            isMultiSelected={selectedIndices?.has(idx) ?? false}
             rating={ratings[images[idx].id]}
+            lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
             url={thumbnails[images[idx].path]}
+            blur={blurhashes?.[images[idx].path]}
             loadThumbnail={loadThumbnail}
             onPick={onPick}
             top={row * rowH}
@@ -158,14 +195,17 @@ export function GridView({
       </div>
     </div>
   );
-}
+});
 
 const GridCell = memo(function GridCell({
   img,
   index,
   isCurrent,
+  isMultiSelected,
   rating,
+  lrcRating,
   url,
+  blur,
   loadThumbnail,
   onPick,
   top,
@@ -176,10 +216,13 @@ const GridCell = memo(function GridCell({
   img: Img;
   index: number;
   isCurrent: boolean;
+  isMultiSelected: boolean;
   rating: Rating | undefined;
+  lrcRating: number | null;
   url: string | undefined;
+  blur?: BlurInfo;
   loadThumbnail: (path: string, index?: number) => void;
-  onPick: (index: number) => void;
+  onPick: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   top: number;
   left: number;
   width: number;
@@ -188,12 +231,57 @@ const GridCell = memo(function GridCell({
   useEffect(() => {
     loadThumbnail(img.path, index);
   }, [img.path, index, loadThumbnail]);
+  // Pin the shimmer phase ONCE at mount. We used to compute this inline in
+  // JSX (`Date.now() - epoch`), which re-evaluated on every parent re-render
+  // and reset the CSS animation each time → visible glitch / stutter.
+  // useMemo([]) captures the elapsed-at-mount value and never changes, so
+  // React's style diffing sees a stable string and the animation runs
+  // smoothly. The math still snaps to the shared SHIMMER_EPOCH_MS so cells
+  // mounted at different times stay in phase with each other.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const shimmerDelayMs = useMemo(
+    () => (Date.now() - SHIMMER_EPOCH_MS) % SHIMMER_DURATION_MS,
+    [],
+  );
+  // Decode the blurhash placeholder once (cells are virtualised, so only the
+  // viewport's worth decode at a time).
+  const blurUrl = useMemo(
+    () => (blur ? blurhashToDataUrl(blur.hash, blur.w / blur.h) : null),
+    [blur],
+  );
   const isReject = rating === "reject";
+  // Verdict glyph as a Lucide SVG icon (not Unicode) so it centers cleanly
+  // inside the 18px dot — Unicode metrics drift across system fonts.
+  const dotIcon: ReactNode =
+    rating === "keep" ? (
+      <Check size={12} color="#0a0a0c" strokeWidth={3} />
+    ) : rating === "reject" ? (
+      <XIcon size={12} color="#0a0a0c" strokeWidth={3} />
+    ) : rating === "favorite" ? (
+      <Star size={12} color="#0a0a0c" strokeWidth={2.6} fill="#0a0a0c" />
+    ) : null;
+  const dotClass =
+    rating === "keep"
+      ? "cull-grid__dot--keep"
+      : rating === "reject"
+      ? "cull-grid__dot--reject"
+      : rating === "favorite"
+      ? "cull-grid__dot--fav"
+      : "";
+  const showLrc = hasLrcRating(lrcRating, rating);
+  const cellClass = [
+    "cull-grid__cell",
+    isCurrent ? "is-current" : "",
+    isReject ? "is-reject" : "",
+    isMultiSelected ? "is-multi-selected" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div
-      className={`cull-grid__cell${isCurrent ? " is-current" : ""}${isReject ? " is-reject" : ""}`}
+      className={cellClass}
       style={{ position: "absolute", top, left, width, height }}
-      onClick={() => onPick(index)}
+      onClick={(e) => onPick(index, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey })}
     >
       {/* Frame element always exists, so the current-cell outline is visible
           on both the loaded thumb AND the placeholder shimmer — placeholders
@@ -201,15 +289,44 @@ const GridCell = memo(function GridCell({
       <div className="cull-grid__frame">
         {url ? (
           <img className="cull-grid__img" src={url} alt="" />
+        ) : blurUrl ? (
+          <img className="cull-grid__img" src={blurUrl} alt="" style={{ filter: "blur(2px)" }} />
         ) : (
-          <div className="cull-grid__placeholder">
+          <div
+            className="cull-grid__placeholder"
+            // Snap the shimmer to a shared epoch so every cell pulses in
+            // sync regardless of when it mounted. Negative animation-delay
+            // = "we've already been running this long". The delay is
+            // computed once at mount (useMemo above) so React renders see a
+            // stable value — recomputing on every render restarts the CSS
+            // animation, which read as a stutter.
+            style={{
+              animationDelay: `-${shimmerDelayMs}ms`,
+            }}
+          >
             <span className="cull-grid__placeholder-name">{stripExt(img.filename)}</span>
           </div>
         )}
       </div>
-      {rating && (
-        <div className="cull-grid__dot">
-          <RatingDot rating={rating} size="md" />
+      {showLrc && (
+        <div className="cull-grid__lrc-badge" aria-label={`LrC ${lrcRating}★`}>
+          <Star size={11} strokeWidth={2.4} fill="currentColor" />
+        </div>
+      )}
+      {/* Hover-revealed filename badge — mono pill at bottom-left, only shown on
+          cells that have a loaded thumb (placeholder cells already display
+          their filename inline). Mockup .cell-fn. */}
+      {url && (
+        <div className="cull-grid__fn" aria-hidden>
+          {stripExt(img.filename)}
+        </div>
+      )}
+      {/* Multi-select tint sits above the photo but below the rating dot, so
+          the dot remains legible. Outline (accent) comes from .is-multi-selected. */}
+      {isMultiSelected && <div className="cull-grid__multi-tint" aria-hidden />}
+      {dotIcon && (
+        <div className={`cull-grid__dot ${dotClass}`} aria-hidden>
+          {dotIcon}
         </div>
       )}
     </div>

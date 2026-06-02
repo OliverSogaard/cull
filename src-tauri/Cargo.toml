@@ -26,6 +26,12 @@ serde_json = "1"
 walkdir = "2"
 memchr = "2" # SIMD byte scan for finding JPEG EOI in the embedded full-res stream
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# BlurHash placeholders: decode the tiny embedded THMB (zune-jpeg, fast no-frills
+# JPEG decoder) and encode a ~25-char hash (blurhash) so the UI has a correct
+# per-image aspect placeholder during scrub before any raster loads. Computed
+# lazily on the thumbnail read path only — never in the analyze fast path.
+zune-jpeg = "0.4"
+blurhash = "0.2"
 
 [dev-dependencies]
 # Only used by cr3.rs tests to validate our EXIF-orientation injection against an

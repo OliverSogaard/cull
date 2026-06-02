@@ -1,6 +1,8 @@
-import { memo, useEffect } from "react";
+import { memo, useEffect, useMemo, type ReactNode } from "react";
+import { Check, Star, X as XIcon } from "lucide-react";
 import type { Img, Rating } from "../types";
-import { RatingDot } from "./RatingDot";
+import { blurhashToDataUrl, type BlurInfo } from "../utils/bundle";
+import { hasLrcRating } from "../utils/ratingColor";
 
 /**
  * Strip virtualization knobs. Both the loupe strip and the compare candidate
@@ -10,70 +12,139 @@ import { RatingDot } from "./RatingDot";
  */
 export const STRIP_RADIUS = 100;
 
-/** Per-cell horizontal stride: 88 px frame + 6 px right margin (see CSS). */
-export const CELL_STRIDE = 94;
+/** Per-cell horizontal stride: 76 px frame + 4 px gap (see CSS). */
+export const CELL_STRIDE = 80;
 
 type ThumbCellProps = {
   img: Img;
   index: number;
   isCurrent: boolean;
   rating: Rating | undefined;
+  /** Optional user LrC 1–5★ rating from the sidecar. Renders a tiny ★ badge
+   * top-left when present and not just CULL's own favorite stamp. */
+  lrcRating?: number | null;
   dimmed: boolean;
   url: string | undefined;
+  /** Per-image blurhash placeholder, shown before the thumbnail JPEG loads. */
+  blur?: BlurInfo;
   loadThumbnail: (path: string, index?: number) => void;
   onPick: (index: number) => void;
-  /** Outline colour when current (defaults to white). Compare uses green / amber. */
-  accentColor?: string;
+  /** Role variant in compare mode — adds a champagne outline + role badge. */
+  roleVariant?: "champion" | "challenger";
 };
 
 /**
  * One filmstrip cell — thumbnail or shimmer placeholder, current-cell outline,
- * rating dot, and a reject grayscale tint. Memoised because a single nav step
+ * verdict glyph dot, and a reject opacity. Memoised because a single nav step
  * changes props for only ~2 cells out of ~200 rendered; shallow-prop equality
  * skips the rest.
- *
- * The cell self-requests its thumbnail on mount; the bounded thumb pool
- * dedupes and reorders requests according to the current view's prioritisation
- * (nearest-cursor in loupe/compare, viewport-first in grid).
  */
 export const ThumbCell = memo(function ThumbCell({
   img,
   index,
   isCurrent,
   rating,
+  lrcRating,
   dimmed,
   url,
+  blur,
   loadThumbnail,
   onPick,
-  accentColor,
+  roleVariant,
 }: ThumbCellProps) {
   useEffect(() => {
     loadThumbnail(img.path, index);
   }, [img.path, index, loadThumbnail]);
+  // Decode the blurhash placeholder once (cells are virtualised, so few mount).
+  const blurUrl = useMemo(
+    () => (blur ? blurhashToDataUrl(blur.hash, blur.w / blur.h) : null),
+    [blur],
+  );
+
+  // Reject cells get an opacity drop unless they're the current cell.
+  const isReject = rating === "reject";
+  const cellOpacity = dimmed ? 0.18 : isReject && !isCurrent ? 0.45 : 1;
+
+  // Verdict glyph + colour for the bottom-right chip. Rendered as a Lucide
+  // SVG icon (not a Unicode character) so centering is intrinsic — Unicode
+  // ★ ✓ ✕ have inconsistent metrics across system fonts on Windows.
+  const dotIcon: ReactNode =
+    rating === "keep" ? (
+      <Check size={9} color="#0a0a0c" strokeWidth={3} />
+    ) : rating === "reject" ? (
+      <XIcon size={9} color="#0a0a0c" strokeWidth={3} />
+    ) : rating === "favorite" ? (
+      <Star size={9} color="#0a0a0c" strokeWidth={2.6} fill="#0a0a0c" />
+    ) : null;
+  const dotClass =
+    rating === "keep"
+      ? "cull-thumb__dot--keep"
+      : rating === "reject"
+      ? "cull-thumb__dot--reject"
+      : rating === "favorite"
+      ? "cull-thumb__dot--fav"
+      : "";
+
+  // Outline colour on the active cell. In compare mode the role variant takes
+  // over (always champagne); in loupe it's the standard champagne accent.
+  const frameClass = [
+    "cull-thumb__frame",
+    roleVariant === "champion" ? "cull-thumb--champion" : "",
+    roleVariant === "challenger" ? "cull-thumb--challenger" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const outlineColor = isCurrent || roleVariant ? "var(--accent)" : "transparent";
+
+  const showLrc = hasLrcRating(lrcRating, rating);
 
   return (
     <div
       data-idx={index}
       className="cull-thumb"
       onClick={() => onPick(index)}
-      style={{
-        opacity: dimmed ? 0.18 : 1,
-        filter: rating === "reject" ? "grayscale(0.85)" : "none",
-      }}
+      style={{ opacity: cellOpacity }}
     >
-      <div
-        className="cull-thumb__frame"
-        style={{ borderColor: isCurrent ? accentColor ?? "#fafafa" : "transparent" }}
-      >
+      <div className={frameClass} style={{ outlineColor }}>
         {url ? (
           <img className="cull-thumb__img" src={url} alt="" />
+        ) : blurUrl ? (
+          <img className="cull-thumb__img" src={blurUrl} alt="" style={{ filter: "blur(1px)" }} />
         ) : (
           <div className="cull-thumb__placeholder" />
         )}
+        {/* When the cell has a compare role, the role badge subsumes the
+            LrC badge into its label ("champion ★" / "challenger ★") so the
+            two top-left pills don't stack on the same 76px cell. Star
+            rendered as a Lucide SVG so it sits on the text baseline cleanly
+            instead of riding high (Unicode ★ has weird metrics in
+            Segoe UI on Windows). */}
+        {roleVariant ? (
+          <div
+            className={`cull-thumb__role-badge cull-thumb__role-badge--${roleVariant}`}
+            aria-hidden
+          >
+            <span className="cull-thumb__role-badge-text">{roleVariant}</span>
+            {showLrc && (
+              <Star
+                size={8}
+                strokeWidth={2.4}
+                fill="currentColor"
+                aria-hidden
+              />
+            )}
+          </div>
+        ) : (
+          showLrc && (
+            <div className="cull-thumb__lrc-badge" aria-label={`LrC ${lrcRating}★`}>
+              <Star size={9} strokeWidth={2.4} fill="currentColor" />
+            </div>
+          )
+        )}
       </div>
-      {rating && (
-        <div className="cull-thumb__dot">
-          <RatingDot rating={rating} size="sm" />
+      {dotIcon && (
+        <div className={`cull-thumb__dot ${dotClass}`} aria-hidden>
+          {dotIcon}
         </div>
       )}
     </div>

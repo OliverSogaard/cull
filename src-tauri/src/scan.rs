@@ -16,7 +16,7 @@ use std::time::Instant;
 use tauri::Emitter;
 use walkdir::WalkDir;
 
-use crate::xmp::read_xmp_rating;
+use crate::xmp::{read_lrc_rating, read_xmp_rating};
 
 /// Scan a folder recursively for `.CR3` files, sorted lexicographically.
 #[tauri::command]
@@ -69,6 +69,11 @@ pub(crate) struct AnalyzeResult {
     order: Vec<usize>,
     /// Per input index: restored CULL rating from the `.xmp` sidecar, or null.
     ratings: Vec<Option<String>>,
+    /// Per input index: the user's LrC 1–5★ rating (if any). Frees the UI
+    /// from waiting for the per-image bundle read to show pre-existing LrC
+    /// ratings on the grid + EXIF panel. Same sidecar pass as `ratings`, so
+    /// it's free to extract here.
+    lrc_ratings: Vec<Option<u8>>,
 }
 
 /// Order a staged set chronologically and restore ratings.
@@ -100,7 +105,7 @@ pub(crate) async fn analyze_folder(
     let concurrent_restore = concurrent_restore.unwrap_or(false);
     let n = paths.len();
     if n == 0 {
-        return Ok(AnalyzeResult { order: vec![], ratings: vec![] });
+        return Ok(AnalyzeResult { order: vec![], ratings: vec![], lrc_ratings: vec![] });
     }
     let start = Instant::now();
 
@@ -162,6 +167,9 @@ pub(crate) async fn analyze_folder(
     let total_xmp = to_read.len();
     let step = (total_xmp / 100).max(1); // ≤ ~100 progress events
     let mut ratings: Vec<Option<String>> = vec![None; n];
+    // LrC star ratings: same sidecar pass, no extra I/O. Only the indices in
+    // `to_read` have a sidecar to read; the rest stay None.
+    let mut lrc_ratings: Vec<Option<u8>> = vec![None; n];
 
     if concurrent_restore && to_read.len() > RESTORE_WORKERS {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -171,16 +179,18 @@ pub(crate) async fn analyze_folder(
         let window_ref = &window;
         let done_ref = &done_counter;
 
-        let parts: Vec<Vec<(usize, Option<String>)>> = std::thread::scope(|s| {
+        type RestorePart = Vec<(usize, Option<String>, Option<u8>)>;
+        let parts: Vec<RestorePart> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(RESTORE_WORKERS);
             for chunk in to_read.chunks(chunk_size) {
                 handles.push(s.spawn(move || {
                     let mut out = Vec::with_capacity(chunk.len());
                     for &i in chunk {
                         let rating = read_xmp_rating(&paths_ref[i]);
-                        out.push((i, rating));
+                        let lrc = read_lrc_rating(&paths_ref[i]);
+                        out.push((i, rating, lrc));
                         let d = done_ref.fetch_add(1, Ordering::Relaxed) + 1;
-                        if d % step == 0 || d == total_xmp {
+                        if d.is_multiple_of(step) || d == total_xmp {
                             let _ = window_ref.emit(
                                 "analyze-progress",
                                 AnalyzeProgress { done: d, total: total_xmp, phase: "restoring".into() },
@@ -194,17 +204,23 @@ pub(crate) async fn analyze_folder(
         });
 
         for part in parts {
-            for (i, r) in part {
+            for (i, r, lrc) in part {
                 ratings[i] = r;
+                lrc_ratings[i] = lrc;
             }
         }
     } else {
-        for (done, &i) in to_read.iter().enumerate() {
+        for (idx, &i) in to_read.iter().enumerate() {
             ratings[i] = read_xmp_rating(&paths[i]);
-            if done % step == 0 || done + 1 == total_xmp {
+            lrc_ratings[i] = read_lrc_rating(&paths[i]);
+            let done = idx + 1;
+            // Same step boundaries as the concurrent path (multiples of `step`,
+            // plus the final tick) so the bar advances identically regardless of
+            // storage mode.
+            if done.is_multiple_of(step) || done == total_xmp {
                 let _ = window.emit(
                     "analyze-progress",
-                    AnalyzeProgress { done: done + 1, total: total_xmp, phase: "restoring".into() },
+                    AnalyzeProgress { done, total: total_xmp, phase: "restoring".into() },
                 );
             }
         }
@@ -228,5 +244,5 @@ pub(crate) async fn analyze_folder(
         n,
         start.elapsed()
     );
-    Ok(AnalyzeResult { order, ratings })
+    Ok(AnalyzeResult { order, ratings, lrc_ratings })
 }

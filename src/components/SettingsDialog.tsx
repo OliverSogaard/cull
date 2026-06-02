@@ -1,18 +1,17 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Settings as SettingsIcon } from "lucide-react";
-import type { ExportFolderMode, Filter, Settings } from "../types";
+import type { Filter, Settings, StorageMode, ThumbsPosition } from "../types";
 import { DEFAULT_SETTINGS } from "../types/settings";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+import { sanitizeFolderName } from "../utils/path";
 
 /**
- * Settings modal. Opens with `Ctrl + ,` or the gear icons on the home screen
- * / status bar. Rows are grouped into sections; each row has a fixed-height
- * help block so toggling a value never reflows anything below.
+ * Settings modal. Opens with `Ctrl + ,` or the settings cog in the top-right
+ * window chrome. Sections + control patterns match cull.html exactly.
  *
  * Edits write through immediately (no apply / cancel) — every control is a
- * quick toggle the user can flip back. The "reset all" button at the bottom
- * needs a second click within a few seconds to commit, so a stray click
- * doesn't wipe everything.
+ * quick toggle the user can flip back. The "Reset" button needs a second
+ * click ("Yes, reset") to commit, so a stray click doesn't wipe everything.
  */
 export function SettingsDialog({
   settings,
@@ -26,45 +25,57 @@ export function SettingsDialog({
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     onChange({ ...settings, [key]: value });
 
+  const exportMode = settings.exportFolder.mode;
+  const pinnedPath =
+    settings.exportFolder.mode === "pinned" ? settings.exportFolder.path : "";
+
+  const trapRef = useFocusTrap<HTMLDivElement>();
+
   return (
-    <div className="cull-quitguard">
-      <div className="cull-quitguard__box cull-settings">
-        <div className="cull-settings__title">
-          <SettingsIcon size={14} strokeWidth={2} />
-          <span>settings</span>
+    <div className="cull-quitguard cull-settings-overlay">
+      <div
+        className="cull-settings"
+        ref={trapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        tabIndex={-1}
+      >
+        <div className="cull-settings__head">
+          <span className="cull-settings__head-title">Settings</span>
+          <span className="cull-settings__head-meta">CULL 1.0</span>
         </div>
 
-        <div className="cull-settings__scroll">
+        <div className="cull-settings__body">
           {/* ───────────── Storage ───────────── */}
-          <Section title="storage">
+          <Section title="Storage">
             <SettingRow
-              label="where are your photos?"
-              help={
-                settings.storageMode === "local"
-                  ? "Photos on this computer (or directly attached drive). Reads are fast, so cull caches more frames ahead and warms the zoom layer quickly."
-                  : "Photos on a network drive (NAS, mapped SMB, SSHFS). Reads are slower and concurrent opens can cause stalls, so cull is more careful with prefetch."
-              }
+              label="Storage mode"
+              help="Network turns down concurrency for slow NAS / SMB shares. Default Local for fast drives."
             >
-              <SegmentToggle
+              <SegmentToggle<StorageMode>
                 value={settings.storageMode}
                 options={[
-                  { value: "local", label: "on this computer" },
-                  { value: "network", label: "on a network drive" },
+                  { value: "local", label: "Local" },
+                  { value: "network", label: "Network" },
                 ]}
-                onChange={(storageMode) => set("storageMode", storageMode)}
+                onChange={(v) => set("storageMode", v)}
               />
             </SettingRow>
           </Section>
 
-          {/* ───────────── Defaults on entering a cull ───────────── */}
-          <Section title="when you start a cull">
-            <SettingRow label="filter" help="Which frames are visible on entry. Status-bar 1-4 still cycle during the cull.">
+          {/* ───────────── When you start a cull ───────────── */}
+          <Section title="When you start a cull">
+            <SettingRow
+              label="Default filter"
+              help="Starts in this filter when you open a folder."
+            >
               <SegmentToggle<Filter>
                 value={settings.defaultFilter}
                 options={[
-                  { value: "all", label: "all" },
-                  { value: "unrated", label: "unrated" },
-                  { value: "keeps", label: "keeps" },
+                  { value: "all", label: "All" },
+                  { value: "unrated", label: "Unrated" },
+                  { value: "keeps", label: "Keeps" },
                   { value: "favorites", label: "★" },
                 ]}
                 onChange={(v) => set("defaultFilter", v)}
@@ -72,107 +83,137 @@ export function SettingsDialog({
             </SettingRow>
 
             <SettingRow
-              label="overlays on entry"
-              help="Which loupe overlays + the thumbnail strip start visible. I / H / P / O / T still toggle them during the cull."
+              label="Default overlays"
+              help="Which overlays start on. Toggle anytime with i / h / p / o / t."
             >
-              <div className="cull-settings__checks">
-                <CheckChip
-                  label="thumbnails"
+              <div className="cull-settings__chips">
+                <Chip
+                  label="Thumbnails"
                   on={settings.defaultThumbsVisible}
                   onChange={(v) => set("defaultThumbsVisible", v)}
                 />
-                <CheckChip
-                  label="info"
+                <Chip
+                  label="Info"
                   on={settings.defaultExifVisible}
                   onChange={(v) => set("defaultExifVisible", v)}
                 />
-                <CheckChip
-                  label="clipping"
+                <Chip
+                  label="Clipping"
                   on={settings.defaultClippingVisible}
                   onChange={(v) => set("defaultClippingVisible", v)}
                 />
-                <CheckChip
-                  label="peaking"
+                <Chip
+                  label="Peaking"
                   on={settings.defaultPeakingVisible}
                   onChange={(v) => set("defaultPeakingVisible", v)}
                 />
-                <CheckChip
-                  label="thirds"
+                <Chip
+                  label="Thirds"
                   on={settings.defaultCompositionVisible}
                   onChange={(v) => set("defaultCompositionVisible", v)}
                 />
               </div>
             </SettingRow>
+
+            <SettingRow
+              label="Thumb strip position"
+              help="Where the loupe / compare thumbnail strip sits."
+            >
+              <SegmentToggle<ThumbsPosition>
+                value={settings.thumbsPosition}
+                options={[
+                  { value: "bottom", label: "Bottom" },
+                  { value: "top", label: "Top" },
+                ]}
+                onChange={(v) => set("thumbsPosition", v)}
+              />
+            </SettingRow>
           </Section>
 
           {/* ───────────── File operations ───────────── */}
-          <Section title="file operations">
+          <Section title="File operations">
             <SettingRow
-              label="rejected subfolder"
-              help='Subfolder created inside the cull folder when you "move rejects". Default: _rejected'
+              label="Rejected subfolder"
+              help="Rejected files move into this subfolder of the source."
             >
-              <input
-                type="text"
-                className="cull-settings__text"
+              <RejectedSubfolderInput
                 value={settings.rejectedSubfolder}
-                spellCheck={false}
-                placeholder={DEFAULT_SETTINGS.rejectedSubfolder}
-                onChange={(e) => set("rejectedSubfolder", e.target.value)}
+                onChange={(v) => set("rejectedSubfolder", v)}
               />
             </SettingRow>
 
             <SettingRow
-              label="export folder"
-              help={
-                settings.exportFolder.mode === "remember"
-                  ? "When you copy keeps, the picker opens at the last folder you exported to."
-                  : "When you copy keeps, always export here (no picker)."
-              }
+              label="Copy keeps to"
+              help='Where keepers go when you run "Copy keeps".'
             >
-              <ExportFolderControl
-                value={settings.exportFolder}
-                onChange={(v) => set("exportFolder", v)}
-              />
-            </SettingRow>
-          </Section>
-
-          {/* ───────────── Launch ───────────── */}
-          <Section title="on launch">
-            <SettingRow
-              label="open last folder"
-              help="Skip the home screen and reopen the folder you last culled. Falls back to the home screen if that folder no longer exists."
-            >
-              <SegmentToggle
-                value={settings.openLastFolderOnLaunch ? "yes" : "no"}
+              <SegmentToggle<"remember" | "pinned">
+                value={exportMode}
                 options={[
-                  { value: "no", label: "show home screen" },
-                  { value: "yes", label: "open last folder" },
+                  { value: "remember", label: "Ask each time" },
+                  { value: "pinned", label: "Pinned root" },
                 ]}
-                onChange={(v) => set("openLastFolderOnLaunch", v === "yes")}
+                onChange={(mode) => {
+                  if (mode === "remember") onChange({ ...settings, exportFolder: { mode: "remember" } });
+                  else if (settings.exportFolder.mode !== "pinned") {
+                    // We let the PinnedRoot row pick the folder; meanwhile set
+                    // pinned with an empty path so the row appears.
+                    onChange({ ...settings, exportFolder: { mode: "pinned", path: "" } });
+                  }
+                }}
+              />
+            </SettingRow>
+
+            {exportMode === "pinned" && (
+              <div className="cull-settings__pinned-config">
+                <SettingRow
+                  label="Pinned root"
+                  help="Each session writes to a subfolder under this. Subfolder name is editable in the finish dialog."
+                >
+                  <PinnedRootControl
+                    path={pinnedPath}
+                    onPick={(p) => onChange({ ...settings, exportFolder: { mode: "pinned", path: p } })}
+                  />
+                </SettingRow>
+              </div>
+            )}
+          </Section>
+
+          {/* ───────────── On launch ───────────── */}
+          <Section title="On launch">
+            <SettingRow
+              label="Reopen last folder"
+              help="Skip the home screen when CULL starts."
+            >
+              <Toggle
+                on={settings.openLastFolderOnLaunch}
+                onChange={(v) => set("openLastFolderOnLaunch", v)}
               />
             </SettingRow>
           </Section>
 
-          {/* ───────────── House-keeping ───────────── */}
-          <Section title="reset">
+          {/* ───────────── Reset ───────────── */}
+          <Section title="Reset">
             <ResetRow onReset={() => onChange(DEFAULT_SETTINGS)} />
           </Section>
         </div>
 
-        <div className="cull-quitguard__actions">
-          <button className="cull-pick-button" onClick={onClose}>
-            close
-          </button>
+        <div className="cull-settings__foot">
+          <kbd>esc</kbd> to close · <kbd>⌃ ,</kbd> to reopen
         </div>
-        <div className="cull-quitguard__hint">
-          esc to close · keybind <kbd>ctrl</kbd>+<kbd>,</kbd>
-        </div>
+        {/* invisible close shim — esc is handled in App; this row also takes
+            a click to dismiss when clicking outside the dialog body. */}
+        <button
+          type="button"
+          className="cull-settings__close-shim"
+          aria-label="close"
+          onClick={onClose}
+        />
       </div>
     </div>
   );
 }
 
-/** Section header — a thin top-line and a small uppercase label. */
+/** Section header. */
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="cull-settings__section">
@@ -193,11 +234,11 @@ function SettingRow({
 }) {
   return (
     <div className="cull-settings__row">
-      <div className="cull-settings__row-head">
+      <div className="cull-settings__row-text">
         <div className="cull-settings__row-name">{label}</div>
-        <div className="cull-settings__row-control">{children}</div>
+        {help && <div className="cull-settings__row-help">{help}</div>}
       </div>
-      {help && <div className="cull-settings__row-help">{help}</div>}
+      <div className="cull-settings__row-control">{children}</div>
     </div>
   );
 }
@@ -230,8 +271,8 @@ function SegmentToggle<T extends string>({
   );
 }
 
-/** Small on/off chip — used for grouping related boolean toggles in one row. */
-function CheckChip({
+/** Small chip — on/off pill, used for default overlay set. */
+function Chip({
   label,
   on,
   onChange,
@@ -243,7 +284,7 @@ function CheckChip({
   return (
     <button
       type="button"
-      className={`cull-settings__check${on ? " is-active" : ""}`}
+      className={`cull-settings__chip${on ? " is-on" : ""}`}
       onClick={() => onChange(!on)}
       aria-pressed={on}
     >
@@ -252,20 +293,30 @@ function CheckChip({
   );
 }
 
+/** Knob-style on/off toggle (mockup .toggle). */
+function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      className={`cull-settings__toggle${on ? " is-on" : ""}`}
+      onClick={() => onChange(!on)}
+      aria-pressed={on}
+    />
+  );
+}
+
 /**
- * Export-folder control: a remember-vs-pin toggle plus, when pinned, a path
- * display and a Browse button. The native folder picker can take seconds to
- * appear on Windows (mapped network drives, Quick Access enumeration), so we
- * surface a `picking…` state on both the segment toggle and the Browse button
- * while the OS dialog is in flight — and ignore further clicks until it
- * resolves.
+ * Pinned-root pick row — shows the picked path (or "(no folder picked)") and
+ * a Change button. The native folder picker can take seconds to appear on
+ * Windows (mapped network drives, Quick Access enumeration), so we surface a
+ * `opening…` state on the button and ignore further clicks until it resolves.
  */
-function ExportFolderControl({
-  value,
-  onChange,
+function PinnedRootControl({
+  path,
+  onPick,
 }: {
-  value: ExportFolderMode;
-  onChange: (next: ExportFolderMode) => void;
+  path: string;
+  onPick: (next: string) => void;
 }) {
   const [picking, setPicking] = useState(false);
 
@@ -276,77 +327,128 @@ function ExportFolderControl({
       const picked = await open({
         directory: true,
         multiple: false,
-        defaultPath: value.mode === "pinned" ? value.path : undefined,
+        defaultPath: path || undefined,
         title: "pin export folder",
       });
-      if (typeof picked === "string") {
-        onChange({ mode: "pinned", path: picked });
-      }
+      if (typeof picked === "string") onPick(picked);
     } finally {
       setPicking(false);
     }
   };
 
   return (
-    <div className="cull-settings__export">
-      <SegmentToggle
-        value={value.mode}
+    <div className="cull-settings__pinned-control">
+      <span
+        className="cull-settings__pinned-path"
+        title={path || "(no folder picked)"}
+      >
+        {path || "(no folder picked)"}
+      </span>
+      <button
+        type="button"
+        className="cull-pick-button"
+        onClick={pick}
         disabled={picking}
-        options={[
-          { value: "remember", label: "remember last" },
-          { value: "pinned", label: picking ? "opening picker…" : "always to…" },
-        ]}
-        onChange={(mode) => {
-          if (mode === "remember") onChange({ mode: "remember" });
-          else if (value.mode !== "pinned") pick();
-          else onChange(value);
-        }}
-      />
-      {value.mode === "pinned" && (
-        <div className="cull-settings__export-pinned">
-          <code className="cull-settings__path">{value.path || "(no folder picked)"}</code>
-          <button
-            type="button"
-            className="cull-settings__browse"
-            onClick={pick}
-            disabled={picking}
-          >
-            {picking ? "opening…" : "browse…"}
-          </button>
-        </div>
-      )}
+      >
+        {picking ? "opening…" : "Change"}
+      </button>
     </div>
   );
 }
 
-/** Reset all settings — two-click confirm to prevent a misclick wiping prefs. */
+/**
+ * Rejected-subfolder text input — silent failsafe. Sanitizes Windows-illegal
+ * chars on every keystroke (so a paste of `c:\bad` collapses to `cbad`), shows
+ * a red border while the value is empty (no help-text noise — purely visual),
+ * and on blur restores the default with a brief champagne flash so the user
+ * sees the change. Mirrors the dest-sub field in the finish dialog.
+ */
+function RejectedSubfolderInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [flashing, setFlashing] = useState(false);
+
+  const isEmpty = value.trim().length === 0;
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      className={`cull-settings__text${isEmpty ? " is-invalid" : ""}${flashing ? " is-flash" : ""}`}
+      value={value}
+      spellCheck={false}
+      placeholder={DEFAULT_SETTINGS.rejectedSubfolder}
+      onChange={(e) => onChange(sanitizeFolderName(e.target.value))}
+      onBlur={() => {
+        if (value.trim().length === 0) {
+          onChange(DEFAULT_SETTINGS.rejectedSubfolder);
+          setFlashing(true);
+          window.setTimeout(() => setFlashing(false), 900);
+        }
+      }}
+    />
+  );
+}
+
+/** Reset all settings — two-step inline confirm to prevent a misclick wiping
+ * prefs. Stage 1: a red-outlined "Reset" button. Stage 2: "Sure?" inline
+ * message with primary "Yes, reset" and a "Cancel" escape. Auto-disarms after
+ * 4 s so a walked-away dialog can't be triggered. */
 function ResetRow({ onReset }: { onReset: () => void }) {
   const [armed, setArmed] = useState(false);
 
+  useEffect(() => {
+    if (!armed) return;
+    const t = window.setTimeout(() => setArmed(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [armed]);
+
   return (
     <div className="cull-settings__row">
-      <div className="cull-settings__row-head">
-        <div className="cull-settings__row-name">reset everything to defaults</div>
-        <button
-          type="button"
-          className={`cull-settings__reset${armed ? " is-armed" : ""}`}
-          onClick={() => {
-            if (armed) {
-              onReset();
-              setArmed(false);
-            } else {
-              setArmed(true);
-              window.setTimeout(() => setArmed(false), 4000);
-            }
-          }}
-        >
-          {armed ? "click again to confirm" : "reset"}
-        </button>
+      <div className="cull-settings__row-text">
+        <div className="cull-settings__row-name">Reset to defaults</div>
+        <div className="cull-settings__row-help">
+          Restores everything in this dialog. Doesn't touch your CR3s or XMPs.
+        </div>
       </div>
-      <div className="cull-settings__row-help">
-        Returns every setting on this page to its default. Doesn't touch any
-        ratings or sidecars — those live on disk.
+      <div className="cull-settings__row-control">
+        {armed ? (
+          <div className="cull-settings__reset-confirm">
+            <span className="cull-settings__reset-msg">Sure?</span>
+            <button
+              type="button"
+              className="cull-settings__reset is-armed"
+              onClick={() => {
+                onReset();
+                setArmed(false);
+              }}
+            >
+              Yes, reset
+            </button>
+            <button
+              type="button"
+              className="cull-pick-button"
+              onClick={() => setArmed(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="cull-settings__reset"
+            onClick={() => setArmed(true)}
+          >
+            Reset
+          </button>
+        )}
       </div>
     </div>
   );
 }
+

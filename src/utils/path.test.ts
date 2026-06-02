@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { basename, stripExt } from "./path";
+import { basename, joinPath, sanitizeFolderName, stripExt } from "./path";
 
 describe("basename", () => {
   it("handles forward-slash paths", () => {
@@ -33,5 +33,34 @@ describe("stripExt", () => {
 
   it("leaves a name with no extension untouched", () => {
     expect(stripExt("noext")).toBe("noext");
+  });
+});
+
+describe("joinPath", () => {
+  it("uses backslash when the root is a Windows path", () => {
+    expect(joinPath("C:\\Exports", "Reception-keeps")).toBe("C:\\Exports\\Reception-keeps");
+  });
+
+  it("uses forward slash for POSIX roots", () => {
+    expect(joinPath("/home/u/exports", "shoot")).toBe("/home/u/exports/shoot");
+  });
+
+  it("strips a trailing separator on the root", () => {
+    expect(joinPath("C:\\Exports\\", "x")).toBe("C:\\Exports\\x");
+    expect(joinPath("/exports/", "x")).toBe("/exports/x");
+  });
+});
+
+describe("sanitizeFolderName", () => {
+  it("strips Windows-illegal characters", () => {
+    expect(sanitizeFolderName("a<b>c:d\"e/f\\g|h?i*j")).toBe("abcdefghij");
+  });
+
+  it("caps the result at 32 chars", () => {
+    expect(sanitizeFolderName("x".repeat(40))).toBe("x".repeat(32));
+  });
+
+  it("leaves a clean name untouched", () => {
+    expect(sanitizeFolderName("Reception-keeps")).toBe("Reception-keeps");
   });
 });

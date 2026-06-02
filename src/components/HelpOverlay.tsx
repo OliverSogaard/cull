@@ -84,6 +84,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
           ["i", "exif + histogram"],
           ["h", "clipping"],
           ["p", "focus peaking"],
+          ["o", "thirds grid"],
           ["t", "candidate strip"],
         ],
       },
@@ -115,6 +116,8 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         ["↑ ↓", "row up / down"],
         ["1 – 4", "filter: all / unrated / keeps / ★"],
         ["click", "open in loupe"],
+        ["⇧+click", "select range"],
+        ["⌃+click", "add to selection"],
       ],
     },
     {
@@ -133,8 +136,10 @@ export function HelpOverlay({ mode }: { mode: HelpMode }) {
   return (
     <div className="cull-help">
       <div className="cull-help__inner">
-        <div className="cull-help__eyebrow">cull · {mode} keys</div>
-        <h2 className="cull-help__title">release tab to dismiss</h2>
+        <div className="cull-help__eyebrow">CULL · {mode.toUpperCase()} KEYS</div>
+        <h2 className="cull-help__title">
+          Release <em>tab</em> to dismiss
+        </h2>
         <div className="cull-help__grid">
           {groups.map((g) => (
             <div key={g.title}>

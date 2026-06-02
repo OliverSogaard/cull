@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Check, Settings as SettingsIcon, Star, X as XIcon } from "lucide-react";
+import { Check, Star, X as XIcon } from "lucide-react";
 import type {
   AnalyzeProgress,
   AnalyzeResult,
@@ -24,21 +24,30 @@ import "./App.css";
 
 import { CompareStrip } from "./components/CompareStrip";
 import { CompareView } from "./components/CompareView";
-import { ExifPanel } from "./components/ExifPanel";
+import { ExifRail } from "./components/ExifRail";
+import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
-import { RatingDot } from "./components/RatingDot";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { STRIP_RADIUS } from "./components/ThumbCell";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { WindowControls } from "./components/WindowControls";
 
+import { useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
 import { PERFORMANCE_PROFILES } from "./types/settings";
-import { fetchBundle } from "./utils/bundle";
+import {
+  fetchBundle,
+  fetchThumbnail,
+  fetchBlurhash,
+  blurhashToDataUrl,
+  type BlurInfo,
+} from "./utils/bundle";
+import { loadBlurCache, saveBlurCache } from "./utils/blurhashCache";
 import { passesFilter } from "./utils/filter";
-import { basename, stripExt } from "./utils/path";
+import { formatRelativeTime, middleTruncate } from "./utils/format";
+import { basename } from "./utils/path";
 import { RATING_COLOR } from "./utils/ratingColor";
 
 // PREFETCH_AHEAD / PREFETCH_BEHIND / PREVIEW_KEEP / HIRES_SETTLE_MS / read-pool
@@ -61,6 +70,20 @@ const PAN_LIMIT = 40; // max % offset from the AF point
 // images/s, the fastest that still feels smooth.
 const NAV_REPEAT_MS = 33;
 
+/** Decode a BlurHash to a data URL, cached process-wide by hash. Deliberately a
+ * plain function, NOT a hook: the loupe's `curBlur` is computed AFTER the
+ * component's `if (phase !== "culling") return …` early return, so using
+ * `useMemo` there changed the hook count between the home and culling phases and
+ * crashed React (black screen on entering the loupe). */
+const blurDecodeCache = new Map<string, string | null>();
+function decodeBlurCached(info: BlurInfo | undefined): string | undefined {
+  if (!info) return undefined;
+  if (!blurDecodeCache.has(info.hash)) {
+    blurDecodeCache.set(info.hash, blurhashToDataUrl(info.hash, info.w / info.h));
+  }
+  return blurDecodeCache.get(info.hash) ?? undefined;
+}
+
 export default function App() {
   const [phase, setPhase] = useState<Phase>("start");
   const [folder, setFolder] = useState<string | null>(null);
@@ -69,6 +92,12 @@ export default function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [ratings, setRatings] = useState<Record<number, Rating>>({});
   const [filter, setFilter] = useState<Filter>("all");
+  // Grid multi-select. Indices are ABSOLUTE (into images), not filter-relative,
+  // so a rating action operating on the set lands on the right photos even if
+  // the filter changes mid-flow. `selectionAnchor` is the cell shift-range
+  // extends from; null means "no anchor yet, set on the next click".
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(() => new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const [exifVisible, setExifVisible] = useState(false);
   const [thumbsVisible, setThumbsVisible] = useState(true);
   const [gridVisible, setGridVisible] = useState(false); // G toggles the contact-sheet grid
@@ -86,6 +115,12 @@ export default function App() {
   // User-tunable settings, persisted to localStorage. Opened with Ctrl+,.
   const [settings, setSettings] = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Recent folders list rendered on the home screen. Pushed to whenever a
+  // folder is opened (after a successful `scan_folder`), and refreshed with
+  // the rated/done counts when the user leaves the cull back to home — so
+  // the list shows "327 / 372" mid-flow and "932 ✓" once everything's rated.
+  const { recents: recentFolders, push: pushRecent, remove: removeRecent } = useRecents();
 
   // Act on the cull (Ctrl+E) — a non-modal finish dialog with two file actions:
   // move rejects to a _rejected/ subfolder, and copy keeps+favorites to an export
@@ -105,9 +140,11 @@ export default function App() {
 
   // Compare mode: Champion vs Challenger. championIndex/challengerIndex are
   // indices into the (chronologically sorted) images array. The champion (left)
-  // is the running keeper (always rated Keep); the challenger (right) is an
-  // unrated frame the user accepts (Enter → it becomes champion) or rejects
-  // (Backspace). Available on any image — no burst grouping.
+  // is the pinned running frame — whatever the user is comparing against; its
+  // rating is whatever it currently is (only persisted as Keep once it actually
+  // wins a comparison, so on entry it may still be unrated). The challenger
+  // (right) is an unrated frame the user accepts (Enter → it becomes champion) or
+  // rejects (Backspace). Available on any image — no burst grouping.
   const [compareMode, setCompareMode] = useState(false);
   const [championIndex, setChampionIndex] = useState(0);
   const [challengerIndex, setChallengerIndex] = useState(0);
@@ -119,11 +156,31 @@ export default function App() {
   // so ESC into compare resumes the same pair (validated for the saved
   // challenger still being unrated — otherwise advance to the next).
   const [navStack, setNavStack] = useState<NavEntry[]>([]);
+  // Live mirror of the nav stack so compare handlers can snapshot it into undo
+  // actions without taking navStack as a dependency (which would re-create those
+  // callbacks on every navigation).
+  const navStackRef = useRef(navStack);
+  useEffect(() => {
+    navStackRef.current = navStack;
+  }, [navStack]);
 
   const [previews, setPreviews] = useState<Record<string, PreviewEntry>>({});
   const requestedPreviews = useRef<Set<string>>(new Set());
   const [metadata, setMetadata] = useState<Record<string, ImageMetadata>>({});
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+  // Per-image BlurHash placeholder data: the hash + DISPLAY dims (orientation-
+  // adjusted). Populated by the thumbnail pool AND a background warm pass, so
+  // EVERY frame (grid / strip / loupe-load) has a correctly-shaped placeholder,
+  // not just thumbnails that happen to have loaded. The frame aspect ratio comes
+  // from these authoritative EXIF dims (not the frozen full-preview naturalSize),
+  // and the ~25-byte hash decodes to a data URL lazily, per-component. The ref
+  // mirror lets the warm pass + loaders skip already-known paths without
+  // re-subscribing.
+  const [blurhashes, setBlurhashes] = useState<Record<string, BlurInfo>>({});
+  const blurhashesRef = useRef(blurhashes);
+  useEffect(() => {
+    blurhashesRef.current = blurhashes;
+  }, [blurhashes]);
   const requestedThumbs = useRef<Set<string>>(new Set());
 
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -143,7 +200,12 @@ export default function App() {
     const el = gridContainerRef.current;
     if (!el) return;
     const update = () => {
-      const w = el.clientWidth;
+      // Subtract horizontal padding so the col count matches the actual
+      // content area (otherwise cells overflow → horizontal scrollbar).
+      const cs = window.getComputedStyle(el);
+      const padL = parseFloat(cs.paddingLeft) || 0;
+      const padR = parseFloat(cs.paddingRight) || 0;
+      const w = Math.max(0, el.clientWidth - padL - padR);
       setGridCols(Math.max(2, Math.floor(w / GRID_CELL_TARGET)));
     };
     update();
@@ -231,7 +293,12 @@ export default function App() {
     return images.map((_, i) => i).filter((i) => passesFilter(ratings[images[i].id], filter));
   }, [images, ratings, filter]);
 
-  const positionInFilter = visibleIndices.indexOf(currentIndex);
+  // Memoized: this O(n) indexOf used to run on EVERY render (incl. every
+  // ~30 Hz scrub frame); now only when the filter list or cursor actually moves.
+  const positionInFilter = useMemo(
+    () => visibleIndices.indexOf(currentIndex),
+    [visibleIndices, currentIndex],
+  );
 
   // Compare-mode candidate strip: every UNRATED frame except the champion (which
   // is pinned separately). The challenger is always one of these. Drives both the
@@ -325,7 +392,18 @@ export default function App() {
     setPreviews((p) => ({ ...p, [path]: { status: "loading" } }));
     fetchBundle(path)
       .then(({ previewUrl, meta }) => {
-        setPreviews((p) => ({ ...p, [path]: { status: "ready", url: previewUrl } }));
+        setPreviews((p) => {
+          const existing = p[path];
+          if (existing && existing.status === "ready") {
+            // A concurrent load (e.g. across an evict-then-reload window) already
+            // populated this path. Don't clobber its URL — that would leak the
+            // blob; drop the just-fetched duplicate instead. Mirrors the
+            // thumbnail loader's guard.
+            if (existing.url !== previewUrl) URL.revokeObjectURL(previewUrl);
+            return p;
+          }
+          return { ...p, [path]: { status: "ready", url: previewUrl } };
+        });
         if (meta) setMetadata((m) => ({ ...m, [path]: meta }));
       })
       .catch((e) => {
@@ -338,9 +416,8 @@ export default function App() {
   // Small thumbnail-only read; the thumbnail pool calls this.
   const loadThumbnailRaw = useCallback((path: string, onSettle: () => void) => {
     requestedThumbs.current.add(path);
-    invoke<ArrayBuffer>("extract_thumbnail", { path })
-      .then((bytes) => {
-        const url = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
+    fetchThumbnail(path)
+      .then(({ url, blurhash, width, height }) => {
         setThumbnails((t) => {
           if (t[path]) {
             URL.revokeObjectURL(url);
@@ -348,6 +425,13 @@ export default function App() {
           }
           return { ...t, [path]: url };
         });
+        // Store the hash + DISPLAY dims so every consumer (loupe / strip / grid)
+        // can place a correctly-shaped blurhash and read the aspect ratio.
+        if (blurhash && width && height) {
+          setBlurhashes((b) =>
+            b[path] ? b : { ...b, [path]: { hash: blurhash, w: width, h: height } },
+          );
+        }
       })
       .catch(() => requestedThumbs.current.delete(path))
       .finally(onSettle);
@@ -424,6 +508,80 @@ export default function App() {
     [pumpBundles],
   );
 
+  // Background BlurHash warm pass: after a folder opens, progressively fetch the
+  // hash + display dims for EVERY frame (cursor-outward priority) so the grid,
+  // strip, and loupe/compare load placeholders are correctly shaped for the whole
+  // shoot — without blocking the (mtime fast-path) analyze. Low concurrency so it
+  // never starves the on-screen thumbnail/preview reads on a NAS. Cancels +
+  // restarts when the staged set changes (new folder). Results are batch-flushed
+  // (~250ms) so 5k tiny updates don't thrash React.
+  useEffect(() => {
+    if (phase !== "culling" || images.length === 0 || !folder) return;
+    let cancelled = false;
+    // Everything we know for this folder (persisted cache + warmed this session) —
+    // used to skip already-known frames and to persist back.
+    const known: Record<string, BlurInfo> = { ...loadBlurCache(folder) };
+    let dirty = false;
+    // Instant population from the persisted cache (CR3s are immutable, so a
+    // path-keyed cache never goes stale). Live entries win — don't clobber fresher.
+    if (Object.keys(known).length > 0) {
+      setBlurhashes((prev) => ({ ...known, ...prev }));
+    }
+    const pending: Record<string, BlurInfo> = {};
+    let flushTimer: number | null = null;
+    const flush = () => {
+      flushTimer = null;
+      const keys = Object.keys(pending);
+      if (cancelled || keys.length === 0) return;
+      setBlurhashes((prev) => {
+        const next = { ...prev };
+        for (const k of keys) next[k] = pending[k];
+        return next;
+      });
+      for (const k of keys) delete pending[k];
+    };
+    const scheduleFlush = () => {
+      if (flushTimer == null) flushTimer = window.setTimeout(flush, 250);
+    };
+    const persist = () => {
+      if (dirty) saveBlurCache(folder, { ...blurhashesRef.current, ...known });
+    };
+    // Cursor-outward order so the visible area fills first.
+    const center = currentIndexRef.current;
+    const order = images.map((_, i) => i).sort((a, b) => Math.abs(a - center) - Math.abs(b - center));
+    let cursor = 0;
+    const WARM_CONCURRENCY = 4;
+    const worker = async (): Promise<void> => {
+      while (!cancelled) {
+        const oi = cursor++;
+        if (oi >= order.length) return;
+        const path = images[order[oi]].path;
+        if (known[path] || blurhashesRef.current[path] || pending[path]) continue;
+        try {
+          const { blurhash, width, height } = await fetchBlurhash(path);
+          if (!cancelled && blurhash && width && height) {
+            const info = { hash: blurhash, w: width, h: height };
+            known[path] = info;
+            pending[path] = info;
+            dirty = true;
+            scheduleFlush();
+          }
+        } catch {
+          // skip — a frame without a placeholder just shows the shimmer.
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: WARM_CONCURRENCY }, () => worker())).then(() => {
+      flush();
+      persist();
+    });
+    return () => {
+      cancelled = true;
+      if (flushTimer != null) clearTimeout(flushTimer);
+      persist(); // persist progress on folder change / unmount
+    };
+  }, [phase, images, folder]);
+
   // Enqueue one filmstrip thumbnail (deduped). `index` drives nearest-first order.
   const loadThumbnail = useCallback(
     (path: string, index = 0) => {
@@ -466,18 +624,33 @@ export default function App() {
         setLastAdded(additions.length);
         setFolder(picked);
 
+        // Push to the home-screen recents list (or refresh an existing entry).
+        // `rated` + `done` only become accurate after `analyze_folder` reads
+        // the sidecars, so we leave them at zero/false here and let the cull
+        // exit (leaveToHome) — or the analyze pass itself — update them.
+        pushRecent({
+          path: picked,
+          count: paths.length,
+          rated: 0,
+          lastOpened: new Date().toISOString(),
+          done: false,
+        });
+
         // Go straight to STAGED after the (sub-millisecond) scan — don't block
         // on preview decode. The current image preloads in the background so
         // "begin culling" is still instant by the time the user clicks it.
         setPhase("staged");
       } catch (e) {
         setScanError(String(e));
+        // Folder is gone / unreadable — drop it from recents so the home screen
+        // doesn't keep advertising a path that no longer opens.
+        removeRecent(picked);
         setPhase(images.length > 0 ? "staged" : "start");
       } finally {
         setPickerBusy(false);
       }
     },
-    [images],
+    [images, pushRecent, removeRecent],
   );
 
   const pickFolder = useCallback(async () => {
@@ -533,9 +706,56 @@ export default function App() {
         if (r) restoredRatings[images[origIdx].id] = r as Rating;
       });
 
+      // Seed the metadata map with the LrC star ratings from the sidecar pass
+      // we just did. The grid renders before per-image bundles arrive, so this
+      // lets the corner ★ badge appear immediately for any image that already
+      // had an .xmp sidecar. The bundle read later fills in the rest of meta
+      // (camera/lens/EXIF) and re-asserts the same lrcRating.
+      const seededMeta: Record<string, ImageMetadata> = {};
+      const lrcRatings = result.lrcRatings ?? [];
+      lrcRatings.forEach((lrc, origIdx) => {
+        if (lrc != null && lrc > 0) {
+          seededMeta[images[origIdx].path] = {
+            capturedAt: null,
+            camera: null,
+            lens: null,
+            focalLengthMm: null,
+            aperture: null,
+            shutterSeconds: null,
+            iso: null,
+            gpsLat: null,
+            gpsLon: null,
+            afXPct: null,
+            afYPct: null,
+            exposureBias: null,
+            whiteBalance: null,
+            driveMode: null,
+            pixelWidth: null,
+            pixelHeight: null,
+            fileSize: null,
+            lrcRating: lrc,
+          };
+        }
+      });
+
       // ids ride along, so the rating map stays valid post-sort.
       setImages(sorted);
       setRatings(restoredRatings);
+      setMetadata((prev) => ({ ...seededMeta, ...prev }));
+
+      // Refresh the home-screen recents entry with the restored rated count
+      // straight off the sidecar pass — so reopening home shows "327 / 372"
+      // immediately, even before the user touches a key in the new session.
+      if (folder) {
+        const ratedNow = Object.keys(restoredRatings).length;
+        pushRecent({
+          path: folder,
+          count: sorted.length,
+          rated: ratedNow,
+          lastOpened: new Date().toISOString(),
+          done: sorted.length > 0 && ratedNow === sorted.length,
+        });
+      }
 
       // Resume where you stopped: land on the first unrated frame in capture
       // order. All-rated or fresh folder → start at top.
@@ -559,7 +779,23 @@ export default function App() {
       unlisten();
       setPhase("culling");
     }
-  }, [images, profile.concurrentRestore, settings]);
+  }, [images, profile.concurrentRestore, settings, folder, pushRecent]);
+
+  // Wipe the multi-selection state — called whenever the user leaves the grid
+  // context (site switch, ESC, opening another folder). Cleanly decoupled from
+  // resetSession so site-switch handlers don't have to drop the whole cull.
+  const clearMultiSelection = useCallback(() => {
+    setSelectedIndices((s) => (s.size > 0 ? new Set() : s));
+    setSelectionAnchor(null);
+  }, []);
+
+  // Multi-selection is only meaningful while the grid is open. The moment the
+  // user leaves the grid (G → L / C, ESC pops out, any path that mounts the
+  // loupe or compare), drop the selection — bringing it back into a different
+  // site would be confusing, and the visual tint isn't rendered there anyway.
+  useEffect(() => {
+    if (!gridVisible) clearMultiSelection();
+  }, [gridVisible, clearMultiSelection]);
 
   // Esc out of review → discard the in-memory session and return Home. Ratings
   // live on in the .xmp sidecars, so reopening the folder restores them.
@@ -582,6 +818,8 @@ export default function App() {
     setNavStack([]);
     setCurrentIndex(0);
     setFilter("all");
+    setSelectedIndices(new Set());
+    setSelectionAnchor(null);
     setFolder(null);
     setLastAdded(0);
     setClippingVisible(false);
@@ -608,9 +846,21 @@ export default function App() {
         unrated: stats.unrated,
       });
     }
+    // Refresh the recents entry with this session's final counts so the home
+    // list reflects what the user just finished (rated count + done badge).
+    if (folder && total > 0) {
+      const ratedNow = total - stats.unrated;
+      pushRecent({
+        path: folder,
+        count: total,
+        rated: ratedNow,
+        lastOpened: new Date().toISOString(),
+        done: ratedNow === total,
+      });
+    }
     setConfirmHome(false);
     resetSession();
-  }, [images.length, stats, folder, resetSession]);
+  }, [images.length, stats, folder, resetSession, pushRecent]);
 
   // Open the act-on-cull dialog with fresh results.
   const openActions = useCallback(() => {
@@ -640,49 +890,45 @@ export default function App() {
     }
   }, [folder, rejectedPaths, actionBusy, settings.rejectedSubfolder]);
 
-  // Copy keeps + favorites (+sidecars). Destination depends on the export-folder
-  // setting: `remember` opens the picker at the last-used folder; `pinned`
-  // skips the picker and uses the pinned path directly.
-  const doCopyKeeps = useCallback(async () => {
-    if (keptPaths.length === 0 || actionBusy !== null) return;
-    let dest: string;
-    if (settings.exportFolder.mode === "pinned") {
-      if (!settings.exportFolder.path) {
-        // Pinned but no path picked yet — surface that as an error.
+  // Copy keeps + favorites (+sidecars) to `dest`. The finish dialog decides
+  // where dest comes from — for pinned mode it joins the pinned root with the
+  // editable subfolder; for ask-each-time mode it surfaces the picker first
+  // and re-uses the picked path here. This stays a thin Tauri wrapper so the
+  // dialog can drive a two-stage flow (pick → confirm) without forking the
+  // copy command.
+  const doCopyKeeps = useCallback(
+    async (dest: string) => {
+      if (keptPaths.length === 0 || actionBusy !== null) return;
+      if (!dest) {
         setCopyResult({
           completed: 0,
           skipped: 0,
-          errors: ["pinned export folder not set — open settings to pick one"],
+          errors: ["destination not set"],
         });
         return;
       }
-      dest = settings.exportFolder.path;
-    } else {
-      const lastExport = localStorage.getItem("cull:lastExportDest") ?? undefined;
-      const picked = await open({
-        directory: true,
-        multiple: false,
-        defaultPath: lastExport,
-        title: "choose export folder",
-      });
-      if (!picked || typeof picked !== "string") return;
-      localStorage.setItem("cull:lastExportDest", picked);
-      dest = picked;
-    }
-    setActionBusy("copy");
-    setCopyResult(null);
-    try {
-      const res = await invoke<FileOpResult>("copy_keeps_to_export", {
-        paths: keptPaths,
-        dest,
-      });
-      setCopyResult(res);
-    } catch (e) {
-      setCopyResult({ completed: 0, skipped: 0, errors: [String(e)] });
-    } finally {
-      setActionBusy(null);
-    }
-  }, [keptPaths, actionBusy, settings.exportFolder]);
+      // Remember the last *root* the user copied into when in ask-each-time mode,
+      // so the next session's picker opens there. Pinned mode is its own root,
+      // so it doesn't need this hint.
+      if (settings.exportFolder.mode === "remember") {
+        localStorage.setItem("cull:lastExportDest", dest);
+      }
+      setActionBusy("copy");
+      setCopyResult(null);
+      try {
+        const res = await invoke<FileOpResult>("copy_keeps_to_export", {
+          paths: keptPaths,
+          dest,
+        });
+        setCopyResult(res);
+      } catch (e) {
+        setCopyResult({ completed: 0, skipped: 0, errors: [String(e)] });
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [keptPaths, actionBusy, settings.exportFolder.mode],
+  );
 
   // curReady gates the hi-res zoom warm-up on the CURRENT image's readiness only
   // (not the whole previews map), so an unrelated prefetch landing doesn't reset it.
@@ -742,7 +988,9 @@ export default function App() {
     return () => {
       if (hiResTimer.current) clearTimeout(hiResTimer.current);
     };
-  }, [phase, currentIndex, compareMode, curReady, thumbsVisible, profile.hiResSettleMs]);
+    // exifVisible included: toggling the info rail resizes the stage too, so the
+    // hi-res layer must drop + re-derive at the new rect (same reason as thumbsVisible).
+  }, [phase, currentIndex, compareMode, curReady, thumbsVisible, exifVisible, profile.hiResSettleMs]);
 
   // Evict previews outside a window of the cursor (in filtered/visible order, so
   // it tracks the prefetch window) plus the active compare burst. Revoking the
@@ -850,6 +1098,29 @@ export default function App() {
     profile.thumbKeep,
     profile.thumbKeepGrid,
   ]);
+
+  // Unmount safety net: revoke any blob URLs still outstanding when the app tears
+  // down. The eviction effects and resetSession cover the in-session cases; this
+  // covers a hard unmount so nothing is left dangling. The maps are mirrored into
+  // refs so this effect runs cleanup ONCE (on unmount) without re-subscribing as
+  // previews/thumbnails change.
+  const previewsRef = useRef(previews);
+  const thumbnailsRef = useRef(thumbnails);
+  useEffect(() => {
+    previewsRef.current = previews;
+  }, [previews]);
+  useEffect(() => {
+    thumbnailsRef.current = thumbnails;
+  }, [thumbnails]);
+  useEffect(
+    () => () => {
+      Object.values(previewsRef.current).forEach(
+        (e) => e.status === "ready" && URL.revokeObjectURL(e.url),
+      );
+      Object.values(thumbnailsRef.current).forEach((u) => URL.revokeObjectURL(u));
+    },
+    [],
+  );
 
   // In compare mode, schedule the champion + challenger (priority 0) and a few of
   // the nearest unrated frames each way, so cycling the challenger is instant.
@@ -1249,8 +1520,17 @@ export default function App() {
   // the race with the original write (which used to fire-and-forget). Different
   // paths still run in parallel (subject to backend bounds).
   const writeQueue = useRef<Map<string, Promise<unknown>>>(new Map());
+  // Monotonic per-path write sequence. A write only owns the failed/saved verdict
+  // for a path while it's still the LATEST write to that path — otherwise an
+  // older write that exhausts its retries AFTER a newer write already succeeded
+  // would re-stamp a phantom "unsaved" failure (and falsely block quit).
+  const writeSeq = useRef<Map<string, number>>(new Map());
 
   const persistRating = useCallback((path: string, rating: Rating | null) => {
+    const seq = (writeSeq.current.get(path) ?? 0) + 1;
+    writeSeq.current.set(path, seq);
+    const isLatest = () => writeSeq.current.get(path) === seq;
+
     // A fresh write/clear for this path supersedes any earlier failure.
     setFailedWrites((f) => {
       if (!(path in f)) return f;
@@ -1284,9 +1564,14 @@ export default function App() {
     next.then(
       () => setSavingCount((c) => c - 1),
       (e) => {
-        console.error(`${cmd} failed permanently`, path, e);
         setSavingCount((c) => c - 1);
-        setFailedWrites((f) => ({ ...f, [path]: rating }));
+        // Only the latest write to this path may stamp a failure; a superseded
+        // older write failing must not resurrect an "unsaved" flag the newer
+        // (successful) write already cleared.
+        if (isLatest()) {
+          console.error(`${cmd} failed permanently`, path, e);
+          setFailedWrites((f) => ({ ...f, [path]: rating }));
+        }
       },
     );
   }, []);
@@ -1315,6 +1600,58 @@ export default function App() {
         if (savingRef.current > 0 || failedCountRef.current > 0) {
           event.preventDefault();
           setQuitGuard(true);
+        }
+      })
+      .then((u) => {
+        unlisten = u;
+      });
+    return () => unlisten?.();
+  }, []);
+
+  // ── Drag-and-drop: drop a folder anywhere to open it ─────────────────────
+  // Hover the window with a folder → render the champagne dashed overlay on
+  // the home screen (the home content dims behind it). Drop → if the first
+  // dropped path is a folder, open it. Drops are ignored while the cull view
+  // is active (replacing the staged set mid-cull would lose state).
+  // openFolderByPath is captured fresh each render; we mirror it into a ref so
+  // the once-registered drag-drop listener uses the latest closure without
+  // unsubscribing and re-subscribing on every render (which would race with
+  // active drag events).
+  const [isDragOver, setIsDragOver] = useState(false);
+  const phaseRef = useRef(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+  const openFolderByPathRef = useRef(openFolderByPath);
+  useEffect(() => {
+    openFolderByPathRef.current = openFolderByPath;
+  }, [openFolderByPath]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        // Only react when the user is on a chrome screen (start/loading/etc).
+        // During an active cull we ignore drop events outright so a stray drop
+        // can't kill the in-progress session.
+        if (phaseRef.current === "culling") {
+          if (p.type === "enter" || p.type === "over") setIsDragOver(false);
+          return;
+        }
+        if (p.type === "enter" || p.type === "over") {
+          setIsDragOver(true);
+        } else if (p.type === "leave") {
+          setIsDragOver(false);
+        } else if (p.type === "drop") {
+          setIsDragOver(false);
+          const first = p.paths?.[0];
+          if (typeof first === "string" && first.length > 0) {
+            // Best-effort: invoke openFolderByPath; if the path is a file (not a
+            // folder), Rust's scan_folder will error and we'll surface that as
+            // a scan error via the regular failure path.
+            openFolderByPathRef.current(first);
+          }
         }
       })
       .then((u) => {
@@ -1375,8 +1712,16 @@ export default function App() {
       setChampionIndex(action.cursorBefore.championIndex);
       setChallengerIndex(action.cursorBefore.challengerIndex);
       setCurrentIndex(action.cursorBefore.currentIndex);
+      // Restore the nav back-stack snapshot too, so ESC after this undo pops the
+      // entry the user actually came from (the action's auto-exit may have popped
+      // it, leaving the live stack out of sync with the restored compare view).
+      if (action.cursorBefore.navStack) setNavStack(action.cursorBefore.navStack);
     } else if (!compareMode) {
-      const idx = images.findIndex((im) => im.id === action.changes[0].imgId);
+      // For a compound (compare) action, changes[0] is the OLD champion that got
+      // rejected; the frame the user actually cares about is the crowned/kept
+      // one — the LAST change. (Identical to changes[0] for single-change actions.)
+      const landId = action.changes[action.changes.length - 1].imgId;
+      const idx = images.findIndex((im) => im.id === landId);
       if (idx !== -1) setCurrentIndex(idx);
     }
     redoStack.current.push(action);
@@ -1387,9 +1732,11 @@ export default function App() {
     if (!action) return;
     applyChanges(action.changes.map((c) => ({ imgId: c.imgId, path: c.path, rating: c.after })));
     // Redo doesn't restore the cursor: the user's now in a fresh context and
-    // re-applying the rating change there is the useful intent.
+    // re-applying the rating change there is the useful intent. Land on the
+    // crowned/kept frame (last change) — not the rejected old champion (changes[0]).
     if (!compareMode) {
-      const idx = images.findIndex((im) => im.id === action.changes[0].imgId);
+      const landId = action.changes[action.changes.length - 1].imgId;
+      const idx = images.findIndex((im) => im.id === landId);
       if (idx !== -1) setCurrentIndex(idx);
     }
     undoStack.current.push(action);
@@ -1397,9 +1744,45 @@ export default function App() {
 
   const applyRating = useCallback(
     (rating: Rating) => {
+      // Multi-select branch: when the user is in grid with >1 selection, apply
+      // the rating to every selected frame at once (one undo-stack entry,
+      // sidecars written in parallel). No auto-advance — the user is acting on
+      // a set, not stepping through one frame at a time.
+      if (gridVisible && selectedIndices.size > 1) {
+        const ids = Array.from(selectedIndices);
+        const changes = ids
+          .map((idx) => images[idx])
+          .filter((im): im is Img => Boolean(im))
+          .map((im) => ({
+            imgId: im.id,
+            path: im.path,
+            before: ratings[im.id],
+            after: rating,
+          }));
+        if (changes.length === 0) return;
+        recordAction({ changes });
+        setRatings((prev) => {
+          const next = { ...prev };
+          for (const c of changes) next[c.imgId] = c.after;
+          return next;
+        });
+        for (const c of changes) persistRating(c.path, c.after);
+        // Feedback flashes once on the current cell so the user sees confirmation
+        // without N popping circles. (Grid doesn't render the feedback overlay
+        // per-cell anyway — it's a single center burst.)
+        const cur = images[currentIndex];
+        if (cur) flashFeedback(rating, cur.id);
+        return;
+      }
+
       const cur = images[currentIndex];
       if (!cur) return;
       const pos = visibleIndices.indexOf(currentIndex);
+      // In grid, the cursor can fall outside the active filter (e.g. the last
+      // matching frame was just rated away, emptying the filter). There's then no
+      // visible cell to act on, so ignore the rating key rather than rate a stale,
+      // off-screen frame. Loupe/compare always display `cur`, so they're unaffected.
+      if (gridVisible && pos === -1) return;
       const nextTarget =
         pos !== -1 && pos + 1 < visibleIndices.length ? visibleIndices[pos + 1] : null;
 
@@ -1412,13 +1795,48 @@ export default function App() {
 
       if (nextTarget !== null) setCurrentIndex(nextTarget);
     },
-    [images, currentIndex, visibleIndices, ratings, flashFeedback, persistRating, recordAction],
+    [
+      gridVisible,
+      selectedIndices,
+      images,
+      currentIndex,
+      visibleIndices,
+      ratings,
+      flashFeedback,
+      persistRating,
+      recordAction,
+    ],
   );
 
   // Unrate (u): clear the current frame's rating and delete the rating data we
   // wrote. A correction, not a verdict — stay on the frame (don't advance). No-op
   // if it's already unrated, so we never touch a sidecar for nothing.
+  // In grid multi-select with >1 selection, clears every selected frame's
+  // rating (skipping the already-unrated ones so the undo stack only carries
+  // actual reverts).
   const unrateCurrent = useCallback(() => {
+    if (gridVisible && selectedIndices.size > 1) {
+      const ids = Array.from(selectedIndices);
+      const changes = ids
+        .map((idx) => images[idx])
+        .filter((im): im is Img => Boolean(im) && ratings[im.id] !== undefined)
+        .map((im) => ({
+          imgId: im.id,
+          path: im.path,
+          before: ratings[im.id],
+          after: undefined as Rating | undefined,
+        }));
+      if (changes.length === 0) return;
+      recordAction({ changes });
+      setRatings((prev) => {
+        const next = { ...prev };
+        for (const c of changes) delete next[c.imgId];
+        return next;
+      });
+      for (const c of changes) persistRating(c.path, null);
+      return;
+    }
+
     const cur = images[currentIndex];
     if (!cur || !ratings[cur.id]) return;
     recordAction({
@@ -1430,7 +1848,15 @@ export default function App() {
       return next;
     });
     persistRating(cur.path, null); // durable clear (delete sidecar / strip rating)
-  }, [images, currentIndex, ratings, persistRating, recordAction]);
+  }, [
+    gridVisible,
+    selectedIndices,
+    images,
+    currentIndex,
+    ratings,
+    persistRating,
+    recordAction,
+  ]);
 
   // ── Site navigation: loupe / compare / grid ───────────────────────────────
   // Sites are mutually exclusive — only one renders at a time. L/C/G switch
@@ -1540,10 +1966,22 @@ export default function App() {
   // confirm (the only "site above loupe" is leaving the cull entirely). Empty
   // stack at compare/grid (shouldn't normally happen, but defends against
   // edge cases) falls back to loupe.
-  const goBack = useCallback(() => {
+  const goBack = useCallback((landIndex?: number) => {
+    // ESC in grid with a multi-selection clears the selection first, instead
+    // of popping the nav stack. The user almost certainly wants "deselect"
+    // before "go back", so we make the cheap intent succeed first.
+    if (gridVisible && selectedIndices.size > 0) {
+      clearMultiSelection();
+      return;
+    }
+    // When leaving compare, land on the caller's explicit index if provided (e.g.
+    // the freshly-crowned champion), else the current champion. The closure's
+    // championIndex alone can be stale (the just-rejected frame) on auto-exit.
+    const compareLanding = () =>
+      setCurrentIndex(snapToFilter(landIndex != null ? landIndex : championIndex));
     if (navStack.length === 0) {
       if (compareMode || gridVisible) {
-        if (compareMode) setCurrentIndex(snapToFilter(championIndex));
+        if (compareMode) compareLanding();
         setCompareMode(false);
         setGridVisible(false);
         setIsZooming(false);
@@ -1557,14 +1995,20 @@ export default function App() {
     const entry = navStack[navStack.length - 1];
     setNavStack((s) => s.slice(0, -1));
 
-    // Leaving compare? Land on the latest champion.
-    if (compareMode) setCurrentIndex(snapToFilter(championIndex));
+    // Leaving compare? Land on the explicit/champion landing.
+    if (compareMode) compareLanding();
 
     if (entry.site === "compare") {
-      const chall = reviveChallenger(entry.champ, entry.chall);
+      // Only restore the saved pair if its champion is still a sensible keeper.
+      // If it was rejected since the entry was saved (lost a later compare, or was
+      // re-rated/undone), don't reseat a reject in the champion slot — fall through
+      // to loupe at the latest champion.
+      const champImg = images[entry.champ];
+      const champValid = champImg && ratings[champImg.id] !== "reject";
+      const chall = champValid ? reviveChallenger(entry.champ, entry.chall) : -1;
       if (chall === -1) {
-        // Saved compare is unrestorable (no unrated remains) — fall through
-        // to loupe at the latest champion.
+        // Saved compare is unrestorable (champion no longer a keeper, or no
+        // unrated challenger remains) — fall through to loupe at the latest champion.
         setCompareMode(false);
         setGridVisible(false);
       } else {
@@ -1586,6 +2030,10 @@ export default function App() {
     championIndex,
     snapToFilter,
     reviveChallenger,
+    selectedIndices,
+    clearMultiSelection,
+    images,
+    ratings,
   ]);
 
   // ← / → → move the challenger to the next/previous unrated frame (champion skipped).
@@ -1609,7 +2057,13 @@ export default function App() {
       changes: [
         { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "reject" },
       ],
-      cursorBefore: { compareMode: true, championIndex, challengerIndex, currentIndex },
+      cursorBefore: {
+        compareMode: true,
+        championIndex,
+        challengerIndex,
+        currentIndex,
+        navStack: [...navStackRef.current],
+      },
     });
     flashFeedback("reject", challImg.id);
     persistRating(challImg.path, "reject");
@@ -1617,10 +2071,9 @@ export default function App() {
     setRatings(next);
     const nextChallenger = nearestUnrated(challengerIndex, next, championIndex);
     if (nextChallenger === -1) {
-      // No more candidates — land on the (unchanged) champion and pop back to
-      // whichever site we came from. ESC after this lands further up the stack.
-      setCurrentIndex(snapToFilter(championIndex));
-      goBack();
+      // No more candidates — pop back to whichever site we came from, landing on
+      // the (unchanged) champion. ESC after this lands further up the stack.
+      goBack(championIndex);
     } else {
       setChallengerIndex(nextChallenger);
     }
@@ -1647,7 +2100,13 @@ export default function App() {
         { imgId: champImg.id, path: champImg.path, before: ratings[champImg.id], after: "reject" },
         { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "keep" },
       ],
-      cursorBefore: { compareMode: true, championIndex, challengerIndex, currentIndex },
+      cursorBefore: {
+        compareMode: true,
+        championIndex,
+        challengerIndex,
+        currentIndex,
+        navStack: [...navStackRef.current],
+      },
     });
     flashFeedback("keep", challImg.id);
     persistRating(champImg.path, "reject"); // dethroned
@@ -1662,10 +2121,10 @@ export default function App() {
     setChampionIndex(newChamp);
     const nextChallenger = nearestUnrated(newChamp, next, newChamp);
     if (nextChallenger === -1) {
-      // Crowned the last unrated frame — land on it and pop back to where the
-      // user came from. (Auto-exit, same path as ESC from compare.)
-      setCurrentIndex(snapToFilter(newChamp));
-      goBack();
+      // Crowned the last unrated frame — pop back to where the user came from,
+      // landing on the new keeper. Pass newChamp explicitly: goBack's own closure
+      // still holds the OLD (just-rejected) champion. (Auto-exit, like ESC.)
+      goBack(newChamp);
     } else {
       setChallengerIndex(nextChallenger);
     }
@@ -1745,6 +2204,80 @@ export default function App() {
       stopHold();
     };
   }, [stopHold]);
+
+  // Safety net: if Settings opens while a hold-scrub is active — by keyboard
+  // (Ctrl+,, which returns before the keydown handler's stopHold guard) OR by
+  // clicking the home-screen gear mid-hold — stop the rAF loop so it can't keep
+  // advancing the cursor behind the modal.
+  useEffect(() => {
+    if (settingsOpen) stopHold();
+  }, [settingsOpen, stopHold]);
+
+  // Click-pick handlers for the thumb / candidate strips. A click must
+  // immediately interrupt any held-arrow scrub so the new image lands and
+  // renders straight away instead of waiting for the scrub loop to settle on
+  // its own. We only call stopHold() when a hold is ACTUALLY active —
+  // calling it unconditionally on a plain tap means an extra setState
+  // (setScrubbing(false)) on every click, which can churn the photo-frame's
+  // mount/unmount during the same render pass as the new index, reading
+  // as a stutter.
+  const pickFromStrip = useCallback(
+    (index: number) => {
+      if (heldDirRef.current !== 0 || scrubbingRef.current) stopHold();
+      setCurrentIndex(index);
+    },
+    [stopHold],
+  );
+  const pickChallengerFromStrip = useCallback(
+    (index: number) => {
+      if (heldDirRef.current !== 0 || scrubbingRef.current) stopHold();
+      setChallengerIndex(index);
+    },
+    [stopHold],
+  );
+
+  // Grid cell click — stable identity so GridView/GridCell memoization holds and
+  // only the changed cell re-renders. (The old inline closure was a fresh
+  // function on every App render, so every visible grid cell re-rendered on any
+  // unrelated state change — e.g. the save-pill counter ticking.) Three modes:
+  // shift-extend, ctrl-toggle, plain click → open in loupe.
+  const handleGridPick = useCallback(
+    (i: number, modifiers: { shift: boolean; ctrl: boolean }) => {
+      if (modifiers.shift) {
+        const anchor = selectionAnchor ?? i;
+        const a = visibleIndices.indexOf(anchor);
+        const b = visibleIndices.indexOf(i);
+        let next: Set<number>;
+        if (a === -1 || b === -1) {
+          next = new Set([i]);
+        } else {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          next = new Set();
+          for (let k = lo; k <= hi; k++) next.add(visibleIndices[k]);
+        }
+        setSelectedIndices(next);
+        if (selectionAnchor === null) setSelectionAnchor(i);
+        setCurrentIndex(i);
+        return;
+      }
+      if (modifiers.ctrl) {
+        setSelectedIndices((prev) => {
+          const next = new Set(prev);
+          if (next.has(i)) next.delete(i);
+          else next.add(i);
+          return next;
+        });
+        setSelectionAnchor(i);
+        setCurrentIndex(i);
+        return;
+      }
+      // Plain click.
+      clearMultiSelection();
+      setCurrentIndex(i);
+      goToSite("loupe");
+    },
+    [visibleIndices, selectionAnchor, clearMultiSelection, goToSite],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1900,6 +2433,11 @@ export default function App() {
           case "t":
           case "T":
             setThumbsVisible((v) => !v);
+            break;
+          case "o":
+          case "O":
+            // Thirds grid — visible on the matte in compare too.
+            setCompositionVisible((v) => !v);
             break;
           case "l":
           case "L":
@@ -2116,32 +2654,71 @@ export default function App() {
 
   // ── Chrome phases (start / loading / staged) ───────────────────────────────
   if (phase !== "culling") {
+    const chromeMode =
+      phase === "start"
+        ? "HOME"
+        : phase === "loading"
+          ? "OPENING"
+          : phase === "analyzing"
+            ? "ANALYZING"
+            : "STAGED";
     return (
       <main className="cull-app cull-app--chrome">
         {quitGuardOverlay}
-        <WindowControls />
-        <button
-          type="button"
-          className="cull-settings-fab"
-          onClick={() => setSettingsOpen(true)}
-          aria-label="settings"
-          title="settings  (Ctrl + , )"
+        <WindowControls onSettings={() => setSettingsOpen(true)} />
+        {/* Top chrome row — brand block with mode name and save status pill.
+            The top-right chrome (settings, minimize, close) is rendered by
+            WindowControls as a fixed overlay so it stays visible across all
+            views and overlays. */}
+        <header className="cull-statusbar cull-statusbar--top" data-tauri-drag-region>
+          <div className="cull-statusbar__left">
+            <span className="cull-statusbar__brandblock">
+              <span className="cull-statusbar__brand">CULL</span>
+              <span className="cull-statusbar__brand-sep">·</span>
+              <span className="cull-statusbar__brand-mode">{chromeMode}</span>
+            </span>
+            <SaveStatusPill
+              failedCount={failedCount}
+              savingCount={savingCount}
+              onRetry={retryFailed}
+            />
+          </div>
+        </header>
+        <div
+          className={`cull-chrome${isDragOver ? " is-drag-over" : ""}`}
+          data-tauri-drag-region
         >
-          <SettingsIcon size={16} strokeWidth={2} />
-        </button>
-        <div className="cull-chrome" data-tauri-drag-region>
+          {isDragOver && (
+            <div className="cull-drag-indicator" aria-hidden>
+              <div className="cull-drag-indicator__arrow">↓</div>
+              <div className="cull-drag-indicator__text">Drop folder to open</div>
+            </div>
+          )}
           {phase === "start" && (
             <div className="cull-hero">
-              <div className="cull-hero__cards" aria-hidden>
-                <div className="cull-hero__card cull-hero__card--keep">
-                  <Check size={24} color="#34d399" strokeWidth={3} />
-                </div>
-                <div className="cull-hero__card cull-hero__card--reject">
-                  <XIcon size={24} color="#f87171" strokeWidth={3} />
-                </div>
+              <h1 className="cull-hero__title">
+                Pick keepers, <em>fast.</em>
+              </h1>
+              <p className="cull-hero__sub">
+                A keyboard-first culling tool for Canon CR3 RAW photos. Verdicts save into
+                Lightroom-compatible XMP sidecars.
+              </p>
+              <div className="cull-hero__cta-row">
+                <button
+                  className="cull-hero__cta"
+                  onClick={pickFolder}
+                  disabled={pickerBusy}
+                >
+                  {pickerBusy ? "opening…" : "Open folder"}
+                  <span className="cull-hero__cta-key">⌃ O</span>
+                </button>
+                <span className="cull-hero__drop-hint">or drop a folder anywhere</span>
               </div>
-              <h1 className="cull-hero__title">CULL</h1>
-              <div className="cull-hero__tagline">keyboard-fast culling for Canon RAW</div>
+              <RecentFolders
+                recents={recentFolders}
+                onPick={(p) => openFolderByPath(p)}
+                pickerBusy={pickerBusy}
+              />
               {lastSession && (
                 <div className="cull-hero__summary">
                   <span className="cull-hero__summary-label">
@@ -2168,16 +2745,15 @@ export default function App() {
               {scanError && (
                 <pre className="cull-message__body cull-chrome__error">{scanError}</pre>
               )}
-              <button
-                className="cull-pick-button cull-pick-button--primary cull-hero__cta"
-                onClick={pickFolder}
-                disabled={pickerBusy}
-              >
-                {pickerBusy ? "opening…" : "open folder"}
-              </button>
               <div className="cull-hero__how">
-                Open a folder of RAW photos, then judge each frame by keyboard.
-                Your picks save straight to XMP sidecars — nothing else is touched.
+                <span>
+                  <span className="cull-hero__how-key">tab</span>
+                  hold for help
+                </span>
+                <span>
+                  <span className="cull-hero__how-key">⌃ ,</span>
+                  settings
+                </span>
               </div>
             </div>
           )}
@@ -2266,8 +2842,6 @@ export default function App() {
   const currentPreview = current ? previews[current.path] : undefined;
   const currentMeta = current ? metadata[current.path] : undefined;
   const currentRating = current ? ratings[current.id] : undefined;
-  const showPersistentDot =
-    !!currentRating && !(feedback && current && feedback.imageId === current.id);
 
   // Zoom transform-origin = AF point (display coords) + pan, clamped to image.
   const afX = currentMeta?.afXPct ?? 50;
@@ -2286,169 +2860,430 @@ export default function App() {
   const oneToOneScale = naturalSize && imgRect ? naturalSize.w / imgRect.width : 5;
   const zoomZ = isZooming ? zoomLevel * oneToOneScale : 1;
   const hiResScale = imgRect && naturalSize ? (imgRect.width / naturalSize.w) * zoomZ : 1;
-  const hiResTx = imgRect ? imgRect.left + (originX / 100) * imgRect.width * (1 - zoomZ) : 0;
-  const hiResTy = imgRect ? imgRect.top + (originY / 100) * imgRect.height * (1 - zoomZ) : 0;
+  // The hi-res layer lives INSIDE the content-clip box (at 0,0 — the clip IS
+  // exactly the displayed image area), so we only need the origin offset INSIDE
+  // the image area. imgRect.width/height still report the displayed image's size.
+  const hiResTx = imgRect ? (originX / 100) * imgRect.width * (1 - zoomZ) : 0;
+  const hiResTy = imgRect ? (originY / 100) * imgRect.height * (1 - zoomZ) : 0;
+
+  // Frame aspect ratio: prefer the per-image DISPLAY dims (authoritative EXIF,
+  // available the moment the thumbnail loads — so correct even mid-scrub) over
+  // the full preview's naturalSize (which freezes on the last settled frame, the
+  // root of the "scrub locks to the first frame's shape" bug).
+  const curBlurInfo = current ? blurhashes[current.path] : undefined;
+  const photoAr = curBlurInfo
+    ? `${curBlurInfo.w} / ${curBlurInfo.h}`
+    : naturalSize
+      ? `${naturalSize.w} / ${naturalSize.h}`
+      : undefined;
+  // Placeholder while scrubbing / before the full preview decodes: the per-image
+  // blurhash (correct aspect, already blurred). Decoded once per hash (memoised
+  // so the warm pass updating OTHER frames never re-decodes the current one).
+  const curBlur = decodeBlurCached(curBlurInfo);
 
   const singleModeBody = (
       <div className="cull-stage">
+        <div className="cull-loupe-body">
         <div className="cull-image-area" ref={stageRef}>
         {images.length === 0 ? (
           <div className="cull-message">no images</div>
         ) : positionInFilter === -1 ? (
-          <div className="cull-message">
-            no images match this filter
-            <br />
-            <span className="cull-message__hint">press 1 for all</span>
-          </div>
-        ) : scrubbing ? (
-          // Fast-scrub: render the cheap thumbnail with the SAME heavy blur as the
-          // loading state, so its low resolution is hidden while flying past. No
-          // full-res decode per step, and no spinner — that appears only on release.
-          <div className="cull-loading">
-            {current && thumbnails[current.path] && (
-              <img className="cull-loading__blur" src={thumbnails[current.path]} alt="" aria-hidden />
-            )}
-          </div>
-        ) : currentPreview?.status === "ready" ? (
-          <>
-            <img
-              ref={imgRef}
-              className="cull-image"
-              src={currentPreview.url}
-              alt=""
-              onLoad={(e) => {
-                setMeasureNonce((n) => n + 1);
-                setNaturalSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
-              }}
-              style={{
-                transform: isZooming ? `scale(${zoomZ})` : undefined,
-                transformOrigin: `${originX}% ${originY}%`,
-                transition: "transform 200ms ease-out",
-              }}
-            />
-            {/* Deferred full-res layer: same blob, rendered at native pixel size and
-                transformed to coincide with the base image, so the compositor holds a
-                full-resolution raster and zoom is sharp immediately. Mounts only after
-                the cursor settles (HIRES_SETTLE_MS); the base image stays beneath as the
-                instant-nav fallback. */}
-            {hiRes && !clippingVisible && imgRect && naturalSize && (
-              <img
-                className="cull-image cull-image--hires"
-                src={currentPreview.url}
-                alt=""
-                aria-hidden
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  top: 0,
-                  width: naturalSize.w,
-                  height: naturalSize.h,
-                  maxWidth: "none",
-                  maxHeight: "none",
-                  transformOrigin: "0 0",
-                  transform: `translate(${hiResTx}px, ${hiResTy}px) scale(${hiResScale})`,
-                  transition: "transform 200ms ease-out",
-                  pointerEvents: "none",
-                  // Promote to a composited layer rasterized at the element's full
-                  // (native-pixel) size, so scaling up on zoom is a GPU op on
-                  // already-full-res pixels rather than a re-decode.
-                  willChange: "transform",
-                }}
-              />
-            )}
-            {clippingVisible && current && clipMasks[current.path] && imgRect && (
-              <img
-                className="cull-clip-overlay"
-                src={clipMasks[current.path]}
-                alt=""
-                style={{
-                  left: imgRect.left,
-                  top: imgRect.top,
-                  width: imgRect.width,
-                  height: imgRect.height,
-                  transform: isZooming ? `scale(${zoomZ})` : undefined,
-                  transformOrigin: `${originX}% ${originY}%`,
-                  transition: "transform 200ms ease-out",
-                }}
-              />
-            )}
-            {peakingVisible && current && peakingMasks[current.path] && imgRect && (
-              <img
-                className="cull-peaking-overlay"
-                src={peakingMasks[current.path]}
-                alt=""
-                style={{
-                  left: imgRect.left,
-                  top: imgRect.top,
-                  width: imgRect.width,
-                  height: imgRect.height,
-                  transform: isZooming ? `scale(${zoomZ})` : undefined,
-                  transformOrigin: `${originX}% ${originY}%`,
-                  transition: "transform 200ms ease-out",
-                  pointerEvents: "none",
-                }}
-              />
-            )}
-            {compositionVisible && !isZooming && imgRect && (
-              <svg
-                className="cull-composition-overlay"
-                style={{
-                  left: imgRect.left,
-                  top: imgRect.top,
-                  width: imgRect.width,
-                  height: imgRect.height,
-                }}
-                viewBox="0 0 100 100"
-                preserveAspectRatio="none"
-                aria-hidden
-              >
-                <line x1="33.333" y1="0" x2="33.333" y2="100" />
-                <line x1="66.667" y1="0" x2="66.667" y2="100" />
-                <line x1="0" y1="33.333" x2="100" y2="33.333" />
-                <line x1="0" y1="66.667" x2="100" y2="66.667" />
-              </svg>
-            )}
-            {showPersistentDot && currentRating && (
-              <div className="cull-persistent-dot">
-                <RatingDot rating={currentRating} size="lg" />
-              </div>
-            )}
-            {exifVisible && current && (
-              <ExifPanel
-                filename={current.filename}
-                metadata={currentMeta}
-                histogramUrl={histograms[current.path]}
-              />
-            )}
-          </>
+          <EmptyFilter filter={filter} />
         ) : currentPreview?.status === "error" ? (
           <div className="cull-message">
             <div className="cull-message__title">preview failed</div>
             <pre className="cull-message__body">{currentPreview.error}</pre>
           </div>
         ) : (
-          // Loading: a full-bleed, heavily-blurred thumbnail (blurhash look) with a
-          // spinner. If the thumbnail isn't in yet, the spinner sits on black.
-          <div className="cull-loading">
-            {current && thumbnails[current.path] && (
-              <img className="cull-loading__blur" src={thumbnails[current.path]} alt="" aria-hidden />
-            )}
-            <div className="cull-loading__spinner" />
-          </div>
+          // Photo-frame stays mounted across image transitions AND across
+          // scrubbing so the matte + outer structure don't pop in/out on
+          // every tap-to-navigate or arrow-key release. The inner <img>
+          // swaps between full preview (when ready and not scrubbing) and
+          // the thumbnail fallback (during scrub / while preview loads),
+          // so there's always pixels in the frame and no remount of overlays.
+          // The spinner appears only when neither scrubbing nor ready —
+          // i.e. true "waiting on disk" state.
+          <>
+            <div
+              className={`cull-photo-frame${
+                feedback && current && feedback.imageId === current.id
+                  ? ` cull-photo-frame--flash-${feedback.rating === "favorite" ? "fav" : feedback.rating}`
+                  : ""
+              }`}
+              style={
+                photoAr
+                  ? ({ ["--photo-ar" as string]: photoAr } as React.CSSProperties)
+                  : undefined
+              }
+            >
+              <img
+                ref={imgRef}
+                className="cull-image"
+                src={
+                  currentPreview?.status === "ready" && !scrubbing
+                    ? currentPreview.url
+                    : curBlur
+                      ? curBlur
+                      : current && thumbnails[current.path]
+                        ? thumbnails[current.path]
+                        : undefined
+                }
+                alt=""
+                onLoad={(e) => {
+                  // Only update naturalSize from the FULL preview, not the
+                  // thumbnail fallback — otherwise the matte would briefly
+                  // shrink to the tiny thumbnail's dimensions during scrub
+                  // or load.
+                  if (currentPreview?.status === "ready" && !scrubbing) {
+                    setMeasureNonce((n) => n + 1);
+                    setNaturalSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
+                  }
+                }}
+                style={{
+                  transform: isZooming ? `scale(${zoomZ})` : undefined,
+                  transformOrigin: `${originX}% ${originY}%`,
+                  transition: "transform 200ms ease-out",
+                  // Heavy blur while scrubbing or loading the thumbnail
+                  // fallback — masks the low-res thumbnail and reads as
+                  // a "settling" indicator. Drops to 0 the moment the full
+                  // preview is ready.
+                  filter:
+                    currentPreview?.status === "ready" && !scrubbing
+                      ? undefined
+                      : curBlur
+                        ? "blur(6px) brightness(0.82)"
+                        : "blur(14px) brightness(0.78)",
+                }}
+              />
+              {/* Spinner overlay only when the full preview is loading AND
+                  we're not mid-scrub. During scrub the blurred thumbnail
+                  stands in for the preview, no spinner needed — adding it
+                  on every step would just be visual noise as the user
+                  flies past. */}
+              {currentPreview?.status !== "ready" && !scrubbing && (
+                <div className="cull-photo-frame__spinner-wrap" aria-hidden>
+                  <div className="cull-loading__spinner" />
+                </div>
+              )}
+              {/* Deferred full-res layer: same blob, rendered at native pixel size and
+                  transformed to coincide with the base image, so the compositor holds a
+                  full-resolution raster and zoom is sharp immediately. Mounts only after
+                  the cursor settles (HIRES_SETTLE_MS); the base image stays beneath as the
+                  instant-nav fallback. Gated on the full preview being ready too —
+                  the thumbnail fallback isn't worth pinning a hi-res raster of. */}
+              {hiRes && !clippingVisible && imgRect && naturalSize && currentPreview?.status === "ready" && (
+                <img
+                  className="cull-image cull-image--hires"
+                  src={currentPreview.url}
+                  alt=""
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    left: 10,
+                    top: 10,
+                    width: naturalSize.w,
+                    height: naturalSize.h,
+                    maxWidth: "none",
+                    maxHeight: "none",
+                    transformOrigin: "0 0",
+                    transform: `translate(${hiResTx}px, ${hiResTy}px) scale(${hiResScale})`,
+                    transition: "transform 200ms ease-out",
+                    pointerEvents: "none",
+                    willChange: "transform",
+                  }}
+                />
+              )}
+              {/* Overlays inset to match the photo-frame's 14px padding (the
+                  matte). They paint over the image area only, never the matte
+                  or the stage. They scale with the image transform so they
+                  remain aligned through zoom. */}
+              {/* Overlays — positioning + sizing comes from the CSS rule
+                  (`position: absolute !important; inset: 14px`), NOT inline
+                  style. That keeps them out of flow even if a future edit
+                  drops the inline `style`, so they cannot influence the
+                  photo-frame's intrinsic size (which is what was causing
+                  the image to visibly resize when clipping toggled).
+                  Inline style is reserved for the zoom transform. */}
+              {clippingVisible && !scrubbing && current && clipMasks[current.path] && (
+                <img
+                  className="cull-clip-overlay"
+                  src={clipMasks[current.path]}
+                  alt=""
+                  style={{
+                    transform: isZooming ? `scale(${zoomZ})` : undefined,
+                    transformOrigin: `${originX}% ${originY}%`,
+                    transition: "transform 200ms ease-out",
+                  }}
+                />
+              )}
+              {peakingVisible && !scrubbing && current && peakingMasks[current.path] && (
+                <img
+                  className="cull-peaking-overlay"
+                  src={peakingMasks[current.path]}
+                  alt=""
+                  style={{
+                    transform: isZooming ? `scale(${zoomZ})` : undefined,
+                    transformOrigin: `${originX}% ${originY}%`,
+                    transition: "transform 200ms ease-out",
+                  }}
+                />
+              )}
+              {compositionVisible && !isZooming && !scrubbing && (
+                <svg
+                  className="cull-composition-overlay"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                  aria-hidden
+                >
+                  <line x1="33.333" y1="0" x2="33.333" y2="100" />
+                  <line x1="66.667" y1="0" x2="66.667" y2="100" />
+                  <line x1="0" y1="33.333" x2="100" y2="33.333" />
+                  <line x1="0" y1="66.667" x2="100" y2="66.667" />
+                </svg>
+              )}
+            </div>
+            {/* Verdict is now shown in the bottom status bar's pill; the floating
+                corner dot is dropped to avoid duplicate signaling and to keep the
+                stage clean alongside the EXIF rail. */}
+          </>
+        )}
+        </div>
+        {exifVisible && current && (
+          <ExifRail
+            metadata={currentMeta}
+            histogramUrl={histograms[current.path]}
+            cullRating={currentRating}
+          />
         )}
         </div>
       </div>
   );
 
+  // Build the bottom status bar JSX once so it renders inside each view's
+  // flex column AFTER the thumb strip (mockup puts it as the last row, with
+  // border-top — see mockup .status). The top chrome row above just holds
+  // the brand block and window controls, like a title bar.
+  //
+  // Layout (left → right) matches the mockup exactly:
+  //   filename · MP  ·  verdict pill (glyph + label)
+  //   overlay cluster (i h p o t — circular toggle chips, on/off state)
+  //   <spacer>
+  //   position N / M  ·  filter tabs (loupe + grid)  ·  finish button
+  // In compare mode the status bar's filename + MP follows the CHALLENGER —
+  // the frame the user is actively judging — not the current cursor (which
+  // would track the champion). Single-view shows the cursor's frame.
+  const statusBarImg = compareMode ? images[challengerIndex] : current;
+  const statusBarMeta = statusBarImg ? metadata[statusBarImg.path] : undefined;
+  const mp =
+    statusBarMeta?.pixelWidth && statusBarMeta?.pixelHeight
+      ? `${(((statusBarMeta.pixelWidth * statusBarMeta.pixelHeight) / 1e6) | 0)} MP`
+      : null;
+  const verdictLabel: Record<Rating, string> = {
+    keep: "Keep",
+    reject: "Reject",
+    favorite: "Fav",
+  };
+  const verdictCls: Record<Rating, string> = {
+    keep: "cull-statusbar__verdict--keep",
+    reject: "cull-statusbar__verdict--reject",
+    favorite: "cull-statusbar__verdict--fav",
+  };
+  // Glyph rendered as a Lucide SVG icon (not a Unicode character) so it
+  // centers perfectly inside the 14px circle. Unicode ★ ✓ ✕ in Segoe UI
+  // Symbol / system-ui have inconsistent baselines on Windows — `flex; center;
+  // center` alone wasn't enough to put the star visually mid-circle.
+  const verdictGlyph: Record<Rating, ReactNode> = {
+    keep: <Check size={9} color="#0a0a0c" strokeWidth={3} />,
+    reject: <XIcon size={9} color="#0a0a0c" strokeWidth={3} />,
+    favorite: <Star size={9} color="#0a0a0c" strokeWidth={2.6} fill="#0a0a0c" />,
+  };
+  const totalKeeps = stats.keeps; // includes favorites
+  const bottomStatusBar = (
+    <footer className="cull-statusbar">
+      <div className="cull-statusbar__left">
+        {statusBarImg && (
+          <span className="cull-statusbar__filename">
+            <span className="cull-statusbar__filename-name">{statusBarImg.filename}</span>
+            {mp && (
+              <>
+                <span className="cull-statusbar__filename-sep">·</span>
+                <span className="cull-statusbar__filename-meta">{mp}</span>
+              </>
+            )}
+          </span>
+        )}
+        {!compareMode && currentRating && (
+          <span
+            className={`cull-statusbar__verdict ${verdictCls[currentRating]}`}
+            aria-label={verdictLabel[currentRating]}
+          >
+            <span className="cull-statusbar__verdict-glyph" aria-hidden>
+              {verdictGlyph[currentRating]}
+            </span>
+            {verdictLabel[currentRating]}
+          </span>
+        )}
+        {isZooming && (
+          <span className="cull-statusbar__chip cull-statusbar__chip--zoom">
+            zoom {zoomLevel}:1
+          </span>
+        )}
+        {scrubbing && (
+          <span className="cull-statusbar__scrub" aria-label="scrubbing">
+            Scrubbing
+          </span>
+        )}
+        {/* Overlay cluster — five circular toggle chips. Hidden in grid (those
+            overlays don't apply there). The thumb-strip chip (t) shows in
+            loupe / compare only too. */}
+        {!gridVisible && (
+          <div className="cull-statusbar__overlay-cluster" aria-label="overlays">
+            <button
+              type="button"
+              className={`cull-statusbar__ov${exifVisible ? " is-on" : ""}`}
+              onClick={() => setExifVisible((v) => !v)}
+              title="i — info"
+              aria-pressed={exifVisible}
+            >
+              i
+            </button>
+            <button
+              type="button"
+              className={`cull-statusbar__ov${clippingVisible ? " is-on" : ""}`}
+              onClick={() => setClippingVisible((v) => !v)}
+              title="h — clipping"
+              aria-pressed={clippingVisible}
+            >
+              h
+            </button>
+            <button
+              type="button"
+              className={`cull-statusbar__ov${peakingVisible ? " is-on" : ""}`}
+              onClick={() => setPeakingVisible((v) => !v)}
+              title="p — focus peaking"
+              aria-pressed={peakingVisible}
+            >
+              p
+            </button>
+            <button
+              type="button"
+              className={`cull-statusbar__ov${compositionVisible ? " is-on" : ""}`}
+              onClick={() => setCompositionVisible((v) => !v)}
+              title="o — thirds"
+              aria-pressed={compositionVisible}
+            >
+              o
+            </button>
+            <button
+              type="button"
+              className={`cull-statusbar__ov${thumbsVisible ? " is-on" : ""}`}
+              onClick={() => setThumbsVisible((v) => !v)}
+              title="t — thumb strip"
+              aria-pressed={thumbsVisible}
+            >
+              t
+            </button>
+          </div>
+        )}
+        {gridVisible && selectedIndices.size > 1 && (
+          <span
+            className="cull-statusbar__multi"
+            title="multi-selection — rating keys apply to all selected"
+          >
+            {selectedIndices.size} selected
+          </span>
+        )}
+        {failedCount > 0 ? (
+          <span
+            className="cull-statusbar__unsaved"
+            onClick={retryFailed}
+            title="some ratings failed to save — click to retry"
+          >
+            ⚠ {failedCount} unsaved · retry
+          </span>
+        ) : (
+          savingCount > 0 && <span className="cull-statusbar__saving">saving {savingCount}…</span>
+        )}
+      </div>
+      <div className="cull-statusbar__spacer" />
+      <div className="cull-statusbar__right">
+        <span
+          className="cull-statusbar__pos"
+          title={compareMode ? "challenger position / total candidates" : "current position / filtered total"}
+        >
+          {compareMode ? (
+            <>
+              <b>{Math.max(0, compareCandidates.indexOf(challengerIndex) + 1)}</b>
+              <span className="of"> / {compareCandidates.length}</span>
+            </>
+          ) : (
+            <>
+              <b>{positionInFilter >= 0 ? positionInFilter + 1 : 0}</b>
+              <span className="of"> / {visibleIndices.length}</span>
+            </>
+          )}
+        </span>
+        {/* Filter tabs disabled in compare. */}
+        {!compareMode && (
+          <div className="cull-filter-tabs" role="tablist" aria-label="filter">
+            <button
+              type="button"
+              className={filter === "all" ? "is-active" : ""}
+              onClick={() => setFilter("all")}
+              title="1 · show all images"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              className={filter === "unrated" ? "is-active" : ""}
+              onClick={() => setFilter("unrated")}
+              title="2 · show only unrated"
+            >
+              Unrated
+            </button>
+            <button
+              type="button"
+              className={filter === "keeps" ? "is-active" : ""}
+              onClick={() => setFilter("keeps")}
+              title="3 · show only keeps"
+            >
+              Keeps
+            </button>
+            <button
+              type="button"
+              className={filter === "favorites" ? "is-active" : ""}
+              onClick={() => setFilter("favorites")}
+              title="4 · show only favorites"
+            >
+              ★
+            </button>
+          </div>
+        )}
+        {(stats.keeps > 0 || rejectedPaths.length > 0) && !actionsOpen && (
+          <button
+            type="button"
+            className="cull-statusbar__finish"
+            onClick={() => setActionsOpen(true)}
+            title="finish the cull — move rejects / copy keeps"
+          >
+            ⌃E · {totalKeeps} keeps
+          </button>
+        )}
+      </div>
+    </footer>
+  );
+
   return (
-    <main className="cull-app">
+    <main className="cull-app" data-thumbs-pos={settings.thumbsPosition}>
       {quitGuardOverlay}
-      <WindowControls />
-      <header className="cull-statusbar" data-tauri-drag-region>
+      <WindowControls onSettings={() => setSettingsOpen(true)} />
+      {/* Top chrome / title bar — brand block + view name + save status pill.
+          Top-right chrome (settings · minimize · close) is fixed by
+          WindowControls. Bottom status bar holds filename / chips / filters /
+          count / finish. */}
+      <header className="cull-statusbar cull-statusbar--top" data-tauri-drag-region>
         <div className="cull-statusbar__left">
-          {/* CULL · <MODE> as a single brand block — the current view (loupe,
-              compare, grid) is part of the app identity, not a togglable
-              indicator. The pills to the right are overlays inside that mode. */}
           <span className="cull-statusbar__brandblock">
             <span className="cull-statusbar__brand">CULL</span>
             <span className="cull-statusbar__brand-sep">·</span>
@@ -2456,117 +3291,29 @@ export default function App() {
               {compareMode ? "COMPARE" : gridVisible ? "GRID" : "LOUPE"}
             </span>
           </span>
-          {current && <span className="cull-statusbar__filename">{stripExt(current.filename)}</span>}
-          {/* Overlay indicators. All use the same chip style; label is the full
-              word for what the toggle does. In GRID, only sort + zoom remain
-              meaningful (the others apply to the loupe image, which isn't
-              rendered there). */}
-          <span className="cull-statusbar__chips">
-            {isZooming && (
-              <span className="cull-statusbar__chip cull-statusbar__chip--zoom">
-                zoom {zoomLevel}:1
-              </span>
-            )}
-            {!gridVisible && exifVisible && <span className="cull-statusbar__chip">info</span>}
-            {!gridVisible && peakingVisible && <span className="cull-statusbar__chip">peaking</span>}
-            {!gridVisible && compositionVisible && (
-              <span className="cull-statusbar__chip">thirds</span>
-            )}
-            {!gridVisible && clippingVisible && (
-              <span className="cull-statusbar__chip">clipping</span>
-            )}
-          </span>
-          {failedCount > 0 ? (
-            <span
-              className="cull-statusbar__unsaved"
-              onClick={retryFailed}
-              title="some ratings failed to save — click to retry"
-            >
-              ⚠ {failedCount} unsaved · retry
-            </span>
-          ) : (
-            savingCount > 0 && <span className="cull-statusbar__saving">saving {savingCount}…</span>
-          )}
-        </div>
-        <div className="cull-statusbar__right">
-          {/* Filters are disabled in compare (it drives its own indices), so hide
-              the 1-4 counts there to avoid implying they do anything. */}
-          {!compareMode && (
-            <div className="cull-filterseg" role="tablist" aria-label="filter">
-              <button
-                type="button"
-                className={`cull-filterseg__opt${filter === "all" ? " is-active" : ""}`}
-                onClick={() => setFilter("all")}
-                title="1 · show all images"
-              >
-                <span className="cull-filterseg__key">1</span>
-                <span className="cull-filterseg__label">all</span>
-                <span className="cull-filterseg__count">{stats.total}</span>
-              </button>
-              <button
-                type="button"
-                className={`cull-filterseg__opt${filter === "unrated" ? " is-active" : ""}`}
-                onClick={() => setFilter("unrated")}
-                title="2 · show only unrated"
-              >
-                <span className="cull-filterseg__key">2</span>
-                <span className="cull-filterseg__label">unrated</span>
-                <span className="cull-filterseg__count">{stats.unrated}</span>
-              </button>
-              <button
-                type="button"
-                className={`cull-filterseg__opt cull-filterseg__opt--keep${filter === "keeps" ? " is-active" : ""}`}
-                onClick={() => setFilter("keeps")}
-                title="3 · show only keeps"
-              >
-                <span className="cull-filterseg__key">3</span>
-                <span className="cull-filterseg__label">keeps</span>
-                <span className="cull-filterseg__count">{stats.keeps}</span>
-              </button>
-              <button
-                type="button"
-                className={`cull-filterseg__opt cull-filterseg__opt--fav${filter === "favorites" ? " is-active" : ""}`}
-                onClick={() => setFilter("favorites")}
-                title="4 · show only favorites"
-              >
-                <span className="cull-filterseg__key">4</span>
-                <span className="cull-filterseg__label">★</span>
-                <span className="cull-filterseg__count">{stats.favorites}</span>
-              </button>
-            </div>
-          )}
-          <span className="cull-statusbar__count" title={compareMode ? "challenger position / total candidates" : "current position / filtered total"}>
-            {compareMode
-              ? // In compare, the filter is paused — the meaningful denominator
-                // is the candidate pool (every unrated frame minus the champion),
-                // and the numerator is the challenger's position inside it.
-                `${Math.max(0, compareCandidates.indexOf(challengerIndex) + 1)} / ${compareCandidates.length}`
-              : `${positionInFilter >= 0 ? positionInFilter + 1 : 0} / ${visibleIndices.length}`}
-          </span>
-          {(stats.keeps > 0 || rejectedPaths.length > 0) && !actionsOpen && (
-            <button
-              type="button"
-              className="cull-statusbar__finish"
-              onClick={() => setActionsOpen(true)}
-              title="finish the cull — move rejects / copy keeps"
-            >
-              ✦ finish
-            </button>
-          )}
-          <button
-            type="button"
-            className="cull-statusbar__gear"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="settings"
-            title="settings  (Ctrl + , )"
-          >
-            <SettingsIcon size={13} strokeWidth={2} />
-          </button>
+          <SaveStatusPill
+            failedCount={failedCount}
+            savingCount={savingCount}
+            onRetry={retryFailed}
+          />
         </div>
       </header>
 
       {compareMode ? (
         <>
+          {thumbsVisible && settings.thumbsPosition === "top" && (
+            <CompareStrip
+              images={images}
+              candidates={compareCandidates}
+              championIndex={championIndex}
+              challengerIndex={challengerIndex}
+              thumbnails={thumbnails}
+              blurhashes={blurhashes}
+              metadata={metadata}
+              loadThumbnail={loadThumbnail}
+              onPickChallenger={pickChallengerFromStrip}
+            />
+          )}
           <CompareView
             images={images}
             championIndex={championIndex}
@@ -2574,9 +3321,9 @@ export default function App() {
             previews={previews}
             metadata={metadata}
             clipMasks={clipMasks}
-            histograms={histograms}
             peakingMasks={peakingMasks}
             thumbnails={thumbnails}
+            blurhashes={blurhashes}
             ratings={ratings}
             exifVisible={exifVisible}
             clippingVisible={clippingVisible}
@@ -2588,51 +3335,75 @@ export default function App() {
             feedback={feedback}
             scrubbing={scrubbing}
           />
-          {thumbsVisible && (
+          {thumbsVisible && settings.thumbsPosition !== "top" && (
             <CompareStrip
               images={images}
               candidates={compareCandidates}
               championIndex={championIndex}
               challengerIndex={challengerIndex}
               thumbnails={thumbnails}
+              blurhashes={blurhashes}
+              metadata={metadata}
               loadThumbnail={loadThumbnail}
-              onPickChallenger={setChallengerIndex}
+              onPickChallenger={pickChallengerFromStrip}
             />
           )}
+          {bottomStatusBar}
         </>
       ) : gridVisible ? (
-        <GridView
-          images={images}
-          visibleIndices={visibleIndices}
-          currentIndex={currentIndex}
-          cols={gridCols}
-          ratings={ratings}
-          thumbnails={thumbnails}
-          loadThumbnail={loadThumbnail}
-          onPick={(i) => {
-            // Click a cell → open it in the loupe AND push grid to the nav
-            // stack so ESC takes the user back to the grid view they came from.
-            setCurrentIndex(i);
-            goToSite("loupe");
-          }}
-          containerRef={gridContainerRef}
-          viewportRangeRef={gridViewportRef}
-          onViewportPump={pumpThumbs}
-        />
+        <>
+          {visibleIndices.length === 0 ? (
+            <EmptyFilter filter={filter} />
+          ) : (
+          <GridView
+            images={images}
+            visibleIndices={visibleIndices}
+            currentIndex={currentIndex}
+            cols={gridCols}
+            ratings={ratings}
+            thumbnails={thumbnails}
+            blurhashes={blurhashes}
+            metadata={metadata}
+            selectedIndices={selectedIndices}
+            loadThumbnail={loadThumbnail}
+            onPick={handleGridPick}
+            containerRef={gridContainerRef}
+            viewportRangeRef={gridViewportRef}
+            onViewportPump={pumpThumbs}
+          />
+          )}
+          {bottomStatusBar}
+        </>
       ) : (
         <>
-          {singleModeBody}
-          {thumbsVisible && (
+          {thumbsVisible && settings.thumbsPosition === "top" && (
             <ThumbStrip
               images={images}
               currentIndex={currentIndex}
               ratings={ratings}
               visibleIndices={visibleIndices}
               thumbnails={thumbnails}
+              blurhashes={blurhashes}
+              metadata={metadata}
               loadThumbnail={loadThumbnail}
-              onPick={setCurrentIndex}
+              onPick={pickFromStrip}
             />
           )}
+          {singleModeBody}
+          {thumbsVisible && settings.thumbsPosition !== "top" && (
+            <ThumbStrip
+              images={images}
+              currentIndex={currentIndex}
+              ratings={ratings}
+              visibleIndices={visibleIndices}
+              thumbnails={thumbnails}
+              blurhashes={blurhashes}
+              metadata={metadata}
+              loadThumbnail={loadThumbnail}
+              onPick={pickFromStrip}
+            />
+          )}
+          {bottomStatusBar}
         </>
       )}
 
@@ -2680,99 +3451,24 @@ export default function App() {
       )}
 
       {actionsOpen && (
-        <div className="cull-quitguard">
-          <div className="cull-quitguard__box cull-actions">
-            <div className="cull-quitguard__title">finish the cull</div>
-            <div className="cull-quitguard__body">
-              <span className="cull-actions__keep">{stats.keeps} kept</span>
-              {stats.favorites > 0 && (
-                <>
-                  {" ("}
-                  <span className="cull-actions__fav">{stats.favorites}★</span>
-                  {")"}
-                </>
-              )}
-              {" · "}
-              {rejectedPaths.length} rejected
-              {" · "}
-              {stats.unrated} unrated
-            </div>
-
-            {(savingCount > 0 || failedCount > 0) && (
-              <div
-                className={`cull-actions__pending${failedCount > 0 ? " cull-actions__pending--err" : ""}`}
-              >
-                {failedCount > 0
-                  ? `⚠ ${failedCount} rating${failedCount > 1 ? "s" : ""} haven't saved — actions disabled until resolved (status bar · retry)`
-                  : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land first`}
-              </div>
-            )}
-
-            <div className="cull-actions__row">
-              <button
-                className="cull-pick-button"
-                disabled={
-                  !folder ||
-                  rejectedPaths.length === 0 ||
-                  actionBusy !== null ||
-                  savingCount > 0 ||
-                  failedCount > 0
-                }
-                onClick={doMoveRejects}
-              >
-                {actionBusy === "move"
-                  ? "moving…"
-                  : rejectedPaths.length > 0
-                    ? `move ${rejectedPaths.length} rejected → ${(settings.rejectedSubfolder.trim() || "_rejected")}/`
-                    : "no rejected files"}
-              </button>
-              {moveResult && (
-                <div
-                  className={`cull-actions__result${moveResult.errors.length > 0 ? " cull-actions__result--err" : ""}`}
-                >
-                  moved {moveResult.completed} · skipped {moveResult.skipped}
-                  {moveResult.errors.length > 0 && ` · ${moveResult.errors.length} errors`}
-                </div>
-              )}
-            </div>
-
-            <div className="cull-actions__row">
-              <button
-                className="cull-pick-button"
-                disabled={
-                  keptPaths.length === 0 ||
-                  actionBusy !== null ||
-                  savingCount > 0 ||
-                  failedCount > 0
-                }
-                onClick={doCopyKeeps}
-              >
-                {actionBusy === "copy"
-                  ? "copying…"
-                  : keptPaths.length > 0
-                    ? settings.exportFolder.mode === "pinned"
-                      ? `copy ${keptPaths.length} kept → ${basename(settings.exportFolder.path) || "pinned"}/`
-                      : `copy ${keptPaths.length} kept → choose folder…`
-                    : "no keeps to copy"}
-              </button>
-              {copyResult && (
-                <div
-                  className={`cull-actions__result${copyResult.errors.length > 0 ? " cull-actions__result--err" : ""}`}
-                >
-                  copied {copyResult.completed} · skipped {copyResult.skipped}
-                  {copyResult.errors.length > 0 && ` · ${copyResult.errors.length} errors`}
-                </div>
-              )}
-            </div>
-
-            <div className="cull-quitguard__actions">
-              <button className="cull-pick-button" onClick={() => setActionsOpen(false)}>
-                close
-              </button>
-            </div>
-            <div className="cull-quitguard__hint">esc to close</div>
-          </div>
-        </div>
+        <FinishDialog
+          folder={folder}
+          folderName={folderName}
+          keptPaths={keptPaths}
+          rejectedPaths={rejectedPaths}
+          favorites={stats.favorites}
+          unrated={stats.unrated}
+          keepsCount={stats.keeps}
+          savingCount={savingCount}
+          failedCount={failedCount}
+          actionBusy={actionBusy}
+          moveResult={moveResult}
+          copyResult={copyResult}
+          settings={settings}
+          onMoveRejects={doMoveRejects}
+          onCopyKeeps={doCopyKeeps}
+          onClose={() => setActionsOpen(false)}
+        />
       )}
 
       {helpVisible && (
@@ -2787,5 +3483,183 @@ export default function App() {
         />
       )}
     </main>
+  );
+}
+
+/**
+ * XMP save-status pill rendered in the top chrome (next to the brand). The
+ * bottom status bar also surfaces failed saves — this is a peripheral mirror
+ * the user catches with their peripheral vision so a failed write doesn't sit
+ * unnoticed when the bottom bar is occluded by a modal.
+ *
+ * Three states, fully derived from existing state (no new state machinery):
+ *  - failed   → red pill, clickable, runs the same retry path as the bottom bar
+ *  - saving   → champagne dot pulsing, "saving…" text
+ *  - idle     → muted dot, "saved" text (default)
+ *
+ * Failed wins over saving so an in-flight retry doesn't visually mask the
+ * still-failing batch behind it.
+ */
+/**
+ * Centered empty-state shown in loupe / grid when the active filter has zero
+ * matches. Matches the mockup's `.empty-state.empty-filter` block: small icon,
+ * uppercase eyebrow, headline with the missing filter highlighted, and a key
+ * hint to switch out.
+ */
+function EmptyFilter({ filter }: { filter: Filter }) {
+  // Label the user-facing filter name. "All" can never actually be empty (it
+  // includes unrated), so falling back to "this" covers the impossible-case.
+  const label =
+    filter === "favorites"
+      ? "★"
+      : filter === "keeps"
+        ? "Keeps"
+        : filter === "unrated"
+          ? "Unrated"
+          : "this";
+  return (
+    <div className="cull-empty-state">
+      <div className="cull-empty-state__icon">⌀</div>
+      <div className="cull-empty-state__eyebrow">No matches</div>
+      <div className="cull-empty-state__title">
+        No images in the <em>{label}</em> filter
+      </div>
+      <div className="cull-empty-state__hint">
+        <kbd>1</kbd> for all · <kbd>2</kbd> for unrated
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Recent-folders section on the home screen. Renders nothing on a totally
+ * fresh launch (empty state replaces the list, per the mockup). Click a row
+ * to re-open that folder; rows that don't have a `count` yet hide the count
+ * column rather than show a stub `0`.
+ *
+ * The mockup uses three columns: path (middle-truncated), count badge
+ * (`327 / 372`, plain `421`, or `932 ✓`), and a relative-time stamp.
+ */
+function RecentFolders({
+  recents,
+  onPick,
+  pickerBusy,
+}: {
+  recents: RecentEntry[];
+  onPick: (path: string) => void;
+  pickerBusy: boolean;
+}) {
+  return (
+    <div className="cull-recent">
+      <div className="cull-recent__label">Recent</div>
+      {recents.length === 0 ? (
+        <div className="cull-recent__empty">
+          No folders yet. Drop one anywhere, or press{" "}
+          <kbd className="cull-recent__kbd">⌃ O</kbd>.
+        </div>
+      ) : (
+        <div className="cull-recent__items">
+          {recents.map((r) => (
+            <RecentRow
+              key={r.path}
+              entry={r}
+              onPick={() => !pickerBusy && onPick(r.path)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }) {
+  // Truncate at ~52 chars — leaves room for the count + time columns at the
+  // mockup's 620px hero width and keeps both the drive letter (head) and the
+  // leaf folder name (tail) visible.
+  const display = middleTruncate(entry.path, 52);
+  const rel = formatRelativeTime(entry.lastOpened);
+  return (
+    <div
+      className="cull-recent__item"
+      role="button"
+      tabIndex={0}
+      onClick={onPick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPick();
+        }
+      }}
+      title={entry.path}
+    >
+      <span className="cull-recent__path">{display}</span>
+      <span className="cull-recent__count">
+        {entry.count > 0 ? (
+          entry.done ? (
+            <>
+              <b>{entry.count}</b>
+              <span className="cull-recent__done" aria-label="finished">
+                {" "}✓
+              </span>
+            </>
+          ) : entry.rated > 0 ? (
+            <>
+              <b>{entry.rated}</b>
+              <span className="cull-recent__of"> / {entry.count}</span>
+            </>
+          ) : (
+            <b>{entry.count}</b>
+          )
+        ) : null}
+      </span>
+      <span className="cull-recent__time">{rel ?? ""}</span>
+    </div>
+  );
+}
+
+function SaveStatusPill({
+  failedCount,
+  savingCount,
+  onRetry,
+}: {
+  failedCount: number;
+  savingCount: number;
+  onRetry: () => void;
+}) {
+  const state =
+    failedCount > 0 ? "failed" : savingCount > 0 ? "saving" : "idle";
+  const text =
+    state === "failed"
+      ? "failed · retry"
+      : state === "saving"
+        ? "saving…"
+        : "saved";
+  return (
+    <span
+      className={`cull-save-status cull-save-status--${state}`}
+      role={state === "failed" ? "button" : undefined}
+      tabIndex={state === "failed" ? 0 : undefined}
+      onClick={state === "failed" ? onRetry : undefined}
+      onKeyDown={
+        state === "failed"
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onRetry();
+              }
+            }
+          : undefined
+      }
+      title={
+        state === "failed"
+          ? "some ratings failed to save — click to retry"
+          : state === "saving"
+            ? `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
+            : "all ratings saved to disk"
+      }
+    >
+      <span className="cull-save-status__dot" />
+      <span className="cull-save-status__label">{text}</span>
+    </span>
   );
 }

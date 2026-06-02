@@ -44,6 +44,12 @@ pub(crate) struct ImageMetadata {
     /// CR3 file size on disk. Filled in by the bundle handler — not from CR3
     /// content.
     pub file_size: Option<u64>,
+    /// Lightroom Classic 1–5★ rating from the `.xmp` sidecar, surfaced so the
+    /// UI can show pre-existing LrC ratings (a row in the (i) panel + a grid
+    /// badge). `None` for absent / 0 / unparseable. Note: a lone 1★ on a frame
+    /// CULL marked as favorite is just CULL's own stamp, not a user rating —
+    /// the frontend filters that case using the (cull) rating it already has.
+    pub lrc_rating: Option<u8>,
 }
 
 impl From<cr3::Cr3Meta> for ImageMetadata {
@@ -66,6 +72,7 @@ impl From<cr3::Cr3Meta> for ImageMetadata {
             pixel_width: m.pixel_width,
             pixel_height: m.pixel_height,
             file_size: None,
+            lrc_rating: None,
         }
     }
 }

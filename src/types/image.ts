@@ -43,4 +43,15 @@ export type ImageMetadata = {
   pixelHeight: number | null;
   /** CR3 file size on disk. */
   fileSize: number | null;
+  /**
+   * Lightroom Classic 1–5★ rating from the `.xmp` sidecar. Surfaced so the
+   * (i) panel can show a "LrC rating ★★★☆☆" row and the grid / strip can
+   * render a tiny corner badge. `null` for unrated.
+   *
+   * Note: when CULL writes a favorite it stamps `xmp:Rating="1"` — so a lone
+   * 1★ on a frame whose CULL rating is "favorite" is just CULL's own mark.
+   * The UI filters that case by comparing this to the CULL rating before
+   * rendering the badge.
+   */
+  lrcRating: number | null;
 };

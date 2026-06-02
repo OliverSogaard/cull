@@ -1,16 +1,30 @@
-import { Minus, Square, X as XIcon } from "lucide-react";
+import { Minus, Settings as SettingsIcon, X as XIcon } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /**
- * Custom min / maximize / close buttons for the borderless window. Close
- * routes through Tauri's normal close-request handler so the quit guard still
- * gets a chance to protect unsaved work. Each button blurs itself on click so
- * the focus ring doesn't linger after pointer interaction.
+ * Top-right chrome buttons for the borderless window. Order matches the
+ * mockup: settings cog · minimize · close. The close button routes through
+ * Tauri's normal close-request handler so the quit guard still gets a chance
+ * to protect unsaved work. Each button blurs itself on click so the focus
+ * ring doesn't linger after pointer interaction.
  */
-export function WindowControls() {
+export function WindowControls({ onSettings }: { onSettings?: () => void }) {
   const win = getCurrentWindow();
   return (
     <div className="cull-wincontrols">
+      {onSettings && (
+        <button
+          className="cull-winbtn"
+          title="settings  (Ctrl + , )"
+          aria-label="settings"
+          onClick={(e) => {
+            e.currentTarget.blur();
+            onSettings();
+          }}
+        >
+          <SettingsIcon size={13} strokeWidth={2} />
+        </button>
+      )}
       <button
         className="cull-winbtn"
         title="minimize"
@@ -21,17 +35,6 @@ export function WindowControls() {
         }}
       >
         <Minus size={13} strokeWidth={2.5} />
-      </button>
-      <button
-        className="cull-winbtn"
-        title="maximize / restore"
-        aria-label="maximize"
-        onClick={(e) => {
-          e.currentTarget.blur();
-          win.toggleMaximize();
-        }}
-      >
-        <Square size={10} strokeWidth={2.5} />
       </button>
       <button
         className="cull-winbtn cull-winbtn--close"
