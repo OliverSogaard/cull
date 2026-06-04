@@ -165,9 +165,10 @@ The on-screen image renders at fit-to-stage size, so the browser keeps the
 JPEG at that resolution. CSS `transform: scale()` upscales those pixels
 during zoom — looks soft for ~0.2 s while the browser re-decodes at the
 new size. To make zoom sharp instantly we mount a *second* `<img>` at the
-image's native pixel size after `HIRES_SETTLE_MS` (150 ms) of cursor rest.
-The browser forces a full-resolution raster for that copy; zooming
-composites from already-sharp pixels.
+image's native pixel size after `profile.hiResSettleMs` of cursor rest
+(50 ms on local storage, 150 ms on network). The browser forces a
+full-resolution raster for that copy; zooming composites from already-sharp
+pixels.
 
 The settle delay means rapid arrow-through never pays the heavy native-
 resolution decode. The layer drops on every navigation and on thumb-strip

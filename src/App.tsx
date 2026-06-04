@@ -68,6 +68,12 @@ const NAV_REPEAT_MS = 33;
 // sustained hold pauses briefly then ramps into the ~30/s repeat above.
 const NAV_HOLD_DELAY_MS = 280;
 
+// How many frames either side of the cursor keep their computed analysis-overlay
+// (clip / peak / histogram) PNG cached. Beyond this the cache is pruned, so
+// leaving an overlay on across a long shoot doesn't accumulate one PNG per
+// visited frame.
+const OVERLAY_CACHE_KEEP = 8;
+
 /**
  * Transparent inline-SVG data URI whose intrinsic width/height carry an aspect
  * ratio. Used as an in-flow "sizer" <img> so the photo matte is sized by the
@@ -258,9 +264,17 @@ export default function App() {
   const [isZooming, setIsZooming] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<1 | 2>(1); // 1 = 1:1, 2 = 2:1 (Shift+Space)
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  // Live mirror of isZooming so the navigation-reset effect can fire on a cursor
+  // move WITHOUT depending on isZooming (which would make it cancel the very zoom
+  // a Space-press just started).
+  const isZoomingRef = useRef(isZooming);
+  useEffect(() => {
+    isZoomingRef.current = isZooming;
+  }, [isZooming]);
 
-  // Measured rect of the displayed image (relative to the stage), used to align
-  // pixel-accurate overlays like the clipping mask to the letterboxed image.
+  // Measured rect of the displayed image (relative to the stage). Consumed ONLY
+  // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
+  // with the base image) — the analysis overlays align via CSS, not this rect.
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgRect, setImgRect] = useState<{
@@ -311,6 +325,23 @@ export default function App() {
       y: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, o.y + dy)),
     }));
   }, []);
+
+  // Exit zoom: drop the scale and re-center. (zoomLevel is intentionally left
+  // as-is — the next Space-press re-sets it.) Centralized so the exit points stay
+  // consistent.
+  const resetZoom = useCallback(() => {
+    setIsZooming(false);
+    setPanOffset({ x: 0, y: 0 });
+  }, []);
+
+  // Leaving a zoomed frame via a cursor move (strip click, rating-advance) must
+  // drop the zoom — otherwise the new image lands scaled to the old pan. Keyboard
+  // arrows pan instead of navigating while zoomed, so currentIndex changes here
+  // only when we genuinely left the frame. Reads isZoomingRef so it fires on the
+  // index change, never on the Space-press that started the zoom.
+  useEffect(() => {
+    if (isZoomingRef.current) resetZoom();
+  }, [currentIndex, resetZoom]);
 
   const visibleIndices = useMemo(() => {
     return images.map((_, i) => i).filter((i) => passesFilter(ratings[images[i].id], filter));
@@ -677,12 +708,19 @@ export default function App() {
     setClippingVisible(false);
     setClipMasks({});
     requestedClipMasks.current.clear();
+    // Mirror the clip handling for the other overlay families — these were leaking
+    // their PNG caches + requested Sets across sessions.
+    setPeakingVisible(false);
+    setPeakingMasks({});
+    requestedPeaks.current.clear();
+    setCompositionVisible(false);
+    setHistograms({});
+    requestedHistograms.current.clear();
     setExifVisible(false);
-    setIsZooming(false);
-    setPanOffset({ x: 0, y: 0 });
+    resetZoom();
     setFeedback(null);
     setPhase("start");
-  }, []);
+  }, [resetZoom]);
 
   // Leaving to home: snapshot the cull for the home-screen summary, then reset.
   const leaveToHome = useCallback(() => {
@@ -860,15 +898,16 @@ export default function App() {
   // compare, which drives its own champion/challenger indices.
   useLayoutEffect(() => {
     if (compareMode || images.length === 0 || visibleIndices.length === 0) return;
-    if (visibleIndices.includes(currentIndex)) return;
+    if (positionInFilter !== -1) return; // reuse the memo, not a fresh O(n) scan
     const forward = visibleIndices.find((i) => i >= currentIndex);
     setCurrentIndex(forward ?? visibleIndices[visibleIndices.length - 1]);
-  }, [visibleIndices, currentIndex, images.length, compareMode]);
+  }, [visibleIndices, currentIndex, positionInFilter, images.length, compareMode]);
 
-  // Measure the displayed image's rect (relative to the stage) so overlays can
-  // align to the letterboxed image. A ResizeObserver on the stage re-measures on
-  // ANY layout change — window resize AND the image growing/shrinking when the
-  // thumbnail strip toggles — so the clipping overlay never lags at the old size.
+  // Measure the displayed image's rect (relative to the stage) to feed the
+  // deferred hi-res zoom layer's transform. A ResizeObserver on the stage
+  // re-measures on ANY layout change — window resize AND the image growing /
+  // shrinking when the thumbnail strip or info rail toggles — so the hi-res layer
+  // never lands at the old size. (The analysis overlays align via CSS, not this.)
   useLayoutEffect(() => {
     if (phase !== "culling") {
       setImgRect(null);
@@ -901,7 +940,9 @@ export default function App() {
     return () => ro.disconnect();
     // cur.stage/cur.dims: the sizer reflows the frame when dims arrive (thumb
     // stage); the RO is on the stage (which doesn't resize), so re-measure here.
-  }, [phase, images, currentIndex, measureNonce, scrubbing, cur.stage, cur.dims]);
+    // images.length (not the array ref) so a folder append doesn't needlessly
+    // tear down + rebuild the observer when the displayed frame is unchanged.
+  }, [phase, images.length, currentIndex, measureNonce, scrubbing, cur.stage, cur.dims]);
 
   // Compute a clipping mask PNG for one image's preview (cached by path). Scans
   // pixels for true clipping and paints diagonal stripes (red 45° highlights /
@@ -975,8 +1016,11 @@ export default function App() {
   // off (clipping does not persist, spec §12).
   useEffect(() => {
     if (!clippingVisible) {
-      requestedClipMasks.current.clear();
-      setClipMasks({});
+      // Idempotent reset: while clipping is off this effect still re-runs on every
+      // scrub frame (currentIndex/cur.* deps), so a fresh {} would force a render
+      // each frame. Keep the same ref when already empty so React bails out.
+      if (requestedClipMasks.current.size > 0) requestedClipMasks.current.clear();
+      setClipMasks((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
     if (compareMode) {
@@ -1067,8 +1111,9 @@ export default function App() {
   // Mirror of the clipping effect: ensure peaking masks exist while P is on.
   useEffect(() => {
     if (!peakingVisible) {
-      requestedPeaks.current.clear();
-      setPeakingMasks({});
+      // Idempotent reset (see the clipping effect) — avoid a per-scrub-frame render.
+      if (requestedPeaks.current.size > 0) requestedPeaks.current.clear();
+      setPeakingMasks((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
     if (compareMode) {
@@ -1096,8 +1141,10 @@ export default function App() {
   // Compute an RGB histogram PNG for one image (cached by path). Computed from the
   // already-loaded THUMBNAIL (~160px) — a histogram is a distribution, so the tiny
   // sample is plenty, and it avoids decoding the 32 MP preview (which made it pop
-  // in ~0.5s late). Channels are drawn additively (overlaps brighten); the full
-  // 0–255 range (including clipping spikes) sets the vertical scale.
+  // in ~0.5s late). NOTE: it samples the downscaled thumb, NOT the full preview the
+  // clipping overlay uses, so it's a coarse distribution and does not faithfully
+  // resolve pixel-level clipping — use the clipping overlay (h) for that. Channels
+  // are drawn additively (overlaps brighten); the 0/255 bins set the vertical scale.
   const loadHistogram = useCallback(
     (path: string) => {
       if (requestedHistograms.current.has(path)) return;
@@ -1128,7 +1175,7 @@ export default function App() {
           g[data[i + 1]]++;
           b[data[i + 2]]++;
         }
-        let max = 1; // include the 0/255 bins — clipping spikes are part of the truth
+        let max = 1; // include the 0/255 bins so a clipping spike doesn't rescale away
         for (let v = 0; v < 256; v++) max = Math.max(max, r[v], g[v], b[v]);
 
         const HW = 256;
@@ -1169,8 +1216,9 @@ export default function App() {
   // drop the cache when it closes. Covers single view and both compare panels.
   useEffect(() => {
     if (!exifVisible) {
-      requestedHistograms.current.clear();
-      setHistograms({});
+      // Idempotent reset (see the clipping effect) — avoid a per-scrub-frame render.
+      if (requestedHistograms.current.size > 0) requestedHistograms.current.clear();
+      setHistograms((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
     if (compareMode) {
@@ -1194,6 +1242,47 @@ export default function App() {
     chalShot.url,
     loadHistogram,
   ]);
+
+  // Bound the per-path overlay caches to a window around the cursor so leaving an
+  // overlay on while arrowing through a long shoot doesn't accumulate a PNG per
+  // visited frame. Skipped during scrub (overlays are hidden then). The requested
+  // Set is pruned in lock-step, so a revisited frame recomputes its mask cleanly.
+  useEffect(() => {
+    if (scrubbing) return;
+    if (
+      requestedClipMasks.current.size === 0 &&
+      requestedPeaks.current.size === 0 &&
+      requestedHistograms.current.size === 0
+    )
+      return;
+    const near = new Set<string>();
+    const add = (i: number) => {
+      const p = images[i]?.path;
+      if (p) near.add(p);
+    };
+    for (let d = -OVERLAY_CACHE_KEEP; d <= OVERLAY_CACHE_KEEP; d++) add(currentIndex + d);
+    if (compareMode) {
+      add(championIndex);
+      add(challengerIndex);
+    }
+    const pruneSet = (req: Set<string>) =>
+      req.forEach((k) => {
+        if (!near.has(k)) req.delete(k);
+      });
+    pruneSet(requestedClipMasks.current);
+    pruneSet(requestedPeaks.current);
+    pruneSet(requestedHistograms.current);
+    const pruneRec = (rec: Record<string, string>) => {
+      const keys = Object.keys(rec);
+      if (keys.length === 0 || keys.every((k) => near.has(k))) return rec; // stable ref
+      const next: Record<string, string> = {};
+      for (const k of keys) if (near.has(k)) next[k] = rec[k];
+      return next;
+    };
+    setClipMasks(pruneRec);
+    setPeakingMasks(pruneRec);
+    setHistograms(pruneRec);
+  }, [currentIndex, images, scrubbing, compareMode, championIndex, challengerIndex]);
 
   const advance = useCallback(
     (dir: 1 | -1, step = 1): boolean => {
@@ -1651,8 +1740,7 @@ export default function App() {
         setChallengerIndex(firstChall);
         setCompareMode(true);
         setGridVisible(false);
-        setIsZooming(false);
-        setPanOffset({ x: 0, y: 0 });
+        resetZoom();
         return;
       }
 
@@ -1663,8 +1751,7 @@ export default function App() {
       setNavStack((s) => [...s, buildNavEntry(current)]);
       setCompareMode(false);
       setGridVisible(target === "grid");
-      setIsZooming(false);
-      setPanOffset({ x: 0, y: 0 });
+      resetZoom();
     },
     [
       compareMode,
@@ -1676,6 +1763,7 @@ export default function App() {
       nearestUnrated,
       buildNavEntry,
       snapToFilter,
+      resetZoom,
     ],
   );
 
@@ -1701,8 +1789,7 @@ export default function App() {
         if (compareMode) compareLanding();
         setCompareMode(false);
         setGridVisible(false);
-        setIsZooming(false);
-        setPanOffset({ x: 0, y: 0 });
+        resetZoom();
       } else {
         setConfirmHome(true);
       }
@@ -1738,8 +1825,7 @@ export default function App() {
       setCompareMode(false);
       setGridVisible(entry.site === "grid");
     }
-    setIsZooming(false);
-    setPanOffset({ x: 0, y: 0 });
+    resetZoom();
   }, [
     navStack,
     compareMode,
@@ -1751,6 +1837,7 @@ export default function App() {
     clearMultiSelection,
     images,
     ratings,
+    resetZoom,
   ]);
 
   // ← / → → move the challenger to the next/previous unrated frame (champion skipped).
@@ -2046,6 +2133,14 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [settingsOpen, phase, pickFolder, beginCulling]);
 
+  // The cull keymap closures capture currentIndex/ratings/etc., so they rebuild on
+  // every nav step + rating. Dispatch through a ref and register the window
+  // listeners once, so the scrub hot path doesn't churn add/removeEventListener.
+  const cullKeyRef = useRef<{
+    onKey: (e: KeyboardEvent) => void;
+    onKeyUp: (e: KeyboardEvent) => void;
+  }>({ onKey: () => {}, onKeyUp: () => {} });
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Chrome shortcuts (settings, open folder, begin culling) are handled by
@@ -2053,6 +2148,10 @@ export default function App() {
       // swallow all cull keys here so nothing slips through behind it.
       if (settingsOpen) return;
       if (phase !== "culling") return; // chrome screens are button-driven
+
+      // Bare modifier presses (Ctrl/Shift/Alt/Meta alone) carry no cull action —
+      // make them a no-op so e.g. tapping Shift mid-scrub doesn't abort the hold.
+      if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta") return;
 
       // A held scrub is sustained ONLY by its own arrow key. Any OTHER key (zoom,
       // rating, help, esc, compare, digits…) interrupts it, so nothing keeps
@@ -2310,16 +2409,10 @@ export default function App() {
       if (e.key === "ArrowRight" && heldDirRef.current === 1) stopHold();
       else if (e.key === "ArrowLeft" && heldDirRef.current === -1) stopHold();
       if (e.code === "Space") {
-        setIsZooming(false);
-        setPanOffset({ x: 0, y: 0 });
+        resetZoom();
       }
     };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKeyUp);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKeyUp);
-    };
+    cullKeyRef.current = { onKey, onKeyUp };
   }, [
     phase,
     startHold,
@@ -2345,7 +2438,22 @@ export default function App() {
     goBack,
     challengerWins,
     challengerLoses,
+    resetZoom,
   ]);
+
+  // Register the window key listeners ONCE; dispatch through cullKeyRef so the
+  // frequently-rebuilt handler closures above don't re-bind the DOM listeners on
+  // every scrub frame / rating. The effect above just refreshes the ref.
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => cullKeyRef.current.onKey(e);
+    const up = (e: KeyboardEvent) => cullKeyRef.current.onKeyUp(e);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -2747,7 +2855,8 @@ export default function App() {
               {/* Deferred full-res layer: same blob, rendered at native pixel size and
                   transformed to coincide with the base image, so the compositor holds a
                   full-resolution raster and zoom is sharp immediately. Mounts only after
-                  the cursor settles (HIRES_SETTLE_MS); the base image stays beneath as the
+                  the cursor settles (profile.hiResSettleMs — 50ms local / 150ms
+                  network); the base image stays beneath as the
                   instant-nav fallback. Gated on the full preview being ready too —
                   the thumbnail fallback isn't worth pinning a hi-res raster of. */}
               {hiRes && !clippingVisible && imgRect && naturalSize && cur.stage === "full" && cur.url && (
@@ -2807,6 +2916,9 @@ export default function App() {
                   }}
                 />
               )}
+              {/* Thirds grid is a whole-frame tool: intentionally hidden while
+                  zoomed, unlike the clip/peak masks (which stay mounted and scale
+                  via the inline transform). */}
               {compositionVisible && !isZooming && !scrubbing && (
                 <svg
                   className="cull-composition-overlay"
