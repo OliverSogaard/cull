@@ -25,11 +25,12 @@ describe("mergeRecent", () => {
     expect(out[0].count).toBe(12);
   });
 
-  it("preserves the larger known count when the new entry has count=0", () => {
-    // mid-scan re-open: caller may push a stub before scan_folder resolves.
+  it("replaces the stored count with the new entry's count, even 0", () => {
+    // A re-scanned now-empty folder pushes count=0; that wins, so the row no
+    // longer advertises a stale total for files that are gone.
     const list = [mk({ path: "C:\\A", count: 372 })];
     const out = mergeRecent(list, mk({ path: "C:\\A", count: 0 }));
-    expect(out[0].count).toBe(372);
+    expect(out[0].count).toBe(0);
   });
 
   it("uses the new count when the new entry has a real count", () => {

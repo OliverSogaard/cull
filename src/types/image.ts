@@ -7,6 +7,12 @@ export type Img = {
   id: number;
   path: string;
   filename: string;
+  /**
+   * Absolute path of the folder this image was scanned from. A staged set can
+   * span several folders ("open another folder"), so recents reports per-folder
+   * counts from this rather than the merged total.
+   */
+  srcFolder: string;
 };
 
 /** Preview load state per path — drives the loupe's loading placeholder. */

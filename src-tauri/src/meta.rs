@@ -52,6 +52,11 @@ pub(crate) struct ImageMetadata {
     pub lrc_rating: Option<u8>,
 }
 
+// MAINTAINERS: this mapping is exhaustive on purpose — adding a field to
+// `ImageMetadata` without mapping it here fails to compile (missing field). The
+// one silent direction is the reverse: if you add a tag to `cr3::Cr3Meta`,
+// remember to add the matching field here AND map it, or the new tag silently
+// never reaches the UI.
 impl From<cr3::Cr3Meta> for ImageMetadata {
     fn from(m: cr3::Cr3Meta) -> Self {
         ImageMetadata {

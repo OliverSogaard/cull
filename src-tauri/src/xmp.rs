@@ -124,17 +124,27 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Read a rating back from a CR3's sidecar.
+/// Read a sidecar ONCE and derive both CULL's pick rating and the user's LrC
+/// star rating from the same in-memory string.
 ///
-/// Primary: the LrC-compatible flag scheme — `xmpDM:pick > 0` → keep (favorite
-/// when the star is exactly 1), `pick < 0` → reject, `pick == 0` → deliberately
-/// unflagged. Fallback (no pick attr present): older CULL sidecars that stored
-/// only `xmp:Rating` with a Cull CreatorTool (keep→0, reject→-1, favorite→5),
-/// so existing culls still resume after the format change.
-pub(crate) fn read_xmp_rating(cr3_path: &str) -> Option<String> {
+/// The analyze restore pass needs both per file; reading the sidecar twice (one
+/// open for the pick rating, another for the star) doubled the open count on
+/// exactly the high-latency NAS path the whole design optimises around
+/// ("one open per file" — see ARCHITECTURE.md). Both values come from the same
+/// bytes, so a single read serves both.
+///
+/// The pick value follows the LrC-compatible flag scheme — `xmpDM:pick > 0` →
+/// keep (favorite when the star is exactly 1), `pick < 0` → reject, `pick == 0`
+/// → deliberately unflagged. Fallback (no pick attr present): older CULL
+/// sidecars that stored only `xmp:Rating` with a Cull CreatorTool (keep→0,
+/// reject→-1, favorite→5), so existing culls still resume after the format
+/// change. The star value is the raw `xmp:Rating` (1–5), or `None`.
+pub(crate) fn read_ratings(cr3_path: &str) -> (Option<String>, Option<u8>) {
     let xmp = Path::new(cr3_path).with_extension("xmp");
-    let content = std::fs::read_to_string(&xmp).ok()?;
-    classify_xmp(&content)
+    match std::fs::read_to_string(&xmp) {
+        Ok(content) => (classify_xmp(&content), parse_lrc_rating(&content)),
+        Err(_) => (None, None),
+    }
 }
 
 /// Read the user's Lightroom Classic 1–5★ star rating from a CR3's sidecar.

@@ -16,20 +16,48 @@ use std::time::Instant;
 use tauri::Emitter;
 use walkdir::WalkDir;
 
-use crate::xmp::{read_lrc_rating, read_xmp_rating};
+use crate::xmp::read_ratings;
 
 /// Scan a folder recursively for `.CR3` files, sorted lexicographically.
+///
+/// `ignore_subdir` (the configured rejected-subfolder name) is pruned from the
+/// walk so re-scanning a shoot after "move rejects" doesn't re-import the frames
+/// that were filed away under it. `None`/empty disables pruning.
 #[tauri::command]
-pub(crate) async fn scan_folder(path: String) -> Result<Vec<String>, String> {
+pub(crate) async fn scan_folder(
+    path: String,
+    ignore_subdir: Option<String>,
+) -> Result<Vec<String>, String> {
     let start = Instant::now();
     let root = Path::new(&path);
-    if !root.is_dir() {
-        return Err(format!("not a directory: {path}"));
+
+    // Classify the failure so the UI can tell a genuinely-gone folder (evict it
+    // from recents) from a transient NAS/SMB blip (keep it — the user retries).
+    // An unreachable share / sleeping drive surfaces as an IO error here, NOT as
+    // a successful-but-not-a-dir, so it is correctly treated as transient.
+    match std::fs::metadata(root) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Err(format!("not a directory: {path}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("folder not found: {path}"));
+        }
+        Err(e) => return Err(format!("couldn't read folder: {e}")),
     }
+
+    let ignore = ignore_subdir.filter(|s| !s.is_empty());
 
     let mut paths: Vec<String> = WalkDir::new(root)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|e| {
+            // Keep the root itself; prune only descendant dirs whose name matches
+            // the ignored subfolder (case-insensitively — Windows paths).
+            e.depth() == 0
+                || !(e.file_type().is_dir()
+                    && ignore.as_deref().is_some_and(|name| {
+                        e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(name))
+                    }))
+        })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .filter_map(|e| {
@@ -65,7 +93,9 @@ struct AnalyzeProgress {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AnalyzeResult {
-    /// Input indices sorted by capture time (then path as tiebreak).
+    /// Input indices sorted by write time (mtime, sub-second), then path as a
+    /// tiebreak. mtime ≈ capture order for in-camera writes; precise EXIF
+    /// DateTimeOriginal is read lazily per image and is not used for ordering.
     order: Vec<usize>,
     /// Per input index: restored CULL rating from the `.xmp` sidecar, or null.
     ratings: Vec<Option<String>>,
@@ -133,7 +163,13 @@ pub(crate) async fn analyze_folder(
             }
             if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
                 if let Ok(since) = modified.duration_since(std::time::UNIX_EPOCH) {
-                    mtime.insert(pstr.to_string(), since.as_secs() as i64);
+                    // Milliseconds, not whole seconds: Canon burst frames are
+                    // written many-per-second, so second-resolution mtime ties
+                    // a whole burst and falls back to filename order (which a
+                    // 9999→0001 counter wrap reverses). Sub-second mtime keeps
+                    // them in actual write order; the path tiebreak below then
+                    // only fires on a genuine exact-millisecond tie.
+                    mtime.insert(pstr.to_string(), since.as_millis() as i64);
                 }
             }
             done += 1;
@@ -145,6 +181,15 @@ pub(crate) async fn analyze_folder(
             }
         }
     }
+
+    // Terminal tick: a staged file missing from its parent listing (deleted /
+    // moved between scan and analyze) or a parent dir we couldn't read means the
+    // per-entry counter above may never reach `n`, freezing the bar short. Emit
+    // one final full tick (idempotent in the normal case) so it always completes.
+    let _ = window.emit(
+        "analyze-progress",
+        AnalyzeProgress { done: n, total: n, phase: "reading".into() },
+    );
 
     let epoch: Vec<Option<i64>> = paths.iter().map(|p| mtime.get(p).copied()).collect();
 
@@ -186,8 +231,7 @@ pub(crate) async fn analyze_folder(
                 handles.push(s.spawn(move || {
                     let mut out = Vec::with_capacity(chunk.len());
                     for &i in chunk {
-                        let rating = read_xmp_rating(&paths_ref[i]);
-                        let lrc = read_lrc_rating(&paths_ref[i]);
+                        let (rating, lrc) = read_ratings(&paths_ref[i]);
                         out.push((i, rating, lrc));
                         let d = done_ref.fetch_add(1, Ordering::Relaxed) + 1;
                         if d.is_multiple_of(step) || d == total_xmp {
@@ -211,8 +255,9 @@ pub(crate) async fn analyze_folder(
         }
     } else {
         for (idx, &i) in to_read.iter().enumerate() {
-            ratings[i] = read_xmp_rating(&paths[i]);
-            lrc_ratings[i] = read_lrc_rating(&paths[i]);
+            let (rating, lrc) = read_ratings(&paths[i]);
+            ratings[i] = rating;
+            lrc_ratings[i] = lrc;
             let done = idx + 1;
             // Same step boundaries as the concurrent path (multiples of `step`,
             // plus the final tick) so the bar advances identically regardless of

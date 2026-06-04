@@ -77,10 +77,52 @@ const NAV_HOLD_DELAY_MS = 280;
 const sizerSrc = (w: number, h: number) =>
   `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%2F%3E`;
 
+/**
+ * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
+ * before the per-image bundle read fills in real EXIF — kept centralized (and
+ * frozen) so adding a metadata field only touches one place, not every seed.
+ */
+const EMPTY_METADATA: ImageMetadata = Object.freeze({
+  capturedAt: null,
+  camera: null,
+  lens: null,
+  focalLengthMm: null,
+  aperture: null,
+  shutterSeconds: null,
+  iso: null,
+  gpsLat: null,
+  gpsLon: null,
+  afXPct: null,
+  afYPct: null,
+  exposureBias: null,
+  whiteBalance: null,
+  driveMode: null,
+  pixelWidth: null,
+  pixelHeight: null,
+  fileSize: null,
+  lrcRating: null,
+});
+
 export default function App() {
   const [phase, setPhase] = useState<Phase>("start");
   const [folder, setFolder] = useState<string | null>(null);
+  // The folder currently being scanned (set before the scan resolves) so the
+  // loading screen labels the folder it's actually opening, not the previous one.
+  const [pendingFolder, setPendingFolder] = useState<string | null>(null);
   const [images, setImages] = useState<Img[]>([]);
+  // Live mirror of `images` so openFolderByPath can read the latest staged set
+  // without depending on `images` (keeps its identity stable across staging).
+  // Updated on commit here AND synchronously at the append site, so even a
+  // same-tick second open computes a correct startId (no duplicate ids).
+  const imagesRef = useRef(images);
+  useEffect(() => {
+    imagesRef.current = images;
+  }, [images]);
+  // Serialises folder opens: a scan already in flight makes any second open
+  // (drag-drop, recents, mount auto-open) a no-op until it settles.
+  const openBusyRef = useRef(false);
+  // Guards begin-culling against a double-click firing two analyze passes.
+  const analyzingRef = useRef(false);
   // Capture-time order from analyze_folder — preserved so sort modes can return.
   const [currentIndex, setCurrentIndex] = useState(0);
   const [ratings, setRatings] = useState<Record<number, Rating>>({});
@@ -124,6 +166,10 @@ export default function App() {
   const [actionBusy, setActionBusy] = useState<"move" | "copy" | null>(null);
 
   const [scanError, setScanError] = useState<string | null>(null);
+  // Surfaced on the staged screen when analyze_folder fails, so a failed sort /
+  // rating-restore returns the user to staged with a retry instead of silently
+  // dropping them into an unsorted, ratings-not-restored cull.
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   // True from the moment pickFolder is invoked until the OS dialog resolves
   // (success OR cancel). Prevents a double-click — or a stuck dialog — from
   // queuing a second picker behind the first.
@@ -372,33 +418,53 @@ export default function App() {
    */
   const openFolderByPath = useCallback(
     async (picked: string) => {
+      // One scan at a time. A second open launched while one is in flight
+      // (drag-drop, recents, mount auto-open) would race the append and the
+      // begin-culling snapshot — serialise every caller through this gate.
+      if (openBusyRef.current) return;
+      openBusyRef.current = true;
       setPickerBusy(true);
       setScanError(null);
+      setAnalyzeError(null);
       try {
-        localStorage.setItem("cull:lastDir", picked);
+        setPendingFolder(picked);
         setPhase("loading");
 
-        const paths = await invoke<string[]>("scan_folder", { path: picked });
+        const paths = await invoke<string[]>("scan_folder", {
+          path: picked,
+          ignoreSubdir: settings.rejectedSubfolder.trim() || "_rejected",
+        });
 
-        // APPEND, never replace. Add only paths not already staged, preserving
-        // existing images, ratings, and loaded previews. An empty folder
+        // Persist the last-used dir only AFTER a successful scan, so a folder
+        // that fails to open never becomes the picker default / auto-open target.
+        localStorage.setItem("cull:lastDir", picked);
+
+        // APPEND, never replace. Read the prior set from imagesRef and update it
+        // synchronously alongside setImages, so dedupe + ids are computed against
+        // the freshest set even if two opens land back-to-back. An empty folder
         // appends nothing rather than wiping the set.
-        const existing = new Set(images.map((im) => im.path));
+        const prev = imagesRef.current;
+        const existing = new Set(prev.map((im) => im.path));
         const additions = paths.filter((p) => !existing.has(p));
-        const startId = images.length;
+        const startId = prev.length;
         const appended = additions.map((p, i) => ({
           id: startId + i,
           path: p,
           filename: basename(p),
+          srcFolder: picked,
         }));
-        setImages((prev) => [...prev, ...appended]);
+        if (appended.length > 0) {
+          imagesRef.current = [...prev, ...appended];
+          setImages(imagesRef.current);
+        }
         setLastAdded(additions.length);
         setFolder(picked);
 
         // Push to the home-screen recents list (or refresh an existing entry).
         // `rated` + `done` only become accurate after `analyze_folder` reads
         // the sidecars, so we leave them at zero/false here and let the cull
-        // exit (leaveToHome) — or the analyze pass itself — update them.
+        // exit (leaveToHome) — or the analyze pass itself — update them. `count`
+        // is THIS folder's own scan total (per-folder, not the merged staged set).
         pushRecent({
           path: picked,
           count: paths.length,
@@ -412,16 +478,20 @@ export default function App() {
         // "begin culling" is still instant by the time the user clicks it.
         setPhase("staged");
       } catch (e) {
-        setScanError(String(e));
-        // Folder is gone / unreadable — drop it from recents so the home screen
-        // doesn't keep advertising a path that no longer opens.
-        removeRecent(picked);
-        setPhase(images.length > 0 ? "staged" : "start");
+        const msg = String(e);
+        setScanError(msg);
+        // Evict from recents only when the folder is definitively gone (deleted
+        // / not a directory). A transient NAS/SMB blip must NOT drop a valid,
+        // frequently-used folder — the backend tags permanent vs transient.
+        if (/not found|not a directory/i.test(msg)) removeRecent(picked);
+        setPhase(imagesRef.current.length > 0 ? "staged" : "start");
       } finally {
+        setPendingFolder(null);
         setPickerBusy(false);
+        openBusyRef.current = false;
       }
     },
-    [images, pushRecent, removeRecent],
+    [pushRecent, removeRecent, settings.rejectedSubfolder],
   );
 
   const pickFolder = useCallback(async () => {
@@ -456,14 +526,44 @@ export default function App() {
     // Intentional empty deps — mount-only.
   }, []);
 
+  // Push one recents entry PER source folder in the staged set, each scoped to
+  // its own count/rated — so a session that spans several folders ("open another
+  // folder") never records the merged total under one folder's name.
+  const recordSessionRecents = useCallback(
+    (imgs: Img[], ratingsMap: Record<number, Rating>) => {
+      if (imgs.length === 0) return;
+      const byFolder = new Map<string, { count: number; rated: number }>();
+      for (const im of imgs) {
+        const agg = byFolder.get(im.srcFolder) ?? { count: 0, rated: 0 };
+        agg.count += 1;
+        if (ratingsMap[im.id]) agg.rated += 1;
+        byFolder.set(im.srcFolder, agg);
+      }
+      const now = new Date().toISOString();
+      // Push the active folder last so it ends up at the front of the list.
+      const folders = [...byFolder.keys()].sort((a, b) =>
+        a === folder ? 1 : b === folder ? -1 : 0,
+      );
+      for (const path of folders) {
+        const { count, rated } = byFolder.get(path)!;
+        pushRecent({ path, count, rated, lastOpened: now, done: count > 0 && rated === count });
+      }
+    },
+    [folder, pushRecent],
+  );
+
   // Begin culling: sort the staged set by capture time, restore ratings, then
   // enter the cull view (warming the first screenful of previews first).
   const beginCulling = useCallback(async () => {
     if (images.length === 0) return;
+    if (analyzingRef.current) return; // ignore a double-click — one analyze pass
+    analyzingRef.current = true;
+    setAnalyzeError(null);
     setLastSession(null); // starting a new cull → drop the previous session's recap
     setProgress({ done: 0, total: images.length, phase: "reading" });
     setPhase("analyzing");
     const unlisten = await listen<AnalyzeProgress>("analyze-progress", (e) => setProgress(e.payload));
+    let ok = true;
     try {
       const result = await invoke<AnalyzeResult>("analyze_folder", {
         paths: images.map((im) => im.path),
@@ -486,26 +586,7 @@ export default function App() {
       const lrcRatings = result.lrcRatings ?? [];
       lrcRatings.forEach((lrc, origIdx) => {
         if (lrc != null && lrc > 0) {
-          seededMeta[images[origIdx].path] = {
-            capturedAt: null,
-            camera: null,
-            lens: null,
-            focalLengthMm: null,
-            aperture: null,
-            shutterSeconds: null,
-            iso: null,
-            gpsLat: null,
-            gpsLon: null,
-            afXPct: null,
-            afYPct: null,
-            exposureBias: null,
-            whiteBalance: null,
-            driveMode: null,
-            pixelWidth: null,
-            pixelHeight: null,
-            fileSize: null,
-            lrcRating: lrc,
-          };
+          seededMeta[images[origIdx].path] = { ...EMPTY_METADATA, lrcRating: lrc };
         }
       });
 
@@ -518,19 +599,10 @@ export default function App() {
       // cursor-outward / grid-viewport order. Same array we just set.
       imageStore.reset(sorted.map((im) => im.path));
 
-      // Refresh the home-screen recents entry with the restored rated count
-      // straight off the sidecar pass — so reopening home shows "327 / 372"
-      // immediately, even before the user touches a key in the new session.
-      if (folder) {
-        const ratedNow = Object.keys(restoredRatings).length;
-        pushRecent({
-          path: folder,
-          count: sorted.length,
-          rated: ratedNow,
-          lastOpened: new Date().toISOString(),
-          done: sorted.length > 0 && ratedNow === sorted.length,
-        });
-      }
+      // Refresh the home-screen recents entries (one per source folder) with the
+      // restored rated counts straight off the sidecar pass — so reopening home
+      // shows "327 / 372" immediately, even before the user touches a key.
+      recordSessionRecents(sorted, restoredRatings);
 
       // Resume where you stopped: land on the first unrated frame in capture
       // order. All-rated or fresh folder → start at top.
@@ -549,12 +621,17 @@ export default function App() {
       // read pool loads the current frame (priority 0) and its prefetch window as
       // soon as the view mounts, so there's no entry-time read stampede.
     } catch (e) {
-      console.error("analyze_folder failed; proceeding unsorted", e);
+      // Don't drop the user into an unsorted, ratings-not-restored cull: surface
+      // the error and return to the staged screen so they can retry.
+      ok = false;
+      console.error("analyze_folder failed", e);
+      setAnalyzeError(String(e));
     } finally {
       unlisten();
-      setPhase("culling");
+      analyzingRef.current = false;
+      setPhase(ok ? "culling" : "staged");
     }
-  }, [images, profile.concurrentRestore, settings, folder, pushRecent]);
+  }, [images, profile.concurrentRestore, settings, recordSessionRecents]);
 
   // Wipe the multi-selection state — called whenever the user leaves the grid
   // context (site switch, ESC, opening another folder). Cleanly decoupled from
@@ -594,6 +671,8 @@ export default function App() {
     setSelectedIndices(new Set());
     setSelectionAnchor(null);
     setFolder(null);
+    setPendingFolder(null);
+    setAnalyzeError(null);
     setLastAdded(0);
     setClippingVisible(false);
     setClipMasks({});
@@ -619,21 +698,12 @@ export default function App() {
         unrated: stats.unrated,
       });
     }
-    // Refresh the recents entry with this session's final counts so the home
-    // list reflects what the user just finished (rated count + done badge).
-    if (folder && total > 0) {
-      const ratedNow = total - stats.unrated;
-      pushRecent({
-        path: folder,
-        count: total,
-        rated: ratedNow,
-        lastOpened: new Date().toISOString(),
-        done: ratedNow === total,
-      });
-    }
+    // Refresh the recents entries (one per source folder) with this session's
+    // final counts so the home list reflects what the user just finished.
+    recordSessionRecents(images, ratings);
     setConfirmHome(false);
     resetSession();
-  }, [images.length, stats, folder, resetSession, pushRecent]);
+  }, [images, ratings, stats, folder, resetSession, recordSessionRecents]);
 
   // Open the act-on-cull dialog with fresh results.
   const openActions = useCallback(() => {
@@ -1276,7 +1346,13 @@ export default function App() {
         // Only react when the user is on a chrome screen (start/loading/etc).
         // During an active cull we ignore drop events outright so a stray drop
         // can't kill the in-progress session.
-        if (phaseRef.current === "culling") {
+        // Ignore drops while a cull is active OR a scan/analyze is in flight —
+        // appending then would race the in-flight staging / begin-culling.
+        if (
+          phaseRef.current === "culling" ||
+          phaseRef.current === "loading" ||
+          phaseRef.current === "analyzing"
+        ) {
           if (p.type === "enter" || p.type === "over") setIsDragOver(false);
           return;
         }
@@ -1929,11 +2005,12 @@ export default function App() {
     [visibleIndices, selectionAnchor, clearMultiSelection, goToSite],
   );
 
+  // Chrome-screen keyboard, phase-agnostic (settings can be opened before a
+  // folder is picked, to set the storage mode). Kept separate from the big cull
+  // keymap so these few shortcuts don't ride its ~25-dependency re-subscription.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Settings can be opened from any phase — it lets the user pick the
-      // storage mode before opening a folder. So both the open shortcut and
-      // the modal's ESC live above the phase gate.
+      // Settings modal owns the keyboard while open: Esc closes, nothing else.
       if (settingsOpen) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -1941,14 +2018,40 @@ export default function App() {
         }
         return;
       }
-      // Ctrl/Cmd + comma → open settings. We accept both `e.key === ","` and
-      // `e.code === "Comma"` so non-US keyboard layouts (where the comma key
-      // may report a different e.key) also work.
+      // Ctrl/Cmd+, → settings. `e.code` fallback covers non-US layouts where the
+      // comma key reports a different `e.key`.
       if ((e.ctrlKey || e.metaKey) && (e.key === "," || e.code === "Comma")) {
         e.preventDefault();
         setSettingsOpen(true);
         return;
       }
+      // Ctrl/Cmd+O → open a folder, from the home or staged screens (matches the
+      // "⌃ O" hint on the open button).
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === "o" || e.code === "KeyO") &&
+        (phase === "start" || phase === "staged")
+      ) {
+        e.preventDefault();
+        pickFolder();
+        return;
+      }
+      // Enter on the staged screen → begin culling (mirrors the primary button).
+      if (phase === "staged" && e.key === "Enter") {
+        e.preventDefault();
+        beginCulling();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [settingsOpen, phase, pickFolder, beginCulling]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Chrome shortcuts (settings, open folder, begin culling) are handled by
+      // the phase-agnostic effect above. While the settings modal is open,
+      // swallow all cull keys here so nothing slips through behind it.
+      if (settingsOpen) return;
       if (phase !== "culling") return; // chrome screens are button-driven
 
       // A held scrub is sustained ONLY by its own arrow key. Any OTHER key (zoom,
@@ -2366,7 +2469,7 @@ export default function App() {
               </div>
               <RecentFolders
                 recents={recentFolders}
-                onPick={(p) => openFolderByPath(p)}
+                onPick={openFolderByPath}
                 pickerBusy={pickerBusy}
               />
               {lastSession && (
@@ -2397,10 +2500,6 @@ export default function App() {
               )}
               <div className="cull-hero__how">
                 <span>
-                  <span className="cull-hero__how-key">tab</span>
-                  hold for help
-                </span>
-                <span>
                   <span className="cull-hero__how-key">⌃ ,</span>
                   settings
                 </span>
@@ -2412,7 +2511,10 @@ export default function App() {
             <>
               <div className="cull-spinner" />
               <div className="cull-chrome__status">
-                loading <span className="cull-chrome__folder">{folderName}</span>
+                loading{" "}
+                <span className="cull-chrome__folder">
+                  {pendingFolder ? basename(pendingFolder) : folderName}
+                </span>
               </div>
               <div className="cull-chrome__sub">
                 {images.length > 0 ? `${images.length} files · decoding first preview…` : "scanning…"}
@@ -2456,6 +2558,9 @@ export default function App() {
                   ? `+${lastAdded} from ${folderName}`
                   : `+0 from ${folderName} · no new CR3 files`}
               </div>
+              {analyzeError && (
+                <pre className="cull-message__body cull-chrome__error">{analyzeError}</pre>
+              )}
               <div className="cull-staged__actions">
                 <button
                   className="cull-pick-button cull-pick-button--ghost"

@@ -1133,6 +1133,13 @@ body,
   color: var(--accent);
 }
 
+/* Keyboard focus needs a real, non-color-only indicator — the path-colour shift
+   above is identical to hover and easy to miss on a dim/truncated row. */
+.cull-recent__item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+  border-radius: 4px;
+}
+
 .cull-recent__path {
   font-family: 'Inter', sans-serif;
   font-size: 14px;
@@ -1202,62 +1209,6 @@ body,
   margin-right: 8px;
   color: var(--text-2);
   letter-spacing: 0.04em;
-}
-
-/* Floating gear in the top-left of the chrome screens. */
-.cull-settings-fab {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 60;
-  width: 46px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 0;
-  color: var(--muted);
-  cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
-}
-
-.cull-settings-fab:hover {
-  color: var(--text);
-  background: var(--surface-2);
-}
-
-.cull-settings-fab:focus-visible {
-  outline: none;
-  color: var(--text);
-  background: var(--surface-2);
-}
-
-/* Status-bar gear */
-.cull-statusbar__gear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 22px;
-  margin-left: 4px;
-  background: transparent;
-  border: 0;
-  border-radius: 4px;
-  color: var(--muted);
-  cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
-}
-
-.cull-statusbar__gear:hover {
-  color: var(--text);
-  background: var(--surface-2);
-}
-
-.cull-statusbar__gear:focus-visible {
-  outline: none;
-  color: var(--text);
-  background: var(--surface-2);
 }
 
 @keyframes cull-hero-in {
