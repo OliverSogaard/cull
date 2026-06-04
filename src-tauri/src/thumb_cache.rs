@@ -6,6 +6,11 @@ use std::sync::Mutex;
 const CAP_BYTES: u64 = 500 * 1024 * 1024;
 const LOW_WATER: u64 = CAP_BYTES * 9 / 10;
 
+/// Process-wide sequence for unique temp-file names, so two overlapping put()s
+/// for the same key never share a temp path and never interleave into one torn
+/// file (mirrors the XMP sidecar writer's XMP_TMP_SEQ).
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub struct ThumbCache { dir: PathBuf, index: Mutex<Index> }
 #[derive(Default)]
 struct Index { entries: HashMap<String, Entry>, total: u64, tick: u64 }
@@ -32,6 +37,12 @@ impl ThumbCache {
                 if let Ok(meta) = e.metadata() {
                     if meta.is_file() {
                         if let Some(key) = e.file_name().to_str().map(|s| s.to_string()) {
+                            // Crash-orphaned temp from an interrupted write — clean it
+                            // up; never index it as a (bogus) cache key.
+                            if key.ends_with(".tmp") {
+                                let _ = std::fs::remove_file(e.path());
+                                continue;
+                            }
                             index.total += meta.len();
                             index.tick += 1;
                             index.entries.insert(key, Entry { size: meta.len(), used: index.tick });
@@ -68,7 +79,20 @@ impl ThumbCache {
         buf.extend_from_slice(&w.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(&h.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(jpeg);
-        if std::fs::write(self.dir.join(&key), &buf).is_err() { return; }
+        // Atomic publish: write to a unique temp sibling then rename over the key,
+        // so a concurrent lock-free get() sees either the old complete file or the
+        // new complete file — never a torn/partial JPEG handed to the decoder.
+        let dst = self.dir.join(&key);
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = self.dir.join(format!("{key}.{seq}.tmp"));
+        if std::fs::write(&tmp, &buf).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return;
+        }
+        if std::fs::rename(&tmp, &dst).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return;
+        }
         let size = buf.len() as u64;
         let mut idx = match self.index.lock() { Ok(g) => g, Err(_) => return };
         if let Some(old) = idx.entries.remove(&key) { idx.total = idx.total.saturating_sub(old.size); }

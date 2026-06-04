@@ -362,11 +362,12 @@ fn with_exif_orientation(mut jpeg: Vec<u8>, orientation: u32) -> Vec<u8> {
     }
     strip_app1_exif(&mut jpeg);
     let app1 = build_orientation_app1(orientation as u16);
-    let mut out = Vec::with_capacity(jpeg.len() + app1.len());
-    out.extend_from_slice(&jpeg[..2]); // SOI
-    out.extend_from_slice(&app1);
-    out.extend_from_slice(&jpeg[2..]);
-    out
+    // Splice the APP1 segment in right after SOI, IN PLACE — shifts the tail once
+    // inside the existing allocation (one realloc at most) rather than allocating
+    // a second multi-MB Vec and copying the whole JPEG into it. Byte-identical
+    // output (SOI + app1 + rest).
+    jpeg.splice(2..2, app1);
+    jpeg
 }
 
 // ── Bounded reads: one open, as few round-trips as possible (never the CRAW) ──
@@ -541,6 +542,10 @@ pub struct Bundle {
     pub preview: Vec<u8>, // full-res (or PRVW fallback) JPEG, EXIF-oriented
     pub meta: Cr3Meta,
     pub orientation: u32,
+    /// CR3 byte length — obtained from the already-open handle during the read,
+    /// so the IPC handler doesn't need a second `std::fs::metadata` stat (an extra
+    /// NAS round-trip per full read).
+    pub file_size: u64,
 }
 
 /// Read preview + metadata from ONE file open and (usually) ONE read. On the
@@ -564,7 +569,7 @@ pub fn read_bundle(path: &str) -> std::io::Result<Bundle> {
     let meta = metadata_from_prefix(&buf);
     let preview = with_exif_orientation(read_fullres_from(&mut f, &mut buf, flen)?, orient);
 
-    Ok(Bundle { preview, meta, orientation: orient })
+    Ok(Bundle { preview, meta, orientation: orient, file_size: flen as u64 })
 }
 
 /// What one thumbnail read yields: the (EXIF-oriented) THMB JPEG, the

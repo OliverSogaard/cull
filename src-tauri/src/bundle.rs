@@ -42,7 +42,9 @@ pub(crate) async fn read_bundle(path: String) -> Result<Response, String> {
         let start = Instant::now();
         let b = cr3::read_bundle(&path).map_err(|e| format!("cr3 bundle: {e}"))?;
         let mut meta = ImageMetadata::from(b.meta);
-        meta.file_size = std::fs::metadata(&path).ok().map(|m| m.len());
+        // Length came from the open handle inside read_bundle — no extra stat
+        // round-trip (the NAS read path's per-file round-trips dominate latency).
+        meta.file_size = Some(b.file_size);
         // Surface the user's pre-existing LrC 1–5★ rating (if any) from the
         // sidecar so the UI can show it in the (i) panel and as a tiny grid
         // badge. Sidecar reads are cheap; we already touch the dir above.
