@@ -2466,10 +2466,10 @@ body,
 .cull-thumbs {
   flex: 0 0 auto;
   height: 70px;
-  display: flex;
-  align-items: center;
+  /* Cells are absolutely positioned inside the inner track (see FilmStrip); the
+     4px gap lives in CELL_STRIDE, not CSS, and the 8px top/bottom padding
+     vertically centers the 54px track (54 + 16 = 70). */
   padding: 8px 0;
-  gap: 4px;
   overflow-x: auto;
   overflow-y: hidden;
   background: var(--bg);
@@ -3087,9 +3087,8 @@ body,
 
 .cull-cmp-strip__candidates {
   flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  /* Cells absolutely positioned in the inner track; gap is in CELL_STRIDE. The
+     parent .cull-cmp-strip (align-items:center) vertically centers this box. */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;

@@ -31,6 +31,16 @@ describe("computeWindow", () => {
     const r = computeWindow({ scrollLeft: 79000, clientWidth: 800, stride, count: 1000, buffer: 4 });
     expect(r.last).toBe(1000);
   });
+  it("handles a single-item list (count=1) without over-running", () => {
+    // single-image set, or a one-candidate compare run
+    expect(
+      computeWindow({ scrollLeft: 0, clientWidth: 800, stride, count: 1, buffer: 4 }),
+    ).toEqual({ first: 0, last: 1 });
+  });
+  it("floors/ceils sub-pixel scroll + width (WebView2 reports fractional values)", () => {
+    const r = computeWindow({ scrollLeft: 123.4, clientWidth: 799.6, stride, count: 1000, buffer: 4 });
+    expect(r).toEqual({ first: 0, last: 16 });
+  });
 });
 
 describe("computeCenterScrollLeft", () => {
@@ -54,5 +64,13 @@ describe("computeCenterScrollLeft", () => {
     expect(
       computeCenterScrollLeft({ centerOffset: 999, stride, cellWidth, clientWidth, trackWidth }),
     ).toBe(max);
+  });
+  it("never returns a negative scroll for centerOffset -1 (compare gap before reselect)", () => {
+    // The hook guards centerOffset >= 0, but the math must be safe regardless:
+    // CompareStrip passes candidates.indexOf(challenger) which is -1 in the gap
+    // after a challenger leaves the candidate list and before the next is picked.
+    expect(
+      computeCenterScrollLeft({ centerOffset: -1, stride, cellWidth, clientWidth, trackWidth }),
+    ).toBe(0);
   });
 });

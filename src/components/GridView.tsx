@@ -2,7 +2,6 @@ import {
   memo,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -12,8 +11,7 @@ import { Check, Star, X as XIcon } from "lucide-react";
 import type { Img, ImageMetadata, Rating } from "../types";
 import { stripExt } from "../utils/path";
 import { hasLrcRating } from "../utils/ratingColor";
-import { useImage } from "../image/useImage";
-import { shimmerPhaseMs } from "../utils/shimmer";
+import { useThumb } from "../image/useThumb";
 
 /** Visible rows above and below the viewport that we still render. */
 const GRID_BUFFER_ROWS = 2;
@@ -46,6 +44,7 @@ export const GridView = memo(function GridView({
   visibleIndices,
   currentIndex,
   cols,
+  contentWidth,
   ratings,
   metadata,
   selectedIndices,
@@ -57,6 +56,10 @@ export const GridView = memo(function GridView({
   visibleIndices: number[];
   currentIndex: number;
   cols: number;
+  /** Grid content width (px, padding-subtracted) measured by App's ResizeObserver
+   *  — the single width source, so cellW and cols never derive from two separate
+   *  measurements that can disagree for a frame. */
+  contentWidth: number;
   ratings: Record<number, Rating>;
   /** Optional metadata map — only the `lrcRating` field is read here, for the
    * tiny corner badge that flags pre-existing LrC ratings. */
@@ -72,20 +75,15 @@ export const GridView = memo(function GridView({
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
-  const [containerW, setContainerW] = useState(0);
 
+  // Height-only observer: WIDTH (and the padding math) is owned by App's RO,
+  // which derives `cols` AND passes `contentWidth` down — so cellW and cols come
+  // from one measurement (no two-observer disagreement) and there's no
+  // getComputedStyle on this resize path.
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const update = () => {
-      setViewportH(el.clientHeight);
-      // clientWidth includes padding; subtract horizontal padding so cells
-      // fit within the content area (no horizontal scrollbar).
-      const cs = window.getComputedStyle(el);
-      const padL = parseFloat(cs.paddingLeft) || 0;
-      const padR = parseFloat(cs.paddingRight) || 0;
-      setContainerW(Math.max(0, el.clientWidth - padL - padR));
-    };
+    const update = () => setViewportH(el.clientHeight);
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
@@ -114,7 +112,7 @@ export const GridView = memo(function GridView({
     };
   }, [containerRef]);
 
-  const cellW = containerW > 0 ? Math.floor(containerW / cols) : GRID_CELL_TARGET;
+  const cellW = contentWidth > 0 ? Math.floor(contentWidth / cols) : GRID_CELL_TARGET;
   const rowH = cellW; // square cells — accommodate landscape AND portrait
   const totalRows = Math.ceil(visibleIndices.length / cols);
   const totalH = totalRows * rowH;
@@ -216,17 +214,8 @@ const GridCell = memo(function GridCell({
   // Grid cells render thumbnails only; the store self-schedules the thumb on
   // mount (and prioritises by the reported grid viewport) and re-renders this
   // cell when it lands. `shimmer` → placeholder; otherwise show the thumb.
-  const img2 = useImage(img.path, { wantFull: false });
-  const url = img2.stage === "shimmer" ? undefined : img2.url;
-  // Pin the shimmer phase ONCE at mount. We used to compute this inline in
-  // JSX (`Date.now() - epoch`), which re-evaluated on every parent re-render
-  // and reset the CSS animation each time → visible glitch / stutter.
-  // useMemo([]) captures the elapsed-at-mount value and never changes, so
-  // React's style diffing sees a stable string and the animation runs
-  // smoothly. The math still snaps to the shared SHIMMER_EPOCH_MS so cells
-  // mounted at different times stay in phase with each other.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shimmerDelayMs = useMemo(() => shimmerPhaseMs(), []);
+  // Thumbnail + pinned shimmer phase, shared with the strip's ThumbCell.
+  const { url, shimmerDelayMs } = useThumb(img.path);
   const isReject = rating === "reject";
   // Verdict glyph as a Lucide SVG icon (not Unicode) so it centers cleanly
   // inside the 18px dot — Unicode metrics drift across system fonts.
@@ -260,6 +249,10 @@ const GridCell = memo(function GridCell({
       className={cellClass}
       style={{ position: "absolute", top, left, width, height }}
       onClick={(e) => onPick(index, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey })}
+      role="button"
+      aria-label={`${stripExt(img.filename)}${rating ? `, ${rating}` : ""}${
+        isMultiSelected ? ", selected" : isCurrent ? ", current" : ""
+      }`}
     >
       {/* Frame element always exists, so the current-cell outline is visible
           on both the loaded thumb AND the placeholder shimmer — placeholders

@@ -145,6 +145,10 @@ export default function App() {
   const [thumbsVisible, setThumbsVisible] = useState(true);
   const [gridVisible, setGridVisible] = useState(false); // G toggles the contact-sheet grid
   const [gridCols, setGridCols] = useState(6); // updated by ResizeObserver while grid is open
+  // Grid content width (padding-subtracted) from the SAME ResizeObserver, passed
+  // to GridView so its cellW derives from the same measurement as gridCols (no
+  // second observer / second padding-math that could disagree for a frame).
+  const [gridContentW, setGridContentW] = useState(0);
   const [helpVisible, setHelpVisible] = useState(false);
   const [confirmHome, setConfirmHome] = useState(false); // Esc → confirm leaving to home
   // Held-arrow fast-scrub. While true we render the cheap thumbnail instead of the
@@ -351,6 +355,7 @@ export default function App() {
       const padL = parseFloat(cs.paddingLeft) || 0;
       const padR = parseFloat(cs.paddingRight) || 0;
       const w = Math.max(0, el.clientWidth - padL - padR);
+      setGridContentW(w);
       setGridCols(Math.max(2, Math.floor(w / GRID_CELL_TARGET)));
     };
     update();
@@ -3160,6 +3165,31 @@ export default function App() {
     </footer>
   );
 
+  // Each strip is built once and reused in the top OR bottom slot (only one of
+  // the two placement guards is ever truthy, so it materializes in exactly one
+  // DOM position). Avoids the verbatim prop-block duplication; placement still
+  // controls DOM order, which focus/scroll depend on.
+  const loupeStrip = (
+    <ThumbStrip
+      images={images}
+      currentIndex={currentIndex}
+      ratings={ratings}
+      visibleIndices={visibleIndices}
+      metadata={metadata}
+      onPick={pickFromStrip}
+    />
+  );
+  const cmpStrip = (
+    <CompareStrip
+      images={images}
+      candidates={compareCandidates}
+      championIndex={championIndex}
+      challengerIndex={challengerIndex}
+      metadata={metadata}
+      onPickChallenger={pickChallengerFromStrip}
+    />
+  );
+
   return (
     <main className="cull-app" data-thumbs-pos={settings.thumbsPosition}>
       {quitGuardOverlay}
@@ -3187,16 +3217,7 @@ export default function App() {
 
       {compareMode ? (
         <>
-          {thumbsVisible && settings.thumbsPosition === "top" && (
-            <CompareStrip
-              images={images}
-              candidates={compareCandidates}
-              championIndex={championIndex}
-              challengerIndex={challengerIndex}
-              metadata={metadata}
-              onPickChallenger={pickChallengerFromStrip}
-            />
-          )}
+          {thumbsVisible && settings.thumbsPosition === "top" && cmpStrip}
           <CompareView
             images={images}
             championIndex={championIndex}
@@ -3215,16 +3236,7 @@ export default function App() {
             feedback={feedback}
             scrubbing={scrubbing}
           />
-          {thumbsVisible && settings.thumbsPosition !== "top" && (
-            <CompareStrip
-              images={images}
-              candidates={compareCandidates}
-              championIndex={championIndex}
-              challengerIndex={challengerIndex}
-              metadata={metadata}
-              onPickChallenger={pickChallengerFromStrip}
-            />
-          )}
+          {thumbsVisible && settings.thumbsPosition !== "top" && cmpStrip}
           {bottomStatusBar}
         </>
       ) : gridVisible ? (
@@ -3237,6 +3249,7 @@ export default function App() {
             visibleIndices={visibleIndices}
             currentIndex={currentIndex}
             cols={gridCols}
+            contentWidth={gridContentW}
             ratings={ratings}
             metadata={metadata}
             selectedIndices={selectedIndices}
@@ -3249,27 +3262,9 @@ export default function App() {
         </>
       ) : (
         <>
-          {thumbsVisible && settings.thumbsPosition === "top" && (
-            <ThumbStrip
-              images={images}
-              currentIndex={currentIndex}
-              ratings={ratings}
-              visibleIndices={visibleIndices}
-              metadata={metadata}
-              onPick={pickFromStrip}
-            />
-          )}
+          {thumbsVisible && settings.thumbsPosition === "top" && loupeStrip}
           {singleModeBody}
-          {thumbsVisible && settings.thumbsPosition !== "top" && (
-            <ThumbStrip
-              images={images}
-              currentIndex={currentIndex}
-              ratings={ratings}
-              visibleIndices={visibleIndices}
-              metadata={metadata}
-              onPick={pickFromStrip}
-            />
-          )}
+          {thumbsVisible && settings.thumbsPosition !== "top" && loupeStrip}
           {bottomStatusBar}
         </>
       )}

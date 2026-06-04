@@ -1,9 +1,9 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { Check, Star, X as XIcon } from "lucide-react";
 import type { Img, Rating } from "../types";
 import { hasLrcRating } from "../utils/ratingColor";
-import { useImage } from "../image/useImage";
-import { shimmerPhaseMs } from "../utils/shimmer";
+import { stripExt } from "../utils/path";
+import { useThumb } from "../image/useThumb";
 
 
 type ThumbCellProps = {
@@ -36,13 +36,8 @@ export const ThumbCell = memo(function ThumbCell({
   onPick,
   roleVariant,
 }: ThumbCellProps) {
-  // Strip cells only ever need the thumbnail; the store self-schedules the
-  // thumb fetch on mount and re-renders this cell when it lands.
-  const img2 = useImage(img.path, { wantFull: false });
-  const url = img2.stage === "shimmer" ? undefined : img2.url;
-  // Shimmer phase pinned at mount so this cell syncs with every other shimmer.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shimmerDelay = useMemo(() => shimmerPhaseMs(), []);
+  // Strip cells only ever need the thumbnail (plumbing shared with GridCell).
+  const { url, shimmerDelayMs: shimmerDelay } = useThumb(img.path);
 
   // Reject cells get an opacity drop unless they're the current cell.
   const isReject = rating === "reject";
@@ -85,6 +80,10 @@ export const ThumbCell = memo(function ThumbCell({
     <div
       className="cull-thumb"
       onClick={() => onPick(index)}
+      role="button"
+      aria-label={`${stripExt(img.filename)}${rating ? `, ${rating}` : ""}${
+        roleVariant ? `, ${roleVariant}` : isCurrent ? ", current" : ""
+      }`}
       style={{ opacity: cellOpacity }}
     >
       <div

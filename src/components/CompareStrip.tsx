@@ -1,8 +1,13 @@
 // src/components/CompareStrip.tsx
+import { useMemo } from "react";
 import type { Img, ImageMetadata } from "../types";
 import { ThumbCell } from "./ThumbCell";
 import { FilmStrip } from "./strip/FilmStrip";
 import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
+
+/** Stable no-op so the pinned champion cell's onPick prop doesn't change every
+ *  render (which would defeat ThumbCell's memo for that one cell). */
+const NOOP = () => {};
 
 /**
  * Compare-mode strip: pinned champion + scrolling unrated candidates.
@@ -28,7 +33,7 @@ export function CompareStrip({
   metadata?: Record<string, ImageMetadata>;
   onPickChallenger: (index: number) => void;
 }) {
-  const cpos = candidates.indexOf(challengerIndex);
+  const cpos = useMemo(() => candidates.indexOf(challengerIndex), [candidates, challengerIndex]);
   const champion = images[championIndex];
 
   return (
@@ -43,7 +48,7 @@ export function CompareStrip({
             rating={undefined}
             lrcRating={metadata?.[champion.path]?.lrcRating ?? null}
             dimmed={false}
-            onPick={() => {}}
+            onPick={NOOP}
           />
         )}
       </div>
