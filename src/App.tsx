@@ -35,7 +35,7 @@ import { WindowControls } from "./components/WindowControls";
 import { useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
-import { PERFORMANCE_PROFILES } from "./types/settings";
+import { PERFORMANCE_PROFILES, normalizeRejectedSubfolder } from "./types/settings";
 import { imageStore } from "./image/imageStore";
 import { runMaskScan, type MaskKind } from "./overlays/maskScans";
 import { maskWorkerAvailable, requestMaskOffThread } from "./overlays/maskClient";
@@ -429,7 +429,10 @@ export default function App() {
   // `imageStore` (driven below + consumed by `useImage` in each view). App only
   // feeds it the storage profile, the cursor, the grid viewport, and a metadata
   // sink — and tells it when the folder / session changes.
-  const profile = PERFORMANCE_PROFILES[settings.storageMode];
+  // `?? local` is belt-and-suspenders: useSettings now validates storageMode, but
+  // a future bug or out-of-range value must never make this undefined (the store
+  // would then read .previewKeep/.bundleConcurrency off undefined and crash).
+  const profile = PERFORMANCE_PROFILES[settings.storageMode] ?? PERFORMANCE_PROFILES.local;
 
   // Storage-mode profile → store concurrency caps + keep-window sizes.
   useEffect(() => {
@@ -481,7 +484,7 @@ export default function App() {
 
         const paths = await invoke<string[]>("scan_folder", {
           path: picked,
-          ignoreSubdir: settings.rejectedSubfolder.trim() || "_rejected",
+          ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
         });
 
         // Persist the last-used dir only AFTER a successful scan, so a folder
@@ -657,6 +660,9 @@ export default function App() {
       // order. All-rated or fresh folder → start at top.
       const resumeAt = sorted.findIndex((img) => !restoredRatings[img.id]);
       setCurrentIndex(resumeAt === -1 ? 0 : resumeAt);
+      // defaultFilter applies AFTER resume: if it excludes the resumed frame, the
+      // auto-jump effect re-homes the cursor to the nearest in-filter one — i.e.
+      // defaultFilter intentionally wins over resume-at-first-unrated.
       setFilter(settings.defaultFilter);
 
       // Reset overlay state to the user's preferred defaults. T/I/H/P/O can
@@ -775,7 +781,7 @@ export default function App() {
     setActionBusy("move");
     setMoveResult(null);
     try {
-      const subfolder = settings.rejectedSubfolder.trim() || "_rejected";
+      const subfolder = normalizeRejectedSubfolder(settings.rejectedSubfolder);
       const res = await invoke<FileOpResult>("move_rejects_to_subfolder", {
         folder,
         paths: rejectedPaths,
@@ -2683,11 +2689,7 @@ export default function App() {
           )}
         </div>
         {settingsOpen && (
-          <SettingsDialog
-            settings={settings}
-            onChange={setSettings}
-            onClose={() => setSettingsOpen(false)}
-          />
+          <SettingsDialog settings={settings} onChange={setSettings} />
         )}
       </main>
     );
@@ -3341,11 +3343,7 @@ export default function App() {
       )}
 
       {settingsOpen && (
-        <SettingsDialog
-          settings={settings}
-          onChange={setSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
+        <SettingsDialog settings={settings} onChange={setSettings} />
       )}
     </main>
   );

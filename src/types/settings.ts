@@ -5,9 +5,10 @@ import type { Filter } from "./rating";
  * across app restarts. Open the dialog with `Ctrl+,`, the gear icon on the
  * home screen, or the gear in the cull-view status bar.
  *
- * Settings are flat (no nested objects) so the shallow-merge in `useSettings`
- * naturally handles backward compatibility — a field added later just gets
- * its default on first load.
+ * Mostly-flat fields, so a field added later just gets its default on first
+ * load. The one nested field (`exportFolder`) is validated explicitly by
+ * `coerceSettings` in `useSettings`, which per-field type/enum-checks the whole
+ * stored blob rather than trusting it.
  */
 
 /**
@@ -90,8 +91,15 @@ export const DEFAULT_SETTINGS: Settings = {
   openLastFolderOnLaunch: false,
 };
 
-/** localStorage key. Bump if the shape ever changes in a non-backward-compatible way. */
+/** localStorage key. Bump only with a migration (read old key → transform →
+ *  write new → remove old); a bare bump silently discards the user's prefs. */
 export const SETTINGS_STORAGE_KEY = "cull:settings:v1";
+
+/** Trim a rejected-subfolder name to a usable value, falling back to the default
+ *  when empty. Shared by the file-op call sites + the load-time coercion so the
+ *  fallback lives in exactly one place. */
+export const normalizeRejectedSubfolder = (s: string): string =>
+  s.trim() || DEFAULT_SETTINGS.rejectedSubfolder;
 
 /**
  * Performance knobs that change with {@link StorageMode}. Pushed into the

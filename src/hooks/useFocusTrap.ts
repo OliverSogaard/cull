@@ -56,9 +56,23 @@ export function useFocusTrap<T extends HTMLElement>() {
       }
     };
 
+    // If a focused control is removed from the DOM (e.g. the Reset row
+    // auto-disarms, or the export-mode switch swaps rows) focus would otherwise
+    // strand on <body>, escaping the trap. Re-home it into the dialog.
+    const onFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Node | null;
+      if (next && node.contains(next)) return; // moving within the dialog — fine
+      // Defer so React can finish reconciling the removed node.
+      requestAnimationFrame(() => {
+        if (!node.contains(document.activeElement)) (focusable()[0] ?? node).focus();
+      });
+    };
+
     node.addEventListener("keydown", onKeyDown);
+    node.addEventListener("focusout", onFocusOut);
     return () => {
       node.removeEventListener("keydown", onKeyDown);
+      node.removeEventListener("focusout", onFocusOut);
       // Restore focus to whatever was focused before the dialog opened.
       prevFocus?.focus?.();
     };

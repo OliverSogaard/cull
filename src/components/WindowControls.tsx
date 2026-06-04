@@ -17,10 +17,11 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
           className="cull-winbtn"
           title="settings  (Ctrl + , )"
           aria-label="settings"
-          onClick={(e) => {
-            e.currentTarget.blur();
-            onSettings();
-          }}
+          // NOTE: deliberately NOT blurring here (unlike minimize/close). The
+          // settings dialog's focus trap restores focus to whatever was focused
+          // when it opened; blurring first would lose the gear as that target
+          // (focus would fall to <body>), so closing wouldn't return focus here.
+          onClick={onSettings}
         >
           <SettingsIcon size={13} strokeWidth={2} />
         </button>

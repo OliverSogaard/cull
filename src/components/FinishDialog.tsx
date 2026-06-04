@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { FileOpResult, Settings } from "../types";
+import { normalizeRejectedSubfolder } from "../types/settings";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { joinPath, sanitizeFolderName } from "../utils/path";
 
@@ -415,7 +416,7 @@ function MoveRejectsRow({
       <div className="cull-actions__row-label">Move rejects</div>
       <div className="cull-actions__row-help">
         Moves the {rejectedCount} rejected CR3s + their XMP sidecars into a{" "}
-        <b>{settings.rejectedSubfolder.trim() || "_rejected"}/</b> subfolder in the source.
+        <b>{normalizeRejectedSubfolder(settings.rejectedSubfolder)}/</b> subfolder in the source.
       </div>
 
       {actionBusy === "move" ? (

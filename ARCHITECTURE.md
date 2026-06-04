@@ -210,6 +210,7 @@ Defaults to `local`; flip to `network` for NAS / SMB / SSHFS.
 | Thumbnail concurrency | 4 | 16 |
 | Background-fill concurrency | 2 | 8 |
 | Full-res keep window (each side) | 18 | 30 |
+| Full-res neighbour prefetch (each side) | 3 | 6 |
 | Hi-res zoom warm-up | 150 ms | 50 ms |
 | XMP-restore on analyze | sequential | 4-thread scoped pool |
 

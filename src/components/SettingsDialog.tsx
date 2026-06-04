@@ -17,11 +17,9 @@ import { sanitizeFolderName } from "../utils/path";
 export function SettingsDialog({
   settings,
   onChange,
-  onClose,
 }: {
   settings: Settings;
   onChange: (next: Settings) => void;
-  onClose: () => void;
 }) {
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     onChange({ ...settings, [key]: value });
@@ -188,6 +186,7 @@ export function SettingsDialog({
               <Toggle
                 on={settings.openLastFolderOnLaunch}
                 onChange={(v) => set("openLastFolderOnLaunch", v)}
+                label="Reopen last folder"
               />
             </SettingRow>
           </Section>
@@ -206,14 +205,6 @@ export function SettingsDialog({
         <div className="cull-settings__foot">
           <kbd>esc</kbd> to close · <kbd>⌃ ,</kbd> to reopen
         </div>
-        {/* invisible close shim — esc is handled in App; this row also takes
-            a click to dismiss when clicking outside the dialog body. */}
-        <button
-          type="button"
-          className="cull-settings__close-shim"
-          aria-label="close"
-          onClick={onClose}
-        />
       </div>
     </div>
   );
@@ -269,6 +260,7 @@ function SegmentToggle<T extends string>({
           className={`cull-settings__seg-opt${value === opt.value ? " is-active" : ""}`}
           onClick={() => !disabled && onChange(opt.value)}
           disabled={disabled}
+          aria-pressed={value === opt.value}
         >
           {opt.label}
         </button>
@@ -299,14 +291,24 @@ function Chip({
   );
 }
 
-/** Knob-style on/off toggle (mockup .toggle). */
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+/** Knob-style on/off toggle (mockup .toggle). `label` is the accessible name —
+ *  the knob has no text content, so AT would otherwise announce it nameless. */
+function Toggle({
+  on,
+  onChange,
+  label,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
   return (
     <button
       type="button"
       className={`cull-settings__toggle${on ? " is-on" : ""}`}
       onClick={() => onChange(!on)}
       aria-pressed={on}
+      aria-label={label}
     />
   );
 }
@@ -388,6 +390,7 @@ function RejectedSubfolderInput({
       className={`cull-settings__text${isEmpty ? " is-invalid" : ""}${flashing ? " is-flash" : ""}`}
       value={value}
       spellCheck={false}
+      aria-label="Rejected subfolder name"
       placeholder={DEFAULT_SETTINGS.rejectedSubfolder}
       onChange={(e) => onChange(sanitizeFolderName(e.target.value))}
       onBlur={() => {
@@ -407,14 +410,27 @@ function RejectedSubfolderInput({
  */
 function ThumbCacheRow() {
   const [cacheSize, setCacheSize] = useState<number | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     invoke<number>("thumb_cache_size").then(setCacheSize).catch(() => setCacheSize(null));
   }, []);
 
   const handleClear = async () => {
-    await invoke("clear_thumb_cache");
-    setCacheSize(await invoke<number>("thumb_cache_size").catch(() => 0));
+    if (clearing) return; // guard against a double-click firing two clears
+    setClearing(true);
+    try {
+      await invoke("clear_thumb_cache");
+    } catch {
+      // swallow — re-read the size below so the display reflects reality either way
+    } finally {
+      try {
+        setCacheSize(await invoke<number>("thumb_cache_size"));
+      } catch {
+        setCacheSize(null); // unknown → drop the "Currently …" suffix, not a wrong 0
+      }
+      setClearing(false);
+    }
   };
 
   const mbLabel =
@@ -431,8 +447,9 @@ function ThumbCacheRow() {
         type="button"
         className="cull-pick-button"
         onClick={handleClear}
+        disabled={clearing}
       >
-        Clear
+        {clearing ? "Clearing…" : "Clear"}
       </button>
     </SettingRow>
   );

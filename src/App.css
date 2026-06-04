@@ -1476,12 +1476,6 @@ body,
   margin: 0 4px;
 }
 
-/* Invisible click-shim — keeps backdrop click within the dialog only;
-   for now this is a no-op so clicks on body don't dismiss. */
-.cull-settings__close-shim {
-  display: none;
-}
-
 /* Legacy class names kept so other call sites don't break — title-meta is
    referenced by FinishDialog. */
 .cull-settings__title {
