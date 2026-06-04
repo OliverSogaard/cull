@@ -37,6 +37,7 @@ import { useSettings } from "./hooks/useSettings";
 
 import { PERFORMANCE_PROFILES } from "./types/settings";
 import { imageStore } from "./image/imageStore";
+import { runMaskScan, type MaskKind } from "./overlays/maskScans";
 import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { formatRelativeTime, middleTruncate } from "./utils/format";
@@ -966,18 +967,31 @@ export default function App() {
   // crushed → black): "any channel" flags saturated colours falsely (a yellow
   // flower ≈ R255 G210 B0 trips the blue=0 test). Small tolerance (250/5) since
   // JPEG quantization rarely lands exactly on 255/0. Checks the preview, not RAW.
-  const loadClipMask = useCallback(
-    (path: string) => {
-      if (requestedClipMasks.current.has(path)) return;
+  // Shared generator for the clip + peak masks — they differ ONLY in the
+  // per-pixel scan (runMaskScan dispatches by kind). Downscales the full preview
+  // to a bounded working size (~1600px): the mask is a diagnostic overlay CSS
+  // stretches to the image rect, so scanning + PNG-encoding the full 32 MP preview
+  // would hang the toggle for ~1s for no visible gain. Bails if the session
+  // generation changes while the probe decodes, so a folder switch can't write a
+  // stale mask into the new set.
+  const buildMask = useCallback(
+    (
+      path: string,
+      kind: MaskKind,
+      requestedRef: { current: Set<string> },
+      setMasks: (updater: (prev: Record<string, string>) => Record<string, string>) => void,
+    ) => {
+      if (requestedRef.current.has(path)) return;
       const snap = imageStore.snapshot(path);
       if (snap.stage !== "full" || !snap.url) return; // retried once the full lands
-      requestedClipMasks.current.add(path);
+      requestedRef.current.add(path);
+      const reqGen = imageStore.getGeneration();
       const probe = new Image();
       probe.onload = () => {
-        // Downscale to a bounded working size: the mask is a diagnostic overlay
-        // that CSS stretches to the image rect, so scanning + PNG-encoding the
-        // full 32 MP preview is pure waste — it would hang the toggle for ~1s.
-        // ~1600 px keeps clipping detection meaningful while making it instant.
+        if (imageStore.getGeneration() !== reqGen) {
+          requestedRef.current.delete(path);
+          return; // session changed mid-decode — don't write a stale mask
+        }
         const MAX = 1600;
         const scale = Math.min(1, MAX / Math.max(probe.naturalWidth, probe.naturalHeight));
         const w = Math.max(1, Math.round(probe.naturalWidth * scale));
@@ -987,45 +1001,25 @@ export default function App() {
         canvas.height = h;
         const ctx = canvas.getContext("2d", { willReadFrequently: true });
         if (!ctx) {
-          requestedClipMasks.current.delete(path);
+          requestedRef.current.delete(path);
           return;
         }
         ctx.drawImage(probe, 0, 0, w, h);
-        const src = ctx.getImageData(0, 0, w, h).data;
+        const srcData = ctx.getImageData(0, 0, w, h).data;
         const mask = ctx.createImageData(w, h);
-        const m = mask.data;
-        const PERIOD = 8;
-        const STRIPE = 3;
-        for (let i = 0; i < src.length; i += 4) {
-          const r = src[i];
-          const g = src[i + 1];
-          const b = src[i + 2];
-          const idx = i >> 2;
-          const x = idx % w;
-          const y = (idx / w) | 0;
-          if (r >= 250 && g >= 250 && b >= 250) {
-            if ((x + y) % PERIOD < STRIPE) {
-              m[i] = 239;
-              m[i + 1] = 68;
-              m[i + 2] = 68;
-              m[i + 3] = 215;
-            }
-          } else if (r <= 5 && g <= 5 && b <= 5) {
-            if ((x - y + h) % PERIOD < STRIPE) {
-              m[i] = 59;
-              m[i + 1] = 130;
-              m[i + 2] = 246;
-              m[i + 3] = 215;
-            }
-          }
-        }
+        runMaskScan(kind, srcData, mask.data, w, h);
         ctx.putImageData(mask, 0, 0);
-        setClipMasks((prev) => ({ ...prev, [path]: canvas.toDataURL("image/png") }));
+        setMasks((prev) => ({ ...prev, [path]: canvas.toDataURL("image/png") }));
       };
-      probe.onerror = () => requestedClipMasks.current.delete(path);
+      probe.onerror = () => requestedRef.current.delete(path);
       probe.src = snap.url;
     },
     [],
+  );
+
+  const loadClipMask = useCallback(
+    (path: string) => buildMask(path, "clip", requestedClipMasks, setClipMasks),
+    [buildMask],
   );
 
   // Ensure masks exist for the on-screen image(s) when clipping is on; clear when
@@ -1067,62 +1061,8 @@ export default function App() {
   // computed off the downscaled preview, cached per path. Threshold tuned for
   // typical JPEG noise floors; bump it if peaking lights up smooth regions.
   const loadPeakingMask = useCallback(
-    (path: string) => {
-      if (requestedPeaks.current.has(path)) return;
-      const snap = imageStore.snapshot(path);
-      if (snap.stage !== "full" || !snap.url) return; // retried once the full lands
-      requestedPeaks.current.add(path);
-      const probe = new Image();
-      probe.onload = () => {
-        const MAX = 1600;
-        const scale = Math.min(1, MAX / Math.max(probe.naturalWidth, probe.naturalHeight));
-        const w = Math.max(1, Math.round(probe.naturalWidth * scale));
-        const h = Math.max(1, Math.round(probe.naturalHeight * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        if (!ctx) {
-          requestedPeaks.current.delete(path);
-          return;
-        }
-        ctx.drawImage(probe, 0, 0, w, h);
-        const src = ctx.getImageData(0, 0, w, h).data;
-        const mask = ctx.createImageData(w, h);
-        const m = mask.data;
-        const THRESHOLD = 60;
-        // Luminance via cheap (R + 2G + B)/4. Central differences for the gradient
-        // — borders left transparent (they'd false-trigger against the letterbox).
-        for (let y = 1; y < h - 1; y++) {
-          const rowAbove = (y - 1) * w * 4;
-          const rowBelow = (y + 1) * w * 4;
-          const row = y * w * 4;
-          for (let x = 1; x < w - 1; x++) {
-            const ixL = row + (x - 1) * 4;
-            const ixR = row + (x + 1) * 4;
-            const ixU = rowAbove + x * 4;
-            const ixD = rowBelow + x * 4;
-            const lumL = (src[ixL] + 2 * src[ixL + 1] + src[ixL + 2]) >> 2;
-            const lumR = (src[ixR] + 2 * src[ixR + 1] + src[ixR + 2]) >> 2;
-            const lumU = (src[ixU] + 2 * src[ixU + 1] + src[ixU + 2]) >> 2;
-            const lumD = (src[ixD] + 2 * src[ixD + 1] + src[ixD + 2]) >> 2;
-            const grad = Math.abs(lumR - lumL) + Math.abs(lumD - lumU);
-            if (grad > THRESHOLD) {
-              const o = row + x * 4;
-              m[o] = 252;     // R
-              m[o + 1] = 211; // G
-              m[o + 2] = 77;  // B (warm yellow)
-              m[o + 3] = 215; // alpha
-            }
-          }
-        }
-        ctx.putImageData(mask, 0, 0);
-        setPeakingMasks((prev) => ({ ...prev, [path]: canvas.toDataURL("image/png") }));
-      };
-      probe.onerror = () => requestedPeaks.current.delete(path);
-      probe.src = snap.url;
-    },
-    [],
+    (path: string) => buildMask(path, "peak", requestedPeaks, setPeakingMasks),
+    [buildMask],
   );
 
   // Mirror of the clipping effect: ensure peaking masks exist while P is on.
@@ -1166,8 +1106,13 @@ export default function App() {
       const thumbUrl = imageStore.thumbUrl(path);
       if (!thumbUrl) return; // retried once the thumbnail loads
       requestedHistograms.current.add(path);
+      const reqGen = imageStore.getGeneration();
       const probe = new Image();
       probe.onload = () => {
+        if (imageStore.getGeneration() !== reqGen) {
+          requestedHistograms.current.delete(path);
+          return; // session changed mid-decode — don't write a stale histogram
+        }
         const SAMPLE = 256;
         const scale = Math.min(1, SAMPLE / Math.max(probe.naturalWidth, probe.naturalHeight));
         const w = Math.max(1, Math.round(probe.naturalWidth * scale));
