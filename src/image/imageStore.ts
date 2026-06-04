@@ -9,11 +9,14 @@
  *  - blob-URL lifecycle (every createObjectURL has exactly one revokeObjectURL)
  *
  * Blob-URL revoke sites:
- *  1. loadThumbInto — when LRU cap evicts an old thumb entry
- *  2. evictFull — when a full-res entry is evicted from the windowed cache
+ *  1. enforceThumbLru — when the LRU cap evicts an old thumb entry
+ *  2. evictFull / evictFullAround — when a full-res entry leaves the windowed cache
  *  3. loadFull — when a full-res entry is REPLACED by a fresher one (no double-keep)
  *  4. hardReset — revokes ALL thumb + full blob URLs (folder change / session end)
  *  5. reset(paths) — revokes full-res for all tracked paths; thumbs are kept
+ *  6. loadThumbInto — stale-generation arrival: revoke the just-created thumb
+ *     blob when the session changed while the read was in flight
+ *  7. loadFull — stale-generation arrival: revoke the just-created preview blob
  *
  * Concurrency-correctness invariants (see fixes C1/C3/C4):
  *  - Every in-flight counter decrement is generation-scoped: a load whose
@@ -73,7 +76,10 @@ export class ImageStore {
   private requestedFull = new Set<string>();
   /** Paths whose loadFull is in flight RIGHT NOW (C3: single-flight fulls). */
   private fullInFlightPaths = new Set<string>();
-  private wantFull = new Set<string>();
+  /** path → number of mounted consumers wanting full-res. A refcount (not a bare
+   *  Set) so two consumers wanting the same path don't lose eviction-protection
+   *  when only one unmounts. `has(p)` ⟺ count > 0 (entries are deleted at 0). */
+  private wantFull = new Map<string, number>();
   /** Per-path transient thumb-failure attempt counter (I6). */
   private thumbAttempts = new Map<string, number>();
   // ── Concurrency counters ───────────────────────────────────────────────
@@ -92,8 +98,11 @@ export class ImageStore {
   /** path → index in `paths`, rebuilt in reset() for O(1) lookups (I2). */
   private pathIndex = new Map<string, number>();
   private cursor = 0;
-  private gridStart = 0;
-  private gridEnd = 0;
+  // -1/-1 = "no grid viewport" (matches clearGridRange); set to a real range only
+  // while the grid is shown. No real path index is ever in [-1,-1], so bg-fill
+  // ordering is pure cursor-distance until a grid range is set.
+  private gridStart = -1;
+  private gridEnd = -1;
   // ── Session generation counter (cancellation) ─────────────────────────
   private generation = 0;
   // ── Performance profile ────────────────────────────────────────────────
@@ -116,9 +125,19 @@ export class ImageStore {
 
   setProfile(p: PerformanceProfile): void {
     this.profile = p;
+    // Apply the new (possibly smaller) full-res keep window now — don't wait for
+    // the next cursor move to free fulls that are suddenly outside the window.
+    this.evictFullAround(this.cursor);
     this.pumpThumbs();
     this.pumpFull();
     this.pumpBg();
+  }
+
+  /** Current session generation — bumped by reset()/hardReset(). Consumers (e.g.
+   *  the overlay mask loaders) capture it before an async op and discard a
+   *  result whose generation no longer matches (the session changed underneath). */
+  getGeneration(): number {
+    return this.generation;
   }
 
   /**
@@ -169,19 +188,19 @@ export class ImageStore {
     this.states.clear();
     this.snaps.clear();
 
-    // Notify all current subscribers that state has been cleared
-    for (const [path, cbs] of this.subs) {
-      // Only re-notify if they're in the new path set
-      if (cbs.size > 0) {
-        this.invalidate(path);
-      }
-    }
-
     this.paths = newPaths;
     this.rebuildPathIndex();
     this.cursor = 0;
-    this.gridStart = 0;
-    this.gridEnd = 0;
+    this.gridStart = -1;
+    this.gridEnd = -1;
+
+    // Notify subscribers whose path SURVIVES into the new folder so their cell
+    // re-reads the (thumb-kept, full-cleared) snapshot. Paths absent from the new
+    // set don't need it — their cell is about to unmount.
+    const newSet = new Set(newPaths);
+    for (const [path, cbs] of this.subs) {
+      if (cbs.size > 0 && newSet.has(path)) this.invalidate(path);
+    }
 
     // Enqueue background fill for new paths (only if generation still current)
     this.scheduleBgFill(gen);
@@ -230,8 +249,8 @@ export class ImageStore {
     this.paths = [];
     this.pathIndex.clear();
     this.cursor = 0;
-    this.gridStart = 0;
-    this.gridEnd = 0;
+    this.gridStart = -1;
+    this.gridEnd = -1;
   }
 
   setCursor(index: number, scrubbing = false): void {
@@ -239,7 +258,7 @@ export class ImageStore {
     // I3: full-res eviction is cursor-driven — recenter the keep-window on the
     // cursor even when no new full just landed (parking on a frame recenters).
     this.evictFullAround(index);
-    this.rescheduleBg();
+    this.rescheduleBg(scrubbing);
     this.pumpFull();
     // Warm neighbours' full-res once the cursor SETTLES — so a single tap to an
     // adjacent frame is already decoded. Never mid-scrub: a scrub flies past
@@ -273,25 +292,39 @@ export class ImageStore {
     return i === undefined ? -1 : i;
   }
 
-  private rescheduleBg(): void {
-    // Re-sort the remaining bg queue entries using the updated cursor/grid range.
+  private rescheduleBg(scrubbing = false): void {
+    // During a scrub the cursor moves ~30×/s; re-sorting the whole bg queue every
+    // step is wasted O(n log n) on the UI thread (the order only decides which
+    // not-yet-loaded thumb pumpBg pops next, and on-demand thumb/full reads always
+    // preempt bg anyway). Skip the sort mid-scrub but still pump so in-flight bg
+    // slots keep filling; the scrub-settle re-fires setCursor with scrubbing=false
+    // and performs the deferred re-sort.
+    if (!scrubbing) this.bgQueue = this.sortByPriority(this.bgQueue);
+    this.pumpBg();
+  }
+
+  /**
+   * Order paths grid-viewport-first, then nearest-cursor. Index lookups are
+   * precomputed once (O(n)) rather than two Map.gets per comparison (which made
+   * the comparator O(n log n) Map lookups on a queue of thousands).
+   */
+  private sortByPriority(q: string[]): string[] {
     const cursor = this.cursor;
     const gridStart = this.gridStart;
     const gridEnd = this.gridEnd;
-    this.bgQueue.sort((a, b) => {
-      const ai = this.indexOf(a);
-      const bi = this.indexOf(b);
-      const aInGrid = ai >= gridStart && ai <= gridEnd ? 0 : 1;
-      const bInGrid = bi >= gridStart && bi <= gridEnd ? 0 : 1;
-      if (aInGrid !== bInGrid) return aInGrid - bInGrid;
-      return Math.abs(ai - cursor) - Math.abs(bi - cursor);
+    const tagged = q.map((p) => {
+      const i = this.indexOf(p);
+      return { p, i, g: i >= gridStart && i <= gridEnd ? 0 : 1 };
     });
-    this.pumpBg();
+    tagged.sort((a, b) =>
+      a.g !== b.g ? a.g - b.g : Math.abs(a.i - cursor) - Math.abs(b.i - cursor),
+    );
+    return tagged.map((t) => t.p);
   }
 
   registerWantFull(path: string): void {
     if (!path) return;
-    this.wantFull.add(path);
+    this.wantFull.set(path, (this.wantFull.get(path) ?? 0) + 1);
     if (!this.requestedFull.has(path)) {
       this.fullQueue.unshift(path); // high priority: front of queue
       this.pumpFull();
@@ -312,7 +345,10 @@ export class ImageStore {
 
   unregisterWantFull(path: string): void {
     if (!path) return;
-    this.wantFull.delete(path);
+    const n = this.wantFull.get(path);
+    if (n === undefined) return;
+    if (n <= 1) this.wantFull.delete(path);
+    else this.wantFull.set(path, n - 1);
   }
 
   requestThumbFor(path: string): void {
@@ -455,13 +491,34 @@ export class ImageStore {
   /** LRU cap enforcement, shared by both thumb lanes — REVOKE SITE 1. */
   private enforceThumbLru(justLoaded: string): void {
     if (this.thumbs.size <= this.thumbLruCap) return;
-    const oldest = this.thumbs.keys().next().value;
-    if (oldest !== undefined && oldest !== justLoaded) {
-      const v = this.thumbs.get(oldest);
+    // Evict the oldest-inserted thumb that is NOT protected. A thumb is protected
+    // if it's the one just loaded, currently wanted full (on screen), or within
+    // the full-res keep-window of the cursor. Without this guard a >cap shoot
+    // could revoke the blob URL of a thumb a live <img> is still displaying
+    // (loupe scrub fallback / compare / histogram probe read thumbUrl directly),
+    // blanking the frame. Fall back to the strict oldest only if all are
+    // protected (the protected set is bounded, so the cap can't run away).
+    const keep = this.profile.previewKeep;
+    const cursor = this.cursor;
+    let victim: string | undefined;
+    for (const key of this.thumbs.keys()) {
+      if (key === justLoaded) continue;
+      if (this.wantFull.has(key)) continue;
+      const idx = this.indexOf(key);
+      if (idx !== -1 && Math.abs(idx - cursor) <= keep) continue;
+      victim = key;
+      break;
+    }
+    if (victim === undefined) {
+      const oldest = this.thumbs.keys().next().value;
+      if (oldest !== undefined && oldest !== justLoaded) victim = oldest;
+    }
+    if (victim !== undefined) {
+      const v = this.thumbs.get(victim);
       if (v) URL.revokeObjectURL(v.url);
-      this.thumbs.delete(oldest);
-      this.requestedThumb.delete(oldest);
-      this.invalidate(oldest);
+      this.thumbs.delete(victim);
+      this.requestedThumb.delete(victim);
+      this.invalidate(victim);
     }
   }
 
@@ -614,18 +671,7 @@ export class ImageStore {
     const unloaded = this.paths.filter(
       (p) => !this.thumbs.has(p) && !this.requestedThumb.has(p),
     );
-    // Sort: grid viewport first, then by distance from cursor
-    const cursor = this.cursor;
-    const gridStart = this.gridStart;
-    const gridEnd = this.gridEnd;
-    this.bgQueue = unloaded.sort((a, b) => {
-      const ai = this.indexOf(a);
-      const bi = this.indexOf(b);
-      const aInGrid = ai >= gridStart && ai <= gridEnd ? 0 : 1;
-      const bInGrid = bi >= gridStart && bi <= gridEnd ? 0 : 1;
-      if (aInGrid !== bInGrid) return aInGrid - bInGrid;
-      return Math.abs(ai - cursor) - Math.abs(bi - cursor);
-    });
+    this.bgQueue = this.sortByPriority(unloaded);
     this.pumpBg();
   }
 

@@ -7,13 +7,15 @@ export function useImage(path: string, opts: { wantFull: boolean }): Resolved {
     (cb) => imageStore.subscribe(path, cb),
     () => imageStore.snapshot(path),
   );
+  // Thumb request keys on path only — a wantFull toggle shouldn't re-fire it
+  // (it's idempotent, but keeping it off the wantFull dep is clearer).
   useEffect(() => {
     imageStore.requestThumbFor(path);
-    if (opts.wantFull) {
-      imageStore.registerWantFull(path);
-      return () => imageStore.unregisterWantFull(path);
-    }
-    return undefined;
+  }, [path]);
+  useEffect(() => {
+    if (!opts.wantFull) return undefined;
+    imageStore.registerWantFull(path);
+    return () => imageStore.unregisterWantFull(path);
   }, [path, opts.wantFull]);
   return snap;
 }
