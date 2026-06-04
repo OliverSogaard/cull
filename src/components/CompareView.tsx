@@ -4,6 +4,7 @@ import type { Feedback, Img, ImageMetadata, Rating } from "../types";
 import { CompareExifRail } from "./ExifRail";
 import { RatingDot } from "./RatingDot";
 import { useImage } from "../image/useImage";
+import { imageStore } from "../image/imageStore";
 
 /**
  * Compare mode: champion (left, green) vs challenger (right, amber).
@@ -194,7 +195,25 @@ const ComparePanel = memo(function ComparePanel({
   // Show the full preview only once it's ready AND we're not scrubbing past it.
   const showFull = img.stage === "full" && !scrubbing;
   const fullPainted = showFull && paintedFullUrl === img.url;
-  const displaySrc = showFull ? img.url : img.stage !== "shimmer" ? img.url : undefined;
+  // While scrubbing past a frame whose full is cached, paint the cheap THUMB —
+  // not the full — so we don't decode a 32 MP raster per step (the CSS blur only
+  // HIDES a full, it doesn't avoid decoding it). Mirrors the loupe (App.tsx).
+  const displaySrc =
+    img.stage === "shimmer"
+      ? undefined
+      : scrubbing && img.stage === "full"
+        ? (imageStore.thumbUrl(path) ?? img.url)
+        : img.url;
+
+  // If this pane lands on a frame whose full is ALREADY decoded (prefetched
+  // neighbour / revisit), mark it painted at once so the thumb→full blur is
+  // skipped — mirrors the loupe (App.tsx). Keyed on the pane's image + scrub
+  // settle, NOT img.url, so a full arriving while we sit on the thumb still gates
+  // on the <img> onLoad below (no sharp flash before paint).
+  useLayoutEffect(() => {
+    if (showFull && img.url) setPaintedFullUrl(img.url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, scrubbing]);
 
   // Frame aspect ratio: prefer the orientation-correct THMB display dims (known
   // as soon as the thumb lands) over the frozen full-preview naturalSize.

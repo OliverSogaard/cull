@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { ImageMetadata, Rating } from "../types";
 import {
   formatExposureBias,
@@ -143,64 +144,77 @@ export function CompareExifRail({
   challengerRating?: Rating;
 }) {
   // Build comparable string values for each row, allowing diff detection.
-  const champTime = formatTime(championMeta?.capturedAt ?? null);
-  const challTime = formatTime(challengerMeta?.capturedAt ?? null);
-  const frameRows: { k: string; a: string; b: string }[] = [
-    { k: "File", a: stripExtName(championName), b: stripExtName(challengerName) },
-    { k: "Body", a: championMeta?.camera ?? "—", b: challengerMeta?.camera ?? "—" },
-    { k: "Lens", a: championMeta?.lens ?? "—", b: challengerMeta?.lens ?? "—" },
-    { k: "Time", a: champTime ?? "—", b: challTime ?? "—" },
-  ];
+  // Memoized so the ~14 formatter calls don't re-run on every App re-render
+  // (each keystroke / champShot/chalShot store-notify); the per-path meta objects
+  // keep a stable ref once loaded, so this bails out unless these two frames change.
+  const { frameRows, lrcRow, exposureRows } = useMemo(() => {
+    const champTime = formatTime(championMeta?.capturedAt ?? null);
+    const challTime = formatTime(challengerMeta?.capturedAt ?? null);
+    const frameRows: { k: string; a: string; b: string }[] = [
+      { k: "File", a: stripExtName(championName), b: stripExtName(challengerName) },
+      { k: "Body", a: championMeta?.camera ?? "—", b: challengerMeta?.camera ?? "—" },
+      { k: "Lens", a: championMeta?.lens ?? "—", b: challengerMeta?.lens ?? "—" },
+      { k: "Time", a: champTime ?? "—", b: challTime ?? "—" },
+    ];
 
-  const lrcA = championMeta?.lrcRating ?? null;
-  const lrcB = challengerMeta?.lrcRating ?? null;
-  const showLrcA = hasLrcRating(lrcA, championRating);
-  const showLrcB = hasLrcRating(lrcB, challengerRating);
-  const lrcRow =
-    showLrcA || showLrcB
-      ? {
-          k: "LrC rating",
-          a: showLrcA && lrcA != null ? `${lrcA}★` : "—",
-          b: showLrcB && lrcB != null ? `${lrcB}★` : "—",
-        }
-      : null;
+    const lrcA = championMeta?.lrcRating ?? null;
+    const lrcB = challengerMeta?.lrcRating ?? null;
+    const showLrcA = hasLrcRating(lrcA, championRating);
+    const showLrcB = hasLrcRating(lrcB, challengerRating);
+    const lrcRow =
+      showLrcA || showLrcB
+        ? {
+            k: "LrC rating",
+            a: showLrcA && lrcA != null ? `${lrcA}★` : "—",
+            b: showLrcB && lrcB != null ? `${lrcB}★` : "—",
+          }
+        : null;
 
-  const exposureRows: { k: string; a: string; b: string }[] = [
-    {
-      k: "Shutter",
-      a: formatShutter(championMeta?.shutterSeconds ?? null) ?? "—",
-      b: formatShutter(challengerMeta?.shutterSeconds ?? null) ?? "—",
-    },
-    {
-      k: "Aperture",
-      a: championMeta?.aperture != null ? `ƒ/${championMeta.aperture}` : "—",
-      b: challengerMeta?.aperture != null ? `ƒ/${challengerMeta.aperture}` : "—",
-    },
-    {
-      k: "ISO",
-      a: championMeta?.iso != null ? `${championMeta.iso}` : "—",
-      b: challengerMeta?.iso != null ? `${challengerMeta.iso}` : "—",
-    },
-    {
-      k: "Focal",
-      a: championMeta?.focalLengthMm != null ? `${championMeta.focalLengthMm.toFixed(0)} mm` : "—",
-      b:
-        challengerMeta?.focalLengthMm != null
-          ? `${challengerMeta.focalLengthMm.toFixed(0)} mm`
-          : "—",
-    },
-    {
-      k: "EV",
-      // Drop the redundant " EV" suffix — the row label already says EV.
-      a: (formatExposureBias(championMeta?.exposureBias ?? null) ?? "—").replace(/ EV$/, ""),
-      b: (formatExposureBias(challengerMeta?.exposureBias ?? null) ?? "—").replace(/ EV$/, ""),
-    },
-    {
-      k: "WB",
-      a: formatWhiteBalance(championMeta?.whiteBalance ?? null) ?? "—",
-      b: formatWhiteBalance(challengerMeta?.whiteBalance ?? null) ?? "—",
-    },
-  ];
+    const exposureRows: { k: string; a: string; b: string }[] = [
+      {
+        k: "Shutter",
+        a: formatShutter(championMeta?.shutterSeconds ?? null) ?? "—",
+        b: formatShutter(challengerMeta?.shutterSeconds ?? null) ?? "—",
+      },
+      {
+        k: "Aperture",
+        a: championMeta?.aperture != null ? `ƒ/${championMeta.aperture}` : "—",
+        b: challengerMeta?.aperture != null ? `ƒ/${challengerMeta.aperture}` : "—",
+      },
+      {
+        k: "ISO",
+        a: championMeta?.iso != null ? `${championMeta.iso}` : "—",
+        b: challengerMeta?.iso != null ? `${challengerMeta.iso}` : "—",
+      },
+      {
+        k: "Focal",
+        a: championMeta?.focalLengthMm != null ? `${championMeta.focalLengthMm.toFixed(0)} mm` : "—",
+        b:
+          challengerMeta?.focalLengthMm != null
+            ? `${challengerMeta.focalLengthMm.toFixed(0)} mm`
+            : "—",
+      },
+      {
+        k: "EV",
+        // Drop the redundant " EV" suffix — the row label already says EV.
+        a: (formatExposureBias(championMeta?.exposureBias ?? null) ?? "—").replace(/ EV$/, ""),
+        b: (formatExposureBias(challengerMeta?.exposureBias ?? null) ?? "—").replace(/ EV$/, ""),
+      },
+      {
+        k: "WB",
+        a: formatWhiteBalance(championMeta?.whiteBalance ?? null) ?? "—",
+        b: formatWhiteBalance(challengerMeta?.whiteBalance ?? null) ?? "—",
+      },
+    ];
+    return { frameRows, lrcRow, exposureRows };
+  }, [
+    championName,
+    challengerName,
+    championMeta,
+    challengerMeta,
+    championRating,
+    challengerRating,
+  ]);
 
   return (
     <aside className="cull-exif-rail cull-exif-rail--compare" aria-label="Compare info">

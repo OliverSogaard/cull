@@ -360,8 +360,21 @@ export default function App() {
   // independent of the active `filter`, which is left untouched and restored on exit.
   const compareCandidates = useMemo(() => {
     if (!compareMode) return [];
-    return images.map((_, i) => i).filter((i) => i !== championIndex && !ratings[images[i].id]);
+    // One pass (no throwaway index array): every unrated frame except the champion.
+    const out: number[] = [];
+    for (let i = 0; i < images.length; i++) {
+      if (i !== championIndex && !ratings[images[i].id]) out.push(i);
+    }
+    return out;
   }, [compareMode, images, ratings, championIndex]);
+
+  // Challenger's position within the candidate list, memoized like positionInFilter
+  // so the status bar's "N / M" doesn't run an O(n) indexOf on every App render
+  // (incl. every ~30 Hz compare scrub frame).
+  const challengerPos = useMemo(
+    () => compareCandidates.indexOf(challengerIndex),
+    [compareCandidates, challengerIndex],
+  );
 
   const stats = useMemo(() => {
     const vals = Object.values(ratings);
@@ -1036,12 +1049,13 @@ export default function App() {
     challengerIndex,
     currentIndex,
     images,
+    // .stage drives the retry-once-the-full-lands; the loader reads the url
+    // itself, so the .url deps were just redundant re-fires (thumb-url→full-url).
+    // cur.* is the LOUPE subscription, champShot/chalShot the COMPARE pair; the
+    // off-mode subscription is pinned to "" (stable), so its dep is inert.
     cur.stage,
-    cur.url,
     champShot.stage,
-    champShot.url,
     chalShot.stage,
-    chalShot.url,
     loadClipMask,
   ]);
 
@@ -1129,12 +1143,10 @@ export default function App() {
     challengerIndex,
     currentIndex,
     images,
+    // .stage only (see the clipping effect) — .url deps were redundant re-fires.
     cur.stage,
-    cur.url,
     champShot.stage,
-    champShot.url,
     chalShot.stage,
-    chalShot.url,
     loadPeakingMask,
   ]);
 
@@ -1212,8 +1224,9 @@ export default function App() {
     [],
   );
 
-  // Compute histograms for the on-screen image(s) while the EXIF overlay is open;
-  // drop the cache when it closes. Covers single view and both compare panels.
+  // Compute the RGB histogram for the on-screen image while the EXIF overlay is
+  // open; drop the cache when it closes. Single view ONLY — the compare rail
+  // renders no histogram, so computing one per champion/challenger was dead work.
   useEffect(() => {
     if (!exifVisible) {
       // Idempotent reset (see the clipping effect) — avoid a per-scrub-frame render.
@@ -1221,27 +1234,13 @@ export default function App() {
       setHistograms((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
-    if (compareMode) {
-      if (images[championIndex]) loadHistogram(images[championIndex].path);
-      if (images[challengerIndex]) loadHistogram(images[challengerIndex].path);
-    } else if (images[currentIndex]) {
-      loadHistogram(images[currentIndex].path);
-    }
-  }, [
-    exifVisible,
-    compareMode,
-    championIndex,
-    challengerIndex,
-    currentIndex,
-    images,
-    cur.stage,
-    cur.url,
-    champShot.stage,
-    champShot.url,
-    chalShot.stage,
-    chalShot.url,
-    loadHistogram,
-  ]);
+    // The histogram is thumb-sourced, so (unlike clip/peak, which bail on
+    // stage!=="full") it would recompute for every scrubbed-past frame. Skip
+    // during scrub; the settle re-fires it via the scrubbing dep. Compare has no
+    // histogram UI, so skip it there entirely.
+    if (scrubbing || compareMode) return;
+    if (images[currentIndex]) loadHistogram(images[currentIndex].path);
+  }, [exifVisible, scrubbing, compareMode, currentIndex, images, cur.stage, loadHistogram]);
 
   // Bound the per-path overlay caches to a window around the cursor so leaving an
   // overlay on while arrowing through a long shoot doesn't accumulate a PNG per
@@ -1733,6 +1732,10 @@ export default function App() {
       if (target === "compare") {
         const champ = currentIndex;
         if (!images[champ]) return;
+        // Don't pin a rejected frame as champion — goBack's compare-restore
+        // refuses to reseat a reject champion, so allowing it on entry would be
+        // inconsistent (and would re-reject it as a no-op on the next Enter).
+        if (ratings[images[champ].id] === "reject") return;
         const firstChall = nearestUnrated(champ, ratings, champ);
         if (firstChall === -1) return;
         setNavStack((s) => [...s, buildNavEntry(current)]);
@@ -1889,7 +1892,6 @@ export default function App() {
     flashFeedback,
     persistRating,
     nearestUnrated,
-    snapToFilter,
     goBack,
     recordAction,
   ]);
@@ -1940,7 +1942,6 @@ export default function App() {
     flashFeedback,
     persistRating,
     nearestUnrated,
-    snapToFilter,
     goBack,
     recordAction,
   ]);
@@ -3104,7 +3105,7 @@ export default function App() {
         >
           {compareMode ? (
             <>
-              <b>{Math.max(0, compareCandidates.indexOf(challengerIndex) + 1)}</b>
+              <b>{Math.max(0, challengerPos + 1)}</b>
               <span className="of"> / {compareCandidates.length}</span>
             </>
           ) : (

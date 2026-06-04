@@ -2983,12 +2983,6 @@ body,
   overflow: hidden;
 }
 
-/* The frame outline removed — Editorial direction uses no role-color frames.
-   Role chip below the photo identifies champion vs challenger instead. */
-.cull-cmp-frame {
-  display: none;
-}
-
 .cull-cmp-img {
   /* Absolute overlay of the matte-inset content box — see .cull-image. The sizer
      drives the frame; this just paints pixels into the content box. Frame AR ==
