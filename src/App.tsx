@@ -38,6 +38,7 @@ import { useSettings } from "./hooks/useSettings";
 import { PERFORMANCE_PROFILES } from "./types/settings";
 import { imageStore } from "./image/imageStore";
 import { runMaskScan, type MaskKind } from "./overlays/maskScans";
+import { maskWorkerAvailable, requestMaskOffThread } from "./overlays/maskClient";
 import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { formatRelativeTime, middleTruncate } from "./utils/format";
@@ -986,13 +987,16 @@ export default function App() {
       if (snap.stage !== "full" || !snap.url) return; // retried once the full lands
       requestedRef.current.add(path);
       const reqGen = imageStore.getGeneration();
+      const MAX = 1600;
       const probe = new Image();
-      probe.onload = () => {
-        if (imageStore.getGeneration() !== reqGen) {
-          requestedRef.current.delete(path);
-          return; // session changed mid-decode — don't write a stale mask
-        }
-        const MAX = 1600;
+      // Commit a finished mask, unless the session changed between decode start
+      // and encode completion (the off-thread path adds a round-trip).
+      const commit = (url: string) => {
+        if (imageStore.getGeneration() !== reqGen) return;
+        setMasks((prev) => ({ ...prev, [path]: url }));
+      };
+      // Main-thread path — also the fallback when the worker is unavailable/errors.
+      const inline = () => {
         const scale = Math.min(1, MAX / Math.max(probe.naturalWidth, probe.naturalHeight));
         const w = Math.max(1, Math.round(probe.naturalWidth * scale));
         const h = Math.max(1, Math.round(probe.naturalHeight * scale));
@@ -1009,7 +1013,24 @@ export default function App() {
         const mask = ctx.createImageData(w, h);
         runMaskScan(kind, srcData, mask.data, w, h);
         ctx.putImageData(mask, 0, 0);
-        setMasks((prev) => ({ ...prev, [path]: canvas.toDataURL("image/png") }));
+        commit(canvas.toDataURL("image/png"));
+      };
+      probe.onload = () => {
+        if (imageStore.getGeneration() !== reqGen) {
+          requestedRef.current.delete(path);
+          return; // session changed mid-decode — don't write a stale mask
+        }
+        // Prefer the OffscreenCanvas worker (scan + PNG encode off the UI thread).
+        // ANY failure (unsupported runtime / decode / worker crash) falls back to
+        // the inline path, so behaviour never regresses below the main-thread one.
+        if (maskWorkerAvailable()) {
+          createImageBitmap(probe).then(
+            (bitmap) => requestMaskOffThread(kind, bitmap, MAX).then(commit, inline),
+            inline,
+          );
+        } else {
+          inline();
+        }
       };
       probe.onerror = () => requestedRef.current.delete(path);
       probe.src = snap.url;
