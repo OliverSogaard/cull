@@ -219,32 +219,9 @@ export default function App() {
   const feedbackTimer = useRef<number | null>(null);
 
   // Grid container — shared between GridView (for layout/scroll) and the cols-
-  // computing ResizeObserver below (so the keydown handler can step by row).
-  // We depend on `gridVisible && !compareMode` rather than just gridVisible:
-  // when the user enters compare from grid, GridView unmounts behind compare's
-  // overlay and the DOM node we're observing is detached. On exit, GridView
-  // re-mounts with a NEW node. Without including compareMode in the deps the
-  // observer would keep watching the dead node and gridCols would never update
-  // on a window resize during the second grid session.
+  // computing ResizeObserver (defined after visibleIndices, below, so it can
+  // also re-run when the grid gains cells — see there).
   const gridContainerRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (!gridVisible || compareMode) return;
-    const el = gridContainerRef.current;
-    if (!el) return;
-    const update = () => {
-      // Subtract horizontal padding so the col count matches the actual
-      // content area (otherwise cells overflow → horizontal scrollbar).
-      const cs = window.getComputedStyle(el);
-      const padL = parseFloat(cs.paddingLeft) || 0;
-      const padR = parseFloat(cs.paddingRight) || 0;
-      const w = Math.max(0, el.clientWidth - padL - padR);
-      setGridCols(Math.max(2, Math.floor(w / GRID_CELL_TARGET)));
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [gridVisible, compareMode]);
 
   // Rating-write durability. Every rating writes an .xmp sidecar; we count writes
   // in flight (savingCount) and remember any that exhausted their retries
@@ -353,6 +330,32 @@ export default function App() {
     () => visibleIndices.indexOf(currentIndex),
     [visibleIndices, currentIndex],
   );
+
+  // Grid column count from the container width — the keydown handler steps by
+  // row using it. Depends on `gridVisible && !compareMode` (entering compare
+  // unmounts GridView, detaching the observed node; exit re-mounts a NEW node)
+  // AND on gridHasCells: when the grid is entered under a no-match filter, the
+  // EmptyFilter placeholder renders instead of GridView, so gridContainerRef is
+  // null and the first run bails — re-run once cells appear so we attach then.
+  const gridHasCells = gridVisible && !compareMode && visibleIndices.length > 0;
+  useLayoutEffect(() => {
+    if (!gridVisible || compareMode) return;
+    const el = gridContainerRef.current;
+    if (!el) return;
+    const update = () => {
+      // Subtract horizontal padding so the col count matches the actual
+      // content area (otherwise cells overflow → horizontal scrollbar).
+      const cs = window.getComputedStyle(el);
+      const padL = parseFloat(cs.paddingLeft) || 0;
+      const padR = parseFloat(cs.paddingRight) || 0;
+      const w = Math.max(0, el.clientWidth - padL - padR);
+      setGridCols(Math.max(2, Math.floor(w / GRID_CELL_TARGET)));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [gridVisible, compareMode, gridHasCells]);
 
   // Compare-mode candidate strip: every UNRATED frame except the champion (which
   // is pinned separately). The challenger is always one of these. Drives both the
@@ -1286,7 +1289,7 @@ export default function App() {
   const advance = useCallback(
     (dir: 1 | -1, step = 1): boolean => {
       if (visibleIndices.length === 0) return false;
-      const pos = visibleIndices.indexOf(currentIndex);
+      const pos = positionInFilter; // reuse the memo, not a fresh O(n) indexOf
       if (pos === -1) {
         setCurrentIndex(visibleIndices[0]);
         return true;
@@ -1299,7 +1302,7 @@ export default function App() {
       setCurrentIndex(visibleIndices[clamped]);
       return true;
     },
-    [visibleIndices, currentIndex],
+    [visibleIndices, positionInFilter],
   );
 
   const flashFeedback = useCallback((rating: Rating, imageId: number) => {
@@ -1549,13 +1552,16 @@ export default function App() {
 
   const applyRating = useCallback(
     (rating: Rating) => {
-      // Multi-select branch: when the user is in grid with >1 selection, apply
-      // the rating to every selected frame at once (one undo-stack entry,
-      // sidecars written in parallel). No auto-advance — the user is acting on
-      // a set, not stepping through one frame at a time.
-      if (gridVisible && selectedIndices.size > 1) {
-        const ids = Array.from(selectedIndices);
-        const changes = ids
+      // Selection branch: any non-empty grid selection rates the SELECTED SET
+      // (one undo entry, sidecars in parallel), so the rating always lands on the
+      // tinted cells — never the cursor (which can diverge after a ctrl-toggle).
+      // No auto-advance — the user is acting on a set. Intersect with the active
+      // filter so a rating never hits a selected frame that's filtered out /
+      // off-screen (matches the single-frame branch's pos===-1 guard below).
+      if (gridVisible && selectedIndices.size >= 1) {
+        const visibleSet = new Set(visibleIndices);
+        const changes = Array.from(selectedIndices)
+          .filter((idx) => visibleSet.has(idx))
           .map((idx) => images[idx])
           .filter((im): im is Img => Boolean(im))
           .map((im) => ({
@@ -1616,13 +1622,14 @@ export default function App() {
   // Unrate (u): clear the current frame's rating and delete the rating data we
   // wrote. A correction, not a verdict — stay on the frame (don't advance). No-op
   // if it's already unrated, so we never touch a sidecar for nothing.
-  // In grid multi-select with >1 selection, clears every selected frame's
-  // rating (skipping the already-unrated ones so the undo stack only carries
-  // actual reverts).
+  // In grid with a non-empty selection, clears every selected frame's rating
+  // (skipping already-unrated ones so the undo stack only carries real reverts),
+  // intersected with the active filter so it never touches an off-screen frame.
   const unrateCurrent = useCallback(() => {
-    if (gridVisible && selectedIndices.size > 1) {
-      const ids = Array.from(selectedIndices);
-      const changes = ids
+    if (gridVisible && selectedIndices.size >= 1) {
+      const visibleSet = new Set(visibleIndices);
+      const changes = Array.from(selectedIndices)
+        .filter((idx) => visibleSet.has(idx))
         .map((idx) => images[idx])
         .filter((im): im is Img => Boolean(im) && ratings[im.id] !== undefined)
         .map((im) => ({
@@ -1656,6 +1663,7 @@ export default function App() {
   }, [
     gridVisible,
     selectedIndices,
+    visibleIndices,
     images,
     currentIndex,
     ratings,
@@ -2063,7 +2071,11 @@ export default function App() {
         const b = visibleIndices.indexOf(i);
         let next: Set<number>;
         if (a === -1 || b === -1) {
+          // Anchor fell out of the filter — reseat it on the clicked cell so the
+          // NEXT shift-click extends from a valid in-filter anchor instead of
+          // collapsing to a single cell again.
           next = new Set([i]);
+          setSelectionAnchor(i);
         } else {
           const [lo, hi] = a < b ? [a, b] : [b, a];
           next = new Set();
@@ -2075,13 +2087,14 @@ export default function App() {
         return;
       }
       if (modifiers.ctrl) {
-        setSelectedIndices((prev) => {
-          const next = new Set(prev);
-          if (next.has(i)) next.delete(i);
-          else next.add(i);
-          return next;
-        });
-        setSelectionAnchor(i);
+        const next = new Set(selectedIndices);
+        if (next.has(i)) next.delete(i);
+        else next.add(i);
+        setSelectedIndices(next);
+        // Anchor tracks the last-interacted cell, but null it when the toggle
+        // emptied the set so a later shift-range can't extend from a
+        // no-longer-selected anchor.
+        setSelectionAnchor(next.size === 0 ? null : i);
         setCurrentIndex(i);
         return;
       }
@@ -2090,7 +2103,7 @@ export default function App() {
       setCurrentIndex(i);
       goToSite("loupe");
     },
-    [visibleIndices, selectionAnchor, clearMultiSelection, goToSite],
+    [visibleIndices, selectionAnchor, selectedIndices, clearMultiSelection, goToSite],
   );
 
   // Chrome-screen keyboard, phase-agnostic (settings can be opened before a
@@ -2337,28 +2350,40 @@ export default function App() {
           break;
         case "ArrowRight":
           e.preventDefault();
+          // In grid, isZooming is always false (Space-zoom is gated by
+          // !gridVisible, and entering grid calls resetZoom) — the pan() branch
+          // is live only for the shared loupe path. Grid arrows step one cell per
+          // OS key event (tap = one cell; hold = OS auto-repeat) and abandon any
+          // multi-selection, so the cursor and the rated frame stay in sync.
           if (isZooming) pan(PAN_STEP, 0);
-          // Grid: one cell per OS key event. Tap = one event (single cell).
-          // Hold = OS auto-repeat (~30Hz after a ~500ms delay) → smooth
-          // traversal without the loupe's rAF burst overshooting on a tap.
-          else if (gridVisible) advance(1);
-          else if (!e.repeat && heldDirRef.current === 0) startHold(1);
+          else if (gridVisible) {
+            clearMultiSelection();
+            advance(1);
+          } else if (!e.repeat && heldDirRef.current === 0) startHold(1);
           break;
         case "ArrowLeft":
           e.preventDefault();
           if (isZooming) pan(-PAN_STEP, 0);
-          else if (gridVisible) advance(-1);
-          else if (!e.repeat && heldDirRef.current === 0) startHold(-1);
+          else if (gridVisible) {
+            clearMultiSelection();
+            advance(-1);
+          } else if (!e.repeat && heldDirRef.current === 0) startHold(-1);
           break;
         case "ArrowUp":
           e.preventDefault();
           if (isZooming) pan(0, -PAN_STEP);
-          else if (gridVisible) advance(-1, gridCols); // jump up a row in the grid
+          else if (gridVisible) {
+            clearMultiSelection();
+            advance(-1, gridCols); // jump up a row in the grid
+          }
           break;
         case "ArrowDown":
           e.preventDefault();
           if (isZooming) pan(0, PAN_STEP);
-          else if (gridVisible) advance(1, gridCols); // jump down a row in the grid
+          else if (gridVisible) {
+            clearMultiSelection();
+            advance(1, gridCols); // jump down a row in the grid
+          }
           break;
         case "g":
         case "G":
@@ -2440,6 +2465,7 @@ export default function App() {
     challengerWins,
     challengerLoses,
     resetZoom,
+    clearMultiSelection,
   ]);
 
   // Register the window key listeners ONCE; dispatch through cullKeyRef so the
@@ -3077,10 +3103,10 @@ export default function App() {
             </button>
           </div>
         )}
-        {gridVisible && selectedIndices.size > 1 && (
+        {gridVisible && selectedIndices.size >= 1 && (
           <span
             className="cull-statusbar__multi"
-            title="multi-selection — rating keys apply to all selected"
+            title="selection — rating keys apply to all selected"
           >
             {selectedIndices.size} selected
           </span>

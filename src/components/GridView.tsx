@@ -3,6 +3,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   type RefObject,
@@ -33,11 +34,12 @@ export const GRID_CELL_TARGET = 168;
  *
  * ## Viewport reporting
  *
- * The currently-visible image-index range is reported via `onViewportChange`
- * (wired to `imageStore.setGridRange` in App) so the store prioritises
- * background thumbnail fill for cells the user is actually looking at. It fires
- * whenever the visible range moves, even on a pure scroll (which won't trigger
- * React renders for already-mounted cells).
+ * The rendered-window image-index range (visible rows plus GRID_BUFFER_ROWS of
+ * overscan each side) is reported via `onViewportChange` (wired to
+ * `imageStore.setGridRange` in App) so the store prioritises background
+ * thumbnail fill for cells at or near the viewport. It fires whenever that range
+ * moves, even on a pure scroll (which won't trigger React renders for
+ * already-mounted cells).
  */
 export const GridView = memo(function GridView({
   images,
@@ -88,6 +90,28 @@ export const GridView = memo(function GridView({
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
+  }, [containerRef]);
+
+  // rAF-throttle scroll → one scrollTop update per frame (mirrors the strip
+  // virtualizer), so a fling doesn't re-run this component's body many times per
+  // frame. Native passive listener; the prev===next guard skips a no-op render
+  // when a settled scroll lands on the same offset.
+  const scrollRafRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (scrollRafRef.current != null) return;
+      scrollRafRef.current = requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        setScrollTop((prev) => (prev === el.scrollTop ? prev : el.scrollTop));
+      });
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current);
+    };
   }, [containerRef]);
 
   const cellW = containerW > 0 ? Math.floor(containerW / cols) : GRID_CELL_TARGET;
@@ -141,11 +165,7 @@ export const GridView = memo(function GridView({
   }, [viewportFirst, viewportLast, onViewportChange]);
 
   return (
-    <div
-      className="cull-grid"
-      ref={containerRef}
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-    >
+    <div className="cull-grid" ref={containerRef}>
       <div className="cull-grid__inner" style={{ height: totalH }}>
         {cells.map(({ idx, row, col }) => (
           <GridCell
