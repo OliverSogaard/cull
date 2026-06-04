@@ -242,6 +242,7 @@ export default function App() {
   // would otherwise capture stale values.
   const savingRef = useRef(0);
   const failedCountRef = useRef(0);
+  const destroyedRef = useRef(false); // window.destroy() must fire at most once
   const failedCount = Object.keys(failedWrites).length;
 
   const [isZooming, setIsZooming] = useState(false);
@@ -715,14 +716,23 @@ export default function App() {
     if (!gridVisible) imageStore.clearGridRange();
   }, [gridVisible]);
 
-  // Esc out of review → discard the in-memory session and return Home. Ratings
-  // live on in the .xmp sidecars, so reopening the folder restores them.
+  // Esc out of review → discard the in-memory session and return Home.
+  // Successfully-saved ratings live on in the .xmp sidecars, so reopening the
+  // folder restores them (a write that's still failing stays flagged for manual
+  // retry on the home screen — it's not in the sidecar yet).
   const resetSession = useCallback(() => {
     // Session end: revoke ALL blob URLs (thumbs + full-res) and clear the store.
     imageStore.hardReset();
     setImages([]);
     setMetadata({});
     setRatings({});
+    // Drop the undo/redo history with the session it belonged to. The stacks hold
+    // imgIds + paths from THIS in-memory cull; the next-opened folder restarts
+    // imgIds at 0, so a stray Ctrl+Z would otherwise replay a stale action against
+    // a re-used imgId and durably write the WRONG folder's sidecar. (Refs are
+    // stable; declared further down but only read when this callback runs.)
+    undoStack.current = [];
+    redoStack.current = [];
     setCompareMode(false);
     setGridVisible(false);
     setNavStack([]);
@@ -1315,9 +1325,11 @@ export default function App() {
       if (!(path in f)) return f;
       const next = { ...f };
       delete next[path];
+      failedCountRef.current = Object.keys(next).length;
       return next;
     });
     setSavingCount((c) => c + 1);
+    savingRef.current += 1; // synchronous: the close guard reads this, not lagged state
     const cmd = rating === null ? "clear_xmp_rating" : "write_xmp_rating";
     const args = rating === null ? { path } : { path, rating };
 
@@ -1341,15 +1353,23 @@ export default function App() {
     writeQueue.current.set(path, next);
 
     next.then(
-      () => setSavingCount((c) => c - 1),
+      () => {
+        setSavingCount((c) => c - 1);
+        savingRef.current -= 1;
+      },
       (e) => {
         setSavingCount((c) => c - 1);
+        savingRef.current -= 1;
         // Only the latest write to this path may stamp a failure; a superseded
         // older write failing must not resurrect an "unsaved" flag the newer
         // (successful) write already cleared.
         if (isLatest()) {
           console.error(`${cmd} failed permanently`, path, e);
-          setFailedWrites((f) => ({ ...f, [path]: rating }));
+          setFailedWrites((f) => {
+            const next = { ...f, [path]: rating };
+            failedCountRef.current = Object.keys(next).length;
+            return next;
+          });
         }
       },
     );
@@ -1361,13 +1381,10 @@ export default function App() {
     Object.entries(failedWrites).forEach(([path, rating]) => persistRating(path, rating));
   }, [failedWrites, persistRating]);
 
-  // Keep the close-handler's mirrors current.
-  useEffect(() => {
-    savingRef.current = savingCount;
-  }, [savingCount]);
-  useEffect(() => {
-    failedCountRef.current = failedCount;
-  }, [failedCount]);
+  // savingRef / failedCountRef are maintained SYNCHRONOUSLY inside persistRating
+  // (above) rather than via a passive effect, so the once-registered close handler
+  // can never read a stale zero in the commit-lag window right after a rating
+  // keystroke — which would otherwise let the window close with a write in flight.
 
   // Quit guard: never let the window close while a rating is still saving or has
   // failed to save. Registered once; reads live state via refs. "cancel and warn"
@@ -1446,9 +1463,12 @@ export default function App() {
   }, []);
 
   // Once a guarded close has flushed everything, finish closing automatically.
+  // destroyedRef makes destroy() fire at most once (a stray re-trigger during the
+  // async teardown would otherwise reject); .catch swallows the unhandled rejection.
   useEffect(() => {
-    if (quitGuard && savingCount === 0 && failedCount === 0) {
-      getCurrentWindow().destroy();
+    if (quitGuard && savingCount === 0 && failedCount === 0 && !destroyedRef.current) {
+      destroyedRef.current = true;
+      getCurrentWindow().destroy().catch(() => {});
     }
   }, [quitGuard, savingCount, failedCount]);
 
@@ -1516,10 +1536,17 @@ export default function App() {
     const action = redoStack.current.pop();
     if (!action) return;
     applyChanges(action.changes.map((c) => ({ imgId: c.imgId, path: c.path, rating: c.after })));
-    // Redo doesn't restore the cursor: the user's now in a fresh context and
-    // re-applying the rating change there is the useful intent. Land on the
-    // crowned/kept frame (last change) — not the rejected old champion (changes[0]).
-    if (!compareMode) {
+    // Compound compare actions snapshot where the crown LANDS (cursorAfter) so a
+    // redo re-crowns the NEW champion instead of leaving the old (now-rejected)
+    // one in the compare pane. Single-frame rates have no cursorAfter: land on the
+    // crowned/kept frame (last change) in the loupe, as before.
+    if (action.cursorAfter) {
+      setCompareMode(action.cursorAfter.compareMode);
+      if (action.cursorAfter.compareMode) setGridVisible(false);
+      setChampionIndex(action.cursorAfter.championIndex);
+      setChallengerIndex(action.cursorAfter.challengerIndex);
+      setCurrentIndex(action.cursorAfter.currentIndex);
+    } else if (!compareMode) {
       const landId = action.changes[action.changes.length - 1].imgId;
       const idx = images.findIndex((im) => im.id === landId);
       if (idx !== -1) setCurrentIndex(idx);
@@ -1546,7 +1573,10 @@ export default function App() {
             path: im.path,
             before: ratings[im.id],
             after: rating,
-          }));
+          }))
+          // Skip cells already at this rating — no redundant write, no dead
+          // before===after entry in the action (mirrors unrateCurrent's guard).
+          .filter((c) => c.before !== c.after);
         if (changes.length === 0) return;
         recordAction({ changes });
         setRatings((prev) => {
@@ -1573,6 +1603,16 @@ export default function App() {
       if (gridVisible && pos === -1) return;
       const nextTarget =
         pos !== -1 && pos + 1 < visibleIndices.length ? visibleIndices[pos + 1] : null;
+
+      // Re-pressing the same verdict on an already-rated frame changes nothing on
+      // disk or in state: skip the redundant sidecar write (an fsync round-trip on
+      // the NAS) and the dead before===after undo entry (which would also wipe a
+      // pending redo). Still flash + advance so the keyboard-fast flow is unchanged.
+      if (ratings[cur.id] === rating) {
+        flashFeedback(rating, cur.id);
+        if (nextTarget !== null) setCurrentIndex(nextTarget);
+        return;
+      }
 
       recordAction({
         changes: [{ imgId: cur.id, path: cur.path, before: ratings[cur.id], after: rating }],
@@ -1845,6 +1885,9 @@ export default function App() {
   const challengerLoses = useCallback(() => {
     const challImg = images[challengerIndex];
     if (!challImg) return;
+    const next: Record<number, Rating> = { ...ratings, [challImg.id]: "reject" };
+    const nextChallenger = nearestUnrated(challengerIndex, next, championIndex);
+    const exiting = nextChallenger === -1;
     recordAction({
       changes: [
         { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "reject" },
@@ -1856,13 +1899,16 @@ export default function App() {
         currentIndex,
         navStack: [...navStackRef.current],
       },
+      // Champion is unchanged; redo just lands on the next challenger (or leaves
+      // compare on the last-frame auto-exit, landing on the champion).
+      cursorAfter: exiting
+        ? { compareMode: false, championIndex, challengerIndex, currentIndex: championIndex }
+        : { compareMode: true, championIndex, challengerIndex: nextChallenger, currentIndex },
     });
     flashFeedback("reject", challImg.id);
     persistRating(challImg.path, "reject");
-    const next: Record<number, Rating> = { ...ratings, [challImg.id]: "reject" };
     setRatings(next);
-    const nextChallenger = nearestUnrated(challengerIndex, next, championIndex);
-    if (nextChallenger === -1) {
+    if (exiting) {
       // No more candidates — pop back to whichever site we came from, landing on
       // the (unchanged) champion. ESC after this lands further up the stack.
       goBack(championIndex);
@@ -1886,6 +1932,14 @@ export default function App() {
     const champImg = images[championIndex];
     const challImg = images[challengerIndex];
     if (!champImg || !challImg) return;
+    const next: Record<number, Rating> = {
+      ...ratings,
+      [champImg.id]: "reject",
+      [challImg.id]: "keep",
+    };
+    const newChamp = challengerIndex;
+    const nextChallenger = nearestUnrated(newChamp, next, newChamp);
+    const exiting = nextChallenger === -1;
     recordAction({
       changes: [
         { imgId: champImg.id, path: champImg.path, before: ratings[champImg.id], after: "reject" },
@@ -1898,20 +1952,18 @@ export default function App() {
         currentIndex,
         navStack: [...navStackRef.current],
       },
+      // Where the crown lands, so a redo re-crowns the new champion (not the
+      // just-rejected old one). On the last-frame auto-exit we leave compare.
+      cursorAfter: exiting
+        ? { compareMode: false, championIndex: newChamp, challengerIndex, currentIndex: newChamp }
+        : { compareMode: true, championIndex: newChamp, challengerIndex: nextChallenger, currentIndex },
     });
     flashFeedback("keep", challImg.id);
     persistRating(champImg.path, "reject"); // dethroned
     persistRating(challImg.path, "keep"); // crowned
-    const next: Record<number, Rating> = {
-      ...ratings,
-      [champImg.id]: "reject",
-      [challImg.id]: "keep",
-    };
     setRatings(next);
-    const newChamp = challengerIndex;
     setChampionIndex(newChamp);
-    const nextChallenger = nearestUnrated(newChamp, next, newChamp);
-    if (nextChallenger === -1) {
+    if (exiting) {
       // Crowned the last unrated frame — pop back to where the user came from,
       // landing on the new keeper. Pass newChamp explicitly: goBack's own closure
       // still holds the OLD (just-rejected) champion. (Auto-exit, like ESC.)
@@ -2138,6 +2190,16 @@ export default function App() {
       // the phase-agnostic effect above. While the settings modal is open,
       // swallow all cull keys here so nothing slips through behind it.
       if (settingsOpen) return;
+      // The quit-guard overlay owns the keyboard while it's up: Esc = keep culling
+      // (dismiss), everything else is swallowed so a rating/undo can't be enqueued
+      // behind a "we're closing" modal or race the auto-close-after-flush.
+      if (quitGuard) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setQuitGuard(false);
+        }
+        return;
+      }
       if (phase !== "culling") return; // chrome screens are button-driven
 
       // Bare modifier presses (Ctrl/Shift/Alt/Meta alone) carry no cull action —
@@ -2432,6 +2494,7 @@ export default function App() {
     settingsOpen,
     helpVisible,
     confirmHome,
+    quitGuard,
     isZooming,
     pan,
     leaveToHome,
@@ -2492,7 +2555,11 @@ export default function App() {
               </button>
               <button
                 className="cull-pick-button cull-quitguard__danger"
-                onClick={() => getCurrentWindow().destroy()}
+                onClick={() => {
+                  if (destroyedRef.current) return;
+                  destroyedRef.current = true;
+                  getCurrentWindow().destroy().catch(() => {});
+                }}
               >
                 close anyway
               </button>
@@ -3296,7 +3363,7 @@ export default function App() {
             </div>
             <div className="cull-quitguard__body">
               {failedCount > 0
-                ? `${failedCount} rating${failedCount > 1 ? "s have" : " has"} not saved to disk yet (the sidecar write keeps failing). Leaving won't lose ${failedCount > 1 ? "them" : "it"} from the retry queue, but it's safer to stay and retry first. Saved picks live in .xmp sidecars.`
+                ? `${failedCount} rating${failedCount > 1 ? "s have" : " has"} not saved to disk yet (the sidecar write keeps failing). Leaving won't lose ${failedCount > 1 ? "them" : "it"} — the unsaved flag stays on the home screen so you can retry saving from there, but it's safer to stay and retry first.`
                 : "This clears the current session and returns to the start screen. Your ratings are saved in .xmp sidecars, so reopening the folder restores them."}
             </div>
             <div className="cull-quitguard__actions">

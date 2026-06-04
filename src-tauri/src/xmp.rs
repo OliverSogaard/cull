@@ -47,8 +47,10 @@ fn atomic_write_xmp(xmp_path: &Path, contents: &str) -> Result<(), String> {
     let seq = XMP_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp_path = xmp_path.with_extension(format!("xmp.{seq}.tmp"));
     // Write + flush + fsync the temp so its bytes are durable on disk BEFORE the
-    // rename — otherwise a power loss right after the rename can leave the new
-    // directory entry pointing at an unflushed (zero/garbage) file.
+    // rename — the rename can then never publish a half-written file. (We don't
+    // fsync the parent dir: opening a directory handle for fsync isn't portable on
+    // the Windows/NTFS target, and NTFS journals the rename's metadata. Over
+    // SMB/NFS full rename durability also depends on the server committing it.)
     {
         let mut f = std::fs::File::create(&tmp_path).map_err(|e| format!("create tmp xmp: {e}"))?;
         f.write_all(contents.as_bytes())
@@ -76,6 +78,14 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
     };
 
     let contents = apply_rating_to_xmp(&base, &rating)?;
+    // Re-rating to the value already on disk (idempotent retries, a same-key
+    // re-press) needs no write — skip the temp+fsync+rename round-trip, which is
+    // the expensive part on the NAS this design targets. A brand-new sidecar always
+    // differs from fresh_xmp() (a flag was added), so that path still writes.
+    if contents == base {
+        eprintln!("[cull] write_xmp_rating({}): {rating} (unchanged, skipped)", xmp_path.display());
+        return Ok(());
+    }
     atomic_write_xmp(&xmp_path, &contents)?;
     eprintln!("[cull] write_xmp_rating({}): {rating}", xmp_path.display());
     Ok(())
@@ -119,8 +129,12 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
         return Ok(());
     }
 
-    atomic_write_xmp(&xmp_path, &stripped)?;
-    eprintln!("[cull] clear_xmp_rating({}): stripped rating", xmp_path.display());
+    // Nothing of CULL's to strip (e.g. already unrated but the sidecar holds user
+    // data) → no write. Only pay the temp+fsync+rename when bytes actually change.
+    if stripped != existing {
+        atomic_write_xmp(&xmp_path, &stripped)?;
+        eprintln!("[cull] clear_xmp_rating({}): stripped rating", xmp_path.display());
+    }
     Ok(())
 }
 
@@ -466,8 +480,11 @@ fn classify_xmp(content: &str) -> Option<String> {
         Some(_) => return None, // pick == 0 → explicitly unflagged
         None => {}
     }
-    // Backward-compat with the pre-flag CULL scheme.
-    if content.contains("Cull") {
+    // Backward-compat with the pre-flag CULL scheme. Gate on the SAME tight marker
+    // the destructive paths use (not a bare "Cull" substring) so a third-party
+    // sidecar that merely mentions "Cull" (a surname, place, keyword) plus a real
+    // user 5★ isn't misread as a CULL favorite.
+    if authored_by_cull(content) {
         return match star {
             Some(-1) => Some("reject".to_string()),
             Some(5) => Some("favorite".to_string()),
@@ -554,12 +571,26 @@ mod tests {
         assert_eq!(classify_xmp("no markers here").as_deref(), None);
     }
 
-    /// Older CULL sidecars (Rating-only + Cull marker) still resume.
+    /// Older CULL sidecars (Rating-only + Cull marker) still resume. The marker
+    /// must be CULL's own (x:xmptk / CreatorTool / xmlns:cull) — a bare "Cull"
+    /// substring no longer qualifies (see classify_xmp's authored_by_cull gate).
     #[test]
     fn backward_compat_old_scheme() {
-        assert_eq!(classify_xmp("Cull <xmp:Rating>5</xmp:Rating>").as_deref(), Some("favorite"));
-        assert_eq!(classify_xmp("Cull 1.0 xmp:Rating=\"0\"").as_deref(), Some("keep"));
-        assert_eq!(classify_xmp("Cull <xmp:Rating>-1</xmp:Rating>").as_deref(), Some("reject"));
+        assert_eq!(
+            classify_xmp("x:xmptk=\"Cull 1.0\" <xmp:Rating>5</xmp:Rating>").as_deref(),
+            Some("favorite")
+        );
+        assert_eq!(
+            classify_xmp("x:xmptk=\"Cull 1.0\" xmp:Rating=\"0\"").as_deref(),
+            Some("keep")
+        );
+        assert_eq!(
+            classify_xmp("x:xmptk=\"Cull 1.0\" <xmp:Rating>-1</xmp:Rating>").as_deref(),
+            Some("reject")
+        );
+        // A stranger's sidecar that merely mentions "Cull" + a genuine 5★ is NOT
+        // misclassified as a CULL favorite.
+        assert_eq!(classify_xmp("photographer: Cullen <xmp:Rating>5</xmp:Rating>"), None);
     }
 
     /// Unrate strips CULL's fields; a fresh CULL sidecar becomes deletable.

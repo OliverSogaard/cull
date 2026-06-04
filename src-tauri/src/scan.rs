@@ -153,6 +153,22 @@ pub(crate) async fn analyze_folder(
         let Ok(entries) = std::fs::read_dir(dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
+            // Sweep crash-orphaned atomic-write temps ("<base>.xmp.<seq>.tmp") left
+            // behind if the process died between temp-create and rename. Match only
+            // CULL's exact shape so another tool's *.tmp is never touched. Best-effort.
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(stem) = name.strip_suffix(".tmp") {
+                    if let Some((head, seq)) = stem.rsplit_once('.') {
+                        if head.ends_with(".xmp")
+                            && !seq.is_empty()
+                            && seq.bytes().all(|b| b.is_ascii_digit())
+                        {
+                            let _ = std::fs::remove_file(&path);
+                            continue;
+                        }
+                    }
+                }
+            }
             if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xmp")) {
                 xmp_stems.insert(path.with_extension("").to_string_lossy().to_lowercase());
                 continue;
