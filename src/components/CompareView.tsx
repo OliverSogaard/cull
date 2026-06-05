@@ -5,6 +5,7 @@ import { CompareExifRail } from "./ExifRail";
 import { RatingDot } from "./RatingDot";
 import { useImage } from "../image/useImage";
 import { imageStore } from "../image/imageStore";
+import { afZoomOrigin } from "../utils/zoom";
 
 /**
  * Compare mode: champion (left, green) vs challenger (right, amber).
@@ -59,10 +60,7 @@ export function CompareView({
   const challenger = images[challengerIndex];
   if (!champion || !challenger) return null;
 
-  const afX = metadata[champion.path]?.afXPct ?? 50;
-  const afY = metadata[champion.path]?.afYPct ?? 50;
-  const originX = Math.max(0, Math.min(100, afX + panOffset.x));
-  const originY = Math.max(0, Math.min(100, afY + panOffset.y));
+  const { x: originX, y: originY } = afZoomOrigin(metadata[champion.path], panOffset);
 
   return (
     <div className="cull-cmp">
@@ -378,7 +376,7 @@ const ComparePanel = memo(function ComparePanel({
 
         {rating && !suppressRating && (
           <div className="cull-cmp-dot">
-            <RatingDot rating={rating} size="md" />
+            <RatingDot rating={rating} />
           </div>
         )}
       </div>

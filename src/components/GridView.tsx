@@ -4,10 +4,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode,
   type RefObject,
 } from "react";
-import { Check, Star, X as XIcon } from "lucide-react";
+import { Star } from "lucide-react";
+import { verdictDotClass, verdictGlyph } from "./verdictGlyph";
 import type { Img, ImageMetadata, Rating } from "../types";
 import { stripExt } from "../utils/path";
 import { hasLrcRating } from "../utils/ratingColor";
@@ -217,24 +217,9 @@ const GridCell = memo(function GridCell({
   // Thumbnail + pinned shimmer phase, shared with the strip's ThumbCell.
   const { url, shimmerDelayMs } = useThumb(img.path);
   const isReject = rating === "reject";
-  // Verdict glyph as a Lucide SVG icon (not Unicode) so it centers cleanly
-  // inside the 18px dot — Unicode metrics drift across system fonts.
-  const dotIcon: ReactNode =
-    rating === "keep" ? (
-      <Check size={12} color="#0a0a0c" strokeWidth={3} />
-    ) : rating === "reject" ? (
-      <XIcon size={12} color="#0a0a0c" strokeWidth={3} />
-    ) : rating === "favorite" ? (
-      <Star size={12} color="#0a0a0c" strokeWidth={2.6} fill="#0a0a0c" />
-    ) : null;
-  const dotClass =
-    rating === "keep"
-      ? "cull-grid__dot--keep"
-      : rating === "reject"
-      ? "cull-grid__dot--reject"
-      : rating === "favorite"
-      ? "cull-grid__dot--fav"
-      : "";
+  // Verdict glyph + colour modifier for the dot (shared with the strip's ThumbCell).
+  const dotIcon = verdictGlyph(rating, 12);
+  const dotClass = verdictDotClass(rating, "cull-grid__dot");
   const showLrc = hasLrcRating(lrcRating, rating);
   const cellClass = [
     "cull-grid__cell",

@@ -6,13 +6,18 @@
 //! ```text
 //!   reject   → xmpDM:pick="-1"  xmpDM:good="false"
 //!   keep     → xmpDM:pick="1"   xmpDM:good="true"
-//!   favorite → xmpDM:pick="1"   xmpDM:good="true"  + xmp:Rating="1"
+//!   favorite → xmpDM:pick="1"   xmpDM:good="true"  + cull:fav
 //! ```
 //!
-//! The pick flag means "survived the cull"; the 1★ marks favorites. Stars 2–5
-//! are the user's LrC edit-pass ratings and are NEVER touched by CULL. Flags
-//! ride in the xmpDM (Dynamic Media) namespace exactly as LrC writes them, so
-//! picks / rejects / favorites round-trip into Lightroom and back.
+//! The pick flag means "survived the cull". Favorites carry a CULL-private
+//! `cull:fav` marker (see `CULL_NS` below): "star" = CULL added a courtesy 1★ to a
+//! frame with no user rating; "flag" = the favorite rides the user's existing
+//! 1–5★ and `xmp:Rating` is left untouched. The marker disambiguates CULL's
+//! favorite stamp from a user's Lightroom star (they used to collide at
+//! `xmp:Rating="1"`). Stars 2–5 are the user's LrC edit-pass ratings and are
+//! NEVER touched by CULL. The pick/good flags ride in the xmpDM (Dynamic Media)
+//! namespace exactly as LrC writes them, so picks / rejects / favorites
+//! round-trip into Lightroom and back.
 //!
 //! ## Invariant
 //!

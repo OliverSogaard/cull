@@ -104,13 +104,17 @@ rename. A unique process-wide sequence number on the temp filename
 share a temp name and never interleave into one corrupt temp; the last
 rename wins with a valid file.
 
-The XMP schema mirrors what Lightroom Classic writes (see the table in
-README). User 2–5★ ratings (LrC's edit-pass column) are never touched —
-favorite-demote on a 3★ keep keeps the 3★ intact.
+The XMP schema uses Lightroom-Classic-compatible pick/good/star flags plus a
+CULL-private `cull:fav` marker (star vs flag) so CULL can tell its own courtesy
+favorite 1★ from a user's LrC 1–5★ star (see the table in README). User 2–5★
+ratings (LrC's edit-pass column) are never touched — favorite-demote on a 3★
+keep keeps the 3★ intact.
 
-`unrate` ("u") strips CULL's pick + good + 1★ from the sidecar; if the
-remaining sidecar carries no other user data and was authored by CULL
-originally, the whole file is removed so unrating leaves no litter.
+`unrate` ("u") strips CULL's pick + good flags and removes the favorite 1★ only
+when CULL owned it (`cull:fav="star"`); a user's own star — including a genuine
+1★ — is preserved. If the remaining sidecar carries no other user data and was
+authored by CULL originally, the whole file is removed so unrating leaves no
+litter.
 
 ## Site navigation: stack-based ESC
 

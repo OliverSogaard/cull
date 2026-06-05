@@ -28,6 +28,35 @@ export function formatWhiteBalance(v: number | null): string | null {
   return v === 0 ? "AWB" : v === 1 ? "WB manual" : null;
 }
 
+/** `ƒ/2.8`. */
+export function formatAperture(f: number | null): string | null {
+  return f != null ? `ƒ/${f}` : null;
+}
+
+/** ISO as a plain string — `400`. */
+export function formatIso(iso: number | null): string | null {
+  return iso != null ? `${iso}` : null;
+}
+
+/** Focal length, no decimals — `50 mm`. */
+export function formatFocal(mm: number | null): string | null {
+  return mm != null ? `${mm.toFixed(0)} mm` : null;
+}
+
+/** Exposure bias without the trailing " EV" — for rows already labelled "EV". */
+export function formatExposureBiasShort(ev: number | null): string | null {
+  const s = formatExposureBias(ev);
+  return s ? s.replace(/ EV$/, "") : null;
+}
+
+/** Capture time `HH:MM:SS` in the user's locale, from an ISO string. */
+export function formatTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 /**
  * Casual relative-time formatter for the home-screen recents list. Matches the
  * mockup's tone ("2 hours ago", "yesterday", "3 days ago") rather than the

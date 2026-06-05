@@ -17,10 +17,12 @@
 //!
 //! Because ftyp + moov + the preview uuid all sit before mdat, and the full-res
 //! JPEG is the very first thing inside mdat, a single large read from offset 0
-//! captures the preview, the thumbnail and all metadata at once — `read_bundle`
-//! exploits this so each cull step is ONE open + (usually) ONE read, which is the
-//! difference between snappy and sluggish on a high-latency NAS. Orientation is
-//! applied by splicing an EXIF tag into the JPEGs (no decode/re-encode).
+//! captures the full-res preview and all metadata at once — `read_bundle` exploits
+//! this so each cull step is ONE open + (usually) ONE read, the difference between
+//! snappy and sluggish on a high-latency NAS. The 160×120 THMB is NOT part of that
+//! read: filmstrip thumbnails are fetched separately by `read_thumbnail` (a small
+//! moov-head read on its own bounded pool). Orientation is applied by splicing an
+//! EXIF tag into the JPEGs (no decode/re-encode).
 //!
 //! INVARIANT: read-only. Never writes to the CR3.
 
@@ -84,14 +86,20 @@ fn jpeg_in_box(d: &[u8], start: usize, end: usize, want: &[u8; 4]) -> Option<Vec
     let hi = end.min(d.len());
     let mut i = start;
     while i + 8 <= hi {
-        if &d[i..i + 4] == want {
-            let box_start = i.checked_sub(4)?;
+        // Jump to the next candidate first byte instead of scanning every byte
+        // (mirrors jpeg_extent's memchr idiom). Same bound + first-match semantics.
+        let p = i + memchr::memchr(want[0], &d[i..hi])?;
+        if p + 8 > hi {
+            break; // no room left for a box header + payload
+        }
+        if &d[p..p + 4] == want {
+            let box_start = p.checked_sub(4)?;
             let size = be_u32(d, box_start)? as usize;
             let box_end = (box_start + size).min(hi);
-            let soi = find_soi(d, i + 4, box_end)?;
+            let soi = find_soi(d, p + 4, box_end)?;
             return Some(d[soi..box_end].to_vec());
         }
-        i += 1;
+        i = p + 1;
     }
     None
 }
@@ -107,9 +115,8 @@ pub fn preview_jpeg(d: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Locate the content bytes of a CMT box (CMT1/2/3/4) given the [start, end)
-/// range that directly contains the Canon metadata uuid box(es). Returns the
-/// TIFF blob (II/MM header onward). Works whether `d` is a full-file/pre-mdat
-/// buffer (call via `cmt_tiff`) or a moov-content buffer (uuid at top level).
+/// range that directly contains the Canon metadata uuid box(es) — i.e. the moov
+/// content range. Returns the TIFF blob (II/MM header onward).
 fn cmt_in_uuid_range<'a>(d: &'a [u8], start: usize, end: usize, cmt: &[u8; 4]) -> Option<&'a [u8]> {
     for (fourcc, cs, ce) in boxes(d, start, end) {
         if &fourcc == b"uuid" && ce - cs >= 16 {
@@ -121,16 +128,6 @@ fn cmt_in_uuid_range<'a>(d: &'a [u8], start: usize, end: usize, cmt: &[u8; 4]) -
         }
     }
     None
-}
-
-/// Locate a CMT box inside moov → Canon uuid, from a buffer in which the moov
-/// box is present with its header (full file or pre-mdat prefix).
-fn cmt_tiff<'a>(d: &'a [u8], cmt: &[u8; 4]) -> Option<&'a [u8]> {
-    let (mstart, mend) = boxes(d, 0, d.len())
-        .into_iter()
-        .find(|(f, _, _)| f == b"moov")
-        .map(|(_, cs, ce)| (cs, ce))?;
-    cmt_in_uuid_range(d, mstart, mend, cmt)
 }
 
 /// Byte size of one component of a TIFF field type (0 = unknown).
@@ -284,11 +281,6 @@ fn orientation_from_cmt1(cmt1: Option<&[u8]>) -> u32 {
         })
         .map(|o| o as u32)
         .unwrap_or(1)
-}
-
-/// EXIF Orientation (CMT1 IFD0, tag 0x0112) from a full-file / pre-mdat buffer.
-pub fn orientation(d: &[u8]) -> u32 {
-    orientation_from_cmt1(cmt_tiff(d, b"CMT1"))
 }
 
 // ── EXIF orientation injection ───────────────────────────────────────────────
@@ -565,8 +557,8 @@ pub fn read_bundle(path: &str) -> std::io::Result<Bundle> {
     // Ensure the (small) moov box is fully buffered before parsing it.
     while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 4 << 20, flen)? {}
 
-    let orient = orientation(&buf);
     let meta = metadata_from_prefix(&buf);
+    let orient = meta.orientation; // parsed once in metadata_from_prefix; reuse it
     let preview = with_exif_orientation(read_fullres_from(&mut f, &mut buf, flen)?, orient);
 
     Ok(Bundle { preview, meta, orientation: orient, file_size: flen as u64 })
@@ -587,11 +579,14 @@ pub struct Thumbnail {
 }
 
 /// Display dimensions: the EXIF sensor `pixel_width/height` are stored in the
-/// UNrotated sensor frame; for the 90°/270° orientations the displayed image is
-/// transposed, so swap.
+/// UNrotated sensor frame; only the 90°/270° orientations (6/8) — the ones
+/// `with_exif_orientation` actually rotates — display transposed, so swap for
+/// those alone. (Mirror orientations 2/4/5/7 are never emitted by Canon and are
+/// passed through un-rotated, so they must NOT swap or the placeholder aspect
+/// would disagree with the painted JPEG.)
 fn display_dims(orient: u32, pw: Option<u32>, ph: Option<u32>) -> (Option<u32>, Option<u32>) {
     match orient {
-        5..=8 => (ph, pw),
+        6 | 8 => (ph, pw),
         _ => (pw, ph),
     }
 }
@@ -605,10 +600,10 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
     const MOOV_SCAN_CAP: usize = 64 << 20; // bound the hunt on malformed input (OOM/DoS)
     let (mut buf, mut f, flen) = read_head(path, HEAD)?;
     while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 2 << 20, flen)? {}
-    let orient = orientation(&buf);
     let raw = thumbnail_from_prefix(&buf).ok_or_else(|| io_err("no thumbnail box"))?;
-    // The moov head already holds the CMT TIFF, so the EXIF pixel dims come free.
+    // The moov head already holds the CMT TIFF, so orientation + EXIF pixel dims come free.
     let meta = metadata_from_prefix(&buf);
+    let orient = meta.orientation;
     let (width, height) = display_dims(orient, meta.pixel_width, meta.pixel_height);
     Ok(Thumbnail {
         jpeg: with_exif_orientation(raw, orient),
@@ -640,6 +635,7 @@ pub struct Cr3Meta {
     pub drive_mode: Option<u32>,    // Canon ContinuousDrive (0 = single, else continuous)
     pub pixel_width: Option<u32>,   // Exif 0xA002 PixelXDimension (main image)
     pub pixel_height: Option<u32>,  // Exif 0xA003 PixelYDimension
+    pub orientation: u32,           // EXIF Orientation (CMT1 0x0112); 1 = upright
 }
 
 /// Parse EXIF + active-AF metadata from a prefix buffer that contains the moov
@@ -648,10 +644,15 @@ pub struct Cr3Meta {
 /// CMT3 = Canon MakerNote (AFInfo2); CMT4 = GPS IFD.
 fn metadata_from_prefix(d: &[u8]) -> Cr3Meta {
     let mut m = Cr3Meta::default();
-    let Some((ms, me)) = moov_range(d) else { return m };
-    let orientation = orientation_from_cmt1(cmt_in_uuid_range(d, ms, me, b"CMT1"));
+    let Some((ms, me)) = moov_range(d) else {
+        m.orientation = 1; // no moov → upright fallback (matches a missing CMT1)
+        return m;
+    };
+    // Locate CMT1 once; reuse the slice for both orientation and the camera tag.
+    let cmt1 = cmt_in_uuid_range(d, ms, me, b"CMT1");
+    m.orientation = orientation_from_cmt1(cmt1);
 
-    if let Some(t) = cmt_in_uuid_range(d, ms, me, b"CMT1").and_then(Tiff::new) {
+    if let Some(t) = cmt1.and_then(Tiff::new) {
         if let Some(ifd) = t.ifd0() {
             m.camera = t.ascii(ifd, 0x0110);
         }
@@ -677,7 +678,7 @@ fn metadata_from_prefix(d: &[u8]) -> Cr3Meta {
         }
     }
     if let Some(t) = cmt_in_uuid_range(d, ms, me, b"CMT3").and_then(Tiff::new) {
-        if let Some((x, y)) = af_display(&t, orientation) {
+        if let Some((x, y)) = af_display(&t, m.orientation) {
             m.af_x_pct = Some(x);
             m.af_y_pct = Some(y);
         }
@@ -887,13 +888,18 @@ mod tests {
         assert!(thumb.starts_with(&[0xFF, 0xD8]), "thumb missing SOI");
     }
 
-    /// display_dims swaps width/height for the 90°/270° orientations only.
+    /// display_dims swaps width/height for the 90°/270° orientations (6/8) only —
+    /// the ones with_exif_orientation actually rotates. 1/3 (upright/180°) and the
+    /// never-emitted, un-rotated mirror values 5/7 must NOT swap.
     #[test]
     fn display_dims_swaps_for_rotated_orientations() {
         assert_eq!(display_dims(1, Some(6000), Some(4000)), (Some(6000), Some(4000)));
         assert_eq!(display_dims(3, Some(6000), Some(4000)), (Some(6000), Some(4000)));
         assert_eq!(display_dims(6, Some(6000), Some(4000)), (Some(4000), Some(6000)));
         assert_eq!(display_dims(8, Some(6000), Some(4000)), (Some(4000), Some(6000)));
+        // Mirror orientations are passed through un-rotated, so dims stay as-is.
+        assert_eq!(display_dims(5, Some(6000), Some(4000)), (Some(6000), Some(4000)));
+        assert_eq!(display_dims(7, Some(6000), Some(4000)), (Some(6000), Some(4000)));
     }
 
     // Exercises read_bundle over every .CR3 in a directory, validating each and

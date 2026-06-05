@@ -1,8 +1,12 @@
 import { useMemo } from "react";
 import type { ImageMetadata, Rating } from "../types";
 import {
-  formatExposureBias,
+  formatAperture,
+  formatExposureBiasShort,
+  formatFocal,
+  formatIso,
   formatShutter,
+  formatTime,
   formatWhiteBalance,
 } from "../utils/format";
 import { hasLrcRating } from "../utils/ratingColor";
@@ -30,11 +34,9 @@ export function ExifRail({
   const body = meta?.camera ?? null;
   const lens = meta?.lens ?? null;
   const captured = meta?.capturedAt ?? null;
+  const timeStr = formatTime(captured);
   const date = captured ? new Date(captured) : null;
   const dateOK = date && !Number.isNaN(date.getTime());
-  const timeStr = dateOK
-    ? date!.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-    : null;
   const dateStr = dateOK
     ? date!.toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" })
     : null;
@@ -43,13 +45,11 @@ export function ExifRail({
 
   // Exposure section
   const shutter = formatShutter(meta?.shutterSeconds ?? null);
-  const aperture = meta?.aperture != null ? `ƒ/${meta.aperture}` : null;
-  const iso = meta?.iso != null ? `${meta.iso}` : null;
-  const focal = meta?.focalLengthMm != null ? `${meta.focalLengthMm.toFixed(0)} mm` : null;
-  // The row label is already "EV", so drop the redundant " EV" suffix
-  // formatExposureBias appends. Leaves the sign / ±0 intact.
-  const evRaw = formatExposureBias(meta?.exposureBias ?? null);
-  const ev = evRaw ? evRaw.replace(/ EV$/, "") : null;
+  const aperture = formatAperture(meta?.aperture ?? null);
+  const iso = formatIso(meta?.iso ?? null);
+  const focal = formatFocal(meta?.focalLengthMm ?? null);
+  // The row label is already "EV", so use the suffix-less formatter.
+  const ev = formatExposureBiasShort(meta?.exposureBias ?? null);
   const wb = formatWhiteBalance(meta?.whiteBalance ?? null);
 
   return (
@@ -178,27 +178,24 @@ export function CompareExifRail({
       },
       {
         k: "Aperture",
-        a: championMeta?.aperture != null ? `ƒ/${championMeta.aperture}` : "—",
-        b: challengerMeta?.aperture != null ? `ƒ/${challengerMeta.aperture}` : "—",
+        a: formatAperture(championMeta?.aperture ?? null) ?? "—",
+        b: formatAperture(challengerMeta?.aperture ?? null) ?? "—",
       },
       {
         k: "ISO",
-        a: championMeta?.iso != null ? `${championMeta.iso}` : "—",
-        b: challengerMeta?.iso != null ? `${challengerMeta.iso}` : "—",
+        a: formatIso(championMeta?.iso ?? null) ?? "—",
+        b: formatIso(challengerMeta?.iso ?? null) ?? "—",
       },
       {
         k: "Focal",
-        a: championMeta?.focalLengthMm != null ? `${championMeta.focalLengthMm.toFixed(0)} mm` : "—",
-        b:
-          challengerMeta?.focalLengthMm != null
-            ? `${challengerMeta.focalLengthMm.toFixed(0)} mm`
-            : "—",
+        a: formatFocal(championMeta?.focalLengthMm ?? null) ?? "—",
+        b: formatFocal(challengerMeta?.focalLengthMm ?? null) ?? "—",
       },
       {
         k: "EV",
-        // Drop the redundant " EV" suffix — the row label already says EV.
-        a: (formatExposureBias(championMeta?.exposureBias ?? null) ?? "—").replace(/ EV$/, ""),
-        b: (formatExposureBias(challengerMeta?.exposureBias ?? null) ?? "—").replace(/ EV$/, ""),
+        // Row label already says EV → suffix-less formatter.
+        a: formatExposureBiasShort(championMeta?.exposureBias ?? null) ?? "—",
+        b: formatExposureBiasShort(challengerMeta?.exposureBias ?? null) ?? "—",
       },
       {
         k: "WB",
@@ -255,13 +252,6 @@ function CompareRow({ k, a, b }: { k: string; a: string; b: string }) {
       <span className="cull-cr-rail__v">{b}</span>
     </div>
   );
-}
-
-function formatTime(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function stripExtName(filename: string): string {

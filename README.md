@@ -104,19 +104,23 @@ Cheat sheet:
 
 ## Rating model
 
-Three states plus the absence of any rating. Matches what Lightroom Classic
-writes to XMP, so verdicts survive a Lightroom round-trip:
+Three states plus the absence of any rating. The pick/good flags (and any star)
+are Lightroom-Classic-compatible so verdicts survive a Lightroom round-trip; the
+`cull:fav` marker is CULL's own private-namespace attribute that Lightroom
+ignores:
 
 | State      | XMP                                                  |
 | ---------- | ---------------------------------------------------- |
 | reject     | `xmpDM:pick="-1"`, `xmpDM:good="false"`              |
 | keep       | `xmpDM:pick="1"`,  `xmpDM:good="true"`               |
-| favorite   | `xmpDM:pick="1"`,  `xmpDM:good="true"`, `xmp:Rating="1"` |
+| favorite   | `xmpDM:pick="1"`,  `xmpDM:good="true"`, `cull:fav` (+ a courtesy `xmp:Rating="1"` only when the frame had no user star) |
 | (unrated)  | no pick attribute                                    |
 
-User stars 2–5 (LrC's edit-pass ratings) are never touched by CULL. The
-favorite marker is specifically a 1★ in addition to the pick flag, so a
-user's 3★ keep stays a 3★ keep round-trip.
+User stars 2–5 (LrC's edit-pass ratings) are never touched by CULL. A favorite on
+a starless frame gets a courtesy 1★ (`cull:fav="star"`, removed on demote); a
+favorite on a frame that already carries a user 1–5★ rides that star
+(`cull:fav="flag"`) and never overwrites it — so a user's 3★ keep stays a 3★
+favorite round-trip.
 
 ## Settings
 

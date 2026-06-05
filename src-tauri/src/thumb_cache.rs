@@ -102,7 +102,9 @@ impl ThumbCache {
     }
     fn evict_locked(&self, idx: &mut Index) {
         let mut v: Vec<(String, u64)> = idx.entries.iter().map(|(k, e)| (k.clone(), e.used)).collect();
-        v.sort_by_key(|(_, u)| *u);
+        // unstable sort: the `used` tick is unique + monotonic, so ordering is
+        // deterministic regardless of stability — and we hold the index lock here.
+        v.sort_unstable_by_key(|(_, u)| *u);
         for (key, _) in v {
             if idx.total <= LOW_WATER { break; }
             if let Some(e) = idx.entries.remove(&key) {

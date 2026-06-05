@@ -29,9 +29,10 @@ import { isReservedFolderName, sanitizeFolderName } from "../utils/path";
 export type StorageMode = "network" | "local";
 
 /**
- * Where the "copy keeps" action sends files. `remember` reuses the last
- * folder you exported to (current default behaviour). `pinned` always exports
- * to the same path, no matter what you picked previously.
+ * Where the "copy keeps" action sends files. `remember` ("ask each time") opens
+ * the OS folder picker on every copy, pre-seeded to the last folder you exported
+ * to (it never auto-exports without a prompt). `pinned` always exports under the
+ * same fixed root, no prompt.
  */
 export type ExportFolderMode =
   | { mode: "remember" }

@@ -619,6 +619,12 @@ export class ImageStore {
     }
   }
 
+  /**
+   * Evict a single path's full-res entry (direct, not window-based). Test-only
+   * today — production eviction goes through {@link evictFullAround} — but kept
+   * because it's the one place the "evict-then-re-request mid-flight doesn't
+   * double-fetch" (C3) dedup invariant is exercised end-to-end.
+   */
   evictFull(path: string): void {
     const state = this.fulls.get(path);
     if (state?.status === "ready") {

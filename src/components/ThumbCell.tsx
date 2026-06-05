@@ -1,9 +1,10 @@
-import { memo, type ReactNode } from "react";
-import { Check, Star, X as XIcon } from "lucide-react";
+import { memo } from "react";
+import { Star } from "lucide-react";
 import type { Img, Rating } from "../types";
 import { hasLrcRating } from "../utils/ratingColor";
 import { stripExt } from "../utils/path";
 import { useThumb } from "../image/useThumb";
+import { verdictDotClass, verdictGlyph } from "./verdictGlyph";
 
 
 type ThumbCellProps = {
@@ -43,25 +44,9 @@ export const ThumbCell = memo(function ThumbCell({
   const isReject = rating === "reject";
   const cellOpacity = dimmed ? 0.18 : isReject && !isCurrent ? 0.45 : 1;
 
-  // Verdict glyph + colour for the bottom-right chip. Rendered as a Lucide
-  // SVG icon (not a Unicode character) so centering is intrinsic — Unicode
-  // ★ ✓ ✕ have inconsistent metrics across system fonts on Windows.
-  const dotIcon: ReactNode =
-    rating === "keep" ? (
-      <Check size={9} color="#0a0a0c" strokeWidth={3} />
-    ) : rating === "reject" ? (
-      <XIcon size={9} color="#0a0a0c" strokeWidth={3} />
-    ) : rating === "favorite" ? (
-      <Star size={9} color="#0a0a0c" strokeWidth={2.6} fill="#0a0a0c" />
-    ) : null;
-  const dotClass =
-    rating === "keep"
-      ? "cull-thumb__dot--keep"
-      : rating === "reject"
-      ? "cull-thumb__dot--reject"
-      : rating === "favorite"
-      ? "cull-thumb__dot--fav"
-      : "";
+  // Verdict glyph + colour modifier for the bottom-right chip (shared with GridCell).
+  const dotIcon = verdictGlyph(rating, 9);
+  const dotClass = verdictDotClass(rating, "cull-thumb__dot");
 
   // Outline colour on the active cell. In compare mode the role variant takes
   // over (always champagne); in loupe it's the standard champagne accent.

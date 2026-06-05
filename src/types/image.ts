@@ -15,12 +15,6 @@ export type Img = {
   srcFolder: string;
 };
 
-/** Preview load state per path — drives the loupe's loading placeholder. */
-export type PreviewEntry =
-  | { status: "loading" }
-  | { status: "ready"; url: string }
-  | { status: "error"; error: string };
-
 /**
  * EXIF subset shown in the (i) panel. Mirrors the Rust `meta::ImageMetadata`
  * shape on the wire (camelCase). Optional throughout because not every CR3

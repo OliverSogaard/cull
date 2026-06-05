@@ -43,6 +43,8 @@ import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { formatRelativeTime, middleTruncate } from "./utils/format";
 import { basename } from "./utils/path";
+import { snapToFilter as snapToFilterPure } from "./utils/snap";
+import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
 
 // Read concurrency, previewKeep, hi-res zoom warm-up, background-fill rate, and
@@ -1699,22 +1701,9 @@ export default function App() {
   // Snap an image index to the nearest member of the current visible filter,
   // so a frame the filter no longer admits (e.g. a freshly-kept image while
   // filtered to UNRATED) doesn't leave loupe/grid with no current cell.
+  // Pure logic + its tests live in utils/snap; this just binds the live deps.
   const snapToFilter = useCallback(
-    (idx: number): number => {
-      if (idx < 0 || idx >= images.length) return idx;
-      if (visibleIndices.length === 0) return idx;
-      if (visibleIndices.indexOf(idx) !== -1) return idx;
-      let best = visibleIndices[0];
-      let bestDist = Math.abs(best - idx);
-      for (const v of visibleIndices) {
-        const d = Math.abs(v - idx);
-        if (d < bestDist) {
-          bestDist = d;
-          best = v;
-        }
-      }
-      return best;
-    },
+    (idx: number): number => snapToFilterPure(idx, visibleIndices, images.length),
     [images.length, visibleIndices],
   );
 
@@ -2776,10 +2765,7 @@ export default function App() {
   const currentRating = current ? ratings[current.id] : undefined;
 
   // Zoom transform-origin = AF point (display coords) + pan, clamped to image.
-  const afX = currentMeta?.afXPct ?? 50;
-  const afY = currentMeta?.afYPct ?? 50;
-  const originX = Math.max(0, Math.min(100, afX + panOffset.x));
-  const originY = Math.max(0, Math.min(100, afY + panOffset.y));
+  const { x: originX, y: originY } = afZoomOrigin(currentMeta, panOffset);
 
   // Transform for the deferred full-res layer. Derived to reproduce the base
   // image's `scale(Z)` about (originX%, originY%) EXACTLY — but starting from the
