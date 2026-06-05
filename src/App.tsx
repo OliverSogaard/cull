@@ -254,14 +254,13 @@ export default function App() {
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
-  // Zoom-suppress latch: a rating that drops zoom sets this so the NEXT frame can't
-  // re-zoom from a stale held Space. WebView2 emits a spurious keyup+keydown pair
-  // during the post-rate / load churn; an unconditional keyup would clear the latch
-  // and let the paired keydown (e.repeat=false) re-arm zoom. So a Space keyup only
-  // clears the latch after a short delay — cancelled if a keydown follows it (auto-
-  // repeat / spurious), confirmed only on a real physical release.
-  const suppressZoomRef = useRef(false);
-  const spaceUpTimerRef = useRef<number | null>(null);
+  // Timestamp of the last Space AUTO-REPEAT keydown (e.repeat===true). While the
+  // key is physically held the OS streams these every ~30ms, so a "fresh"
+  // (e.repeat===false) Space keydown arriving right after one is a SPURIOUS WebView
+  // re-press (emitted during the post-rate / load DOM churn) — not a real new
+  // press — and must NOT re-zoom the next frame. Timing-independent of how slow the
+  // load is, unlike a keyup-confirmation window.
+  const lastSpaceRepeatAt = useRef(0);
 
   // Measured rect of the displayed image (relative to the stage). Consumed ONLY
   // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
@@ -1615,12 +1614,11 @@ export default function App() {
       // frame before the reset commits. Guarded so a normal rating doesn't churn
       // zoom state on every keystroke.
       if (isZoomingRef.current) {
+        // Drop zoom so the next frame isn't left scaled. A still-held Space can't
+        // re-zoom it: the Space-keydown guard ignores a "fresh" press while the OS
+        // auto-repeat stream is active (see the keydown handler).
         resetZoom();
         isZoomingRef.current = false;
-        // Latch zoom OFF for the incoming frame: a still-held Space + WebView's
-        // spurious keyup/keydown churn must not re-zoom the next frame. Cleared
-        // only by a confirmed real Space release (see the keyup handler).
-        suppressZoomRef.current = true;
       }
       // Flash the verdict on the INCOMING frame's id: the full-frame wash is keyed
       // to the current frame, which the advance below makes nextImg, so keying it to
@@ -2063,11 +2061,9 @@ export default function App() {
   useEffect(() => {
     const onBlur = () => {
       stopHold();
-      suppressZoomRef.current = false;
-      if (spaceUpTimerRef.current != null) {
-        clearTimeout(spaceUpTimerRef.current);
-        spaceUpTimerRef.current = null;
-      }
+      // Focus left mid-hold: forget the auto-repeat stream so a fresh Space press
+      // after focus returns zooms normally.
+      lastSpaceRepeatAt.current = 0;
     };
     window.addEventListener("blur", onBlur);
     return () => {
@@ -2301,14 +2297,16 @@ export default function App() {
       // Works in single + compare. No-op in grid (there's no loupe image to zoom).
       if (e.code === "Space") {
         e.preventDefault();
-        // A keydown means the key is (still) physically down — cancel any pending
-        // "real release" confirmation so a spurious/auto-repeat keyup can't clear
-        // the zoom-suppress latch out from under the paired keydown.
-        if (spaceUpTimerRef.current != null) {
-          clearTimeout(spaceUpTimerRef.current);
-          spaceUpTimerRef.current = null;
+        if (e.repeat) {
+          // Key physically held — record it so a spurious "fresh" press right after
+          // (WebView re-press during the rate/load churn) can be told from a real one.
+          lastSpaceRepeatAt.current = performance.now();
+          return;
         }
-        if (!e.repeat && !gridVisible && !suppressZoomRef.current) {
+        // Genuine (non-repeat) press → zoom, UNLESS the OS auto-repeat stream is
+        // still active (the key never came up; this "fresh" press is the spurious
+        // re-press that used to re-lock zoom on the next frame after a rate).
+        if (!gridVisible && performance.now() - lastSpaceRepeatAt.current > 700) {
           // (a held scrub was already stopped by the interrupt guard above)
           setIsZooming(true);
           setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
@@ -2511,14 +2509,6 @@ export default function App() {
       else if (isLeftUp && heldDirRef.current === -1) stopHold();
       if (e.code === "Space") {
         resetZoom();
-        // Confirm the latch-clear on a delay: a spurious auto-repeat keyup is
-        // immediately followed by a keydown (which cancels this timer); only a
-        // genuine release (no following keydown) lets it fire and re-enable zoom.
-        if (spaceUpTimerRef.current != null) clearTimeout(spaceUpTimerRef.current);
-        spaceUpTimerRef.current = window.setTimeout(() => {
-          suppressZoomRef.current = false;
-          spaceUpTimerRef.current = null;
-        }, 120);
       }
     };
     cullKeyRef.current = { onKey, onKeyUp };

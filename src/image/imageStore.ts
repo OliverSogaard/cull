@@ -214,7 +214,11 @@ export class ImageStore {
     // start it anyway so off-screen thumbs still fill. gen-scoped.
     this.bgStarted = false;
     setTimeout(() => {
-      if (this.generation === gen && !this.bgStarted) {
+      // Fallback for an entry that never requests a full (e.g. grid-first): start
+      // the sweep so off-screen thumbs still fill — but NOT while a full is mid-read
+      // (a slow first full would otherwise get the stampede the deferral prevents;
+      // its own loadFull-finally starts the sweep when it lands).
+      if (this.generation === gen && !this.bgStarted && this.fullInFlightPaths.size === 0) {
         this.bgStarted = true;
         this.scheduleBgFill(gen);
       }
@@ -276,8 +280,10 @@ export class ImageStore {
     this.pumpFull();
     // Warm neighbours' full-res once the cursor SETTLES — so a single tap to an
     // adjacent frame is already decoded. Never mid-scrub: a scrub flies past
-    // frames it never lands on, and prefetching each would flood the NAS.
-    if (!scrubbing) this.prefetchFullsAround(index);
+    // frames it never lands on, and prefetching each would flood the NAS. Also NOT
+    // until the first full has landed (bgStarted): on cull entry the neighbour
+    // prefetch (12 MB reads each) would race the one full the user is waiting on.
+    if (!scrubbing && this.bgStarted) this.prefetchFullsAround(index);
   }
 
   setGridRange(start: number, end: number): void {
@@ -601,10 +607,12 @@ export class ImageStore {
       if (this.generation === gen) {
         this.fullInFlight--;
         // First full-res has landed (or errored) — NOW start the deferred
-        // background thumbnail sweep, so it never raced the first full read.
+        // background thumbnail sweep AND neighbour prefetch, so neither raced the
+        // first full read (the cause of the minute-long first paint).
         if (!this.bgStarted) {
           this.bgStarted = true;
           this.scheduleBgFill(gen);
+          this.prefetchFullsAround(this.cursor);
         }
         this.pumpFull();
         // I1: finishing the last on-demand full must wake the bg sweep.
