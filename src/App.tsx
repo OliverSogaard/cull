@@ -254,12 +254,14 @@ export default function App() {
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
-  // Timestamp of the last Space keydown. Auto-repeat keydowns from a physically
-  // held key arrive rapidly (<~250ms apart); a genuine fresh press follows a gap.
-  // We zoom only on a fresh press, so a key still held through a rate (which dropped
-  // zoom) can't re-zoom the next frame — and this works even where WebView2 doesn't
-  // set e.repeat on auto-repeat (the assumption that broke the earlier fixes).
-  const lastSpaceKeydownAt = useRef(0);
+  // Is Space LOGICALLY held? Armed on the first keydown, cleared only by a keyup
+  // CONFIRMED over a short delay (a spurious auto-repeat keyup is cancelled by its
+  // following keydown). Zoom arms only on a fresh press (spaceDown false→true); a
+  // key held THROUGH a rate keeps this true, so its repeats are ignored and the next
+  // frame can never re-zoom — independent of e.repeat (unreliable here) and of how
+  // slow the load is. Replaces the earlier e.repeat / keyup-timing heuristics.
+  const spaceDownRef = useRef(false);
+  const spaceUpTimerRef = useRef<number | null>(null);
 
   // Measured rect of the displayed image (relative to the stage). Consumed ONLY
   // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
@@ -281,10 +283,6 @@ export default function App() {
   // full-resolution raster, so the zoom composites from already-sharp pixels.
   const [hiRes, setHiRes] = useState(false);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
-  // The full-preview blob URL that has actually finished decoding (its onLoad
-  // fired). Keeps the low-res blurred until the full has PAINTED — not merely
-  // when the stage flips to "full" — so the low-res never flashes sharp first.
-  const [paintedFullUrl, setPaintedFullUrl] = useState<string | null>(null);
   const hiResTimer = useRef<number | null>(null);
 
   const [clippingVisible, setClippingVisible] = useState(false);
@@ -859,9 +857,11 @@ export default function App() {
   // A scrubbed-past frame whose full is already cached must still show as blurred
   // during scrub — otherwise a cached full renders sharp mid-scrub.
   const showFull = cur.stage === "full" && !scrubbing;
-  // True only once the CURRENT full preview has decoded+painted (its onLoad
-  // fired for this url); until then we keep showing the blurred low-res.
-  const fullPainted = showFull && paintedFullUrl === cur.url;
+  // Sharp as soon as the STORE has the full (and we're not scrubbing). Deliberately
+  // NOT gated on an <img> onLoad/paint signal: that signal gets missed when the full
+  // decodes before React observes it, which left the frame blurred FOREVER. Worst
+  // case now is a ~1-frame soft thumb as the full repaints — it can never get stuck.
+  const fullPainted = showFull;
   // Phase for the loupe matte shimmer, pinned per image so every shimmer syncs.
   const loupeShimmerDelay = useMemo(() => shimmerPhaseMs(), [currentIndex]);
 
@@ -873,47 +873,6 @@ export default function App() {
     setNaturalSize(null);
   }, [currentIndex]);
 
-  // If we LAND on (or settle on) a frame whose full-res is already ready
-  // (prefetched / cached), mark it painted at once so the thumb→full blur is
-  // skipped — there is no low-res for THIS frame on screen that could flash, so
-  // the full appears sharp immediately. Deliberately keyed ONLY on navigation /
-  // scrub-settle, NOT on cur.url: a full that ARRIVES while we sit on the thumb
-  // must still gate on the <img> onLoad below, or the low-res would flash sharp
-  // for ~0.1s before the full paints (the behaviour fullPainted was added for).
-  useLayoutEffect(() => {
-    if (showFull && cur.url) setPaintedFullUrl(cur.url);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIndex, scrubbing]);
-
-  // Robust blur-clear backstop. The displayed <img>'s onLoad can be MISSED when the
-  // full decodes before React attaches the handler (a fast / already-decoded blob),
-  // leaving the frame blurred FOREVER until a navigation re-runs the layout-effect
-  // above. img.decode() resolves when the current src is paint-ready regardless of
-  // whether onLoad fired, so mark the full painted (and measure it) from that.
-  // Fail-open on a decode error so the blur can never stick.
-  useEffect(() => {
-    const url = cur.url;
-    if (!showFull || !url || paintedFullUrl === url) return;
-    const img = imgRef.current;
-    if (!img) return;
-    let cancelled = false;
-    img
-      .decode()
-      .then(() => {
-        if (cancelled) return;
-        setPaintedFullUrl(url);
-        if (img.naturalWidth > 0) {
-          setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
-          setMeasureNonce((n) => n + 1);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setPaintedFullUrl(url);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [showFull, cur.url, paintedFullUrl]);
 
   // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
   // every navigation / compare toggle so rapid arrow-through never pays the heavy
@@ -2090,16 +2049,22 @@ export default function App() {
   useEffect(() => {
     const onBlur = () => {
       stopHold();
-      // Focus left mid-hold: forget the keydown timing so a Space press after focus
-      // returns reads as a fresh press and zooms normally.
-      lastSpaceKeydownAt.current = 0;
+      // Focus left mid-hold (e.g. Alt+Tab): the keyup may never arrive, so drop the
+      // held flag + any pending release and exit zoom — otherwise a stuck spaceDown
+      // would block the next zoom.
+      spaceDownRef.current = false;
+      if (spaceUpTimerRef.current != null) {
+        clearTimeout(spaceUpTimerRef.current);
+        spaceUpTimerRef.current = null;
+      }
+      resetZoom();
     };
     window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("blur", onBlur);
       stopHold();
     };
-  }, [stopHold]);
+  }, [stopHold, resetZoom]);
 
   // Safety net: if Settings opens while a hold-scrub is active — by keyboard
   // (Ctrl+,, which returns before the keydown handler's stopHold guard) OR by
@@ -2326,22 +2291,17 @@ export default function App() {
       // Works in single + compare. No-op in grid (there's no loupe image to zoom).
       if (e.code === "Space") {
         e.preventDefault();
-        const now = performance.now();
-        const gap = now - lastSpaceKeydownAt.current;
-        lastSpaceKeydownAt.current = now;
-        // TEMP DIAGNOSTIC — remove once zoom-after-rate is confirmed fixed:
-        console.log("[cull zoom] space down", {
-          repeat: e.repeat,
-          gapMs: Math.round(gap),
-          isZooming: isZoomingRef.current,
-        });
+        // A keydown means the key is down — cancel any pending keyup confirmation so
+        // a spurious auto-repeat keyup can't clear the held flag out from under it.
+        if (spaceUpTimerRef.current != null) {
+          clearTimeout(spaceUpTimerRef.current);
+          spaceUpTimerRef.current = null;
+        }
         if (gridVisible) return;
-        if (isZoomingRef.current) return; // already zooming — ignore held repeats
-        // Only a genuine FRESH press zooms. A still-held key (auto-repeat) arrives
-        // flagged e.repeat OR within ~250ms of the previous keydown — either way it
-        // must NOT re-zoom (esp. the next frame after a rate dropped zoom). Timing,
-        // not just e.repeat, since WebView2 may not flag auto-repeat.
-        if (e.repeat || gap < 250) return;
+        if (spaceDownRef.current) return; // already held (auto-repeat) — ignore
+        spaceDownRef.current = true;
+        // Fresh press → zoom. A key held through a rate stays spaceDown===true, so
+        // its repeats hit the guard above and never re-zoom the next frame.
         setIsZooming(true);
         setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
         setPanOffset({ x: 0, y: 0 });
@@ -2541,7 +2501,15 @@ export default function App() {
       if (isRightUp && heldDirRef.current === 1) stopHold();
       else if (isLeftUp && heldDirRef.current === -1) stopHold();
       if (e.code === "Space") {
-        resetZoom();
+        // Defer the release: a spurious auto-repeat keyup is immediately followed by
+        // its keydown (which cancels this). Only a genuine release — no following
+        // keydown within the window — clears the held flag and exits zoom.
+        if (spaceUpTimerRef.current != null) clearTimeout(spaceUpTimerRef.current);
+        spaceUpTimerRef.current = window.setTimeout(() => {
+          spaceUpTimerRef.current = null;
+          spaceDownRef.current = false;
+          resetZoom();
+        }, 80);
       }
     };
     cullKeyRef.current = { onKey, onKeyUp };
@@ -2942,7 +2910,6 @@ export default function App() {
                   if (showFull) {
                     setMeasureNonce((n) => n + 1);
                     setNaturalSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
-                    setPaintedFullUrl(cur.url ?? null);
                   }
                 }}
                 style={{
