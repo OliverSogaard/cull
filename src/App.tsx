@@ -608,6 +608,18 @@ export default function App() {
     [folder, pushRecent],
   );
 
+  // Persist the recents' rated/done counts WHILE culling, not only on the way
+  // back home. leaveToHome already records them, but quitting straight from the
+  // cull view (closing the window) never hit that path — so a later relaunch
+  // showed the stale "327 / 372" from when the folder was opened. Debounced so a
+  // rating burst writes once after it settles; localStorage.setItem is sync, so
+  // whatever's on disk when the window dies is current to within the debounce.
+  useEffect(() => {
+    if (phase !== "culling" || images.length === 0) return;
+    const t = window.setTimeout(() => recordSessionRecents(images, ratings), 600);
+    return () => window.clearTimeout(t);
+  }, [phase, images, ratings, recordSessionRecents]);
+
   // Begin culling: sort the staged set by capture time, restore ratings, then
   // enter the cull view (warming the first screenful of previews first).
   const beginCulling = useCallback(async () => {
