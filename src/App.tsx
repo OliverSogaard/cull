@@ -254,13 +254,12 @@ export default function App() {
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
-  // Timestamp of the last Space AUTO-REPEAT keydown (e.repeat===true). While the
-  // key is physically held the OS streams these every ~30ms, so a "fresh"
-  // (e.repeat===false) Space keydown arriving right after one is a SPURIOUS WebView
-  // re-press (emitted during the post-rate / load DOM churn) — not a real new
-  // press — and must NOT re-zoom the next frame. Timing-independent of how slow the
-  // load is, unlike a keyup-confirmation window.
-  const lastSpaceRepeatAt = useRef(0);
+  // Timestamp of the last Space keydown. Auto-repeat keydowns from a physically
+  // held key arrive rapidly (<~250ms apart); a genuine fresh press follows a gap.
+  // We zoom only on a fresh press, so a key still held through a rate (which dropped
+  // zoom) can't re-zoom the next frame — and this works even where WebView2 doesn't
+  // set e.repeat on auto-repeat (the assumption that broke the earlier fixes).
+  const lastSpaceKeydownAt = useRef(0);
 
   // Measured rect of the displayed image (relative to the stage). Consumed ONLY
   // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
@@ -885,6 +884,36 @@ export default function App() {
     if (showFull && cur.url) setPaintedFullUrl(cur.url);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIndex, scrubbing]);
+
+  // Robust blur-clear backstop. The displayed <img>'s onLoad can be MISSED when the
+  // full decodes before React attaches the handler (a fast / already-decoded blob),
+  // leaving the frame blurred FOREVER until a navigation re-runs the layout-effect
+  // above. img.decode() resolves when the current src is paint-ready regardless of
+  // whether onLoad fired, so mark the full painted (and measure it) from that.
+  // Fail-open on a decode error so the blur can never stick.
+  useEffect(() => {
+    const url = cur.url;
+    if (!showFull || !url || paintedFullUrl === url) return;
+    const img = imgRef.current;
+    if (!img) return;
+    let cancelled = false;
+    img
+      .decode()
+      .then(() => {
+        if (cancelled) return;
+        setPaintedFullUrl(url);
+        if (img.naturalWidth > 0) {
+          setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+          setMeasureNonce((n) => n + 1);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPaintedFullUrl(url);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showFull, cur.url, paintedFullUrl]);
 
   // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
   // every navigation / compare toggle so rapid arrow-through never pays the heavy
@@ -2061,9 +2090,9 @@ export default function App() {
   useEffect(() => {
     const onBlur = () => {
       stopHold();
-      // Focus left mid-hold: forget the auto-repeat stream so a fresh Space press
-      // after focus returns zooms normally.
-      lastSpaceRepeatAt.current = 0;
+      // Focus left mid-hold: forget the keydown timing so a Space press after focus
+      // returns reads as a fresh press and zooms normally.
+      lastSpaceKeydownAt.current = 0;
     };
     window.addEventListener("blur", onBlur);
     return () => {
@@ -2297,21 +2326,25 @@ export default function App() {
       // Works in single + compare. No-op in grid (there's no loupe image to zoom).
       if (e.code === "Space") {
         e.preventDefault();
-        if (e.repeat) {
-          // Key physically held — record it so a spurious "fresh" press right after
-          // (WebView re-press during the rate/load churn) can be told from a real one.
-          lastSpaceRepeatAt.current = performance.now();
-          return;
-        }
-        // Genuine (non-repeat) press → zoom, UNLESS the OS auto-repeat stream is
-        // still active (the key never came up; this "fresh" press is the spurious
-        // re-press that used to re-lock zoom on the next frame after a rate).
-        if (!gridVisible && performance.now() - lastSpaceRepeatAt.current > 700) {
-          // (a held scrub was already stopped by the interrupt guard above)
-          setIsZooming(true);
-          setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
-          setPanOffset({ x: 0, y: 0 });
-        }
+        const now = performance.now();
+        const gap = now - lastSpaceKeydownAt.current;
+        lastSpaceKeydownAt.current = now;
+        // TEMP DIAGNOSTIC — remove once zoom-after-rate is confirmed fixed:
+        console.log("[cull zoom] space down", {
+          repeat: e.repeat,
+          gapMs: Math.round(gap),
+          isZooming: isZoomingRef.current,
+        });
+        if (gridVisible) return;
+        if (isZoomingRef.current) return; // already zooming — ignore held repeats
+        // Only a genuine FRESH press zooms. A still-held key (auto-repeat) arrives
+        // flagged e.repeat OR within ~250ms of the previous keydown — either way it
+        // must NOT re-zoom (esp. the next frame after a rate dropped zoom). Timing,
+        // not just e.repeat, since WebView2 may not flag auto-repeat.
+        if (e.repeat || gap < 250) return;
+        setIsZooming(true);
+        setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
+        setPanOffset({ x: 0, y: 0 });
         return;
       }
 
