@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { FileOpResult, Settings } from "../types";
 import { normalizeRejectedSubfolder } from "../types/settings";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import { joinPath, sanitizeFolderName } from "../utils/path";
+import { isReservedFolderName, joinPath, sanitizeFolderName } from "../utils/path";
 
 /** How long after the last keystroke (or dialog open) before we probe disk. */
 const FOLDER_EXISTS_DEBOUNCE_MS = 250;
@@ -132,16 +132,45 @@ export function FinishDialog({
     };
   }, [pinnedMode, pinnedRoot, sub]);
 
+  // ── Pinned-root existence check ────────────────────────────────────────────
+  // The pinned ROOT (not just the dest subfolder) is validated on open + when it
+  // changes. If the user pinned a folder that's since been deleted or is on an
+  // unmounted drive, copy_keeps_to_export's create_dir_all would silently re-make
+  // the tree and scatter keepers somewhere they'd never look — so we block the
+  // copy and tell them to re-pick it in Settings instead.
+  const [rootMissing, setRootMissing] = useState(false);
+  useEffect(() => {
+    if (!pinnedMode || !pinnedRoot) {
+      setRootMissing(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const exists = await invoke<boolean>("path_exists", { path: pinnedRoot });
+        if (!cancelled) setRootMissing(!exists);
+      } catch {
+        if (!cancelled) setRootMissing(false);
+      }
+    }, FOLDER_EXISTS_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [pinnedMode, pinnedRoot]);
+
   // Disable copy when something would block it — same gates as before, plus the
-  // pinned-mode subfolder must be non-empty (sanitize guarantees no bad chars).
+  // pinned-mode subfolder must be non-empty, not a Windows reserved device name,
+  // and its pinned root must still exist on disk.
   const subTrimmed = sub.trim();
-  const subInvalid = pinnedMode && subTrimmed.length === 0;
+  const subInvalid =
+    pinnedMode && (subTrimmed.length === 0 || isReservedFolderName(subTrimmed));
   const copyDisabled =
     keptPaths.length === 0 ||
     actionBusy !== null ||
     savingCount > 0 ||
     failedCount > 0 ||
-    (pinnedMode && (subInvalid || !pinnedRoot));
+    (pinnedMode && (subInvalid || !pinnedRoot || rootMissing));
 
   const pickDestination = async () => {
     if (picking) return;
@@ -254,6 +283,15 @@ export function FinishDialog({
 
             {pinnedMode ? (
               <>
+                {rootMissing && (
+                  <div className="cull-finish__folder-exists">
+                    <span className="cull-finish__folder-exists-icon">⚠</span>
+                    <span>
+                      The pinned export root no longer exists. Re-pick it in{" "}
+                      <b>Settings</b> before copying.
+                    </span>
+                  </div>
+                )}
                 {folderExists && (
                   <div className="cull-finish__folder-exists">
                     <span className="cull-finish__folder-exists-icon">⚠</span>
@@ -341,14 +379,7 @@ export function FinishDialog({
               </div>
             )}
 
-            {copyResult && (
-              <div
-                className={`cull-actions__result${copyResult.errors.length > 0 ? " cull-actions__result--err" : ""}`}
-              >
-                copied {copyResult.completed} · skipped {copyResult.skipped}
-                {copyResult.errors.length > 0 && ` · ${copyResult.errors.length} errors`}
-              </div>
-            )}
+            {copyResult && <FileOpResultLine verb="copied" result={copyResult} />}
           </div>
         </div>
 
@@ -461,14 +492,23 @@ function MoveRejectsRow({
         </button>
       )}
 
-      {moveResult && (
-        <div
-          className={`cull-actions__result${moveResult.errors.length > 0 ? " cull-actions__result--err" : ""}`}
-        >
-          moved {moveResult.completed} · skipped {moveResult.skipped}
-          {moveResult.errors.length > 0 && ` · ${moveResult.errors.length} errors`}
-        </div>
-      )}
+      {moveResult && <FileOpResultLine verb="moved" result={moveResult} />}
+    </div>
+  );
+}
+
+/**
+ * One-line result summary for a batch file op. Shows the TRUE error total
+ * (`errorCount`, which the backend caps the message list at 20 but counts in
+ * full) so a 200-failure batch never reads as "only 20 errors". Falls back to
+ * the capped list length for older backends that don't send `errorCount`.
+ */
+function FileOpResultLine({ verb, result }: { verb: string; result: FileOpResult }) {
+  const errs = result.errorCount ?? result.errors.length;
+  return (
+    <div className={`cull-actions__result${errs > 0 ? " cull-actions__result--err" : ""}`}>
+      {verb} {result.completed} · skipped {result.skipped}
+      {errs > 0 && ` · ${errs} error${errs > 1 ? "s" : ""}`}
     </div>
   );
 }

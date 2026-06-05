@@ -1,4 +1,5 @@
 import type { Filter } from "./rating";
+import { isReservedFolderName, sanitizeFolderName } from "../utils/path";
 
 /**
  * User-tunable runtime settings. Persisted to localStorage so they survive
@@ -95,11 +96,17 @@ export const DEFAULT_SETTINGS: Settings = {
  *  write new → remove old); a bare bump silently discards the user's prefs. */
 export const SETTINGS_STORAGE_KEY = "cull:settings:v1";
 
-/** Trim a rejected-subfolder name to a usable value, falling back to the default
- *  when empty. Shared by the file-op call sites + the load-time coercion so the
- *  fallback lives in exactly one place. */
-export const normalizeRejectedSubfolder = (s: string): string =>
-  s.trim() || DEFAULT_SETTINGS.rejectedSubfolder;
+/** Normalise a rejected-subfolder name to a value the OS will actually create,
+ *  falling back to the default when empty or a Windows reserved device name.
+ *  sanitizeFolderName strips illegal chars + trailing dots/spaces (so the move
+ *  destination matches the on-disk name we also hand the scan-ignore filter — a
+ *  mismatch would re-import the moved rejects). Shared by the file-op call sites,
+ *  the scan-ignore name, and the load-time coercion so the rule lives in one place. */
+export const normalizeRejectedSubfolder = (s: string): string => {
+  const clean = sanitizeFolderName(s);
+  if (!clean || isReservedFolderName(clean)) return DEFAULT_SETTINGS.rejectedSubfolder;
+  return clean;
+};
 
 /**
  * Performance knobs that change with {@link StorageMode}. Pushed into the

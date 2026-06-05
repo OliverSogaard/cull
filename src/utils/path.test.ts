@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { basename, joinPath, sanitizeFolderName, stripExt } from "./path";
+import {
+  basename,
+  isReservedFolderName,
+  joinPath,
+  sanitizeFolderName,
+  stripExt,
+} from "./path";
 
 describe("basename", () => {
   it("handles forward-slash paths", () => {
@@ -62,5 +68,35 @@ describe("sanitizeFolderName", () => {
 
   it("leaves a clean name untouched", () => {
     expect(sanitizeFolderName("Reception-keeps")).toBe("Reception-keeps");
+  });
+
+  it("strips trailing dots/spaces and leading spaces (Windows coerces these away)", () => {
+    // A trailing dot would create a dir named "rejects" on disk while the
+    // scan-ignore string kept "rejects.", re-importing the moved rejects.
+    expect(sanitizeFolderName("rejects.")).toBe("rejects");
+    expect(sanitizeFolderName("rejects   ")).toBe("rejects");
+    expect(sanitizeFolderName("  rejects")).toBe("rejects");
+    expect(sanitizeFolderName("v2..")).toBe("v2");
+  });
+
+  it("does NOT itself drop reserved names (per-keystroke would wipe a valid name)", () => {
+    // "CON" is reserved, but sanitize must allow it through so typing "CONcert"
+    // works; the reserved guard is applied at commit via isReservedFolderName.
+    expect(sanitizeFolderName("CON")).toBe("CON");
+    expect(sanitizeFolderName("CONcert-keeps")).toBe("CONcert-keeps");
+  });
+});
+
+describe("isReservedFolderName", () => {
+  it("flags Windows reserved device names (case-insensitive, incl. with extension)", () => {
+    for (const n of ["CON", "con", "NUL", "PRN", "AUX", "COM1", "LPT9", "CON.foo"]) {
+      expect(isReservedFolderName(n)).toBe(true);
+    }
+  });
+
+  it("does not flag ordinary names that merely contain a reserved prefix", () => {
+    for (const n of ["CONcert-keeps", "rejects", "_rejected", "COM10", "console", "Reception"]) {
+      expect(isReservedFolderName(n)).toBe(false);
+    }
   });
 });

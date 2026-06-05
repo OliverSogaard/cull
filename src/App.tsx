@@ -804,7 +804,7 @@ export default function App() {
       });
       setMoveResult(res);
     } catch (e) {
-      setMoveResult({ completed: 0, skipped: 0, errors: [String(e)] });
+      setMoveResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1 });
     } finally {
       setActionBusy(null);
     }
@@ -824,6 +824,7 @@ export default function App() {
           completed: 0,
           skipped: 0,
           errors: ["destination not set"],
+          errorCount: 1,
         });
         return;
       }
@@ -842,7 +843,7 @@ export default function App() {
         });
         setCopyResult(res);
       } catch (e) {
-        setCopyResult({ completed: 0, skipped: 0, errors: [String(e)] });
+        setCopyResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1 });
       } finally {
         setActionBusy(null);
       }

@@ -40,12 +40,33 @@ export function joinPath(root: string, sub: string): string {
 
 /**
  * Strip characters that Windows (and most other filesystems) refuse in
- * filenames / folder names, and cap at 32 chars so a runaway paste can't
- * produce an unwieldy path. Used by the rejected-subfolder input in Settings
- * and the editable Pinned-root subfolder in the finish dialog.
+ * filenames / folder names, cap at 32 chars so a runaway paste can't produce an
+ * unwieldy path, and drop trailing dots/spaces + leading spaces (Windows
+ * silently coerces those away on create — which would de-sync the on-disk folder
+ * name from the string we also pass to the scan-ignore filter, re-importing the
+ * moved rejects on reopen). Used by the rejected-subfolder input in Settings and
+ * the editable Pinned-root subfolder in the finish dialog.
  *
- * The illegal set comes from Windows: < > : " / \\ | ? *.
+ * The illegal set comes from Windows: < > : " / \\ | ? *. Does NOT itself reject
+ * the reserved device names (CON/NUL/…) — doing that per keystroke would wipe a
+ * legitimate name the moment it passed through "CON"; see {@link isReservedFolderName},
+ * applied at commit time instead.
  */
 export function sanitizeFolderName(raw: string): string {
-  return raw.replace(/[<>:"/\\|?*]/g, "").slice(0, 32);
+  return raw
+    .replace(/[<>:"/\\|?*]/g, "")
+    .slice(0, 32)
+    .replace(/^ +/, "")
+    .replace(/[. ]+$/, "");
+}
+
+/**
+ * True if `name`'s base (the part before the first dot) is a Windows reserved
+ * device name — a folder so named can't be created on Windows, so the whole
+ * move/copy would fail. Checked at commit time so call sites can fall back to a
+ * safe default. Case-insensitive; "CON.foo" is reserved too, hence the pre-dot base.
+ */
+export function isReservedFolderName(name: string): boolean {
+  const base = name.split(".")[0].trim().toUpperCase();
+  return /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(base);
 }
