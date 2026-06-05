@@ -324,12 +324,12 @@ describe("imageStore", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Concurrency / generation-accounting regression tests (C1, C3, C4, I6, LRU).
+// Concurrency / generation-accounting regression tests.
 // These use a deferred `invoke` so we can interleave reset()/evict() with a
 // load that is still in flight.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("imageStore — generation & concurrency", () => {
-  it("C1/C4: stale-generation thumb load revokes its blob and does NOT write into the new session", async () => {
+  it("stale-generation thumb load revokes its blob and does NOT write into the new session", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const mockInvoke = vi.mocked(invoke);
     const deferreds = deferredInvoke(mockInvoke);
@@ -363,7 +363,7 @@ describe("imageStore — generation & concurrency", () => {
     expect(store.snapshot(path).stage).toBe("shimmer");
   });
 
-  it("C1: counters never go negative — concurrency cap is still respected after an interrupted load", async () => {
+  it("counters never go negative — concurrency cap is still respected after an interrupted load", async () => {
     const { PERFORMANCE_PROFILES } = await import("../types/settings");
     const { invoke } = await import("@tauri-apps/api/core");
     const mockInvoke = vi.mocked(invoke);
@@ -435,7 +435,7 @@ describe("imageStore — generation & concurrency", () => {
     expect(maxLive["/b/"]).toBeLessThanOrEqual(totalCap);
   });
 
-  it("C4: a path mid-thumb-load when reset() runs is re-scheduled and eventually loads in the new session", async () => {
+  it("a path mid-thumb-load when reset() runs is re-scheduled and eventually loads in the new session", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const mockInvoke = vi.mocked(invoke);
     const deferreds = deferredInvoke(mockInvoke);
@@ -449,7 +449,7 @@ describe("imageStore — generation & concurrency", () => {
     expect(deferreds.length).toBe(1); // first (old-gen) fetch in flight
 
     // reset() to a NEW session that still contains `path`. The mid-load path's
-    // requestedThumb must have been cleared (C4) so it's not permanently excluded.
+    // requestedThumb must have been cleared so it's not permanently excluded.
     // The background sweep is now DEFERRED until the first full-res lands, so drive
     // the re-load on-demand (as the strip/grid would) rather than via bg-fill; if
     // requestedThumb still held the stale entry this would be a no-op (stuck at 1).
@@ -540,7 +540,7 @@ describe("imageStore — generation & concurrency", () => {
     expect(snap.url).toBeDefined();
   });
 
-  it("I6: transient thumb failure clears requestedThumb so a retry succeeds", async () => {
+  it("transient thumb failure clears requestedThumb so a retry succeeds", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const mockInvoke = vi.mocked(invoke);
 
@@ -569,7 +569,7 @@ describe("imageStore — generation & concurrency", () => {
     expect(store.snapshot(path).stage).toBe("thumb");
   });
 
-  it("C3: evict-then-re-request mid-flight does NOT start a duplicate loadFull", async () => {
+  it("evict-then-re-request mid-flight does NOT start a duplicate loadFull", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const mockInvoke = vi.mocked(invoke);
     const deferreds = deferredInvoke(mockInvoke);

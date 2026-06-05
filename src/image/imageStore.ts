@@ -18,7 +18,7 @@
  *     blob when the session changed while the read was in flight
  *  7. loadFull — stale-generation arrival: revoke the just-created preview blob
  *
- * Concurrency-correctness invariants (see fixes C1/C3/C4):
+ * Concurrency-correctness invariants:
  *  - Every in-flight counter decrement is generation-scoped: a load whose
  *    generation has been superseded by reset()/hardReset() does NOT touch the
  *    current-session counters (otherwise late decrements drive them negative,
@@ -39,13 +39,13 @@ import type { ImageMetadata } from "../types";
 
 type ThumbEntry = { url: string; dims: ImageDims };
 
-/** All-session thumb LRU cap (loadThumb + loadBg share this — M1). */
+/** All-session thumb LRU cap (loadThumb + loadBg share this). */
 const THUMB_LRU_CAP = 15000;
 
-/** Placeholder dims used before real dimensions are known (M5). */
+/** Placeholder dims used before real dimensions are known. */
 const UNKNOWN_DIMS: ImageDims = { w: 1, h: 1 };
 
-/** Max transient-failure retries before a path is left as shimmer (I6). */
+/** Max transient-failure retries before a path is left as shimmer. */
 const MAX_THUMB_ATTEMPTS = 3;
 
 /** Constructor options (test-only knobs kept minimal). */
@@ -74,13 +74,13 @@ export class ImageStore {
   // ── Request tracking (prevent duplicate fetches) ───────────────────────
   private requestedThumb = new Set<string>();
   private requestedFull = new Set<string>();
-  /** Paths whose loadFull is in flight RIGHT NOW (C3: single-flight fulls). */
+  /** Paths whose loadFull is in flight RIGHT NOW (single-flight fulls). */
   private fullInFlightPaths = new Set<string>();
   /** path → number of mounted consumers wanting full-res. A refcount (not a bare
    *  Set) so two consumers wanting the same path don't lose eviction-protection
    *  when only one unmounts. `has(p)` ⟺ count > 0 (entries are deleted at 0). */
   private wantFull = new Map<string, number>();
-  /** Per-path transient thumb-failure attempt counter (I6). */
+  /** Per-path transient thumb-failure attempt counter. */
   private thumbAttempts = new Map<string, number>();
   // ── Concurrency counters ───────────────────────────────────────────────
   private thumbInFlight = 0;
@@ -99,7 +99,7 @@ export class ImageStore {
   private bgStarted = false;
   // ── Ordered list of all paths (for background fill + eviction) ─────────
   private paths: string[] = [];
-  /** path → index in `paths`, rebuilt in reset() for O(1) lookups (I2). */
+  /** path → index in `paths`, rebuilt in reset() for O(1) lookups. */
   private pathIndex = new Map<string, number>();
   private cursor = 0;
   // -1/-1 = "no grid viewport" (matches clearGridRange); set to a real range only
@@ -167,13 +167,13 @@ export class ImageStore {
     this.bgQueue = [];
     this.wantFull.clear();
     this.requestedFull.clear();
-    // C4: old-gen thumb loads bailed without populating `thumbs`; if we keep
+    // old-gen thumb loads bailed without populating `thumbs`; if we keep
     // their paths in requestedThumb they'd be excluded from bg-fill forever
     // (permanent shimmer). Clear it so the new session can re-schedule them.
     this.requestedThumb.clear();
     this.thumbAttempts.clear();
 
-    // C1: zero in-flight counters. Late decrements from superseded loads are
+    // zero in-flight counters. Late decrements from superseded loads are
     // now gen-scoped (they no-op), so zeroing here can't be driven negative.
     this.thumbInFlight = 0;
     this.fullInFlight = 0;
@@ -243,7 +243,7 @@ export class ImageStore {
     this.requestedFull.clear();
     this.fullInFlightPaths.clear();
     this.thumbAttempts.clear();
-    // C1: gen-scoped finally blocks make zeroing safe (no negative drift).
+    // gen-scoped finally blocks make zeroing safe (no negative drift).
     this.thumbInFlight = 0;
     this.fullInFlight = 0;
     this.bgInFlight = 0;
@@ -273,7 +273,7 @@ export class ImageStore {
 
   setCursor(index: number, scrubbing = false): void {
     this.cursor = index;
-    // I3: full-res eviction is cursor-driven — recenter the keep-window on the
+    // full-res eviction is cursor-driven — recenter the keep-window on the
     // cursor even when no new full just landed (parking on a frame recenters).
     this.evictFullAround(index);
     this.rescheduleBg(scrubbing);
@@ -306,7 +306,7 @@ export class ImageStore {
     }
   }
 
-  /** O(1) path→index lookup; -1 if not tracked (I2). */
+  /** O(1) path→index lookup; -1 if not tracked. */
   private indexOf(path: string): number {
     const i = this.pathIndex.get(path);
     return i === undefined ? -1 : i;
@@ -350,7 +350,7 @@ export class ImageStore {
       this.pumpFull();
       return;
     }
-    // I4: already requested. If it's still queued (not yet in flight), promote
+    // already requested. If it's still queued (not yet in flight), promote
     // it to the FRONT so a landed-on frame preempts queued prefetch fulls.
     if (!this.fullInFlightPaths.has(path)) {
       const qi = this.fullQueue.indexOf(path);
@@ -464,8 +464,8 @@ export class ImageStore {
 
   /**
    * Shared thumb loader for both the on-demand lane and the background-fill
-   * lane (M2). Differs only in which in-flight counter it touches, kept in the
-   * `lane` parameter so the C1/C4/I6 logic lives in exactly one place.
+   * lane. Differs only in which in-flight counter it touches, kept in the
+   * `lane` parameter so the concurrency logic lives in exactly one place.
    */
   private async loadThumbInto(lane: ThumbLane, path: string): Promise<void> {
     const gen = this.generation;
@@ -485,7 +485,7 @@ export class ImageStore {
       this.enforceThumbLru(path);
       this.invalidate(path);
     } catch {
-      // I6: transient failure — drop the request marker so it can be retried,
+      // transient failure — drop the request marker so it can be retried,
       // but cap retries so a genuinely-missing THMB doesn't hot-loop. Only act
       // for the current generation (a superseded load must not touch state).
       if (this.generation === gen) {
@@ -497,7 +497,7 @@ export class ImageStore {
         // else: leave it requested → stays shimmer, no further retries.
       }
     } finally {
-      // C1: gen-scoped decrement. A superseded load must NOT touch the current
+      // gen-scoped decrement. A superseded load must NOT touch the current
       // session's counters (reset/hardReset already zeroed them).
       if (this.generation === gen) {
         if (lane === "thumb") this.thumbInFlight--;
@@ -550,7 +550,7 @@ export class ImageStore {
       this.fullQueue.length > 0
     ) {
       const path = this.fullQueue.shift()!;
-      // C3: single-flight per path — never start a second loadFull while one is
+      // single-flight per path — never start a second loadFull while one is
       // already in flight for this path (the guard lives here, before the
       // counter is touched, so accounting stays perfectly balanced).
       if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) {
@@ -569,7 +569,7 @@ export class ImageStore {
   }
 
   private async loadFull(path: string): Promise<void> {
-    // C3: `pumpFull` has already added `path` to `fullInFlightPaths` and
+    // `pumpFull` has already added `path` to `fullInFlightPaths` and
     // guarantees this is the only in-flight loadFull for it.
     const gen = this.generation;
     try {
@@ -591,7 +591,7 @@ export class ImageStore {
       // Surface EXIF metadata to App (camera / lens / AF point / pixel dims).
       if (result.meta) this.metaSink?.(path, result.meta);
       this.invalidate(path);
-      // I3: also recenter the keep-window on the CURSOR (not just-loaded), so
+      // also recenter the keep-window on the CURSOR (not just-loaded), so
       // eviction tracks where the user is, not where the last load happened.
       this.evictFullAround(this.cursor);
     } catch (e) {
@@ -600,10 +600,10 @@ export class ImageStore {
       this.fulls.set(path, { status: "error", error: msg });
       this.invalidate(path);
     } finally {
-      // C3: clear in-flight marker regardless of generation (it's path-keyed
+      // clear in-flight marker regardless of generation (it's path-keyed
       // and must not leak even for a superseded load).
       this.fullInFlightPaths.delete(path);
-      // C1: gen-scoped counter decrement + pumps.
+      // gen-scoped counter decrement + pumps.
       if (this.generation === gen) {
         this.fullInFlight--;
         // First full-res has landed (or errored) — NOW start the deferred
@@ -615,7 +615,7 @@ export class ImageStore {
           this.prefetchFullsAround(this.cursor);
         }
         this.pumpFull();
-        // I1: finishing the last on-demand full must wake the bg sweep.
+        // finishing the last on-demand full must wake the bg sweep.
         this.pumpBg();
       }
     }
@@ -624,7 +624,7 @@ export class ImageStore {
   /**
    * Evict full-res entries that are far from `centerIndex`, keeping at most
    * `previewKeep` on each side. Revokes their blob URLs. — REVOKE SITE 2.
-   * Cursor-driven (I3): callable from setCursor and after a load.
+   * Cursor-driven: callable from setCursor and after a load.
    */
   private evictFullAround(centerIndex: number): void {
     if (centerIndex < 0) return;
@@ -651,7 +651,7 @@ export class ImageStore {
    * Evict a single path's full-res entry (direct, not window-based). Test-only
    * today — production eviction goes through {@link evictFullAround} — but kept
    * because it's the one place the "evict-then-re-request mid-flight doesn't
-   * double-fetch" (C3) dedup invariant is exercised end-to-end.
+   * double-fetch" dedup invariant is exercised end-to-end.
    */
   evictFull(path: string): void {
     const state = this.fulls.get(path);
@@ -659,7 +659,7 @@ export class ImageStore {
       URL.revokeObjectURL(state.url); // REVOKE SITE 2 (direct eviction)
     }
     this.fulls.delete(path);
-    // C3: do NOT drop requestedFull while a loadFull is still in flight for
+    // do NOT drop requestedFull while a loadFull is still in flight for
     // this path, or a re-request would start a duplicate fetch.
     if (!this.fullInFlightPaths.has(path)) {
       this.requestedFull.delete(path);
