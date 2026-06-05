@@ -254,16 +254,6 @@ export default function App() {
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
-  // Pending "Space released" confirmation timer. A keyup schedules the unzoom; a
-  // following keydown (auto-repeat) cancels it, so a spurious mid-hold keyup can't
-  // briefly drop the zoom.
-  const spaceUpTimerRef = useRef<number | null>(null);
-  // Zoom may ARM only when this is true. A rate that dropped an active zoom clears
-  // it; only a real Space keyup (physical release) re-arms it. This is what stops a
-  // key HELD through a rate from re-zooming the next frame — even when the OS
-  // resumes the hold's auto-repeat as a NON-repeat keydown (e.repeat alone misses
-  // that case). Starts true so the first zoom works with no prior keyup.
-  const armReadyRef = useRef(true);
 
   // Measured rect of the displayed image (relative to the stage). Consumed ONLY
   // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
@@ -329,11 +319,10 @@ export default function App() {
   // only when we genuinely left the frame. Reads isZoomingRef so it fires on the
   // index change, never on the Space-press that started the zoom.
   useEffect(() => {
-    // Any navigation drops zoom (no-op when not zoomed). Unconditional so a lagging
-    // isZoomingRef can't leave the freshly-shown frame scaled. Only fires on a real
-    // currentIndex change — while zoomed, arrows pan (currentIndex stays put), so
-    // this never cancels a just-started zoom.
-    resetZoom();
+    // Leaving a zoomed frame via a cursor move drops the zoom. Reads isZoomingRef
+    // (not isZooming) so it fires on the index change, never on the Space-press that
+    // started the zoom.
+    if (isZoomingRef.current) resetZoom();
   }, [currentIndex, resetZoom]);
 
   const visibleIndices = useMemo(() => {
@@ -1617,14 +1606,8 @@ export default function App() {
       const nextTarget =
         pos !== -1 && pos + 1 < visibleIndices.length ? visibleIndices[pos + 1] : null;
       const nextImg = nextTarget !== null ? images[nextTarget] : null;
-      // A rating drops any active loupe zoom so the next frame doesn't land scaled.
-      // If zoom WAS active, also suppress re-zoom until Space is physically released
-      // (armReady) — so a key held through the rate can't re-zoom the next frame even
-      // when the OS resumes its auto-repeat as a non-repeat keydown. resetZoom is a
-      // no-op when not zoomed; the unconditional call avoids isZoomingRef's commit lag.
-      if (isZoomingRef.current) armReadyRef.current = false;
-      resetZoom();
-      isZoomingRef.current = false;
+      // (Rating is blocked while zoomed — see the keymap — so zoom is never active
+      // here and the next frame can't inherit it.)
       // Flash the verdict on the INCOMING frame's id: the full-frame wash is keyed
       // to the current frame, which the advance below makes nextImg, so keying it to
       // the outgoing cur.id meant the wash was wiped the instant we advanced.
@@ -2066,14 +2049,7 @@ export default function App() {
   useEffect(() => {
     const onBlur = () => {
       stopHold();
-      // Focus left mid-hold (e.g. Alt+Tab): cancel any pending release-confirm, exit
-      // zoom, and re-arm (the release keyup may never arrive, so don't wedge zoom off).
-      if (spaceUpTimerRef.current != null) {
-        clearTimeout(spaceUpTimerRef.current);
-        spaceUpTimerRef.current = null;
-      }
-      armReadyRef.current = true;
-      resetZoom();
+      resetZoom(); // focus lost mid-hold (e.g. Alt+Tab) → exit zoom
     };
     window.addEventListener("blur", onBlur);
     return () => {
@@ -2100,6 +2076,9 @@ export default function App() {
   // as a stutter.
   const pickFromStrip = useCallback(
     (index: number) => {
+      // Ignore strip clicks while zoomed — changing the frame mid-zoom is disabled
+      // (it left the next frame stuck zoomed). Release Space first.
+      if (isZoomingRef.current) return;
       if (heldDirRef.current !== 0 || scrubbingRef.current) stopHold();
       setCurrentIndex(index);
     },
@@ -2107,6 +2086,7 @@ export default function App() {
   );
   const pickChallengerFromStrip = useCallback(
     (index: number) => {
+      if (isZoomingRef.current) return; // disabled while zoomed (see pickFromStrip)
       if (heldDirRef.current !== 0 || scrubbingRef.current) stopHold();
       setChallengerIndex(index);
     },
@@ -2307,17 +2287,10 @@ export default function App() {
       // Works in single + compare. No-op in grid (there's no loupe image to zoom).
       if (e.code === "Space") {
         e.preventDefault();
-        // A keydown cancels a pending release-confirm so a spurious mid-hold keyup
-        // (immediately followed by an auto-repeat keydown) can't drop the zoom.
-        if (spaceUpTimerRef.current != null) {
-          clearTimeout(spaceUpTimerRef.current);
-          spaceUpTimerRef.current = null;
-        }
-        // Arm ONLY on a genuine fresh press: not an auto-repeat (e.repeat), and only
-        // when armReady — which a zoomed rate cleared until the next real release. So
-        // a key held through a rate can't re-zoom the next frame, even if the OS
-        // resumes its auto-repeat as a non-repeat keydown.
-        if (!e.repeat && !gridVisible && armReadyRef.current) {
+        // Arm zoom on a fresh press only (ignore OS auto-repeat so panning a held
+        // zoom works). Rating + strip-clicks are blocked while zoomed, so zoom can
+        // never carry to another frame — no held-key gymnastics needed.
+        if (!e.repeat && !gridVisible) {
           setIsZooming(true);
           setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
           setPanOffset({ x: 0, y: 0 });
@@ -2338,11 +2311,11 @@ export default function App() {
         switch (e.key) {
           case "Enter":
             e.preventDefault();
-            if (!e.repeat) challengerWins();
+            if (!e.repeat && !isZoomingRef.current) challengerWins(); // disabled while zoomed
             break;
           case "Backspace":
             e.preventDefault();
-            if (!e.repeat) challengerLoses();
+            if (!e.repeat && !isZoomingRef.current) challengerLoses(); // disabled while zoomed
             break;
           case "ArrowRight":
             e.preventDefault();
@@ -2400,21 +2373,23 @@ export default function App() {
       }
 
       switch (e.key) {
+        // Rating is disabled WHILE ZOOMED (rating advanced the frame, which left the
+        // next one stuck zoomed). Release Space first, then rate.
         case "Enter":
           e.preventDefault();
-          applyRating("keep");
+          if (!isZoomingRef.current) applyRating("keep");
           break;
         case "Backspace":
           e.preventDefault();
-          applyRating("reject");
+          if (!isZoomingRef.current) applyRating("reject");
           break;
         case "f":
         case "F":
-          applyRating("favorite");
+          if (!isZoomingRef.current) applyRating("favorite");
           break;
         case "u":
         case "U":
-          unrateCurrent(); // clear the rating, stay on the frame
+          if (!isZoomingRef.current) unrateCurrent(); // clear rating, stay on frame
           break;
         case "l":
         case "L":
@@ -2518,16 +2493,7 @@ export default function App() {
       if (isRightUp && heldDirRef.current === 1) stopHold();
       else if (isLeftUp && heldDirRef.current === -1) stopHold();
       if (e.code === "Space") {
-        // A physical release re-enables zoom-arming (a zoomed rate suppressed it).
-        armReadyRef.current = true;
-        // Defer the unzoom: a spurious mid-hold keyup is immediately followed by an
-        // auto-repeat keydown (which cancels this timer); only a genuine release —
-        // no following keydown within the window — actually exits zoom.
-        if (spaceUpTimerRef.current != null) clearTimeout(spaceUpTimerRef.current);
-        spaceUpTimerRef.current = window.setTimeout(() => {
-          spaceUpTimerRef.current = null;
-          resetZoom();
-        }, 80);
+        resetZoom(); // release → exit zoom
       }
     };
     cullKeyRef.current = { onKey, onKeyUp };
