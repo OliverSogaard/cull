@@ -448,13 +448,16 @@ describe("imageStore — generation & concurrency", () => {
     await flush();
     expect(deferreds.length).toBe(1); // first (old-gen) fetch in flight
 
-    // reset() to a NEW session that still contains `path` (bg-fill should pick
-    // it up). Old requestedThumb must have been cleared (C4) so it's not
-    // permanently excluded.
+    // reset() to a NEW session that still contains `path`. The mid-load path's
+    // requestedThumb must have been cleared (C4) so it's not permanently excluded.
+    // The background sweep is now DEFERRED until the first full-res lands, so drive
+    // the re-load on-demand (as the strip/grid would) rather than via bg-fill; if
+    // requestedThumb still held the stale entry this would be a no-op (stuck at 1).
     store.reset([path]);
+    store.requestThumbFor(path);
     await flush();
 
-    // The bg-fill of the new session should have launched a fetch for `path`.
+    // A fresh fetch launched for `path` in the new session.
     expect(deferreds.length).toBeGreaterThanOrEqual(2);
 
     // Settle the old fetch (stale → revoked, no write) and the new fetch.

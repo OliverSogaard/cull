@@ -2,10 +2,9 @@ import { useMemo } from "react";
 import type { ImageMetadata, Rating } from "../types";
 import {
   formatAperture,
-  formatDimensions,
   formatExposureBiasShort,
-  formatFileSize,
   formatFocal,
+  formatImageSize,
   formatIso,
   formatShutter,
   formatTime,
@@ -42,8 +41,11 @@ export function ExifRail({
   const dateStr = dateOK
     ? date!.toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" })
     : null;
-  const dimensions = formatDimensions(meta?.pixelWidth ?? null, meta?.pixelHeight ?? null);
-  const size = formatFileSize(meta?.fileSize ?? null);
+  const imageSize = formatImageSize(
+    meta?.pixelWidth ?? null,
+    meta?.pixelHeight ?? null,
+    meta?.fileSize ?? null,
+  );
   const lrc = meta?.lrcRating ?? null;
   const showLrc = hasLrcRating(lrc, cullRating);
 
@@ -65,8 +67,7 @@ export function ExifRail({
           {lens && <RailRow k="Lens" v={lens} />}
           {timeStr && <RailRow k="Time" v={timeStr} />}
           {dateStr && <RailRow k="Date" v={dateStr} />}
-          {dimensions && <RailRow k="Dimensions" v={dimensions} />}
-          {size && <RailRow k="Size" v={size} />}
+          {imageSize && <RailRow k="Image" v={imageSize} />}
           {showLrc && lrc != null && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">LrC rating</span>
@@ -79,7 +80,7 @@ export function ExifRail({
               </span>
             </div>
           )}
-          {!body && !lens && !timeStr && !dateStr && !dimensions && !size && !showLrc && (
+          {!body && !lens && !timeStr && !dateStr && !imageSize && !showLrc && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">—</span>
               <span className="cull-exif-rail__v cull-exif-rail__v--dim">reading…</span>
@@ -161,6 +162,21 @@ export function CompareExifRail({
       { k: "Body", a: championMeta?.camera ?? "—", b: challengerMeta?.camera ?? "—" },
       { k: "Lens", a: championMeta?.lens ?? "—", b: challengerMeta?.lens ?? "—" },
       { k: "Time", a: champTime ?? "—", b: challTime ?? "—" },
+      {
+        k: "Image",
+        a:
+          formatImageSize(
+            championMeta?.pixelWidth ?? null,
+            championMeta?.pixelHeight ?? null,
+            championMeta?.fileSize ?? null,
+          ) ?? "—",
+        b:
+          formatImageSize(
+            challengerMeta?.pixelWidth ?? null,
+            challengerMeta?.pixelHeight ?? null,
+            challengerMeta?.fileSize ?? null,
+          ) ?? "—",
+      },
     ];
 
     const lrcA = championMeta?.lrcRating ?? null;

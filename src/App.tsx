@@ -254,11 +254,14 @@ export default function App() {
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
-  // True while Space is physically held. A rating-advance doesn't release Space,
-  // so this stays true across the frame change and blocks a stray Space keydown
-  // (WebView can emit one after the DOM churn) from re-zooming the next frame —
-  // which used to leave it stuck zoomed with no keyup left to clear it.
-  const spaceHeldRef = useRef(false);
+  // Zoom-suppress latch: a rating that drops zoom sets this so the NEXT frame can't
+  // re-zoom from a stale held Space. WebView2 emits a spurious keyup+keydown pair
+  // during the post-rate / load churn; an unconditional keyup would clear the latch
+  // and let the paired keydown (e.repeat=false) re-arm zoom. So a Space keyup only
+  // clears the latch after a short delay — cancelled if a keydown follows it (auto-
+  // repeat / spurious), confirmed only on a real physical release.
+  const suppressZoomRef = useRef(false);
+  const spaceUpTimerRef = useRef<number | null>(null);
 
   // Measured rect of the displayed image (relative to the stage). Consumed ONLY
   // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
@@ -1126,19 +1129,21 @@ export default function App() {
     loadPeakingMask,
   ]);
 
-  // Compute an RGB histogram PNG for one image (cached by path). Computed from the
-  // already-loaded THUMBNAIL (~160px) — a histogram is a distribution, so the tiny
-  // sample is plenty, and it avoids decoding the 32 MP preview (which made it pop
-  // in ~0.5s late). The embedded Canon THMB letterboxes the photo into a fixed 4:3
-  // frame with pure-black bars; we crop to the photo's content rect (from its EXIF
-  // aspect) before sampling so those bars don't dump a false spike into the darks
-  // (0) bin. NOTE: coarse distribution, not pixel-level — use clipping (h) for that.
-  // Channels draw additively (overlaps brighten); the 0/255 bins set the scale.
+  // Compute an RGB histogram PNG for one image (cached by path). Sourced from the
+  // FULL-RES preview (the bare sensor JPEG, no letterbox) — NOT the embedded THMB,
+  // which Canon pads into a fixed 4:3 frame with pure-black bars that dumped a
+  // false spike into the darks (0) bin. We wait for the full to be ready; it's the
+  // on-screen loupe frame so it loads anyway, and the effect re-fires when the
+  // stage flips to "full". NOTE: coarse distribution, not pixel-level — use
+  // clipping (h) for that. Channels draw additively; the 0/255 bins set the scale.
   const loadHistogram = useCallback(
-    (path: string, meta: ImageMetadata | undefined) => {
+    (path: string) => {
       if (requestedHistograms.current.has(path)) return;
-      const thumbUrl = imageStore.thumbUrl(path);
-      if (!thumbUrl) return; // retried once the thumbnail loads
+      const snap = imageStore.snapshot(path);
+      // Guard BEFORE marking requested, so an early thumb-stage call doesn't
+      // freeze an uncomputed (or letterboxed) entry that the guard then blocks.
+      if (snap.stage !== "full" || !snap.url) return;
+      const fullUrl = snap.url;
       requestedHistograms.current.add(path);
       const reqGen = imageStore.getGeneration();
       const probe = new Image();
@@ -1160,24 +1165,7 @@ export default function App() {
           return;
         }
         sctx.drawImage(probe, 0, 0, w, h);
-        // Crop to the photo's content rect (from its EXIF aspect) so the THMB's
-        // black letterbox bars aren't sampled into the darks bin.
-        let sx = 0;
-        let sy = 0;
-        let sw = w;
-        let sh = h;
-        if (meta?.pixelWidth && meta?.pixelHeight) {
-          const contentAR = meta.pixelWidth / meta.pixelHeight;
-          const thumbAR = w / h;
-          if (contentAR > thumbAR) {
-            sh = Math.max(1, Math.round(w / contentAR)); // bars top & bottom
-            sy = Math.floor((h - sh) / 2);
-          } else if (contentAR < thumbAR) {
-            sw = Math.max(1, Math.round(h * contentAR)); // bars left & right
-            sx = Math.floor((w - sw) / 2);
-          }
-        }
-        const data = sctx.getImageData(sx, sy, sw, sh).data;
+        const data = sctx.getImageData(0, 0, w, h).data;
         const r = new Uint32Array(256);
         const g = new Uint32Array(256);
         const b = new Uint32Array(256);
@@ -1218,7 +1206,7 @@ export default function App() {
         setHistograms((prev) => ({ ...prev, [path]: hc.toDataURL("image/png") }));
       };
       probe.onerror = () => requestedHistograms.current.delete(path);
-      probe.src = thumbUrl;
+      probe.src = fullUrl;
     },
     [],
   );
@@ -1239,8 +1227,8 @@ export default function App() {
     // histogram UI, so skip it there entirely.
     if (scrubbing || compareMode) return;
     const img = images[currentIndex];
-    if (img) loadHistogram(img.path, metadata[img.path]);
-  }, [exifVisible, scrubbing, compareMode, currentIndex, images, metadata, cur.stage, loadHistogram]);
+    if (img) loadHistogram(img.path);
+  }, [exifVisible, scrubbing, compareMode, currentIndex, images, cur.stage, loadHistogram]);
 
   // Bound the per-path overlay caches to a window around the cursor so leaving an
   // overlay on while arrowing through a long shoot doesn't accumulate a PNG per
@@ -1629,6 +1617,10 @@ export default function App() {
       if (isZoomingRef.current) {
         resetZoom();
         isZoomingRef.current = false;
+        // Latch zoom OFF for the incoming frame: a still-held Space + WebView's
+        // spurious keyup/keydown churn must not re-zoom the next frame. Cleared
+        // only by a confirmed real Space release (see the keyup handler).
+        suppressZoomRef.current = true;
       }
       // Flash the verdict on the INCOMING frame's id: the full-frame wash is keyed
       // to the current frame, which the advance below makes nextImg, so keying it to
@@ -2071,7 +2063,11 @@ export default function App() {
   useEffect(() => {
     const onBlur = () => {
       stopHold();
-      spaceHeldRef.current = false;
+      suppressZoomRef.current = false;
+      if (spaceUpTimerRef.current != null) {
+        clearTimeout(spaceUpTimerRef.current);
+        spaceUpTimerRef.current = null;
+      }
     };
     window.addEventListener("blur", onBlur);
     return () => {
@@ -2305,9 +2301,15 @@ export default function App() {
       // Works in single + compare. No-op in grid (there's no loupe image to zoom).
       if (e.code === "Space") {
         e.preventDefault();
-        if (!e.repeat && !gridVisible && !spaceHeldRef.current) {
+        // A keydown means the key is (still) physically down — cancel any pending
+        // "real release" confirmation so a spurious/auto-repeat keyup can't clear
+        // the zoom-suppress latch out from under the paired keydown.
+        if (spaceUpTimerRef.current != null) {
+          clearTimeout(spaceUpTimerRef.current);
+          spaceUpTimerRef.current = null;
+        }
+        if (!e.repeat && !gridVisible && !suppressZoomRef.current) {
           // (a held scrub was already stopped by the interrupt guard above)
-          spaceHeldRef.current = true;
           setIsZooming(true);
           setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
           setPanOffset({ x: 0, y: 0 });
@@ -2508,8 +2510,15 @@ export default function App() {
       if (isRightUp && heldDirRef.current === 1) stopHold();
       else if (isLeftUp && heldDirRef.current === -1) stopHold();
       if (e.code === "Space") {
-        spaceHeldRef.current = false;
         resetZoom();
+        // Confirm the latch-clear on a delay: a spurious auto-repeat keyup is
+        // immediately followed by a keydown (which cancels this timer); only a
+        // genuine release (no following keydown) lets it fire and re-enable zoom.
+        if (spaceUpTimerRef.current != null) clearTimeout(spaceUpTimerRef.current);
+        spaceUpTimerRef.current = window.setTimeout(() => {
+          suppressZoomRef.current = false;
+          spaceUpTimerRef.current = null;
+        }, 120);
       }
     };
     cullKeyRef.current = { onKey, onKeyUp };

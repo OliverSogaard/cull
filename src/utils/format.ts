@@ -61,6 +61,19 @@ export function formatFileSize(bytes: number | null): string | null {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+/** One-liner combining pixel dims + file size — `6000 × 4000, 42.3 MB`. Drops
+ *  whichever half is missing; null if both are. Shared by the loupe + compare rails. */
+export function formatImageSize(
+  w: number | null,
+  h: number | null,
+  bytes: number | null,
+): string | null {
+  const dims = formatDimensions(w, h);
+  const size = formatFileSize(bytes);
+  if (dims && size) return `${dims}, ${size}`;
+  return dims ?? size;
+}
+
 /** Capture time `HH:MM:SS` in the user's locale, from an ISO string. */
 export function formatTime(iso: string | null): string | null {
   if (!iso) return null;

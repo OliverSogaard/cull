@@ -93,6 +93,10 @@ export class ImageStore {
   private fullQueue: string[] = [];
   /** Background-fill book-order queue */
   private bgQueue: string[] = [];
+  /** The background thumbnail sweep is deferred until the first full-res read
+   *  lands, so on cull entry the one full the user is waiting on isn't starved
+   *  behind an N-image thumbnail stampede through the shared blocking-read pool. */
+  private bgStarted = false;
   // ── Ordered list of all paths (for background fill + eviction) ─────────
   private paths: string[] = [];
   /** path → index in `paths`, rebuilt in reset() for O(1) lookups (I2). */
@@ -202,12 +206,22 @@ export class ImageStore {
       if (cbs.size > 0 && newSet.has(path)) this.invalidate(path);
     }
 
-    // Enqueue background fill for new paths (only if generation still current)
-    this.scheduleBgFill(gen);
-    // Re-pump every lane so the new session starts loading immediately.
+    // DON'T start the background thumbnail sweep yet. On cull entry the loupe is
+    // about to request the first full-res; an N-image thumbnail stampede through
+    // the shared blocking-read pool would starve that one read (→ minute-long
+    // first paint). The sweep is kicked once the first full lands (loadFull's
+    // finally). Fallback: if no full is requested within 2s (e.g. grid-first),
+    // start it anyway so off-screen thumbs still fill. gen-scoped.
+    this.bgStarted = false;
+    setTimeout(() => {
+      if (this.generation === gen && !this.bgStarted) {
+        this.bgStarted = true;
+        this.scheduleBgFill(gen);
+      }
+    }, 2000);
+    // Re-pump the on-demand lanes so visible thumbs + the first full load now.
     this.pumpThumbs();
     this.pumpFull();
-    this.pumpBg();
   }
 
   /**
@@ -586,6 +600,12 @@ export class ImageStore {
       // C1: gen-scoped counter decrement + pumps.
       if (this.generation === gen) {
         this.fullInFlight--;
+        // First full-res has landed (or errored) — NOW start the deferred
+        // background thumbnail sweep, so it never raced the first full read.
+        if (!this.bgStarted) {
+          this.bgStarted = true;
+          this.scheduleBgFill(gen);
+        }
         this.pumpFull();
         // I1: finishing the last on-demand full must wake the bg sweep.
         this.pumpBg();
@@ -686,9 +706,12 @@ export class ImageStore {
     while (
       this.bgInFlight < cap &&
       // On-demand thumbs + on-demand full take priority — don't start new bg
-      // work if there are higher-priority items queued
+      // work if there are higher-priority items queued, or while a wanted full
+      // is actively READING (in flight). The latter keeps the bg lane from
+      // refilling its slots and starving the full the user is staring at.
       this.thumbQueue.length === 0 &&
       this.fullQueue.length === 0 &&
+      this.fullInFlightPaths.size === 0 &&
       this.bgQueue.length > 0
     ) {
       const path = this.bgQueue.shift()!;
