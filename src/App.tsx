@@ -254,13 +254,10 @@ export default function App() {
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
-  // Is Space LOGICALLY held? Armed on the first keydown, cleared only by a keyup
-  // CONFIRMED over a short delay (a spurious auto-repeat keyup is cancelled by its
-  // following keydown). Zoom arms only on a fresh press (spaceDown false→true); a
-  // key held THROUGH a rate keeps this true, so its repeats are ignored and the next
-  // frame can never re-zoom — independent of e.repeat (unreliable here) and of how
-  // slow the load is. Replaces the earlier e.repeat / keyup-timing heuristics.
-  const spaceDownRef = useRef(false);
+  // Pending "Space released" confirmation timer. A keyup schedules the unzoom; a
+  // following keydown (auto-repeat) cancels it, so a spurious mid-hold keyup can't
+  // briefly drop the zoom. (Zoom itself only ARMS on a non-repeat keydown — a held
+  // key sends e.repeat===true, so it can't re-zoom the next frame after a rate.)
   const spaceUpTimerRef = useRef<number | null>(null);
 
   // Measured rect of the displayed image (relative to the stage). Consumed ONLY
@@ -327,7 +324,11 @@ export default function App() {
   // only when we genuinely left the frame. Reads isZoomingRef so it fires on the
   // index change, never on the Space-press that started the zoom.
   useEffect(() => {
-    if (isZoomingRef.current) resetZoom();
+    // Any navigation drops zoom (no-op when not zoomed). Unconditional so a lagging
+    // isZoomingRef can't leave the freshly-shown frame scaled. Only fires on a real
+    // currentIndex change — while zoomed, arrows pan (currentIndex stays put), so
+    // this never cancels a just-started zoom.
+    resetZoom();
   }, [currentIndex, resetZoom]);
 
   const visibleIndices = useMemo(() => {
@@ -848,7 +849,21 @@ export default function App() {
   // release (scrubbing flips false → wantFull true → store fetches the full).
   const cur = useImage(
     !gridVisible && !compareMode ? images[currentIndex]?.path ?? "" : "",
-    { wantFull: !gridVisible && !compareMode && !!images[currentIndex] && !scrubbing },
+    {
+      // Only want the full-res ONCE CULLING HAS STARTED. Before that (staged
+      // screen) this hook still runs at App scope, and without the phase gate it
+      // requested the full at the pre-reset generation; beginCulling's reset() then
+      // discarded that load, and since path/wantFull didn't change across the reset
+      // the effect never re-fired — so the first frame stayed blurred until you
+      // navigated. Gating on phase makes wantFull flip false→true AFTER the reset,
+      // re-firing the effect so the first frame loads at the live generation.
+      wantFull:
+        phase === "culling" &&
+        !gridVisible &&
+        !compareMode &&
+        !!images[currentIndex] &&
+        !scrubbing,
+    },
   );
   // curReady gates the hi-res zoom warm-up on the CURRENT image's full preview
   // being ready (so an unrelated prefetch landing doesn't reset it).
@@ -1601,13 +1616,12 @@ export default function App() {
       // sync the ref synchronously so a still-held Space can't re-zoom the incoming
       // frame before the reset commits. Guarded so a normal rating doesn't churn
       // zoom state on every keystroke.
-      if (isZoomingRef.current) {
-        // Drop zoom so the next frame isn't left scaled. A still-held Space can't
-        // re-zoom it: the Space-keydown guard ignores a "fresh" press while the OS
-        // auto-repeat stream is active (see the keydown handler).
-        resetZoom();
-        isZoomingRef.current = false;
-      }
+      // Unconditionally drop zoom on a rate (resetZoom is a no-op when not zoomed).
+      // Do NOT gate on isZoomingRef: it lags the isZooming state by a commit, and a
+      // missed reset left the NEXT frame stuck zoomed. A still-held Space can't
+      // re-zoom: the keydown guard ignores repeats while spaceDown is set.
+      resetZoom();
+      isZoomingRef.current = false;
       // Flash the verdict on the INCOMING frame's id: the full-frame wash is keyed
       // to the current frame, which the advance below makes nextImg, so keying it to
       // the outgoing cur.id meant the wash was wiped the instant we advanced.
@@ -2049,10 +2063,8 @@ export default function App() {
   useEffect(() => {
     const onBlur = () => {
       stopHold();
-      // Focus left mid-hold (e.g. Alt+Tab): the keyup may never arrive, so drop the
-      // held flag + any pending release and exit zoom — otherwise a stuck spaceDown
-      // would block the next zoom.
-      spaceDownRef.current = false;
+      // Focus left mid-hold (e.g. Alt+Tab): cancel any pending release-confirm and
+      // exit zoom.
       if (spaceUpTimerRef.current != null) {
         clearTimeout(spaceUpTimerRef.current);
         spaceUpTimerRef.current = null;
@@ -2291,20 +2303,20 @@ export default function App() {
       // Works in single + compare. No-op in grid (there's no loupe image to zoom).
       if (e.code === "Space") {
         e.preventDefault();
-        // A keydown means the key is down — cancel any pending keyup confirmation so
-        // a spurious auto-repeat keyup can't clear the held flag out from under it.
+        // A keydown cancels a pending release-confirm so a spurious mid-hold keyup
+        // (immediately followed by an auto-repeat keydown) can't drop the zoom.
         if (spaceUpTimerRef.current != null) {
           clearTimeout(spaceUpTimerRef.current);
           spaceUpTimerRef.current = null;
         }
-        if (gridVisible) return;
-        if (spaceDownRef.current) return; // already held (auto-repeat) — ignore
-        spaceDownRef.current = true;
-        // Fresh press → zoom. A key held through a rate stays spaceDown===true, so
-        // its repeats hit the guard above and never re-zoom the next frame.
-        setIsZooming(true);
-        setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
-        setPanOffset({ x: 0, y: 0 });
+        // Arm ONLY on a genuine fresh press. Auto-repeat from a held key arrives
+        // with e.repeat===true, so a key held through a rate (which dropped zoom)
+        // can never re-zoom the next frame — only a real new press does.
+        if (!e.repeat && !gridVisible) {
+          setIsZooming(true);
+          setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
+          setPanOffset({ x: 0, y: 0 });
+        }
         return;
       }
 
@@ -2501,13 +2513,12 @@ export default function App() {
       if (isRightUp && heldDirRef.current === 1) stopHold();
       else if (isLeftUp && heldDirRef.current === -1) stopHold();
       if (e.code === "Space") {
-        // Defer the release: a spurious auto-repeat keyup is immediately followed by
-        // its keydown (which cancels this). Only a genuine release — no following
-        // keydown within the window — clears the held flag and exits zoom.
+        // Defer the unzoom: a spurious mid-hold keyup is immediately followed by an
+        // auto-repeat keydown (which cancels this timer); only a genuine release —
+        // no following keydown within the window — actually exits zoom.
         if (spaceUpTimerRef.current != null) clearTimeout(spaceUpTimerRef.current);
         spaceUpTimerRef.current = window.setTimeout(() => {
           spaceUpTimerRef.current = null;
-          spaceDownRef.current = false;
           resetZoom();
         }, 80);
       }
