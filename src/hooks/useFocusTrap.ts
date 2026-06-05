@@ -31,8 +31,9 @@ export function useFocusTrap<T extends HTMLElement>() {
         (el) => el.getClientRects().length > 0,
       );
 
-    // Move focus into the dialog on open.
-    (focusable()[0] ?? node).focus();
+    // Move focus into the dialog on open. preventScroll so a scrollable dialog
+    // body doesn't jump to bring the first control into view.
+    (focusable()[0] ?? node).focus({ preventScroll: true });
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
@@ -62,9 +63,12 @@ export function useFocusTrap<T extends HTMLElement>() {
     const onFocusOut = (e: FocusEvent) => {
       const next = e.relatedTarget as Node | null;
       if (next && node.contains(next)) return; // moving within the dialog — fine
-      // Defer so React can finish reconciling the removed node.
+      // Defer so React can finish reconciling the removed node. Re-home to the
+      // dialog root (not the first control) with preventScroll, so a button that
+      // disables/removes itself on click doesn't make the body scroll up to the
+      // top control.
       requestAnimationFrame(() => {
-        if (!node.contains(document.activeElement)) (focusable()[0] ?? node).focus();
+        if (!node.contains(document.activeElement)) node.focus({ preventScroll: true });
       });
     };
 

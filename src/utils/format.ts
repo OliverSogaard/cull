@@ -49,6 +49,18 @@ export function formatExposureBiasShort(ev: number | null): string | null {
   return s ? s.replace(/ EV$/, "") : null;
 }
 
+/** `6000 × 4000` from pixel dims (true × sign); null if either missing. */
+export function formatDimensions(w: number | null, h: number | null): string | null {
+  if (w == null || h == null || w <= 0 || h <= 0) return null;
+  return `${w} × ${h}`;
+}
+
+/** `42.3 MB` from bytes (1 MB = 1048576 B); null if missing / non-positive. */
+export function formatFileSize(bytes: number | null): string | null {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return null;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
 /** Capture time `HH:MM:SS` in the user's locale, from an ISO string. */
 export function formatTime(iso: string | null): string | null {
   if (!iso) return null;

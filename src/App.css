@@ -934,52 +934,6 @@ body,
   letter-spacing: 0.06em;
 }
 
-/* Last-session recap on the home screen after finishing a cull */
-.cull-hero__summary {
-  margin-top: 36px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 14px 18px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 4px;
-  width: 100%;
-  max-width: 500px;
-  box-sizing: border-box;
-}
-
-.cull-hero__summary-label {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.cull-hero__summary-stats {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: var(--text-2);
-}
-
-.cull-hero__summary-pct {
-  color: var(--text);
-}
-
-.cull-hero__summary-stats .cull-count--keep {
-  color: var(--ok);
-}
-
-.cull-hero__summary-stats .cull-count--fav {
-  color: var(--fav);
-}
-
 .cull-hero__how {
   margin-top: 70px;
   padding-top: 24px;
@@ -2225,10 +2179,13 @@ body,
 }
 
 /* ── feedback popup ───────────────────────────────────────── */
+/* Anchored bottom-right WITHIN its positioned parent — the loupe photo stage
+   (.cull-image-area) or the grid view (.cull-grid-wrap) — so it sits in the
+   image/grid area, clear of the thumb strip and the bottom status bar. */
 .cull-feedback {
   position: absolute;
-  bottom: 32px;
-  right: 32px;
+  bottom: 16px;
+  right: 16px;
   z-index: 30;
   pointer-events: none;
 }
@@ -2415,6 +2372,16 @@ body,
 }
 
 /* ── contact-sheet grid (G) ───────────────────────────────── */
+/* Positioning context for the grid's rating-feedback chip; the footer is its
+   sibling, so the chip stays within the grid area and never overlaps it. The
+   inner .cull-grid (flex:1) fills it, so width/scroll behave exactly as before. */
+.cull-grid-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .cull-grid {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -2811,7 +2778,7 @@ body,
   position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 2;
+  z-index: 7; /* above the clip(4)/peak(5)/thirds(6) overlays so the verdict shows */
 }
 
 /* Role chip below the photo — champion filled, challenger hollow. */

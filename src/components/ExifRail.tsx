@@ -2,7 +2,9 @@ import { useMemo } from "react";
 import type { ImageMetadata, Rating } from "../types";
 import {
   formatAperture,
+  formatDimensions,
   formatExposureBiasShort,
+  formatFileSize,
   formatFocal,
   formatIso,
   formatShutter,
@@ -40,6 +42,8 @@ export function ExifRail({
   const dateStr = dateOK
     ? date!.toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" })
     : null;
+  const dimensions = formatDimensions(meta?.pixelWidth ?? null, meta?.pixelHeight ?? null);
+  const size = formatFileSize(meta?.fileSize ?? null);
   const lrc = meta?.lrcRating ?? null;
   const showLrc = hasLrcRating(lrc, cullRating);
 
@@ -61,6 +65,8 @@ export function ExifRail({
           {lens && <RailRow k="Lens" v={lens} />}
           {timeStr && <RailRow k="Time" v={timeStr} />}
           {dateStr && <RailRow k="Date" v={dateStr} />}
+          {dimensions && <RailRow k="Dimensions" v={dimensions} />}
+          {size && <RailRow k="Size" v={size} />}
           {showLrc && lrc != null && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">LrC rating</span>
@@ -73,7 +79,7 @@ export function ExifRail({
               </span>
             </div>
           )}
-          {!body && !lens && !timeStr && !dateStr && !showLrc && (
+          {!body && !lens && !timeStr && !dateStr && !dimensions && !size && !showLrc && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">—</span>
               <span className="cull-exif-rail__v cull-exif-rail__v--dim">reading…</span>

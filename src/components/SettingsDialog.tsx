@@ -17,9 +17,11 @@ import { sanitizeFolderName } from "../utils/path";
 export function SettingsDialog({
   settings,
   onChange,
+  onClose,
 }: {
   settings: Settings;
   onChange: (next: Settings) => void;
+  onClose: () => void;
 }) {
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     onChange({ ...settings, [key]: value });
@@ -31,7 +33,13 @@ export function SettingsDialog({
   const trapRef = useFocusTrap<HTMLDivElement>();
 
   return (
-    <div className="cull-quitguard cull-settings-overlay">
+    <div
+      className="cull-quitguard cull-settings-overlay"
+      onClick={(e) => {
+        // Click on the backdrop itself (not bubbled from inside the box) closes.
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div
         className="cull-settings"
         ref={trapRef}
@@ -457,8 +465,8 @@ function ThumbCacheRow() {
 
 /** Reset all settings — two-step inline confirm to prevent a misclick wiping
  * prefs. Stage 1: a red-outlined "Reset" button. Stage 2: "Sure?" inline
- * message with primary "Yes, reset" and a "Cancel" escape. Auto-disarms after
- * 4 s so a walked-away dialog can't be triggered. */
+ * message with primary "Yes, reset". Auto-disarms after 4 s (and Esc / clicking
+ * outside closes the dialog), so no explicit Cancel button is needed. */
 function ResetRow({ onReset }: { onReset: () => void }) {
   const [armed, setArmed] = useState(false);
 
@@ -489,13 +497,6 @@ function ResetRow({ onReset }: { onReset: () => void }) {
               }}
             >
               Yes, reset
-            </button>
-            <button
-              type="button"
-              className="cull-pick-button"
-              onClick={() => setArmed(false)}
-            >
-              Cancel
             </button>
           </div>
         ) : (

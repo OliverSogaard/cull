@@ -16,7 +16,6 @@ import type {
   NavSite,
   Phase,
   Rating,
-  SessionSummary,
   UndoAction,
 } from "./types";
 import "./App.css";
@@ -158,9 +157,6 @@ export default function App() {
   // per step. Full-res returns the instant the key is released.
   const [scrubbing, setScrubbing] = useState(false);
 
-  // Snapshot of the just-finished cull, shown on the home screen after you leave.
-  const [lastSession, setLastSession] = useState<SessionSummary | null>(null);
-
   // User-tunable settings, persisted to localStorage. Opened with Ctrl+,.
   const [settings, setSettings] = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -245,6 +241,7 @@ export default function App() {
   const savingRef = useRef(0);
   const failedCountRef = useRef(0);
   const destroyedRef = useRef(false); // window.destroy() must fire at most once
+  const quitShownAtRef = useRef(0); // when the quit guard was shown (min-visible floor)
   const failedCount = Object.keys(failedWrites).length;
 
   const [isZooming, setIsZooming] = useState(false);
@@ -257,6 +254,11 @@ export default function App() {
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
+  // True while Space is physically held. A rating-advance doesn't release Space,
+  // so this stays true across the frame change and blocks a stray Space keydown
+  // (WebView can emit one after the DOM churn) from re-zooming the next frame —
+  // which used to leave it stuck zoomed with no keyup left to clear it.
+  const spaceHeldRef = useRef(false);
 
   // Measured rect of the displayed image (relative to the stage). Consumed ONLY
   // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
@@ -619,7 +621,6 @@ export default function App() {
     if (analyzingRef.current) return; // ignore a double-click — one analyze pass
     analyzingRef.current = true;
     setAnalyzeError(null);
-    setLastSession(null); // starting a new cull → drop the previous session's recap
     setProgress({ done: 0, total: images.length, phase: "reading" });
     setPhase("analyzing");
     const unlisten = await listen<AnalyzeProgress>("analyze-progress", (e) => setProgress(e.payload));
@@ -763,26 +764,13 @@ export default function App() {
     setPhase("start");
   }, [resetZoom]);
 
-  // Leaving to home: snapshot the cull for the home-screen summary, then reset.
+  // Leaving to home: refresh the per-folder recents with this session's final
+  // counts, then discard the in-memory session and return to the start screen.
   const leaveToHome = useCallback(() => {
-    const total = images.length;
-    if (total > 0) {
-      const favorites = stats.favorites;
-      setLastSession({
-        folder: folder ? basename(folder) : "",
-        total,
-        keep: stats.keeps - favorites, // keeps includes favorites; this is keep-only
-        favorites,
-        rejected: total - stats.unrated - stats.keeps,
-        unrated: stats.unrated,
-      });
-    }
-    // Refresh the recents entries (one per source folder) with this session's
-    // final counts so the home list reflects what the user just finished.
     recordSessionRecents(images, ratings);
     setConfirmHome(false);
     resetSession();
-  }, [images, ratings, stats, folder, resetSession, recordSessionRecents]);
+  }, [images, ratings, resetSession, recordSessionRecents]);
 
   // Open the act-on-cull dialog with fresh results.
   const openActions = useCallback(() => {
@@ -1141,12 +1129,13 @@ export default function App() {
   // Compute an RGB histogram PNG for one image (cached by path). Computed from the
   // already-loaded THUMBNAIL (~160px) — a histogram is a distribution, so the tiny
   // sample is plenty, and it avoids decoding the 32 MP preview (which made it pop
-  // in ~0.5s late). NOTE: it samples the downscaled thumb, NOT the full preview the
-  // clipping overlay uses, so it's a coarse distribution and does not faithfully
-  // resolve pixel-level clipping — use the clipping overlay (h) for that. Channels
-  // are drawn additively (overlaps brighten); the 0/255 bins set the vertical scale.
+  // in ~0.5s late). The embedded Canon THMB letterboxes the photo into a fixed 4:3
+  // frame with pure-black bars; we crop to the photo's content rect (from its EXIF
+  // aspect) before sampling so those bars don't dump a false spike into the darks
+  // (0) bin. NOTE: coarse distribution, not pixel-level — use clipping (h) for that.
+  // Channels draw additively (overlaps brighten); the 0/255 bins set the scale.
   const loadHistogram = useCallback(
-    (path: string) => {
+    (path: string, meta: ImageMetadata | undefined) => {
       if (requestedHistograms.current.has(path)) return;
       const thumbUrl = imageStore.thumbUrl(path);
       if (!thumbUrl) return; // retried once the thumbnail loads
@@ -1171,7 +1160,24 @@ export default function App() {
           return;
         }
         sctx.drawImage(probe, 0, 0, w, h);
-        const data = sctx.getImageData(0, 0, w, h).data;
+        // Crop to the photo's content rect (from its EXIF aspect) so the THMB's
+        // black letterbox bars aren't sampled into the darks bin.
+        let sx = 0;
+        let sy = 0;
+        let sw = w;
+        let sh = h;
+        if (meta?.pixelWidth && meta?.pixelHeight) {
+          const contentAR = meta.pixelWidth / meta.pixelHeight;
+          const thumbAR = w / h;
+          if (contentAR > thumbAR) {
+            sh = Math.max(1, Math.round(w / contentAR)); // bars top & bottom
+            sy = Math.floor((h - sh) / 2);
+          } else if (contentAR < thumbAR) {
+            sw = Math.max(1, Math.round(h * contentAR)); // bars left & right
+            sx = Math.floor((w - sw) / 2);
+          }
+        }
+        const data = sctx.getImageData(sx, sy, sw, sh).data;
         const r = new Uint32Array(256);
         const g = new Uint32Array(256);
         const b = new Uint32Array(256);
@@ -1232,8 +1238,9 @@ export default function App() {
     // during scrub; the settle re-fires it via the scrubbing dep. Compare has no
     // histogram UI, so skip it there entirely.
     if (scrubbing || compareMode) return;
-    if (images[currentIndex]) loadHistogram(images[currentIndex].path);
-  }, [exifVisible, scrubbing, compareMode, currentIndex, images, cur.stage, loadHistogram]);
+    const img = images[currentIndex];
+    if (img) loadHistogram(img.path, metadata[img.path]);
+  }, [exifVisible, scrubbing, compareMode, currentIndex, images, metadata, cur.stage, loadHistogram]);
 
   // Bound the per-path overlay caches to a window around the cursor so leaving an
   // overlay on while arrowing through a long shoot doesn't accumulate a PNG per
@@ -1398,6 +1405,7 @@ export default function App() {
       .onCloseRequested((event) => {
         if (savingRef.current > 0 || failedCountRef.current > 0) {
           event.preventDefault();
+          quitShownAtRef.current = performance.now();
           setQuitGuard(true);
         }
       })
@@ -1469,10 +1477,17 @@ export default function App() {
   // destroyedRef makes destroy() fire at most once (a stray re-trigger during the
   // async teardown would otherwise reject); .catch swallows the unhandled rejection.
   useEffect(() => {
-    if (quitGuard && savingCount === 0 && failedCount === 0 && !destroyedRef.current) {
+    if (!(quitGuard && savingCount === 0 && failedCount === 0 && !destroyedRef.current)) return;
+    // Keep the guard on screen a beat even if the write finished in the same tick
+    // it appeared — otherwise destroy() fires on the overlay's first painted frame
+    // and the user never sees the "saving…" panel.
+    const elapsed = performance.now() - quitShownAtRef.current;
+    const t = window.setTimeout(() => {
+      if (destroyedRef.current) return;
       destroyedRef.current = true;
       getCurrentWindow().destroy().catch(() => {});
-    }
+    }, Math.max(0, 350 - elapsed));
+    return () => window.clearTimeout(t);
   }, [quitGuard, savingCount, failedCount]);
 
   // ── Undo / redo of rating actions ────────────────────────────────────────
@@ -1606,13 +1621,26 @@ export default function App() {
       if (gridVisible && pos === -1) return;
       const nextTarget =
         pos !== -1 && pos + 1 < visibleIndices.length ? visibleIndices[pos + 1] : null;
+      const nextImg = nextTarget !== null ? images[nextTarget] : null;
+      // A rating drops any active loupe zoom so the next frame doesn't land scaled;
+      // sync the ref synchronously so a still-held Space can't re-zoom the incoming
+      // frame before the reset commits. Guarded so a normal rating doesn't churn
+      // zoom state on every keystroke.
+      if (isZoomingRef.current) {
+        resetZoom();
+        isZoomingRef.current = false;
+      }
+      // Flash the verdict on the INCOMING frame's id: the full-frame wash is keyed
+      // to the current frame, which the advance below makes nextImg, so keying it to
+      // the outgoing cur.id meant the wash was wiped the instant we advanced.
+      const flashId = (nextImg ?? cur).id;
 
       // Re-pressing the same verdict on an already-rated frame changes nothing on
       // disk or in state: skip the redundant sidecar write (an fsync round-trip on
       // the NAS) and the dead before===after undo entry (which would also wipe a
       // pending redo). Still flash + advance so the keyboard-fast flow is unchanged.
       if (ratings[cur.id] === rating) {
-        flashFeedback(rating, cur.id);
+        flashFeedback(rating, flashId);
         if (nextTarget !== null) setCurrentIndex(nextTarget);
         return;
       }
@@ -1621,7 +1649,7 @@ export default function App() {
         changes: [{ imgId: cur.id, path: cur.path, before: ratings[cur.id], after: rating }],
       });
       setRatings((prev) => ({ ...prev, [cur.id]: rating }));
-      flashFeedback(rating, cur.id);
+      flashFeedback(rating, flashId);
       persistRating(cur.path, rating); // durable write with retry + failure tracking
 
       if (nextTarget !== null) setCurrentIndex(nextTarget);
@@ -1636,6 +1664,7 @@ export default function App() {
       flashFeedback,
       persistRating,
       recordAction,
+      resetZoom,
     ],
   );
 
@@ -2038,10 +2067,15 @@ export default function App() {
   }, []);
 
   // Stop a held scrub if the key-release is missed (window blur) and on unmount.
+  // Also clear the Space-held flag so a lost Space keyup can't wedge zoom off.
   useEffect(() => {
-    window.addEventListener("blur", stopHold);
+    const onBlur = () => {
+      stopHold();
+      spaceHeldRef.current = false;
+    };
+    window.addEventListener("blur", onBlur);
     return () => {
-      window.removeEventListener("blur", stopHold);
+      window.removeEventListener("blur", onBlur);
       stopHold();
     };
   }, [stopHold]);
@@ -2107,14 +2141,18 @@ export default function App() {
       }
       if (modifiers.ctrl) {
         const next = new Set(selectedIndices);
-        if (next.has(i)) next.delete(i);
+        const wasSelected = next.has(i);
+        if (wasSelected) next.delete(i);
         else next.add(i);
         setSelectedIndices(next);
         // Anchor tracks the last-interacted cell, but null it when the toggle
         // emptied the set so a later shift-range can't extend from a
         // no-longer-selected anchor.
         setSelectionAnchor(next.size === 0 ? null : i);
-        setCurrentIndex(i);
+        // Only an ADD moves the cursor (and its outline) onto the cell; a
+        // deselect leaves current where it was, so the just-deselected cell
+        // doesn't get a stray current-outline just because it was clicked.
+        if (!wasSelected) setCurrentIndex(i);
         return;
       }
       // Plain click.
@@ -2267,8 +2305,9 @@ export default function App() {
       // Works in single + compare. No-op in grid (there's no loupe image to zoom).
       if (e.code === "Space") {
         e.preventDefault();
-        if (!e.repeat && !gridVisible) {
+        if (!e.repeat && !gridVisible && !spaceHeldRef.current) {
           // (a held scrub was already stopped by the interrupt guard above)
+          spaceHeldRef.current = true;
           setIsZooming(true);
           setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
           setPanOffset({ x: 0, y: 0 });
@@ -2276,12 +2315,12 @@ export default function App() {
         return;
       }
 
-      // ESC is shared across all sites: it pops the nav stack (or, from loupe
-      // with empty stack, opens the home-confirm). It's lifted out of the
-      // mode-specific branches because the back-stack is global.
+      // ESC from any site opens the leave-to-home confirm (Enter=leave, Esc=stay).
+      // Stepping back site-by-site felt wrong, so ESC does the same thing wherever
+      // you are. (goBack is still used by the compare auto-exit flows.)
       if (e.key === "Escape") {
         e.preventDefault();
-        goBack();
+        setConfirmHome(true);
         return;
       }
 
@@ -2461,9 +2500,15 @@ export default function App() {
       }
       // Only the HELD arrow's release stops the scrub; releasing the opposite
       // arrow (which was ignored on keydown) must not interrupt the flow.
-      if (e.key === "ArrowRight" && heldDirRef.current === 1) stopHold();
-      else if (e.key === "ArrowLeft" && heldDirRef.current === -1) stopHold();
+      // Stop on the held arrow's release. Use e.code as a fallback: a modifier
+      // (Alt/Shift) still held at release can mangle e.key, which used to make the
+      // exact match miss and leave the rAF scrub loop running forever.
+      const isRightUp = e.key === "ArrowRight" || e.code === "ArrowRight";
+      const isLeftUp = e.key === "ArrowLeft" || e.code === "ArrowLeft";
+      if (isRightUp && heldDirRef.current === 1) stopHold();
+      else if (isLeftUp && heldDirRef.current === -1) stopHold();
       if (e.code === "Space") {
+        spaceHeldRef.current = false;
         resetZoom();
       }
     };
@@ -2641,29 +2686,6 @@ export default function App() {
                 onPick={openFolderByPath}
                 pickerBusy={pickerBusy}
               />
-              {lastSession && (
-                <div className="cull-hero__summary">
-                  <span className="cull-hero__summary-label">
-                    last cull{lastSession.folder ? ` · ${lastSession.folder}` : ""}
-                  </span>
-                  <span className="cull-hero__summary-stats">
-                    <span className="cull-count--keep">
-                      {lastSession.keep + lastSession.favorites} kept
-                    </span>
-                    {lastSession.favorites > 0 && (
-                      <span className="cull-count--fav">{lastSession.favorites}★</span>
-                    )}
-                    <span>{lastSession.rejected} rejected</span>
-                    {lastSession.unrated > 0 && <span>{lastSession.unrated} left</span>}
-                    <span className="cull-hero__summary-pct">
-                      {Math.round(
-                        ((lastSession.keep + lastSession.favorites) / lastSession.total) * 100,
-                      )}
-                      % kept
-                    </span>
-                  </span>
-                </div>
-              )}
               {scanError && (
                 <pre className="cull-message__body cull-chrome__error">{scanError}</pre>
               )}
@@ -2751,7 +2773,11 @@ export default function App() {
           )}
         </div>
         {settingsOpen && (
-          <SettingsDialog settings={settings} onChange={setSettings} />
+          <SettingsDialog
+            settings={settings}
+            onChange={setSettings}
+            onClose={() => setSettingsOpen(false)}
+          />
         )}
       </main>
     );
@@ -2797,6 +2823,24 @@ export default function App() {
       // — a square fills the stage height (width = height), like a portrait.
       : (naturalSize ?? { w: 10000, h: 10000 });
   const photoAr = `${frameDims.w} / ${frameDims.h}`;
+
+  // Rating feedback chip — a brief corner badge. Rendered INSIDE the loupe photo
+  // stage and the grid view (each its own positioning context) so it sits bottom-
+  // right within the image / grid area, clear of the thumb strip and the footer.
+  const feedbackChip = feedback && (
+    <div className="cull-feedback" key={feedback.ts}>
+      <div
+        className="cull-feedback__circle"
+        style={{ backgroundColor: RATING_COLOR[feedback.rating] }}
+      >
+        {feedback.rating === "keep" && <Check size={22} color="white" strokeWidth={3} />}
+        {feedback.rating === "reject" && <XIcon size={22} color="white" strokeWidth={3} />}
+        {feedback.rating === "favorite" && (
+          <Star size={22} color="white" strokeWidth={3} fill="white" />
+        )}
+      </div>
+    </div>
+  );
 
   const singleModeBody = (
       <div className="cull-stage">
@@ -2992,6 +3036,7 @@ export default function App() {
                 stage clean alongside the EXIF rail. */}
           </>
         )}
+        {feedbackChip}
         </div>
         {exifVisible && current && (
           <ExifRail
@@ -3014,15 +3059,10 @@ export default function App() {
   //   overlay cluster (i h p o t — circular toggle chips, on/off state)
   //   <spacer>
   //   position N / M  ·  filter tabs (loupe + grid)  ·  finish button
-  // In compare mode the status bar's filename + MP follows the CHALLENGER —
-  // the frame the user is actively judging — not the current cursor (which
-  // would track the champion). Single-view shows the cursor's frame.
+  // In compare mode the status bar's filename follows the CHALLENGER — the frame
+  // the user is actively judging — not the current cursor (which would track the
+  // champion). Single-view shows the cursor's frame.
   const statusBarImg = compareMode ? images[challengerIndex] : current;
-  const statusBarMeta = statusBarImg ? metadata[statusBarImg.path] : undefined;
-  const mp =
-    statusBarMeta?.pixelWidth && statusBarMeta?.pixelHeight
-      ? `${(((statusBarMeta.pixelWidth * statusBarMeta.pixelHeight) / 1e6) | 0)} MP`
-      : null;
   const verdictLabel: Record<Rating, string> = {
     keep: "Keep",
     reject: "Reject",
@@ -3049,12 +3089,6 @@ export default function App() {
         {statusBarImg && (
           <span className="cull-statusbar__filename">
             <span className="cull-statusbar__filename-name">{statusBarImg.filename}</span>
-            {mp && (
-              <>
-                <span className="cull-statusbar__filename-sep">·</span>
-                <span className="cull-statusbar__filename-meta">{mp}</span>
-              </>
-            )}
           </span>
         )}
         {!compareMode && currentRating && (
@@ -3295,23 +3329,26 @@ export default function App() {
         </>
       ) : gridVisible ? (
         <>
-          {visibleIndices.length === 0 ? (
-            <EmptyFilter filter={filter} />
-          ) : (
-          <GridView
-            images={images}
-            visibleIndices={visibleIndices}
-            currentIndex={currentIndex}
-            cols={gridCols}
-            contentWidth={gridContentW}
-            ratings={ratings}
-            metadata={metadata}
-            selectedIndices={selectedIndices}
-            onPick={handleGridPick}
-            containerRef={gridContainerRef}
-            onViewportChange={handleGridViewport}
-          />
-          )}
+          <div className="cull-grid-wrap">
+            {visibleIndices.length === 0 ? (
+              <EmptyFilter filter={filter} />
+            ) : (
+              <GridView
+                images={images}
+                visibleIndices={visibleIndices}
+                currentIndex={currentIndex}
+                cols={gridCols}
+                contentWidth={gridContentW}
+                ratings={ratings}
+                metadata={metadata}
+                selectedIndices={selectedIndices}
+                onPick={handleGridPick}
+                containerRef={gridContainerRef}
+                onViewportChange={handleGridViewport}
+              />
+            )}
+            {feedbackChip}
+          </div>
           {bottomStatusBar}
         </>
       ) : (
@@ -3321,21 +3358,6 @@ export default function App() {
           {thumbsVisible && settings.thumbsPosition !== "top" && loupeStrip}
           {bottomStatusBar}
         </>
-      )}
-
-      {feedback && (
-        <div className="cull-feedback" key={feedback.ts}>
-          <div
-            className="cull-feedback__circle"
-            style={{ backgroundColor: RATING_COLOR[feedback.rating] }}
-          >
-            {feedback.rating === "keep" && <Check size={22} color="white" strokeWidth={3} />}
-            {feedback.rating === "reject" && <XIcon size={22} color="white" strokeWidth={3} />}
-            {feedback.rating === "favorite" && (
-              <Star size={22} color="white" strokeWidth={3} fill="white" />
-            )}
-          </div>
-        </div>
       )}
 
       {confirmHome && (
@@ -3392,7 +3414,11 @@ export default function App() {
       )}
 
       {settingsOpen && (
-        <SettingsDialog settings={settings} onChange={setSettings} />
+        <SettingsDialog
+          settings={settings}
+          onChange={setSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
     </main>
   );
@@ -3437,7 +3463,7 @@ function EmptyFilter({ filter }: { filter: Filter }) {
         No images in the <em>{label}</em> filter
       </div>
       <div className="cull-empty-state__hint">
-        <kbd>1</kbd> for all · <kbd>2</kbd> for unrated
+        <kbd>1</kbd> for all
       </div>
     </div>
   );

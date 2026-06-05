@@ -9,13 +9,3 @@ export type Phase = "start" | "loading" | "staged" | "analyzing" | "culling";
  * be settled without staring at a stale rating.
  */
 export type Feedback = { rating: Rating; imageId: number; ts: number };
-
-/** Cull-session recap shown on the home screen after you leave a cull. */
-export type SessionSummary = {
-  folder: string;
-  total: number;
-  keep: number;
-  favorites: number;
-  rejected: number;
-  unrated: number;
-};
