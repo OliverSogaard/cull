@@ -13,13 +13,12 @@ import {
 import { hasLrcRating } from "../utils/ratingColor";
 
 /**
- * Loupe-side EXIF rail (mockup .exif-rail). A 290-px column glued to the right
+ * Loupe-side EXIF rail. A 290-px column glued to the right
  * edge of the photo stage when (i) is on. Three sections — Frame, Exposure,
  * Histogram — each labelled with the mono champagne uppercase eyebrow.
  *
- * Designed to replace the old floating `ExifPanel`. The rail mounts as a sibling
- * of the photo stage so the photo area shrinks when info is on, instead of
- * letting the panel float over the photo.
+ * The rail mounts as a sibling of the photo stage so the photo area shrinks when
+ * info is on, rather than floating over the photo.
  */
 export function ExifRail({
   metadata,

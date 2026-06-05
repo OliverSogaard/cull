@@ -1,6 +1,6 @@
 import type { ImageDims } from "../utils/bundle";
 
-export type FullState =
+type FullState =
   | { status: "loading" }
   | { status: "ready"; url: string; dims: ImageDims }
   | { status: "error"; error: string };
@@ -10,7 +10,7 @@ export type ImageState = {
   full: FullState | undefined;
 };
 
-export type Stage = "shimmer" | "thumb" | "full";
+type Stage = "shimmer" | "thumb" | "full";
 export type Resolved = { stage: Stage; url: string | undefined; dims: ImageDims | undefined; error: string | undefined };
 
 export function resolveStage(s: ImageState): Resolved {

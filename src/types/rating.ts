@@ -15,7 +15,7 @@ export type Rating = "keep" | "reject" | "favorite";
 export type Filter = "all" | "unrated" | "keeps" | "favorites";
 
 /** One per-image rating change. Compound actions (e.g. challengerWins) bundle several into an {@link UndoAction}. */
-export type Change = {
+type Change = {
   imgId: number;
   path: string;
   before: Rating | undefined;
@@ -23,7 +23,7 @@ export type Change = {
 };
 
 /** A compare-cursor snapshot (which pair was on screen) for undo/redo restore. */
-export type CompareCursor = {
+type CompareCursor = {
   compareMode: boolean;
   championIndex: number;
   challengerIndex: number;

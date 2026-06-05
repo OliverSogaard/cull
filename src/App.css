@@ -240,7 +240,7 @@ body,
 }
 
 /* Verdict pill — colored 14px circle with glyph (✓ / ✕ / ★) preceding the
-   uppercase label (Keep / Reject / Fav). Mockup .status-verdict. */
+   uppercase label (Keep / Reject / Fav). */
 .cull-statusbar__verdict {
   display: inline-flex;
   align-items: center;
@@ -293,7 +293,7 @@ body,
 
 /* Overlay cluster — five circular i / h / p / o / t toggle chips. Each is
    transparent off, champagne (accent-soft bg + accent border + accent text)
-   when on. Mockup .overlay-cluster. */
+   when on. */
 .cull-statusbar__overlay-cluster {
   display: inline-flex;
   gap: 3px;
@@ -338,7 +338,7 @@ body,
 }
 
 /* Scrubbing indicator — champagne pulse with an animated arrow prefix.
-   Surfaced while a held-arrow scrub is in flight. Mockup .scrub-indicator. */
+   Surfaced while a held-arrow scrub is in flight. */
 .cull-statusbar__scrub {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
@@ -362,7 +362,7 @@ body,
   50% { opacity: 0.4; transform: translateX(2px); }
 }
 
-/* Position counter "N / M" — mockup .status-pos. Lives on the right cluster.
+/* Position counter "N / M" — lives on the right cluster.
    Tabular-numeric, with the slash + total muted, and a fixed width so the row
    doesn't pan when the number changes from one to three digits. */
 .cull-statusbar__pos {
@@ -387,7 +387,7 @@ body,
   color: var(--muted);
 }
 
-/* Filter tabs — text-only pills with an active underline. Mockup .filter-tabs. */
+/* Filter tabs — text-only pills with an active underline. */
 .cull-filter-tabs {
   display: inline-flex;
   align-items: center;
@@ -453,7 +453,7 @@ body,
 
 /* "N selected" multi-select counter chip — pinned next to the position
    counter while the grid has a multi-selection. Champagne pill (soft accent
-   background, accent text) to match the mockup's .multi-counter. */
+   background, accent text). */
 .cull-statusbar__multi {
   display: inline-flex;
   align-items: center;
@@ -481,7 +481,7 @@ body,
 
 /* Loupe body: photo stage and (optional) EXIF rail are siblings in a row.
    The rail is a 290px column on the right; the stage shrinks accordingly when
-   info is on. Mockup .loupe-body. */
+   info is on. */
 .cull-loupe-body {
   flex: 1 1 auto;
   display: flex;
@@ -818,7 +818,7 @@ body,
   transition: opacity 200ms ease-out;
 }
 
-/* Champagne dashed overlay matching the mockup's .drag-indicator. Pointer
+/* Champagne dashed overlay for the drag indicator. Pointer
    events disabled so the drop still lands on the underlying window. */
 .cull-drag-indicator {
   position: absolute;
@@ -947,7 +947,7 @@ body,
 }
 
 /* ── home recents list ──────────────────────────────────────
-   Mockup's .home-recent: sits below the CTA row, has a small
+   Sits below the CTA row, has a small
    uppercase "Recent" label with a divider, then up to RECENTS_CAP
    rows of path + count + relative time. */
 .cull-recent {
@@ -1447,7 +1447,7 @@ body,
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-/* Knob-style toggle (mockup .toggle). */
+/* Knob-style toggle. */
 .cull-settings__toggle {
   width: 36px;
   height: 20px;
@@ -1489,7 +1489,7 @@ body,
 }
 
 /* Pinned-root config row — indented under the Copy keeps segment with a
-   champagne left border, matching the mockup .pinned-config. */
+   champagne left border. */
 .cull-settings__pinned-config {
   position: relative;
   padding-left: 14px;
@@ -1860,8 +1860,7 @@ body,
 }
 
 /* Pinned-mode "folder already exists" banner. Sits between the row-help text
-   and the dest-edit input, in dim red, matching the mockup's
-   .folder-exists-banner. Only renders when path_exists returns true; the
+   and the dest-edit input, in dim red. Only renders when path_exists returns true; the
    primary button label also swaps to "Confirm (merge)" so the action is
    self-explanatory. */
 .cull-finish__folder-exists {
@@ -1884,7 +1883,7 @@ body,
 }
 
 /* ── finish dialog: pinned-root edit row ──────────────────────
-   Mockup .dest-path-edit / .dest-root / .dest-sub: a single combined
+   A single combined
    field showing `<muted root sep><editable subfolder>` with a primary
    Copy button trailing. Border lights up when the input has focus. */
 .cull-finish__dest-edit {
@@ -1949,7 +1948,7 @@ body,
 }
 
 /* ── finish dialog: ask-each-time stage-2 picked row ──────────
-   Mockup .picked-label + .picked-path: `WILL COPY TO  <path>  [Change]
+   `WILL COPY TO  <path>  [Change]
    [Copy keeps]`. Wraps gracefully if the path is too long. */
 .cull-finish__picked {
   display: flex;
@@ -1983,8 +1982,7 @@ body,
   text-overflow: ellipsis;
 }
 
-/* Move-rejects inline confirm row (Sure? message + Yes / Cancel buttons).
-   Mockup .move-confirm. */
+/* Move-rejects inline confirm row (Sure? message + Yes / Cancel buttons). */
 .cull-finish__confirm {
   display: flex;
   align-items: center;
@@ -2013,8 +2011,8 @@ body,
   color: #fff;
 }
 
-/* Move-rejects progress row (label + breathing accent bar). Mockup
-   .finish-progress. The bar is indeterminate because the backend op is
+/* Move-rejects progress row (label + breathing accent bar).
+   The bar is indeterminate because the backend op is
    batched, but a "moving N…" label still gives the user feedback. */
 .cull-finish__progress {
   display: flex;
@@ -2071,7 +2069,7 @@ body,
 
 /* ── empty-state (no filter matches) ──────────────────────────
    Loupe + Grid render this when the active filter has zero matches.
-   Mirrors the mockup's .empty-state.empty-filter: round icon, eyebrow,
+   Round icon, eyebrow,
    headline with the missing filter highlighted in accent, and small
    kbd-style key hints to switch out. */
 .cull-empty-state {
@@ -2568,8 +2566,7 @@ body,
   opacity: 1;
 }
 
-/* Hover-revealed filename pill at bottom-left of each loaded grid cell.
-   Mockup .cell-fn. */
+/* Hover-revealed filename pill at bottom-left of each loaded grid cell. */
 .cull-grid__fn {
   display: none;
   position: absolute;
@@ -2694,7 +2691,7 @@ body,
 
 /* Compare body: panels (1fr 1fr grid) and optional rail in a flex row.
    The rail is a fixed-width column on the right that shrinks the panels area
-   when info is on, matching the mockup .compare-body. */
+   when info is on. */
 .cull-cmp-body {
   flex: 1 1 auto;
   display: flex;

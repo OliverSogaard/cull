@@ -8,4 +8,4 @@ export type { Img, ImageMetadata } from "./image";
 export type { FileOpResult, AnalyzeProgress, AnalyzeResult } from "./ipc";
 export type { NavSite, NavEntry, HelpMode, HelpGroup } from "./nav";
 export type { Phase, Feedback } from "./ui";
-export type { ExportFolderMode, Settings, StorageMode, ThumbsPosition } from "./settings";
+export type { Settings, StorageMode, ThumbsPosition } from "./settings";

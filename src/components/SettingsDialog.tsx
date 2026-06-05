@@ -8,7 +8,7 @@ import { sanitizeFolderName } from "../utils/path";
 
 /**
  * Settings modal. Opens with `Ctrl + ,` or the settings cog in the top-right
- * window chrome. Sections + control patterns match cull.html exactly.
+ * window chrome.
  *
  * Edits write through immediately (no apply / cancel) — every control is a
  * quick toggle the user can flip back. The "Reset" button needs a second
@@ -299,7 +299,7 @@ function Chip({
   );
 }
 
-/** Knob-style on/off toggle (mockup .toggle). `label` is the accessible name —
+/** Knob-style on/off toggle. `label` is the accessible name —
  *  the knob has no text content, so AT would otherwise announce it nameless. */
 function Toggle({
   on,

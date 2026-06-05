@@ -147,7 +147,7 @@ export class ImageStore {
   /**
    * Register the metadata sink. The store calls it with (path, meta) whenever a
    * full-res bundle read yields EXIF metadata. App uses this to keep its
-   * `metadata` map fed now that the old `loadImageRaw` path is gone.
+   * `metadata` map fed.
    */
   setMetaSink(sink: ((path: string, meta: ImageMetadata) => void) | undefined): void {
     this.metaSink = sink;

@@ -952,7 +952,7 @@ mod tests {
                 b.preview.len() / 1024,
                 if fit { "yes" } else { "GREW" },
             );
-            // New EXIF extras (#41) — eyeball against known values to validate.
+            // Print EXIF extras to eyeball against known values.
             eprintln!(
                 "    exif {:?}x{:?}  eV={:?}  wb={:?}  drive={:?}",
                 b.meta.pixel_width, b.meta.pixel_height,

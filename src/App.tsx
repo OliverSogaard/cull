@@ -446,7 +446,7 @@ export default function App() {
   // EXIF metadata sink: the store's full-res bundle reads return the full
   // camera / lens / AF / pixel-dims metadata (including the LrC rating, which
   // read_bundle fills in). The bundle meta is authoritative, so it OVERWRITES
-  // any seeded lrc-only entry — exactly as the old loadImageRaw did — otherwise
+  // any seeded lrc-only entry — otherwise
   // a frame that had a pre-seeded LrC star would never gain its full EXIF.
   useEffect(() => {
     imageStore.setMetaSink((path, meta) => {
@@ -1067,7 +1067,7 @@ export default function App() {
   );
 
   // Ensure masks exist for the on-screen image(s) when clipping is on; clear when
-  // off (clipping does not persist, spec §12).
+  // off (clipping does not persist).
   useEffect(() => {
     if (!clippingVisible) {
       // Idempotent reset: while clipping is off this effect still re-runs on every
@@ -3044,11 +3044,11 @@ export default function App() {
   );
 
   // Build the bottom status bar JSX once so it renders inside each view's
-  // flex column AFTER the thumb strip (mockup puts it as the last row, with
-  // border-top — see mockup .status). The top chrome row above just holds
-  // the brand block and window controls, like a title bar.
+  // flex column AFTER the thumb strip (the last row, with a border-top). The
+  // top chrome row above just holds the brand block and window controls, like
+  // a title bar.
   //
-  // Layout (left → right) matches the mockup exactly:
+  // Layout (left → right):
   //   filename · MP  ·  verdict pill (glyph + label)
   //   overlay cluster (i h p o t — circular toggle chips, on/off state)
   //   <spacer>
@@ -3434,7 +3434,7 @@ export default function App() {
  */
 /**
  * Centered empty-state shown in loupe / grid when the active filter has zero
- * matches. Matches the mockup's `.empty-state.empty-filter` block: small icon,
+ * matches. Small icon,
  * uppercase eyebrow, headline with the missing filter highlighted, and a key
  * hint to switch out.
  */
@@ -3465,11 +3465,11 @@ function EmptyFilter({ filter }: { filter: Filter }) {
 
 /**
  * Recent-folders section on the home screen. Renders nothing on a totally
- * fresh launch (empty state replaces the list, per the mockup). Click a row
+ * fresh launch (empty state replaces the list). Click a row
  * to re-open that folder; rows that don't have a `count` yet hide the count
  * column rather than show a stub `0`.
  *
- * The mockup uses three columns: path (middle-truncated), count badge
+ * Three columns: path (middle-truncated), count badge
  * (`327 / 372`, plain `421`, or `932 ✓`), and a relative-time stamp.
  */
 function RecentFolders({
@@ -3506,7 +3506,7 @@ function RecentFolders({
 
 function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }) {
   // Truncate at ~52 chars — leaves room for the count + time columns at the
-  // mockup's 620px hero width and keeps both the drive letter (head) and the
+  // 620px hero width and keeps both the drive letter (head) and the
   // leaf folder name (tail) visible.
   const display = middleTruncate(entry.path, 52);
   const rel = formatRelativeTime(entry.lastOpened);

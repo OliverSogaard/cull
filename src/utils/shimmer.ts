@@ -10,10 +10,10 @@
  */
 
 /** Module-load epoch (ms). All shimmers measure their phase from here. */
-export const SHIMMER_EPOCH_MS = Date.now();
+const SHIMMER_EPOCH_MS = Date.now();
 
 /** Sweep duration — MUST match the `cull-shimmer-sweep` animation in App.css. */
-export const SHIMMER_DURATION_MS = 1400;
+const SHIMMER_DURATION_MS = 1400;
 
 /** Current phase offset (ms) into the shared sweep cycle. Pin at mount and pass
  *  as `--shimmer-delay: -<value>ms`. */

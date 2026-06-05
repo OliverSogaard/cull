@@ -14,7 +14,7 @@ export type MaskKind = "clip" | "peak";
  * false positives on saturated colours (a yellow flower ≈ R255 G210 B0 would
  * trip a single-channel blue=0 test).
  */
-export function clipScan(src: Uint8ClampedArray, m: Uint8ClampedArray, w: number, h: number): void {
+function clipScan(src: Uint8ClampedArray, m: Uint8ClampedArray, w: number, h: number): void {
   const PERIOD = 8;
   const STRIPE = 3;
   for (let i = 0; i < src.length; i += 4) {
@@ -47,7 +47,7 @@ export function clipScan(src: Uint8ClampedArray, m: Uint8ClampedArray, w: number
  * strong (in-focus edges). Luminance via cheap (R + 2G + B)/4; central
  * differences; borders left transparent (they'd false-trigger on the letterbox).
  */
-export function peakScan(src: Uint8ClampedArray, m: Uint8ClampedArray, w: number, h: number): void {
+function peakScan(src: Uint8ClampedArray, m: Uint8ClampedArray, w: number, h: number): void {
   const THRESHOLD = 60;
   for (let y = 1; y < h - 1; y++) {
     const rowAbove = (y - 1) * w * 4;

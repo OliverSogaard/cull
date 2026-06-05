@@ -2,8 +2,8 @@ import { Minus, Settings as SettingsIcon, X as XIcon } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /**
- * Top-right chrome buttons for the borderless window. Order matches the
- * mockup: settings cog · minimize · close. The close button routes through
+ * Top-right chrome buttons for the borderless window. Order is
+ * settings cog · minimize · close. The close button routes through
  * Tauri's normal close-request handler so the quit guard still gets a chance
  * to protect unsaved work. Each button blurs itself on click so the focus
  * ring doesn't linger after pointer interaction.

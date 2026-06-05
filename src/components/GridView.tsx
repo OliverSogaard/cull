@@ -269,7 +269,7 @@ const GridCell = memo(function GridCell({
       )}
       {/* Hover-revealed filename badge — mono pill at bottom-left, only shown on
           cells that have a loaded thumb (placeholder cells already display
-          their filename inline). Mockup .cell-fn. */}
+          their filename inline). */}
       {url && (
         <div className="cull-grid__fn" aria-hidden>
           {stripExt(img.filename)}

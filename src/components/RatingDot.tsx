@@ -10,8 +10,7 @@ import { RATING_COLOR } from "../utils/ratingColor";
  * across system fonts on Windows vs. macOS, which broke `flex; center; center`
  * centering for the star in particular. SVG icons are intrinsically centered.
  *
- * Rendered in the compare panes. (Earlier `lg`/`sm` size variants — a loupe-corner
- * dot and a glyphless inline dot — were removed when those call sites went away.)
+ * Rendered in the compare panes.
  */
 export function RatingDot({ rating }: { rating: Rating }) {
   const dim = 18;

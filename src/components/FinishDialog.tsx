@@ -401,7 +401,7 @@ export function FinishDialog({
 
 /**
  * Move-rejects row with an inline "Sure?" two-step confirm and a progress UI
- * during the move. Matches the mockup's .finish-action.move-rejects pattern:
+ * during the move. Three-stage flow:
  *   stage 1: [Move rejects] button
  *   stage 2 (armed): "Sure? This moves N files." [Yes, move] [Cancel]
  *   stage 3 (in flight): progress bar with breathing animation

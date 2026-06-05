@@ -19,7 +19,7 @@ export type RecentEntry = {
   done: boolean;
 };
 
-export const RECENTS_STORAGE_KEY = "cull:recents:v1";
+const RECENTS_STORAGE_KEY = "cull:recents:v1";
 export const RECENTS_CAP = 5;
 
 /**
