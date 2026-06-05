@@ -1654,7 +1654,6 @@ export default function App() {
       flashFeedback,
       persistRating,
       recordAction,
-      resetZoom,
     ],
   );
 
