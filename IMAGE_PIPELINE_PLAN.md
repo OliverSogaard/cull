@@ -1,0 +1,235 @@
+# Image Loading & Rendering Overhaul — Implementation Plan
+
+## Context
+
+Image loading/rendering is the most central system in CULL, and while it works, it still carries slow loads, visual glitches, and bad-experience edges. This plan is the product of a full re-audit (2026-06-10): an 8-agent code audit (architecture maps × latency / glitch / race / memory hunts), a 3-agent design panel (frontend rendering, Rust backend/tiers, platform research), and an adversarial cross-review that adjudicated every conflict. **Every claim below was verified against the actual code with file:line evidence.** The plan is written to be implemented in later sessions without re-research.
+
+**Decisions (firm):**
+- **The navigation tier becomes the CR3's embedded 1620×1080 PRVW preview; the 32.5 MP full-res JPEG becomes zoom-only.** Both designers independently converged on this; it is the headline change.
+- **Decode-gated presentation**: the visible loupe never swaps to undecoded pixels, ever. `img.decode()` on the element that becomes visible is the portable mechanism (verified on both engines).
+- **Display-adaptive sharpness is committed scope** (not deferred): Oliver culls mostly on a 4K/Retina Mac, where 1620 px upscales ~1.6–1.8×. A generated ≤2560 px mid tier serves the *settled* fit view on high-DPI displays (Phase 8). Tier selection = measured stage rect × `devicePixelRatio` — both already available; decoding more pixels than the display can show is pure waste.
+- **Local profile is the center focus; NAS stays first-class.** Photos live on a NAS today (local SSD aspired). The NAS-specific taxes (stat-per-cached-thumb, sidecar-open-per-nav, no timeouts) die as core work, not as an afterthought.
+- **Camera baseline: R6 Mark III (32.5 MP).** Used only to quantify costs — nothing hardcodes it; tiers derive from the file.
+- **Windows + macOS only** (WebView2 + WKWebView), per the standing platform decision. Pure-Rust backend invariants preserved (no C deps).
+
+**Invariants that survive untouched** (battle-tested, do not regress): CR3 files never modified; orientation via APP1 splice, no re-encode; raw-binary IPC framing (u32 LE header len + JSON + JPEG bytes, no base64); one-open-per-read discipline; generation-based cancellation; every `createObjectURL` paired with exactly one revoke; bounded lanes with on-demand preempting background; the deferred bg sweep (the first-full starvation it prevents was a real minute-long bug); storage-mode profiles pushed live via `setProfile`.
+
+## Why: the verified diagnosis
+
+1. **The "full" tier is the full-resolution mdat JPEG.** `read_bundle` does a 12 MiB head read + 8 MiB grow loop scanning mdat for the ≈32 MP JPEG (`cr3.rs:550`, layout doc `cr3.rs:4–18`), and the webview decodes it **on every navigation** — sometimes twice (the deferred hi-res zoom layer re-rasters the same blob at native size, `App.tsx:3095–3116`) or three times (the histogram probe decodes it again, `App.tsx:1255–1290`). The 1620×1080 PRVW box — which sits *before* mdat and is captured by a ~2 MiB head read — is used only as a fallback (`read_fullres_from` → `preview_jpeg`). Nothing exists between the 160×120 THMB and 32.5 MP. Decoded cost: preview ≈ 7 MB RGBA vs full ≈ 130 MB.
+2. **Decode-blind unveil.** The blur(14px) veil is removed the instant the store *has the blob* (`fullPainted = showFull`, `App.tsx:996–1000`), not when pixels are decoded; `objectFit` flips cover→contain at the same instant (`App.tsx:3058`). There is **no `img.decode()` or pre-decode anywhere in the display swap path** — the soft flash + geometry jump on every cold navigation is structural.
+3. **Per-navigation NAS taxes**: `read_lrc_rating` opens the sidecar inside every `read_bundle` (`bundle.rs:51`, ~37–74 ms/nav on NAS); `ThumbCache::get` stats the **source** file on every hit (`thumb_cache.rs:58` `mtime_of`) — one NAS round-trip per *cached* thumbnail, exactly what the cache exists to avoid; no IPC timeout anywhere (a hung SMB read pins a concurrency lane forever); `eprintln!` per read (`bundle.rs:62`).
+4. **Measured shape of the problem** (24–32 MP CR3, NAS ≈ 37 ms/round-trip + ~80 MB/s, local NVMe): cold NAS navigation ≈ **400–550 ms**; cold local navigation ≈ **160–310 ms** (decode-bound — the 12.6 MiB read is ~6 ms, the 32 MP decode is 150–300 ms). Targets after this plan: **~75–90 ms NAS cold, ~15–25 ms prvw-cached or local** (≈5–10×), with zero visible pops.
+
+## Problem inventory (all verified; each has an owner phase)
+
+| # | Problem | Evidence | Owner |
+|---|---|---|---|
+| P1 | Decode-blind unveil: blur lifted on blob-arrival, objectFit cover→contain flip, occasional sharp-before-blur inversion; no decode-before-swap anywhere | App.tsx:996–1000, 3033–3062 | Phase 4 |
+| P2 | Full tier too heavy: 32 MP fetch+decode per nav, ×2 with hi-res layer, ×3 with histogram; PRVW unused except fallback | cr3.rs:550, App.tsx:3095, 1255–1290 | Phases 2–3 |
+| P3 | Tier gap: 160×120 THMB serves scrub + strip + grid → blurry scrub, soft grid cells | bundle.rs:88–92 | Phase 3 (scrub via preview), grid deferred (cut list) |
+| P4 | Prefetch fetches bytes but never decodes; enqueued at BACK of fullQueue; no direction bias; first tap always cold (prefetch only starts after first full lands) | imageStore.ts:678–697, 612–616 | Phases 3, 5 |
+| P5 | Eviction gaps: compare champion thrash risk; thumb LRU can revoke a blob a live `<img>` still shows (compare-scrub reads `thumbUrl()` directly, bypassing wantFull protection); zoomed frame eviction → instant blur mid-zoom; in-flight-full paths' thumbs unprotected | imageStore.ts:512–543, 629–648; CompareView.tsx:203 | Phase 1 |
+| P6 | Dead ends: errored full never retried (`requestedFull` never cleared on the error path — pumpFull skips it forever); thumb stuck as permanent shimmer after `MAX_THUMB_ATTEMPTS=3` transient failures; no read timeout | imageStore.ts:597–601, 487–498, 49 | Phases 1–2 |
+| P7 | Stale-async gaps: hi-res settle timer can mount a stale frame's layer; mask/histogram probe decodes never cancelled on session change (wasted decodes + ref leaks); `requestedClipMasks` grows unbounded on rapid toggles | App.tsx:1019–1032, 1156–1174, 1264–1276 | Phases 4, 6 |
+| P8 | Main-thread pixel work: histogram canvas ops from a full decode; mask recompute on rapid toggles, no debounce; bg queue O(n log n) re-sort per cursor move | App.tsx:1282–1329, imageStore.ts:315–343 | Phases 1, 6 |
+| P9 | Memory: hi-res layer doubles decoded memory (≈130 MB RGBA per 32 MP copy); overlay caches unbounded per session; 12 MiB head alloc per read × 12 concurrent | App.tsx:3095, cr3.rs:414 | Phases 3, 6 (allocs die structurally with 2 MiB heads) |
+| P10 | thumb_cache: stat-per-hit; eviction sorts + deletes files while holding the index Mutex; no per-entry size cap | thumb_cache.rs:58, 103–115 | Phases 0, 2, 7 |
+| P11 | Cosmetics: matte flashes neutral-square between portrait↔landscape while dims unknown (10000×10000 fallback); grid cells re-shimmer 1–2 frames on remount despite cached thumb; overlays pop in late after nav; status-bar MP/EXIF wait on a full read | App.tsx:2954–2960, GridView cell mount, App.tsx metaSink | Phases 1–4 |
+
+One stale doc claim found: `ARCHITECTURE.md` says the histogram is computed from the *thumbnail*; the code deliberately uses the full preview because Canon's THMB letterboxes into a 4:3 frame with black bars that poison the darks bin (comment at `App.tsx:1255–1258`). The redesign sources histogram + masks from PRVW — native 3:2, **no letterbox** — which resolves both the doc intent and the perf cost. Update ARCHITECTURE.md during implementation, not before.
+
+## Target architecture
+
+### Tier ladder
+
+| Tier | Source | Pixels / bytes | Consumers |
+|---|---|---|---|
+| `thumb` | THMB in moov (1 MiB head, `cr3.rs:599`) | 160×120, ~15 KB | filmstrip + grid cells, scrub fallback |
+| `preview` **(new nav tier)** | PRVW uuid box (`PREVIEW_UUID` `cr3.rs:33`) — **one ~2 MiB head read captures ftyp + moov + PRVW** (layout: `cr3.rs:4–18`) | 1620×1080, ~0.4–0.9 MB | **loupe fit (every nav)**, compare panes, warm scrub, masks + histogram |
+| `mid` **(new, Phase 8)** | generated in Rust from the full JPEG (decode → resize → encode), disk-cached | ≤2560 long edge, q80, ~1 MB | settled fit view when stage×DPR > ~1700 (4K/Retina); fallback chain mid→preview always works |
+| `full` | mdat JPEG via **exact byte-range** from moov `stsz`/`co64` hints — no 12 MiB scan (scan kept as validation fallback) | 32.5 MP, 8–13 MB | **zoom only**, warmed on settle (400 ms network / 150 ms local) |
+
+### Frontend: the decode-gated presenter (kills P1 and most glitches)
+
+**New `src/image/present.ts`** — a framework-agnostic, double-buffered, two-`<img>`-layer state machine with the decode function injected (fully unit-testable):
+
+- `PresentState = { front, back: LayerState; transitionMs; navToken }`; events `nav | offer(path, tier, url) | scrub(active) | reset`.
+- **Only-upgrade rule**: an offer with tier ≤ the front tier for the same path is ignored — a late thumb can never replace a shown preview.
+- **Nav-token guard**: every nav bumps the token; decode completions carrying a stale token are dropped. This one mechanism kills the stale hi-res-timer class AND the sharp-before-blur inversion class (P7/P1).
+- **Snap-vs-fade**: decode resolves within ~48 ms of nav → flip with `transitionMs: 0` (cached nav feels instant, Photo Mechanic style); otherwise 140 ms crossfade (`cubic-bezier(0.2, 0, 0, 1)`), blurred thumb staying beneath during the fade.
+- **Scrub mode**: everything snaps; offers above `preview` ignored; an offer is accepted only if the layer's `decode()` resolves within a frame budget (~16 ms) — else the blurred thumb shows. (Warmth checks alone can lie on WKWebView; the per-layer decode gate is the truth.)
+- **`objectFit` + blur are FIXED per tier per layer** (thumb ⇒ cover + blur(12px) brightness(.82); preview/full ⇒ contain, no filter) and never change while a layer is visible — the geometry jump becomes structurally impossible.
+
+**New `src/image/usePresent.ts`** — React binding owning the two `<img>` refs; `deps.decode = (layer, url) => { el.src = url; return el.decode(); }`. `el.decode()` *on the element that becomes visible* is the only cross-engine guarantee (see Platform notes).
+
+**Integration contract with the existing zoom math** (so the double-buffer can't break it): the presenter's two layers live absolutely-positioned inside the photo-frame clip box, %-sized; `imgRect` (ResizeObserver, App.tsx:1062–1101) measures the **front layer only** — if the front layer isn't mounted, the measure is skipped and `imgRect` keeps its last-good value (never reset to null mid-session); the presenter seeds a measure when its front layer mounts. The zoom `transform: scale()` + origin math (App.tsx:2929–2947) applies to the front layer and the overlays exactly as today; the hi-res layer's transform derivation (`imgRect` + native dims) is unchanged — native dims now come from the dims cache/meta instead of an onLoad probe. **Scrub frame budget, precisely**: an offer is accepted if its layer's `decode()` promise wins a race against the next `requestAnimationFrame`; on loss, keep the current layer and re-offer on the next scrub step (decode continues in the background, so it usually wins the following frame). **Scope**: the presenter is single-image, loupe-only — compare keeps its own two-pane architecture (each pane its own consumer; see choreography below).
+
+**New `src/components/loupe/LoupeStage.tsx`** — extract the loupe stage (App.tsx ~2981–3185 + the hooks at ~989–1032; App.tsx is 3,739 lines and over budget regardless). Delete: `fullPainted`, the inline objectFit/filter flips, the `scrubbing && stage==='full'` thumbUrl special-case, the per-nav `setNaturalSize(null)` reset (a dims cache replaces it). The hi-res zoom layer mounts **only post-decode**, token-guarded inside the presenter's settle timer.
+
+**Swap choreography per scenario** (the doc of record for "what shows when"):
+
+| Scenario | Sequence |
+|---|---|
+| Cold nav | matte at correct AR (dims cache) + shimmer → thumb snaps in blurred → preview decodes on back layer → 140 ms crossfade |
+| Cached nav | offer(preview) → decode < 48 ms → **snap**, zero transition, no blur ever mounts |
+| Scrub step | warm preview → snap **sharp** (new — scrub through the prefetched neighbourhood is sharp); else snap blurred thumb; zero fetches mid-scrub (unchanged) |
+| Scrub release | normal offer path: warm → snap; cold → blurred thumb + crossfade on arrival |
+| Zoom engage | base layer scales the *preview*; if settle already warmed the full → hi-res layer already mounted → sharp instantly; else preview-upscale shows, hi-res layer fades 100 ms post-decode |
+| Compare (decided here — the code HAS compare zoom, `CompareView.tsx:54` `zoomLevel: 1\|2`) | panes display **preview** (stepping challengers is preview-fast; champion's preview pinned for the session); engaging compare zoom fetches + pins **fulls for both panes** with the same decode-gated hi-res-layer pattern per pane, preview-upscale until decode; exiting zoom releases the full pins after a grace period (~5 s) so zoom-toggle ping-pong doesn't refetch |
+| Stage resize (strip/rail toggle) | layers are %-sized in the frame — no remount, no event; hi-res layer drops and re-warms after settle |
+| Error | tier error with no lower tier → "preview failed" panel + retry affordance; with thumb present → thumb stays + quiet error chip |
+
+**Decode-ahead pool** (Phase 5): a small pool of detached `<img>` elements pre-decoding cursor neighbours, **direction-biased 2:1**; radii 4 ahead / 2 behind (network), 8/4 (local); decoded-pool caps 9 previews + 1 full (network), 18 + 2 (local) — decoded RGBA is the real memory budget (preview ≈ 7 MB; full ≈ 130 MB at 32.5 MP). The pool is *advisory* on WKWebView (decoded-cache eviction is opaque); correctness always lives in the presenter's per-layer decode gate. **Not** `createImageBitmap`: its resize options are unsupported in WKWebView and bitmaps double decoded memory off the display path.
+
+**Scheduler hardening** (Phase 1 — lands against the *current* pipeline so the new tiers arrive on solid ground):
+- `TierState` error model: per-path per-tier `{ attempts, lastError, nextRetryAt }` with capped backoff; an errored full clears `requestedFull` so it can re-queue (today it never retries); a retry affordance surfaces on the error panel; failed thumbs re-arm on folder revisit instead of permanent shimmer.
+- Unified eviction-protection predicate in one function: never evict/revoke a blob that is (a) display-refcounted (every direct `thumbUrl()` consumer — compare-scrub fallback CompareView.tsx:203, histogram probe — moves to a refcounted accessor), (b) `pinFull`-pinned (compare champion + challenger pinned for the whole compare session; the zoomed frame pinned while `isZooming`), (c) in `fullInFlightPaths`, or (d) within the keep window.
+- Dims cache: a `pathDims: Map<string, ImageDims>` **inside imageStore**, fed by thumb/preview meta as it arrives, consulted by `resolveStage`, never evicted until `hardReset` (dims are tiny); matte AR comes from it → no neutral-square flash; `contain` (not cover) while dims are genuinely unknown.
+- Folder-level failure recovery: when several paths in one folder reach terminal retry (NAS unmounted / sleep-wake), stop hammering — surface a non-blocking "folder unreachable — retry" affordance whose retry re-runs the scan; reconnect therefore self-heals without restarting the app.
+- Argmin bg picker: replace the O(n log n) `sortByPriority` re-sort per cursor move with an O(n) argmin scan picking the next bg candidate at pump time.
+- `decoding="sync"` on grid/strip cell `<img>`s (tiny JPEGs — kills the 1–2-frame re-shimmer on remount); suppress the shimmer entirely when the snapshot already has a thumb at mount.
+- First-tap warm: on session start, enqueue preview for cursor ±1 immediately (inherits the first-full starvation guard; today the second tap is always cold).
+- Spinner only after 150 ms of genuine waiting (no flash on fast loads).
+
+**Overlays off-thread** (Phase 6): new `src/overlays/overlayService.ts` owning masks + histogram with per-kind bounded LRUs (~16 entries) and generation hooks (cancel in-flight probes on session change; clear request-sets on toggle-off — both current leaks). Histogram moves into the existing mask worker as a new op, gated behind a **startup OffscreenCanvas capability probe** (1×1 `convertToBlob` in the worker at boot; WKWebView support is "test before trust" — inline main-thread fallback stays). Masks + histogram source from **preview** (1.75 MP, no letterbox) instead of full — ~15× cheaper and kills the third full decode.
+
+### Backend (Rust)
+
+**New commands** (`bundle.rs`; raw-binary framing unchanged):
+
+```rust
+/// Navigation hot path. ONE open, ONE ~2 MiB read (grow only if moov/PRVW spill).
+/// Header: { meta, orientation, previewLen, fullOffset, fullLen }
+read_preview(path, gen, gate, cache) -> Response
+
+/// Zoom tier. seek + ONE exact-range chunked read, SOI/EOI validated;
+/// any mismatch -> legacy head+grow mdat scan fallback. Skips moov re-parse
+/// (orientation echoed back from the frontend). Header: { fullLen }
+read_fullres(path, gen, full_offset?, full_len?, orientation, gate) -> Response
+
+/// Phase 8. Serves the generated ~2560px tier from disk cache; on miss reads
+/// full (exact range), decode->resize->encode, caches, returns.
+read_mid(path, gen, full_offset?, full_len?, gate, cache) -> Response
+```
+
+`cr3.rs` gains `read_preview_bundle` (2 MiB head + grow until moov AND the PRVW uuid box are buffered; reuses `preview_jpeg`, `metadata_from_prefix`, `with_exif_orientation` unchanged), `full_jpeg_location(moov) -> Option<(u64,u64)>` (walk moov→trak→mdia→minf→stbl, `stsz` + `co64`/`stco`, smallest-offset candidate — ~40 lines on the existing `boxes()` helper; robustness comes from read-time validation, not `stsd` decoding), and `read_fullres_at(path, off, len)` (seek on the open handle — not a second open — read in ≤2 MiB chunks with a cancellation check between chunks). `read_bundle` stays as a delegating shim during migration (same wire format, served by `read_preview_bundle` + scan fallback), then dies.
+
+**Edge contracts (spec'd so the implementer never guesses):**
+- **PRVW absent** (`preview_jpeg` returns `Option`, `cr3.rs:108` — possible on other bodies/firmware): `read_preview` returns `Err("no PRVW")`; the frontend marks that *path* `previewUnavailable` and routes its navigation tier to `full` (today's behavior, per-path only). THMB is unaffected. Add one corpus-adjacent test with a synthetic PRVW-less file.
+- **Hint mismatch** in `read_fullres`: valid ⟺ SOI (`FFD8`) at byte 0 of the hinted range AND `jpeg_extent` confirms EOI inside it; anything else → legacy head+grow scan fallback + a `dlog!` mismatch line (telemetry for future bodies).
+- **Command capability detection** (Phases 2/3 landing out of order): one probe `invoke("read_preview", …)` at session start — on unknown-command error, set a session flag aliasing preview→`read_bundle`. Never per-call error-string matching.
+
+**THE hard validation gate, written FIRST**: a `CULL_TEST_CR3_DIR`-gated test asserting `full_jpeg_location` hint == mdat-scan result for **every** sample CR3 (the real R6 III corpus in `sample_cr3s/`). No frontend work depends on range-reads until this passes on all samples.
+
+**New `io_gate.rs`**:
+- `IoGate`: a global read semaphore — permits 6 (network) / 16 (local), swapped by `set_io_profile`. Deliberately above what the frontend ever requests: it is a **backstop** (against accounting bugs, the bg sweep, future callers like the mid generator), not a second scheduler. Every fs-touching command acquires an owned permit before `spawn_blocking`.
+- `SessionGate { gen: AtomicU64, mtimes: RwLock<HashMap<String,i64>> }` + `begin_session(gen)` command, called from `imageStore.reset()`/`hardReset()`. Every read command takes `gen: u64`; chunked reads bail with `Err("cancelled")` between ≤2 MiB chunks when the gen moved — a superseded read dies within ~one chunk (~25 ms), vs. today's entire multi-MB read.
+- **Timeouts are backend-owned**: wrap each command's `spawn_blocking` in `tokio::time::timeout` — tiered: thumb/preview 20 s, full 45 s (network); 8 s / 15 s (local). On timeout the invoke rejects → the frontend lane slot frees instantly; the orphaned blocking task keeps its *owned* permit and self-heals when the syscall eventually returns. (Blocking fs reads cannot be safely aborted on Windows/macOS — `CancelSynchronousIo` is racy with pool-thread reuse, macOS has nothing — so **detach + ignore** is the decision; a truly hung SMB read pins one backend permit out of 6/16, never a precious frontend lane.) A dev-mode stuck-permit detector (`dlog!` any permit held > 2× its tier timeout, with path + generation) makes permit leaks visible instead of mysterious.
+
+**New `tier_cache.rs`** (generalizes `thumb_cache.rs`):
+- Per-tier subdirs + caps: `thumb/` 500 MB (256 KB/entry), `prvw/` 2 GB (2 MiB/entry), `mid/` 4 GB (4 MiB/entry). Same FNV-1a key.
+- File format **v2**: `"CUL2"` magic, version, tier byte, **mtime in ms** (matches `analyze_folder`'s ms mtimes, `scan.rs:188`), **file size** as a second cheap validator, dims, JPEG payload. One-time invalidation of existing thumb caches accepted (silent regeneration).
+- **Stat-per-hit dies**: validation reads the **session mtime table** (`SessionGate.mtimes`), populated for free by `analyze_folder`'s directory listings — no stat, ever, for analyzed files; un-analyzed paths stat once and memoize. Sound because CR3s are immutable while culling (the app never writes them).
+- Eviction selects victims and mutates the index **under** the Mutex, then deletes files **outside** it (a failed delete re-indexes at next startup scan). Same for `clear()`. `put()` refuses payloads above the per-entry cap.
+- prvw cache fills by **piggyback on `read_preview` misses only** — never a standalone NAS sweep.
+- **Cross-process safety** (two app instances share the cache dir; the Mutex is in-process only): temp names gain the **process id** (`{key}.{pid}.{seq}.tmp` — today two processes can collide on `{key}.{seq}.tmp` and interleave a torn file); atomic rename keeps publishes last-writer-wins; any `get()` whose `fs::read` or validator fails (the other instance evicted it) is treated as a miss and dropped from the index — already-graceful, now stated as a contract; index divergence self-heals at next startup scan. Concurrent instances are *correct*, just not cache-optimal — that's the accepted design.
+
+**Hot-path hygiene** (Phase 0 — immediate NAS win, zero behavior change):
+- Delete `read_lrc_rating` from the read path (`bundle.rs:51`). The data already arrives in bulk: `analyze_folder` returns `lrc_ratings` for every file from the same sidecar pass (`scan.rs:106, 233–276`); the frontend owns its own subsequent writes. Mid-session *external* LrC edits were never a supported scenario.
+- `dlog!` macro (`eprintln!` under `cfg(any(debug_assertions, feature = "verbose-logs"))`, else nothing); mechanical replace at bundle.rs:62, scan.rs, xmp.rs sites.
+- Eviction-outside-lock + per-entry cap on the **existing** thumb cache (forward-ports into tier_cache later).
+
+**Metadata fast path**: `read_thumbnail` already parses the full `Cr3Meta` and throws most of it away (`cr3.rs` thumb path calls `metadata_from_prefix`). Extend `ThumbHeader` with `meta` and feed the existing `metaSink` (imageStore.ts:120) from the thumb path too. **Merge semantics**: all three commands return the *same complete* `ImageMetadata` (each has moov + the open handle for `file_size`; `lrc_rating` comes from analyze only) — so metaSink writes are idempotent and ordering-immaterial; the existing last-write-wins merge in App is correct as-is, no field-level merging needed → EXIF rail, AF-zoom-origin, and status-bar MP populate when the *thumb* lands (the bg sweep guarantees that for every frame). `read_preview` returns meta as well. **Never ship EXIF at analyze time** — analyze's fast path is dir-listings-only (`scan.rs`), and per-file moov reads there would re-create the N×37 ms regression the design exists to kill. Bonus: dims arrive with thumb/preview meta, shrinking the unknown-AR window to the both-cold case.
+
+**Mid-tier generation** (Phase 8; pure-Rust: `zune-jpeg` decode, `fast_image_resize` SIMD resize, encoder = re-benchmark `jpeg-encoder` vs `zenjpeg` at implementation time; ~150–260 ms/image single-thread):
+- **NAS-polite policy**: (a) opportunistic — generate whenever full bytes are already in memory (zoom/settle), zero extra I/O, CPU only; (b) idle sweep **local profile only**, concurrency 1–2, generation-cancelled, paused while any on-demand queue is non-empty. On network mode the mid tier fills in as the user zooms; the settled view uses cached mid when present, else stays on preview.
+- **Display-adaptive selection** (frontend): `needPx = stageRect.width × devicePixelRatio`, computed **fresh at each tier request** (never cached at mount) and re-evaluated on stage `ResizeObserver` fires plus a `matchMedia('(resolution: …dppx)')` listener for DPR flips (window dragged 4K ↔ 1440p mid-session). `needPx ≲ 1700` → preview suffices; above → prefer mid once cached, request generation otherwise. ~100 px hysteresis on the threshold so resize jitter doesn't flap tiers. Fallback chain mid→preview always renders something sharp-enough instantly.
+- **Orientation on generated mids**: `zune-jpeg` outputs unrotated pixels and the re-encode emits no EXIF — so after encoding, **splice the source's orientation APP1 with the existing `with_exif_orientation` (`cr3.rs:348`)**, identical to every other tier (the webview rotates on display; never rotate pixels). The orientation value is already in hand from the preview/thumb meta.
+
+### New performance profiles (adjudicated)
+
+| Knob | network | local | Notes |
+|---|---|---|---|
+| previewConcurrency (was bundleConcurrency) | 4 | 12 | 2 MiB reads, ~60 ms NAS each — pipelined without an open-storm |
+| fullConcurrency (new lane) | 2 | 2 | fulls are rare now; 2×10 MB NAS reads ≈ saturation |
+| thumbConcurrency / backgroundFill | 4 / 2 | 16 / 8 | unchanged |
+| previewKeep — **blob** retention/side | 60 | 150 | blobs dropped ~15×: 120 cached previews ≈ 75 MB of JPEG bytes; eviction-churn class (P5) largely dissolves |
+| fullKeep (new, per side) | 2 | 3 | full blobs are huge; wantFull/zoom pins still override |
+| decoded warm pool (presenter/pool caps) | 9 prvw + 1 full | 18 + 2 | decoded RGBA is the true budget — state the blob/decoded split explicitly in the profile type |
+| previewPrefetchRadius (direction-biased 2:1) | 4 ahead / 2 behind | 8 / 4 | conservative on purpose; constants, not architecture — tune after measuring |
+| fullSettleMs (was hiResSettleMs) | 400 | 150 | settle now *fetches* the full (10 MB + 32 MP decode) — must only charge deliberately-parked frames |
+| backend IoGate permits | 6 | 16 | backstop |
+| mid-gen concurrency | 1 | 2 | Phase 8 |
+
+### Expected results (the numbers to verify against)
+
+| Path | Today | After |
+|---|---|---|
+| NAS cold navigation | 12.6 MiB + sidecar open ≈ 225 ms I/O + 150–300 ms decode ≈ **400–550 ms** | 2 MiB ≈ 62 ms + 10–20 ms decode ≈ **75–90 ms** |
+| NAS, prvw disk-cached | n/a | **~15–25 ms** |
+| Local cold navigation | **160–310 ms** (decode-bound) | **~15–25 ms** |
+| Zoom settle | inside every nav | off the critical path: NAS ≈ 320–410 ms once, parked frames only; ~35 ms with cached mid |
+| Steady-state decoded memory/frame | ~130–260 MB (full ×1–2) | ~7 MB (preview) + transient full during zoom only |
+| Histogram/masks | 3rd full decode, main thread, letterboxed source | 1.75 MP preview, worker, no letterbox |
+
+## Implementation phases (each independently shippable; Rust risk isolated from frontend risk)
+
+- **Phase 0 — Rust hygiene** (zero behavior change, immediate NAS win): `dlog!`; delete `read_lrc_rating` from the read path; eviction-outside-lock + per-entry cap on the existing thumb cache. *Verify: cargo test; NAS nav timing drops by ~one round-trip.*
+- **Phase 1 — Frontend store hardening** (no Rust, no UI shape change): TierState retry/backoff + affordances; unified protection predicate + display refcounts + `pinFull`; dims cache (+ contain-while-unknown); argmin bg picker; `decoding="sync"` cells; first-tap warm; 150 ms spinner delay. *Verify: imageStore unit tests for every new invariant (retry re-queue, pin survives eviction pass, refcounted thumbUrl, dims survive full eviction); manual: compare-scrub no blanking, zoom no mid-zoom blur, error frame retries.*
+- **Phase 2 — Rust: preview + range-read + gating** (lands dormant — `read_bundle` untouched, nothing calls the new commands yet): hint-vs-scan corpus test FIRST; `read_preview` + `full_jpeg_location` + `read_fullres`; ThumbHeader meta; `IoGate`/`SessionGate`/`begin_session` + timeouts + chunked gen-cancel; session mtime table (kills stat-per-hit for the existing cache immediately). **Benchmark Windows raw-IPC here as a decision gate** (research says ~50 MB/s WebView2 vs ~GB/s macOS): if a 10 MB full's IPC transfer measures p50 > ~150 ms on Windows, *commit* Channels-for-the-full-tier into Phase 5 scope; if not, record the measured number in this doc and close the question. *Verify: cargo test incl. corpus gate; timing harness on dev machines.*
+- **Phase 3 — The switch** (the headline UX win): store gains the preview lane as the navigation tier; full → settle/zoom-only with pins; new profiles (note: profiles are **code constants** — localStorage stores only `storageMode`, so the field renames need no settings migration, verified `types/settings.ts:98,137`); meta from thumb/preview feeds metaSink; first-tap warm wired; `begin_session` on reset; capability probe at session start (Phases 2/3 can land out of order). **Plus the dev HUD this plan's tuning depends on**: a debug-flag overlay showing per-nav timings (fetch ms / decode ms per tier), lane + queue utilization, cache hit rates, eviction counts, and estimated decoded memory — every later profile-tuning claim cites HUD numbers, not feel. *Verify: HUD shows NAS cold nav ≈ 75–90 ms, local ≈ 15–25 ms; EXIF rail populates from thumbs; zoom still sharp after settle.*
+- **Phase 4 — The presenter**: `present.ts` + `usePresent.ts` + `LoupeStage.tsx` extraction; delete `fullPainted`/objectFit-flip/naturalSize-reset; snap-vs-fade choreography; decode-gated hi-res layer with token checks. Old single-img path deleted only after the manual matrix — cold nav / cached nav / scrub + release / zoom / stage resize / **compare-scrub** / **compare-zoom** / error — passes on **both** WebView2 and WKWebView. *Verify: present.ts unit tests (injected decode: late-thumb ignored, stale token dropped, snap-window boundary, scrub budget); the matrix.*
+- **Phase 5 — Decode-ahead + sharp scrub**: decode pool (advisory contract), direction-biased bands, warm-scrub frame-budget rule. *Verify: arrow-tap latency ≈ snap on prefetched neighbours; scrub over a warmed region is sharp; memory stays within pool caps.*
+- **Phase 6 — Overlays off-thread**: `overlayService` + worker histogram behind the startup capability probe; preview-sourced masks/histogram; bounded LRUs + generation hooks. App.tsx slims by ~280 lines. *Verify: no darks-bin spike (letterbox gone); toggle-spam leaks nothing; nav with overlays on stays at 60 fps.*
+- **Phase 7 — Disk tier cache v2**: `tier_cache.rs`, v2 format + dual validators; prvw cache piggybacking. *Verify: close + reopen folder paints previews with zero NAS reads; corrupted/oversized entries refused.*
+- **Phase 8 — Display-adaptive mid tier** (committed — the 4K/Retina case): crates + `read_mid` + opportunistic generation + local idle sweep; `needPx` selection in the store. *Verify: on a 4K stage, settled fit view is pixel-sharp without zoom; on 1440p, mid is never requested; dragging the window 4K → 1440p and back flips tier choice without restart; a rotated (portrait, orientation 6/8) frame renders correctly when served from the mid cache; NAS profile never fetches full solely to generate.*
+
+## Cut list (decided — do not re-add without new evidence)
+
+- **Frontend invoke-timeout / zombie-read accounting** — backend owns timeouts (tokio) + chunked gen-cancel + IoGate; an entire frontend accounting subsystem deleted from the design.
+- **`buf_pool.rs`** (head-buffer reuse) — structurally obsoleted by 2 MiB heads + exact-range fulls; the 12 MiB alloc survives only in the rare scan-fallback.
+- **`sweepCachesPreviews` knob** (bg sweep reading 2 MiB heads on local) — local cold nav is already ~15–25 ms.
+- **Grid/strip "midthumb" tier** — deferred-on-complaint (grid cells and Retina strip cells upscale the 160 px THMB somewhat; small sizes hide it). If it ever lands, it is opportunistic-downscale-only (from bytes already fetched), never a standalone NAS sweep, and named distinctly from `mid`.
+- **Speculative ±1 overlay mask prebuild** — overlays already fade in ~120 ms from a worker fed by an in-memory preview.
+- **WebCodecs ImageDecoder** — dual-platform since Safari 26 but unneeded; noted as the escape hatch if `img.decode()` granularity ever proves insufficient.
+- **Custom protocol / Channels-by-default; `image-rendering: crisp-edges` on strips** (wrong tool for photo thumbs).
+
+**Standing watchlist**: prefetch bands stay **preview-only forever** (a full-prefetch regression re-creates today's traffic); no new code path may add a standalone NAS read; timeouts never ship without the IoGate backstop; every `createObjectURL` keeps its paired revoke through the tier migration; long-session WebView2 memory creep (add a dev-mode memory readout; `MemoryUsageTargetLevel` in the back pocket).
+
+## Platform notes (research-verified, June 2026)
+
+- **`img.decode()`**: fully supported in WebView2 (Chromium) and WKWebView (Safari 26+ unified versioning). Decodes at natural size; decoded rasters live in a per-session cache **subject to memory-pressure eviction** — which is why correctness is per-element decode gating, and the warm pool is advisory only.
+- **`createImageBitmap` resize options (`resizeWidth/Height/Quality`)**: **not supported in WKWebView** (base API is). Hence: no bitmap-based display path; the existing mask worker's no-resize-params usage is portable and stays.
+- **WebCodecs `ImageDecoder`**: Chromium-only historically; WebKit shipped it in Safari 26. Unused (cut list).
+- **OffscreenCanvas 2d + `convertToBlob` in workers**: solid on Chromium; "test before trust" on WKWebView → the startup capability probe in Phase 6.
+- **CSS `transform: scale()` softness is physics**: neither engine offers a CSS-only force-re-raster; `will-change: transform` *prevents* re-raster (speed over sharpness). The decode-gated native-size hi-res layer is the correct and only portable pattern — keep it.
+- **Blob URLs pin their bytes until revoked** in both engines; displayed images are not re-decoded mid-display under normal pressure.
+- **Tauri 2 raw IPC throughput**: ~GB/s-class on macOS, **measured ~50 MB/s-class on Windows** — a 10 MB full costs ~200 ms in transfer alone on WebView2. Acceptable *only because* full is zoom-only; benchmark in Phase 2; Channels-for-full is the isolated fallback if needed.
+- **Prior art**: Photo Mechanic's instant feel comes from embedded-JPEG-first rendering (exactly this plan's preview tier); FastRawViewer decodes actual RAW; Narrative/Aftershoot pre-render locally with GPU pipelines. None render through a webview — which is why decode discipline matters more here, not less.
+
+## Cross-doc impact (check when implementing)
+
+- **`SMART_CULLING_PLAN.md`** stays compatible — it consumes `cr3::preview_jpeg` (survives) and PRVW directly — but three of its references shift under this plan: its AF-crop precision fallback names `read_bundle` (→ `read_fullres`), its NAS-backpressure probe reads `imageStore` internals (`fullInFlightPaths`, `:712-731` — renamed/moved with the lane split), and its profile-table anchor (`types/settings.ts:118-156` — fields renamed). Re-anchor that doc when its implementation starts.
+- **`MACOS_SUPPORT_PLAN.md`**: its NFC path-normalization chokepoint (`openFoldersByPaths`) still covers every new command — they all receive paths that flowed through it; no change needed. Its `imageStore`/App line anchors will drift as phases land (that doc already expects re-verification).
+- **`ARCHITECTURE.md`**: update the Read pipeline, profiles table, and histogram sections as phases land (stale thumbnail-histogram claim noted above).
+
+## Critical files
+
+- **New:** `src/image/present.ts`, `src/image/usePresent.ts`, `src/components/loupe/LoupeStage.tsx`, `src/overlays/overlayService.ts`, `src-tauri/src/io_gate.rs`, `src-tauri/src/tier_cache.rs` (replaces `thumb_cache.rs`), Phase 8: `src-tauri/src/midtier.rs`.
+- `src-tauri/src/cr3.rs` — layout doc (:4–18), `PREVIEW_UUID` (:33), `read_bundle`/HEAD (:550), `read_thumbnail` (:599), `preview_jpeg`, `jpeg_extent`, `with_exif_orientation`; gains `read_preview_bundle`, `full_jpeg_location`, `read_fullres_at`.
+- `src-tauri/src/bundle.rs` — commands (:40–124), the lrc read to delete (:51), ThumbHeader (:81); `src-tauri/src/scan.rs` — ms mtimes (:188), `lrc_ratings` (:106, 233–276), session-mtime feed; `src-tauri/src/lib.rs` — managed state + command registration; `src-tauri/Cargo.toml` — Phase 8 crates.
+- `src/image/imageStore.ts` — the whole scheduler (lanes :452–731, eviction :512–543/:629–648, prefetch :678–697, reset :160–229, profiles via :130); `src/image/stage.ts` (tier precedence), `src/utils/bundle.ts` (new frame parsers), `src/types/settings.ts` (profile table :137–156).
+- `src/App.tsx` — loupe block (:2981–3185), unveil gating (:996–1000), hi-res effect (:1019–1032), overlays (:1100–1400), scrub (:2129–2180); `src/components/CompareView.tsx` (:203 thumbUrl bypass), `GridView.tsx`/`ThumbCell.tsx` (`decoding="sync"`, shimmer suppression), `src/overlays/maskClient.ts`/`maskScans.ts` (worker ops).
+- `ARCHITECTURE.md` — update the Read pipeline + histogram sections as phases land (stale thumbnail-histogram claim noted above).
+
+## Risks / open validations
+
+- **`full_jpeg_location` hints** must be confirmed against the real R6 III corpus before anything depends on range-reads (the Phase 2 gate test). Validation-at-read-time + scan fallback bounds the blast radius of any future body that lays out mdat differently.
+- **PRVW size on future bodies** could exceed the 2 MiB head — the grow loop covers it at one extra round-trip; instrument grow frequency in dev and bump the constant only if >2–3% of files grow.
+- **WKWebView vs WebView2 `img.decode()` timing** differences — the Phase 4 manual matrix runs on both before the old path is deleted.
+- **Cache format v2** invalidates existing thumb caches once (silent regeneration; acceptable).
+- **Settle-warming on Windows+NAS** is the weakest combination (50 MB/s IPC × 10 MB full): the Phase 2 benchmark decides whether Channels-for-full is needed; 400 ms settle keeps it off the navigation path either way.
+- **Profile numbers are starting points, not findings** — previewKeep/prefetch radii/decoded-pool caps get tuned against the Phase 3 dev HUD timings, with the watchlist constraints as hard bounds.
+- **Mixed-storage multi-folder sessions** (one NAS folder + one local folder staged together): the storage profile is session-global, so a mixed session runs at whichever mode is set — a deliberate, documented simplification. If it ever matters in practice, per-path profile selection by folder root is the extension point; do not build it speculatively.
+- **Two concurrent app instances** are correct but cache-suboptimal (see tier_cache cross-process contract) — not a supported optimization target.
