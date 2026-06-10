@@ -1,4 +1,5 @@
 import type { HelpGroup, HelpMode } from "../types";
+import { modGlyph, modName } from "../utils/platform";
 
 /**
  * Context-aware keyboard reference. The "switch view" group lists only the
@@ -14,9 +15,9 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
   const session: HelpGroup = {
     title: "session",
     keys: [
-      ["ctrl+z", "undo"],
-      ["ctrl+⇧+z", "redo"],
-      ["ctrl+e", "finish actions"],
+      [`${modName}+z`, "undo"],
+      [`${modName}+⇧+z`, "redo"],
+      [`${modName}+e`, "finish actions"],
       ["tab (hold)", "this help"],
       ["esc", "back  (or home at loupe with no history)"],
     ],
@@ -117,7 +118,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         ["1 – 4", "filter: all / unrated / keeps / ★"],
         ["click", "open in loupe"],
         ["⇧+click", "select range"],
-        ["⌃+click", "add to selection"],
+        [`${modGlyph}+click`, "add to selection"],
       ],
     },
     {

@@ -19,6 +19,11 @@
 //! - All Tauri commands that touch the filesystem run on the blocking pool, so
 //!   a slow NAS read can't stall the async runtime or the UI thread.
 
+// CULL ships for Windows and macOS only — Linux and mobile are deliberately
+// unsupported (no CI runners, no platform handling anywhere). Fail fast.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+compile_error!("CULL supports Windows and macOS only.");
+
 mod bundle;
 mod cr3;
 mod file_ops;
@@ -36,6 +41,69 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir());
             app.manage(std::sync::Arc::new(thumb_cache::ThumbCache::new(dir.join("thumbs"))));
+
+            // macOS: replace the default menu so Cmd+Q routes through
+            // window.close() and the JS close-guard (pending XMP writes) gets
+            // its normal chance to object. The default menu's predefined Quit
+            // item maps to the native `terminate:` selector, which hard-kills
+            // the app — no close-request, no RunEvent::ExitRequested, nothing
+            // interceptable (verified against tauri 2.11.2 / tao 0.35.3).
+            // The Edit submenu is rebuilt verbatim: its predefined roles are
+            // what make Cmd+C/V/X work inside WKWebView text fields.
+            // Known gap, accepted for personal use: Dock-icon Quit and
+            // logout/shutdown still terminate natively, bypassing the guard.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
+
+                let quit = MenuItem::with_id(
+                    app,
+                    "cull-quit",
+                    "Quit CULL",
+                    true,
+                    Some("CmdOrCtrl+Q"),
+                )?;
+                let app_menu = SubmenuBuilder::new(app, "CULL")
+                    .about(None)
+                    .separator()
+                    .services()
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .item(&quit)
+                    .build()?;
+                let edit_menu = SubmenuBuilder::new(app, "Edit")
+                    .undo()
+                    .redo()
+                    .separator()
+                    .cut()
+                    .copy()
+                    .paste()
+                    .select_all()
+                    .build()?;
+                let window_menu = SubmenuBuilder::new(app, "Window")
+                    .minimize()
+                    .maximize()
+                    .separator()
+                    .close_window()
+                    .build()?;
+                let menu = MenuBuilder::new(app)
+                    .items(&[&app_menu, &edit_menu, &window_menu])
+                    .build()?;
+                app.set_menu(menu)?;
+                app.on_menu_event(|app, event| {
+                    if event.id().as_ref() == "cull-quit" {
+                        // close(), never destroy(): close raises the JS
+                        // onCloseRequested guard, exactly like the red light.
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.close();
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

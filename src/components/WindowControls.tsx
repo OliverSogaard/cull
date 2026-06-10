@@ -1,12 +1,14 @@
 import { Minus, Settings as SettingsIcon, X as XIcon } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isMac } from "../utils/platform";
 
 /**
  * Top-right chrome buttons for the borderless window. Order is
- * settings cog · minimize · close. The close button routes through
- * Tauri's normal close-request handler so the quit guard still gets a chance
- * to protect unsaved work. Each button blurs itself on click so the focus
- * ring doesn't linger after pointer interaction.
+ * settings cog · minimize · close. On macOS the native traffic lights own
+ * minimize/zoom/close, so only the settings gear renders. The close button
+ * routes through Tauri's normal close-request handler so the quit guard
+ * still gets a chance to protect unsaved work. Each button blurs itself on
+ * click so the focus ring doesn't linger after pointer interaction.
  */
 export function WindowControls({ onSettings }: { onSettings?: () => void }) {
   const win = getCurrentWindow();
@@ -15,7 +17,7 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
       {onSettings && (
         <button
           className="cull-winbtn"
-          title="settings  (Ctrl + , )"
+          title={`settings  (${isMac ? "Cmd" : "Ctrl"} + , )`}
           aria-label="settings"
           // NOTE: deliberately NOT blurring here (unlike minimize/close). The
           // settings dialog's focus trap restores focus to whatever was focused
@@ -26,28 +28,32 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
           <SettingsIcon size={13} strokeWidth={2} />
         </button>
       )}
-      <button
-        className="cull-winbtn"
-        title="minimize"
-        aria-label="minimize"
-        onClick={(e) => {
-          e.currentTarget.blur();
-          win.minimize();
-        }}
-      >
-        <Minus size={13} strokeWidth={2.5} />
-      </button>
-      <button
-        className="cull-winbtn cull-winbtn--close"
-        title="close"
-        aria-label="close"
-        onClick={(e) => {
-          e.currentTarget.blur();
-          win.close();
-        }}
-      >
-        <XIcon size={14} strokeWidth={2.5} />
-      </button>
+      {!isMac && (
+        <>
+          <button
+            className="cull-winbtn"
+            title="minimize"
+            aria-label="minimize"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              win.minimize();
+            }}
+          >
+            <Minus size={13} strokeWidth={2.5} />
+          </button>
+          <button
+            className="cull-winbtn cull-winbtn--close"
+            title="close"
+            aria-label="close"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              win.close();
+            }}
+          >
+            <XIcon size={14} strokeWidth={2.5} />
+          </button>
+        </>
+      )}
     </div>
   );
 }

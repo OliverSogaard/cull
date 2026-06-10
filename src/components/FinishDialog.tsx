@@ -184,7 +184,9 @@ export function FinishDialog({
         title: "choose export folder",
       });
       if (typeof picked === "string") {
-        setPickedDestination(picked);
+        // NFC-normalize like openFoldersByPaths: macOS dialogs can return
+        // decomposed Unicode, which would fork lastExportDest comparisons.
+        setPickedDestination(picked.normalize("NFC"));
       }
     } finally {
       setPicking(false);

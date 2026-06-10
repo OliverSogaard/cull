@@ -69,6 +69,11 @@ body,
   letter-spacing: 0.04em;
 }
 
+/* macOS: traffic lights occupy top-left (~14+52px); only the gear sits top-right. */
+:root[data-platform="mac"] .cull-statusbar--top {
+  padding: 0 60px 0 84px;
+}
+
 /* ── save-status pill (top chrome) ────────────────────────────
    XMP save indicator next to the brand block. Three states driven
    purely from the existing savingCount / failedWrites state. */

@@ -13,7 +13,12 @@ Lightroom Classic. Three views share one keyboard vocabulary:
 CULL never touches your CR3 files. The only thing it writes is a
 `{basename}.xmp` sidecar next to each image.
 
+**Supported platforms: Windows (x64) and macOS (Apple Silicon).** Linux and
+mobile are intentionally unsupported and blocked at compile time.
+
 ## Running CULL
+
+### Windows
 
 If you have a built `CULL.exe` (Windows), double-click it.
 
@@ -25,6 +30,21 @@ If WebView2 isn't already installed (it ships with Windows 10 21H2+ and all
 Windows 11), the installer will fetch it the first time. After that, CULL
 launches normally.
 
+### macOS
+
+Download the `.dmg` from the GitHub Releases page (Apple Silicon only), or
+build locally. Drag the app out of the DMG into `/Applications` before first
+run (avoids App Translocation).
+
+A downloaded DMG is unsigned and un-notarized, so the first launch needs
+**right-click → Open** (or System Settings → Privacy & Security → "Open
+Anyway", or `xattr -d com.apple.quarantine /Applications/CULL.app`). Locally
+built apps carry no quarantine attribute and launch directly.
+
+Expect one-time macOS permission prompts on first access to
+Desktop/Documents/Downloads, SD cards (removable volumes), and NAS (network
+volumes) — normal TCC behavior, no action needed.
+
 ## Building from source
 
 You'll need:
@@ -32,8 +52,9 @@ You'll need:
 - **Node 20+** and **pnpm 9+** (`npm i -g pnpm`)
 - **Rust stable** (`rustup toolchain install stable`)
 - A Tauri-supported toolchain. Windows: Visual Studio Build Tools with the
-  Desktop C++ workload. macOS / Linux: see
+  Desktop C++ workload. macOS: Xcode Command Line Tools. See
   [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites).
+  (Linux is compile-blocked — builds fail by design.)
 
 Then:
 
@@ -47,21 +68,44 @@ The first Rust build takes ~15 minutes. Incremental builds are fast.
 
 ## Sharing the built app
 
-After `pnpm tauri build`, the Windows installer lives at:
+After `pnpm tauri build`, the installers live at:
 
 ```
-src-tauri/target/release/bundle/nsis/CULL_0.1.0_x64-setup.exe
+src-tauri/target/release/bundle/nsis/CULL_0.1.0_x64-setup.exe   (Windows)
+src-tauri/target/release/bundle/dmg/CULL_0.1.0_aarch64.dmg      (macOS)
+src-tauri/target/release/bundle/macos/CULL.app                  (macOS, raw app)
 ```
 
-That single `.exe` is self-contained — it bundles the WebView2 bootstrapper,
+The Windows `.exe` is self-contained — it bundles the WebView2 bootstrapper,
 so a fresh PC without WebView2 will still install cleanly. Hand it to anyone
 on Windows 10/11 (x64) and they can install and run it.
 
 Caveats:
 
-- The installer isn't code-signed, so SmartScreen will warn first-run.
-- Windows on ARM is not supported by this build.
-- For macOS / Linux builds, run `pnpm tauri build` on the target platform.
+- Neither installer is code-signed: SmartScreen warns on Windows, and macOS
+  needs the right-click → Open dance (see "Running CULL" above).
+- Windows on ARM and Intel Macs are not supported by these builds.
+- A local `pnpm tauri build` produces only the current platform's installer;
+  CI (below) builds both from one tag.
+
+## Releases
+
+Push a `v*` tag and GitHub Actions builds both installers into a draft
+release:
+
+```bash
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+The workflow (`.github/workflows/release.yml`) runs `tauri build` on
+`windows-latest` (NSIS `.exe`) and `macos-latest` (aarch64 `.app` + `.dmg`),
+then attaches both to a draft GitHub release named after the tag. Review and
+publish the draft manually.
+
+Config note: `src-tauri/tauri.macos.conf.json` overrides the window config on
+macOS via JSON Merge Patch (RFC 7396) — **arrays are replaced wholesale**, so
+any future edit to `app.windows[0]` in `tauri.conf.json` must be mirrored
+there.
 
 ## Test
 
@@ -78,6 +122,7 @@ files are present.
 ## Keyboard reference
 
 Hold **Tab** at any time inside the cull view for a context-aware reference.
+On macOS, `ctrl` means `⌘` throughout (every shortcut accepts either).
 Cheat sheet:
 
 | Key | Loupe | Compare | Grid |

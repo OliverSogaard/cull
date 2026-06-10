@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "msi", "app", "dmg"],
     "publisher": "Olive",
     "copyright": "© 2026 Olive",
     "category": "Photography",

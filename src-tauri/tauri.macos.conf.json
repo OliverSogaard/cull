@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "title": "CULL",
+        "width": 1600,
+        "height": 1000,
+        "minWidth": 800,
+        "minHeight": 500,
+        "backgroundColor": "#000000",
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 14, "y": 12 }
+      }
+    ]
+  }
+}

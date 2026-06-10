@@ -42,6 +42,7 @@ import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
+import { modGlyph } from "./utils/platform";
 import { snapToFilter as snapToFilterPure } from "./utils/snap";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
@@ -530,7 +531,13 @@ export default function App() {
       // (drag-drop, recents, mount auto-open) would race the append and the
       // begin-culling snapshot — serialise every caller through this gate.
       if (openBusyRef.current) return;
-      const folders = picked.filter((p) => typeof p === "string" && p.length > 0);
+      // NFC-normalize at the single folder-path entry point: macOS file APIs
+      // can hand back decomposed Unicode (NFD: "ø" = "o" + combining stroke),
+      // which would fork recents keys / cache keys / lastDir comparisons for
+      // Danish folder names. Everything downstream sees one canonical form.
+      const folders = picked
+        .filter((p) => typeof p === "string" && p.length > 0)
+        .map((p) => p.normalize("NFC"));
       if (folders.length === 0) return;
       openBusyRef.current = true;
       setPickerBusy(true);
@@ -548,10 +555,12 @@ export default function App() {
           // Per-folder label so the loading screen tracks the batch as it scans.
           setPendingFolder(folderPath);
           try {
-            const paths = await invoke<string[]>("scan_folder", {
-              path: folderPath,
-              ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
-            });
+            const paths = (
+              await invoke<string[]>("scan_folder", {
+                path: folderPath,
+                ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
+              })
+            ).map((p) => p.normalize("NFC"));
 
             // Persist the last-used dir only AFTER a successful scan, so a folder
             // that fails to open never becomes the picker default / auto-open target.
@@ -2801,7 +2810,7 @@ export default function App() {
                   disabled={pickerBusy}
                 >
                   {pickerBusy ? "opening…" : "Open folders"}
-                  <span className="cull-hero__cta-key">⌃ O</span>
+                  <span className="cull-hero__cta-key">{modGlyph} O</span>
                 </button>
                 <span className="cull-hero__drop-hint">or drop folders anywhere</span>
               </div>
@@ -2817,7 +2826,7 @@ export default function App() {
               )}
               <div className="cull-hero__how">
                 <span>
-                  <span className="cull-hero__how-key">⌃ ,</span>
+                  <span className="cull-hero__how-key">{modGlyph} ,</span>
                   settings
                 </span>
               </div>
@@ -2903,7 +2912,7 @@ export default function App() {
                 )}
               </div>
               <div className="cull-staged__hint">
-                drop folders anywhere to add more · ⌃ O · esc to start over
+                drop folders anywhere to add more · {modGlyph} O · esc to start over
               </div>
             </>
           )}
@@ -3381,7 +3390,7 @@ export default function App() {
             onClick={() => setActionsOpen(true)}
             title="finish the cull — move rejects / copy keeps"
           >
-            ⌃E · {totalKeeps} keeps
+            {modGlyph}E · {totalKeeps} keeps
           </button>
         )}
       </div>
@@ -3629,7 +3638,7 @@ function RecentFolders({
       {recents.length === 0 ? (
         <div className="cull-recent__empty">
           No folders yet. Drop some anywhere, or press{" "}
-          <kbd className="cull-recent__kbd">⌃ O</kbd>.
+          <kbd className="cull-recent__kbd">{modGlyph} O</kbd>.
         </div>
       ) : (
         <div className="cull-recent__items">

@@ -5,6 +5,7 @@ import type { Filter, Settings, StorageMode, ThumbsPosition } from "../types";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { sanitizeFolderName } from "../utils/path";
+import { modGlyph } from "../utils/platform";
 
 /**
  * Settings modal. Opens with `Ctrl + ,` or the settings cog in the top-right
@@ -211,7 +212,7 @@ export function SettingsDialog({
         </div>
 
         <div className="cull-settings__foot">
-          <kbd>esc</kbd> to close · <kbd>⌃ ,</kbd> to reopen
+          <kbd>esc</kbd> to close · <kbd>{modGlyph} ,</kbd> to reopen
         </div>
       </div>
     </div>
