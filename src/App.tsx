@@ -31,7 +31,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { WindowControls } from "./components/WindowControls";
 
-import { useRecents, type RecentEntry } from "./hooks/useRecents";
+import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
 import { PERFORMANCE_PROFILES, normalizeRejectedSubfolder } from "./types/settings";
@@ -40,7 +40,7 @@ import { runMaskScan, type MaskKind } from "./overlays/maskScans";
 import { maskWorkerAvailable, requestMaskOffThread } from "./overlays/maskClient";
 import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
-import { formatRelativeTime, middleTruncate } from "./utils/format";
+import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
 import { snapToFilter as snapToFilterPure } from "./utils/snap";
 import { afZoomOrigin } from "./utils/zoom";
@@ -119,7 +119,7 @@ export default function App() {
   // loading screen labels the folder it's actually opening, not the previous one.
   const [pendingFolder, setPendingFolder] = useState<string | null>(null);
   const [images, setImages] = useState<Img[]>([]);
-  // Live mirror of `images` so openFolderByPath can read the latest staged set
+  // Live mirror of `images` so openFoldersByPaths can read the latest staged set
   // without depending on `images` (keeps its identity stable across staging).
   // Updated on commit here AND synchronously at the append site, so even a
   // same-tick second open computes a correct startId (no duplicate ids).
@@ -161,11 +161,12 @@ export default function App() {
   const [settings, setSettings] = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Recent folders list rendered on the home screen. Pushed to whenever a
-  // folder is opened (after a successful `scan_folder`), and refreshed with
-  // the rated/done counts when the user leaves the cull back to home — so
-  // the list shows "327 / 372" mid-flow and "932 ✓" once everything's rated.
-  const { recents: recentFolders, push: pushRecent, remove: removeRecent } = useRecents();
+  // Recent sessions list rendered on the home screen. One entry per folder
+  // SET, written once a session ENTERS CULLING (staging alone leaves no trace,
+  // so an Esc'd mis-pick never lands in the list) and refreshed with the
+  // rated/done counts while culling and on the way back home — so the list
+  // shows "327 / 372" mid-flow and "932 ✓" once everything's rated.
+  const { recents: recentFolders, push: pushRecent, removeEntry } = useRecents();
 
   // Act on the cull (Ctrl+E) — a non-modal finish dialog with two file actions:
   // move rejects to a _rejected/ subfolder, and copy keeps+favorites to an export
@@ -185,6 +186,9 @@ export default function App() {
   // queuing a second picker behind the first.
   const [pickerBusy, setPickerBusy] = useState(false);
   const [lastAdded, setLastAdded] = useState(0);
+  // Folders that scanned successfully in the most recent open batch — drives
+  // the staged screen's "+N from a + b" summary line.
+  const [lastBatchFolders, setLastBatchFolders] = useState<string[]>([]);
   const [progress, setProgress] = useState<AnalyzeProgress>({ done: 0, total: 0, phase: "" });
 
   // Compare mode: Champion vs Challenger. championIndex/challengerIndex are
@@ -467,87 +471,182 @@ export default function App() {
     imageStore.setGridRange(first, last);
   }, []);
 
+  // The recents key of the entry THIS session last wrote. A session's folder
+  // set can grow (drop-append while staged), which changes its key — tracking
+  // the previous key lets the writer replace the stale entry instead of
+  // leaving both "[A]" and "[A, B]" rows behind.
+  const sessionRecentsKeyRef = useRef<string | null>(null);
+
+  // Replace this session's recents entry (removing the previous-keyed row if
+  // the folder set changed since the last write) and remember the new key.
+  const commitSessionRecent = useCallback(
+    (paths: string[], count: number, rated: number) => {
+      if (paths.length === 0) return;
+      const key = recentKey(paths);
+      const prevKey = sessionRecentsKeyRef.current;
+      if (prevKey && prevKey !== key) removeEntry(prevKey);
+      pushRecent({
+        paths,
+        count,
+        rated,
+        lastOpened: new Date().toISOString(),
+        done: count > 0 && rated === count,
+      });
+      sessionRecentsKeyRef.current = key;
+    },
+    [pushRecent, removeEntry],
+  );
+
+  // Write this session's single combined recents entry: all source folders in
+  // first-staged order, with combined count/rated across the whole set.
+  const writeSessionRecent = useCallback(
+    (imgs: Img[], ratingsMap: Record<number, Rating>) => {
+      if (imgs.length === 0) return;
+      const paths: string[] = [];
+      const seen = new Set<string>();
+      let rated = 0;
+      for (const im of imgs) {
+        if (!seen.has(im.srcFolder)) {
+          seen.add(im.srcFolder);
+          paths.push(im.srcFolder);
+        }
+        if (ratingsMap[im.id]) rated += 1;
+      }
+      commitSessionRecent(paths, imgs.length, rated);
+    },
+    [commitSessionRecent],
+  );
+
   /**
-   * Scan a known folder path and stage its CR3s. Same logic as `pickFolder`
-   * minus the OS picker — used both by `pickFolder` after the user picks, and
-   * by the launch-time "open last folder" effect.
+   * Scan known folder paths and stage their CR3s, appended in order. Same
+   * logic as `pickFolder` minus the OS picker — used by `pickFolder` after the
+   * user picks, by drag-drop, by recents clicks (which pass `fromRecentKey` so
+   * the session replaces that entry instead of duplicating it), and by the
+   * launch-time "open last folder" effect.
    */
-  const openFolderByPath = useCallback(
-    async (picked: string) => {
+  const openFoldersByPaths = useCallback(
+    async (picked: string[], opts?: { fromRecentKey?: string }) => {
       // One scan at a time. A second open launched while one is in flight
       // (drag-drop, recents, mount auto-open) would race the append and the
       // begin-culling snapshot — serialise every caller through this gate.
       if (openBusyRef.current) return;
+      const folders = picked.filter((p) => typeof p === "string" && p.length > 0);
+      if (folders.length === 0) return;
       openBusyRef.current = true;
       setPickerBusy(true);
       setScanError(null);
       setAnalyzeError(null);
+      // A recents click re-opens a saved session: seed the session key so the
+      // staged set's write-back REPLACES that entry rather than duplicating it.
+      if (opts?.fromRecentKey) sessionRecentsKeyRef.current = opts.fromRecentKey;
+      let totalAdded = 0;
+      const okFolders: string[] = [];
+      const failures: { path: string; msg: string; permanent: boolean }[] = [];
       try {
-        setPendingFolder(picked);
         setPhase("loading");
+        for (const folderPath of folders) {
+          // Per-folder label so the loading screen tracks the batch as it scans.
+          setPendingFolder(folderPath);
+          try {
+            const paths = await invoke<string[]>("scan_folder", {
+              path: folderPath,
+              ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
+            });
 
-        const paths = await invoke<string[]>("scan_folder", {
-          path: picked,
-          ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
-        });
+            // Persist the last-used dir only AFTER a successful scan, so a folder
+            // that fails to open never becomes the picker default / auto-open target.
+            localStorage.setItem("cull:lastDir", folderPath);
 
-        // Persist the last-used dir only AFTER a successful scan, so a folder
-        // that fails to open never becomes the picker default / auto-open target.
-        localStorage.setItem("cull:lastDir", picked);
-
-        // APPEND, never replace. Read the prior set from imagesRef and update it
-        // synchronously alongside setImages, so dedupe + ids are computed against
-        // the freshest set even if two opens land back-to-back. An empty folder
-        // appends nothing rather than wiping the set.
-        const prev = imagesRef.current;
-        const existing = new Set(prev.map((im) => im.path));
-        const additions = paths.filter((p) => !existing.has(p));
-        const startId = prev.length;
-        const appended = additions.map((p, i) => ({
-          id: startId + i,
-          path: p,
-          filename: basename(p),
-          srcFolder: picked,
-        }));
-        if (appended.length > 0) {
-          imagesRef.current = [...prev, ...appended];
-          setImages(imagesRef.current);
+            // APPEND, never replace. Read the prior set from imagesRef and update it
+            // synchronously alongside setImages, so dedupe + ids are computed against
+            // the freshest set even if two opens land back-to-back. An empty folder
+            // appends nothing rather than wiping the set.
+            const prev = imagesRef.current;
+            const existing = new Set(prev.map((im) => im.path));
+            const additions = paths.filter((p) => !existing.has(p));
+            const startId = prev.length;
+            const appended = additions.map((p, i) => ({
+              id: startId + i,
+              path: p,
+              filename: basename(p),
+              srcFolder: folderPath,
+            }));
+            if (appended.length > 0) {
+              imagesRef.current = [...prev, ...appended];
+              setImages(imagesRef.current);
+            }
+            totalAdded += additions.length;
+            okFolders.push(folderPath);
+          } catch (e) {
+            const msg = String(e);
+            // Evict a single-folder entry only when its folder is definitively
+            // gone (deleted / not a directory). A transient NAS/SMB blip must
+            // NOT drop a valid, frequently-used folder — the backend tags
+            // permanent vs transient.
+            const permanent = /not found|not a directory/i.test(msg);
+            if (permanent) removeEntry(recentKey([folderPath]));
+            failures.push({ path: folderPath, msg, permanent });
+          }
         }
-        setLastAdded(additions.length);
-        setFolder(picked);
 
-        // Push to the home-screen recents list (or refresh an existing entry).
-        // `rated` + `done` only become accurate after `analyze_folder` reads
-        // the sidecars, so we leave them at zero/false here and let the cull
-        // exit (leaveToHome) — or the analyze pass itself — update them. `count`
-        // is THIS folder's own scan total (per-folder, not the merged staged set).
-        pushRecent({
-          path: picked,
-          count: paths.length,
-          rated: 0,
-          lastOpened: new Date().toISOString(),
-          done: false,
-        });
+        if (okFolders.length > 0) {
+          setLastAdded(totalAdded);
+          setLastBatchFolders(okFolders);
+          // `folder` keeps its "most recently opened" meaning — it labels the
+          // loading fallback and seeds the finish dialog's default subfolder.
+          setFolder(okFolders[okFolders.length - 1]);
+        }
 
-        // Go straight to STAGED after the (sub-millisecond) scan — don't block
+        if (opts?.fromRecentKey) {
+          if (failures.some((f) => !f.permanent)) {
+            // Part of the saved set failed transiently — keep its entry intact
+            // so the user can retry the FULL set later. Whatever did load
+            // writes a fresh entry under its own (different) key below.
+            sessionRecentsKeyRef.current = null;
+          } else if (okFolders.length === 0 && imagesRef.current.length === 0) {
+            // Every folder of the saved set is permanently gone — the entry
+            // can never open anything again.
+            removeEntry(opts.fromRecentKey);
+            sessionRecentsKeyRef.current = null;
+          }
+        }
+
+        // Recents are NOT written at stage time — only beginCulling (and the
+        // in-cull refreshes) record a session, so a mis-pick abandoned with
+        // Esc leaves no trace and a re-opened recent that's Esc'd keeps its
+        // original entry untouched. One exception: a re-opened recent whose
+        // folders scanned fine but are now EMPTY can never reach culling, so
+        // its existing entry is updated in place to a 0 count here instead of
+        // advertising a stale total forever. Gated on the seeded key having
+        // survived the failure handling above, so a partially-failed re-open
+        // never spawns a fresh count-0 entry for a set that was never culled.
+        if (
+          sessionRecentsKeyRef.current === opts?.fromRecentKey &&
+          opts?.fromRecentKey &&
+          imagesRef.current.length === 0 &&
+          okFolders.length > 0
+        ) {
+          commitSessionRecent(okFolders, 0, 0);
+        }
+
+        if (failures.length > 0) {
+          setScanError(failures.map((f) => `${f.path}: ${f.msg}`).join("\n"));
+        }
+
+        // Go straight to STAGED after the (sub-millisecond) scans — don't block
         // on preview decode. The current image preloads in the background so
-        // "begin culling" is still instant by the time the user clicks it.
-        setPhase("staged");
-      } catch (e) {
-        const msg = String(e);
-        setScanError(msg);
-        // Evict from recents only when the folder is definitively gone (deleted
-        // / not a directory). A transient NAS/SMB blip must NOT drop a valid,
-        // frequently-used folder — the backend tags permanent vs transient.
-        if (/not found|not a directory/i.test(msg)) removeRecent(picked);
-        setPhase(imagesRef.current.length > 0 ? "staged" : "start");
+        // "begin culling" is still instant by the time the user clicks it. A
+        // successful scan that found nothing still lands on staged so the
+        // "+0 · no new CR3 files" feedback is visible; only a batch where
+        // every folder failed (and nothing was already staged) returns home.
+        setPhase(imagesRef.current.length > 0 || okFolders.length > 0 ? "staged" : "start");
       } finally {
         setPendingFolder(null);
         setPickerBusy(false);
         openBusyRef.current = false;
       }
     },
-    [pushRecent, removeRecent, settings.rejectedSubfolder],
+    [commitSessionRecent, removeEntry, settings.rejectedSubfolder],
   );
 
   const pickFolder = useCallback(async () => {
@@ -559,15 +658,18 @@ export default function App() {
       // Access / Network) makes it enumerate the NAS before it can even
       // paint — pointing at a concrete path skips that.
       const lastDir = localStorage.getItem("cull:lastDir") ?? undefined;
-      const picked = await open({ directory: true, multiple: false, defaultPath: lastDir });
-      if (!picked || typeof picked !== "string") return; // cancelled — stay put
-      // Hand off to the shared open-by-path. (It also flips pickerBusy on/off,
+      const picked = await open({ directory: true, multiple: true, defaultPath: lastDir });
+      if (!picked) return; // cancelled — stay put
+      // The multiple:true overload types the result as string[] | null, but
+      // normalize defensively in case a platform dialog hands back a string.
+      const folders = Array.isArray(picked) ? picked : [picked];
+      // Hand off to the shared open-by-paths. (It also flips pickerBusy on/off,
       // which is fine — setState is idempotent.)
-      await openFolderByPath(picked);
+      await openFoldersByPaths(folders);
     } finally {
       setPickerBusy(false);
     }
-  }, [pickerBusy, openFolderByPath]);
+  }, [pickerBusy, openFoldersByPaths]);
 
   // Launch-time auto-open: if the user prefers it and a last folder is
   // remembered, skip the home screen and load it straight away. Runs once on
@@ -578,35 +680,18 @@ export default function App() {
     if (!settings.openLastFolderOnLaunch) return;
     const lastDir = localStorage.getItem("cull:lastDir");
     if (!lastDir) return;
-    openFolderByPath(lastDir);
+    // Reopen the full last SESSION when the last-used dir belongs to one —
+    // restoring just lastDir out of a multi-folder session would fork a
+    // subset entry in recents. (recentFolders is loaded synchronously from
+    // localStorage, so the mount-time value is complete.)
+    const session = recentFolders.find((r) => r.paths.includes(lastDir));
+    if (session) {
+      openFoldersByPaths(session.paths, { fromRecentKey: recentKey(session.paths) });
+    } else {
+      openFoldersByPaths([lastDir]);
+    }
     // Intentional empty deps — mount-only.
   }, []);
-
-  // Push one recents entry PER source folder in the staged set, each scoped to
-  // its own count/rated — so a session that spans several folders ("open another
-  // folder") never records the merged total under one folder's name.
-  const recordSessionRecents = useCallback(
-    (imgs: Img[], ratingsMap: Record<number, Rating>) => {
-      if (imgs.length === 0) return;
-      const byFolder = new Map<string, { count: number; rated: number }>();
-      for (const im of imgs) {
-        const agg = byFolder.get(im.srcFolder) ?? { count: 0, rated: 0 };
-        agg.count += 1;
-        if (ratingsMap[im.id]) agg.rated += 1;
-        byFolder.set(im.srcFolder, agg);
-      }
-      const now = new Date().toISOString();
-      // Push the active folder last so it ends up at the front of the list.
-      const folders = [...byFolder.keys()].sort((a, b) =>
-        a === folder ? 1 : b === folder ? -1 : 0,
-      );
-      for (const path of folders) {
-        const { count, rated } = byFolder.get(path)!;
-        pushRecent({ path, count, rated, lastOpened: now, done: count > 0 && rated === count });
-      }
-    },
-    [folder, pushRecent],
-  );
 
   // Persist the recents' rated/done counts WHILE culling, not only on the way
   // back home. leaveToHome already records them, but quitting straight from the
@@ -616,9 +701,9 @@ export default function App() {
   // whatever's on disk when the window dies is current to within the debounce.
   useEffect(() => {
     if (phase !== "culling" || images.length === 0) return;
-    const t = window.setTimeout(() => recordSessionRecents(images, ratings), 600);
+    const t = window.setTimeout(() => writeSessionRecent(images, ratings), 600);
     return () => window.clearTimeout(t);
-  }, [phase, images, ratings, recordSessionRecents]);
+  }, [phase, images, ratings, writeSessionRecent]);
 
   // Begin culling: sort the staged set by capture time, restore ratings, then
   // enter the cull view (warming the first screenful of previews first).
@@ -666,10 +751,10 @@ export default function App() {
       // cursor-outward / grid-viewport order. Same array we just set.
       imageStore.reset(sorted.map((im) => im.path));
 
-      // Refresh the home-screen recents entries (one per source folder) with the
-      // restored rated counts straight off the sidecar pass — so reopening home
-      // shows "327 / 372" immediately, even before the user touches a key.
-      recordSessionRecents(sorted, restoredRatings);
+      // Refresh the home-screen recents entry with the restored rated counts
+      // straight off the sidecar pass — so reopening home shows "327 / 372"
+      // immediately, even before the user touches a key.
+      writeSessionRecent(sorted, restoredRatings);
 
       // Resume where you stopped: land on the first unrated frame in capture
       // order. All-rated or fresh folder → start at top.
@@ -701,7 +786,7 @@ export default function App() {
       analyzingRef.current = false;
       setPhase(ok ? "culling" : "staged");
     }
-  }, [images, profile.concurrentRestore, settings, recordSessionRecents]);
+  }, [images, profile.concurrentRestore, settings, writeSessionRecent]);
 
   // Wipe the multi-selection state — called whenever the user leaves the grid
   // context (site switch, ESC, opening another folder). Cleanly decoupled from
@@ -751,8 +836,13 @@ export default function App() {
     setSelectionAnchor(null);
     setFolder(null);
     setPendingFolder(null);
+    setScanError(null);
     setAnalyzeError(null);
     setLastAdded(0);
+    setLastBatchFolders([]);
+    // The next session is a fresh folder set — it must write a NEW recents
+    // entry, not replace this one's.
+    sessionRecentsKeyRef.current = null;
     setClippingVisible(false);
     setClipMasks({});
     requestedClipMasks.current.clear();
@@ -770,13 +860,13 @@ export default function App() {
     setPhase("start");
   }, [resetZoom]);
 
-  // Leaving to home: refresh the per-folder recents with this session's final
+  // Leaving to home: refresh the session's recents entry with its final
   // counts, then discard the in-memory session and return to the start screen.
   const leaveToHome = useCallback(() => {
-    recordSessionRecents(images, ratings);
+    writeSessionRecent(images, ratings);
     setConfirmHome(false);
     resetSession();
-  }, [images, ratings, resetSession, recordSessionRecents]);
+  }, [images, ratings, resetSession, writeSessionRecent]);
 
   // Open the act-on-cull dialog with fresh results.
   const openActions = useCallback(() => {
@@ -785,26 +875,51 @@ export default function App() {
     setActionsOpen(true);
   }, []);
 
-  // Move rejected CR3s (+sidecars) into a subfolder of the current folder.
-  // The subfolder name comes from settings (default `_rejected`).
+  // Move rejected CR3s (+sidecars) into a subfolder of the folder each photo
+  // came FROM — a multi-folder session must not sweep folder A's rejects into
+  // folder B's `_rejected`. One backend call per source folder, results merged
+  // into a single FileOpResult for the dialog. The subfolder name comes from
+  // settings (default `_rejected`).
   const doMoveRejects = useCallback(async () => {
-    if (!folder || rejectedPaths.length === 0 || actionBusy !== null) return;
+    if (rejectedPaths.length === 0 || actionBusy !== null) return;
     setActionBusy("move");
     setMoveResult(null);
     try {
       const subfolder = normalizeRejectedSubfolder(settings.rejectedSubfolder);
-      const res = await invoke<FileOpResult>("move_rejects_to_subfolder", {
-        folder,
-        paths: rejectedPaths,
-        subfolder,
-      });
-      setMoveResult(res);
-    } catch (e) {
-      setMoveResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1 });
+      const byFolder = new Map<string, string[]>();
+      for (const im of images) {
+        if (ratings[im.id] !== "reject") continue;
+        const list = byFolder.get(im.srcFolder);
+        if (list) list.push(im.path);
+        else byFolder.set(im.srcFolder, [im.path]);
+      }
+      const merged: FileOpResult = { completed: 0, skipped: 0, errors: [], errorCount: 0 };
+      for (const [srcFolder, paths] of byFolder) {
+        try {
+          const res = await invoke<FileOpResult>("move_rejects_to_subfolder", {
+            folder: srcFolder,
+            paths,
+            subfolder,
+          });
+          merged.completed += res.completed;
+          merged.skipped += res.skipped;
+          merged.errors.push(...res.errors);
+          merged.errorCount = (merged.errorCount ?? 0) + (res.errorCount ?? res.errors.length);
+        } catch (e) {
+          // One folder failing (offline NAS, permissions) must not abort the
+          // moves for the folders that ARE reachable.
+          merged.errors.push(`${srcFolder}: ${String(e)}`);
+          merged.errorCount = (merged.errorCount ?? 0) + 1;
+        }
+      }
+      // Mirror the backend's error-list cap so a huge failure can't bloat the UI;
+      // errorCount still carries the true total.
+      merged.errors = merged.errors.slice(0, 20);
+      setMoveResult(merged);
     } finally {
       setActionBusy(null);
     }
-  }, [folder, rejectedPaths, actionBusy, settings.rejectedSubfolder]);
+  }, [images, ratings, rejectedPaths, actionBusy, settings.rejectedSubfolder]);
 
   // Copy keeps + favorites (+sidecars) to `dest`. The finish dialog decides
   // where dest comes from — for pinned mode it joins the pinned root with the
@@ -1411,13 +1526,13 @@ export default function App() {
     return () => unlisten?.();
   }, []);
 
-  // ── Drag-and-drop: drop a folder anywhere to open it ─────────────────────
-  // Hover the window with a folder → render the champagne dashed overlay on
-  // the home screen (the home content dims behind it). Drop → if the first
-  // dropped path is a folder, open it. Drops are ignored while the cull view
-  // is active (replacing the staged set mid-cull would lose state).
-  // openFolderByPath is captured fresh each render; we mirror it into a ref so
-  // the once-registered drag-drop listener uses the latest closure without
+  // ── Drag-and-drop: drop folders anywhere to open them ────────────────────
+  // Hover the window with folders → render the champagne dashed overlay on
+  // the home screen (the home content dims behind it). Drop → every dropped
+  // folder is scanned and staged together. Drops are ignored while the cull
+  // view is active (replacing the staged set mid-cull would lose state).
+  // openFoldersByPaths is captured fresh each render; we mirror it into a ref
+  // so the once-registered drag-drop listener uses the latest closure without
   // unsubscribing and re-subscribing on every render (which would race with
   // active drag events).
   const [isDragOver, setIsDragOver] = useState(false);
@@ -1425,10 +1540,10 @@ export default function App() {
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
-  const openFolderByPathRef = useRef(openFolderByPath);
+  const openFoldersByPathsRef = useRef(openFoldersByPaths);
   useEffect(() => {
-    openFolderByPathRef.current = openFolderByPath;
-  }, [openFolderByPath]);
+    openFoldersByPathsRef.current = openFoldersByPaths;
+  }, [openFoldersByPaths]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1454,12 +1569,14 @@ export default function App() {
           setIsDragOver(false);
         } else if (p.type === "drop") {
           setIsDragOver(false);
-          const first = p.paths?.[0];
-          if (typeof first === "string" && first.length > 0) {
-            // Best-effort: invoke openFolderByPath; if the path is a file (not a
-            // folder), Rust's scan_folder will error and we'll surface that as
-            // a scan error via the regular failure path.
-            openFolderByPathRef.current(first);
+          const dropped = (p.paths ?? []).filter(
+            (path): path is string => typeof path === "string" && path.length > 0,
+          );
+          if (dropped.length > 0) {
+            // Best-effort: stage every dropped folder in one batch; if a path
+            // is a file (not a folder), Rust's scan_folder will error and we'll
+            // surface that as a scan error via the regular failure path.
+            openFoldersByPathsRef.current(dropped);
           }
         }
       })
@@ -2188,14 +2305,26 @@ export default function App() {
         return;
       }
       // Enter on the staged screen → begin culling (mirrors the primary button).
-      if (phase === "staged" && e.key === "Enter") {
+      // With 0 images staged the primary button is "open folders" instead —
+      // leave Enter alone there so a focused button still activates.
+      if (phase === "staged" && e.key === "Enter" && images.length > 0) {
         e.preventDefault();
         beginCulling();
+        return;
+      }
+      // Esc on the staged screen → discard the staged set and return Home, so
+      // a mis-picked batch can just be retried. No confirm needed: nothing is
+      // rated before the analyze pass, so there's no work to lose — and since
+      // recents are only written once culling begins, an abandoned staging
+      // leaves no entry behind.
+      if (phase === "staged" && e.key === "Escape") {
+        e.preventDefault();
+        resetSession();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [settingsOpen, phase, pickFolder, beginCulling]);
+  }, [settingsOpen, phase, pickFolder, beginCulling, images.length, resetSession]);
 
   // The cull keymap closures capture currentIndex/ratings/etc., so they rebuild on
   // every nav step + rating. Dispatch through a ref and register the window
@@ -2653,7 +2782,7 @@ export default function App() {
           {isDragOver && (
             <div className="cull-drag-indicator" aria-hidden>
               <div className="cull-drag-indicator__arrow">↓</div>
-              <div className="cull-drag-indicator__text">Drop folder to open</div>
+              <div className="cull-drag-indicator__text">Drop folders to open</div>
             </div>
           )}
           {phase === "start" && (
@@ -2671,14 +2800,16 @@ export default function App() {
                   onClick={pickFolder}
                   disabled={pickerBusy}
                 >
-                  {pickerBusy ? "opening…" : "Open folder"}
+                  {pickerBusy ? "opening…" : "Open folders"}
                   <span className="cull-hero__cta-key">⌃ O</span>
                 </button>
-                <span className="cull-hero__drop-hint">or drop a folder anywhere</span>
+                <span className="cull-hero__drop-hint">or drop folders anywhere</span>
               </div>
               <RecentFolders
                 recents={recentFolders}
-                onPick={openFolderByPath}
+                onPick={(entry) =>
+                  openFoldersByPaths(entry.paths, { fromRecentKey: recentKey(entry.paths) })
+                }
                 pickerBusy={pickerBusy}
               />
               {scanError && (
@@ -2703,7 +2834,7 @@ export default function App() {
                 </span>
               </div>
               <div className="cull-chrome__sub">
-                {images.length > 0 ? `${images.length} files · decoding first preview…` : "scanning…"}
+                {images.length > 0 ? `${images.length} files staged · scanning…` : "scanning…"}
               </div>
             </>
           )}
@@ -2739,30 +2870,40 @@ export default function App() {
               <div className="cull-staged__count">
                 {images.length} CR3 {images.length === 1 ? "image" : "images"} staged
               </div>
-              <div className="cull-chrome__folder cull-staged__folder">
+              <div
+                className="cull-chrome__folder cull-staged__folder"
+                title={lastBatchFolders.join("\n")}
+              >
                 {lastAdded > 0
-                  ? `+${lastAdded} from ${folderName}`
-                  : `+0 from ${folderName} · no new CR3 files`}
+                  ? `+${lastAdded} from ${formatFolderSet(lastBatchFolders, 40)}`
+                  : `+0 from ${formatFolderSet(lastBatchFolders, 40)} · no new CR3 files`}
               </div>
+              {scanError && (
+                <pre className="cull-message__body cull-chrome__error">{scanError}</pre>
+              )}
               {analyzeError && (
                 <pre className="cull-message__body cull-chrome__error">{analyzeError}</pre>
               )}
               <div className="cull-staged__actions">
-                <button
-                  className="cull-pick-button cull-pick-button--ghost"
-                  onClick={pickFolder}
-                  disabled={pickerBusy}
-                >
-                  {pickerBusy ? "opening…" : "open another folder"}
-                </button>
-                {images.length > 0 && (
+                {images.length > 0 ? (
                   <button
                     className="cull-pick-button cull-pick-button--primary"
                     onClick={beginCulling}
                   >
                     begin culling →
                   </button>
+                ) : (
+                  <button
+                    className="cull-pick-button cull-pick-button--primary"
+                    onClick={pickFolder}
+                    disabled={pickerBusy}
+                  >
+                    {pickerBusy ? "opening…" : "open folders"}
+                  </button>
                 )}
+              </div>
+              <div className="cull-staged__hint">
+                drop folders anywhere to add more · ⌃ O · esc to start over
               </div>
             </>
           )}
@@ -3464,13 +3605,14 @@ function EmptyFilter({ filter }: { filter: Filter }) {
 }
 
 /**
- * Recent-folders section on the home screen. Renders nothing on a totally
- * fresh launch (empty state replaces the list). Click a row
- * to re-open that folder; rows that don't have a `count` yet hide the count
+ * Recent-sessions section on the home screen. Renders nothing on a totally
+ * fresh launch (empty state replaces the list). Click a row to re-open that
+ * session's folder set; rows that don't have a `count` yet hide the count
  * column rather than show a stub `0`.
  *
- * Three columns: path (middle-truncated), count badge
- * (`327 / 372`, plain `421`, or `932 ✓`), and a relative-time stamp.
+ * Three columns: folder names (`wedding-d1 + wedding-d2`, overflowing to
+ * `+N more` — full paths in the tooltip), count badge (`327 / 372`, plain
+ * `421`, or `932 ✓`), and a relative-time stamp.
  */
 function RecentFolders({
   recents,
@@ -3478,7 +3620,7 @@ function RecentFolders({
   pickerBusy,
 }: {
   recents: RecentEntry[];
-  onPick: (path: string) => void;
+  onPick: (entry: RecentEntry) => void;
   pickerBusy: boolean;
 }) {
   return (
@@ -3486,16 +3628,16 @@ function RecentFolders({
       <div className="cull-recent__label">Recent</div>
       {recents.length === 0 ? (
         <div className="cull-recent__empty">
-          No folders yet. Drop one anywhere, or press{" "}
+          No folders yet. Drop some anywhere, or press{" "}
           <kbd className="cull-recent__kbd">⌃ O</kbd>.
         </div>
       ) : (
         <div className="cull-recent__items">
           {recents.map((r) => (
             <RecentRow
-              key={r.path}
+              key={recentKey(r.paths)}
               entry={r}
-              onPick={() => !pickerBusy && onPick(r.path)}
+              onPick={() => !pickerBusy && onPick(r)}
             />
           ))}
         </div>
@@ -3505,10 +3647,10 @@ function RecentFolders({
 }
 
 function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }) {
-  // Truncate at ~52 chars — leaves room for the count + time columns at the
-  // 620px hero width and keeps both the drive letter (head) and the
-  // leaf folder name (tail) visible.
-  const display = middleTruncate(entry.path, 52);
+  // Folder NAMES, not paths — budgeted at ~52 chars so the count + time
+  // columns still fit at the 620px hero width. The tooltip carries the full
+  // paths (one per line), which also disambiguates duplicate basenames.
+  const display = formatFolderSet(entry.paths, 52);
   const rel = formatRelativeTime(entry.lastOpened);
   return (
     <div
@@ -3522,7 +3664,7 @@ function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }
           onPick();
         }
       }}
-      title={entry.path}
+      title={entry.paths.join("\n")}
     >
       <span className="cull-recent__path">{display}</span>
       <span className="cull-recent__count">

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatExposureBias,
+  formatFolderSet,
   formatRelativeTime,
   formatShutter,
   formatWhiteBalance,
@@ -148,5 +149,63 @@ describe("middleTruncate", () => {
     // ceil((max-1)/2) head + floor((max-1)/2) tail chars.
     expect(out).toContain("Reception");
     expect(out).toContain("…");
+  });
+});
+
+describe("formatFolderSet", () => {
+  it("shows a single folder as its bare name", () => {
+    expect(formatFolderSet(["C:\\Shoots\\wedding-d1"])).toBe("wedding-d1");
+    expect(formatFolderSet(["/home/o/shoots/wedding-d1"])).toBe("wedding-d1");
+  });
+
+  it("middle-truncates a single name that alone overflows", () => {
+    const long = "C:\\Shoots\\" + "a".repeat(80);
+    const out = formatFolderSet([long], 20);
+    expect(out.length).toBeLessThanOrEqual(20);
+    expect(out).toContain("…");
+  });
+
+  it("joins two names with ' + '", () => {
+    expect(formatFolderSet(["C:\\S\\wedding-d1", "C:\\S\\wedding-d2"])).toBe(
+      "wedding-d1 + wedding-d2",
+    );
+  });
+
+  it("overflows to '+N more' instead of exceeding the budget", () => {
+    const paths = ["C:\\S\\wedding-d1", "C:\\S\\wedding-d2", "C:\\S\\wedding-d3"];
+    const out = formatFolderSet(paths, 24);
+    expect(out.length).toBeLessThanOrEqual(24);
+    expect(out).toBe("wedding-d1 +2 more");
+  });
+
+  it("always shows at least the first name, even on a tiny budget", () => {
+    const out = formatFolderSet(["C:\\S\\wedding-d1", "C:\\S\\wedding-d2"], 8);
+    expect(out).toContain("+1 more");
+    expect(out.startsWith("w")).toBe(true);
+  });
+
+  it("fits as many names as the budget allows before counting the rest", () => {
+    const paths = ["C:\\S\\aa", "C:\\S\\bb", "C:\\S\\cc", "C:\\S\\dd"];
+    // "aa + bb + cc + dd" = 17 chars — fits in 17.
+    expect(formatFolderSet(paths, 17)).toBe("aa + bb + cc + dd");
+    // 16 can't fit all four, but "aa + bb + cc +1 more" needs 20 > 16,
+    // so it backs off to "aa + bb +2 more" (15).
+    expect(formatFolderSet(paths, 16)).toBe("aa + bb +2 more");
+  });
+
+  it("keeps duplicate basenames as-is", () => {
+    expect(formatFolderSet(["C:\\D1\\RAW", "C:\\D2\\RAW"])).toBe("RAW + RAW");
+  });
+
+  it("middle-truncates an overlong FIRST name in the multi-folder branch", () => {
+    const long = "C:\\Shoots\\" + "a".repeat(60);
+    const out = formatFolderSet([long, "C:\\Shoots\\bb"], 30);
+    expect(out.length).toBeLessThanOrEqual(30);
+    expect(out).toContain("…");
+    expect(out).toContain("+1 more");
+  });
+
+  it("returns empty string for an empty set", () => {
+    expect(formatFolderSet([])).toBe("");
   });
 });

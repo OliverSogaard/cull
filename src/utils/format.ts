@@ -6,6 +6,8 @@
  * empty strings.
  */
 
+import { basename } from "./path";
+
 /** `1/250s` for fast shutters; `1.6s` for long exposures. */
 export function formatShutter(seconds: number | null): string | null {
   // Guard NaN/Infinity too: `NaN <= 0` is false, so a NaN would otherwise slip
@@ -118,6 +120,43 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
   if (weeks === 1) return "last week";
   if (weeks < 5) return `${weeks} weeks ago`;
   return then.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/**
+ * Render a session's folder set as folder NAMES, not paths — `wedding-d1 +
+ * wedding-d2` — for the home-screen recents list and the staged summary. When
+ * the full join would blow the char budget, show as many leading names as fit
+ * and count the rest: `wedding-d1 +2 more`. The first name always renders
+ * (middle-truncated if it alone overflows a single-folder row), so a row is
+ * never just "+3 more". Duplicate basenames (two folders both named `RAW`)
+ * render as-is — the full-path tooltip at the call site disambiguates.
+ */
+export function formatFolderSet(paths: string[], maxChars = 52): string {
+  const names = paths.map(basename);
+  if (names.length === 0) return "";
+  if (names.length === 1) return middleTruncate(names[0], maxChars);
+  const full = names.join(" + ");
+  if (full.length <= maxChars) return full;
+  // Greedy: take leading names while the join + a " +N more" suffix still
+  // fits. The suffix is reserved per step because once we stop, the names we
+  // dropped must be counted.
+  let acc = names[0];
+  let shown = 1;
+  for (let i = 1; i < names.length; i++) {
+    const candidate = `${acc} + ${names[i]}`;
+    const remaining = names.length - (i + 1);
+    const suffix = remaining > 0 ? ` +${remaining} more` : "";
+    if (candidate.length + suffix.length > maxChars) break;
+    acc = candidate;
+    shown++;
+  }
+  const suffix = ` +${names.length - shown} more`;
+  // An overlong FIRST name can't be dropped (the row must say *something*), so
+  // it shrinks instead — same middle-truncation as the single-folder case.
+  if (shown === 1 && acc.length + suffix.length > maxChars) {
+    acc = middleTruncate(acc, Math.max(1, maxChars - suffix.length));
+  }
+  return `${acc}${suffix}`;
 }
 
 /**
