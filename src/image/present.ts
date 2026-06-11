@@ -134,6 +134,11 @@ export class Presenter {
     this.notify();
   }
 
+  /** True while `path` is the navigated frame (offerTiers' retry guard). */
+  isCurrent(path: string): boolean {
+    return this.currentPath === path;
+  }
+
   /** Session change: drop everything, bump the token. */
   reset(): void {
     this.navToken++;
@@ -214,5 +219,45 @@ export class Presenter {
   private notify(): void {
     this.snap = null;
     for (const cb of this.listeners) cb();
+  }
+}
+
+/** Bound on offerTiers' scrub-mode thumb retries (each retry costs one frame,
+ *  so the worst case is well under one scrub step at 33 ms/step). */
+const SCRUB_THUMB_RETRIES = 8;
+
+/**
+ * How consumers hand a frame's available tiers to the presenter. The two
+ * physical layers share ONE back element, so two concurrent offers clobber
+ * each other: the later `el.src =` aborts the earlier offer's in-flight
+ * decode (usePresent's decode contract).
+ *
+ * - SETTLED: fire both in tier order. When both urls are in hand (cached
+ *   nav) the preview's src-set aborts the thumb decode — desired: the
+ *   preview presents directly and blur never mounts.
+ * - SCRUB: sequence them, best first. Fire-and-forgetting both would let the
+ *   preview abort the thumb and then LOSE its one-frame race — leaving
+ *   nothing to present for the step (the compare-scrub stall found in the
+ *   WebView2 matrix). Instead the preview gets its frame budget; on a loss
+ *   the thumb decodes and RETRIES frame by frame (same src — re-offers don't
+ *   abort it) until it presents or the scrub moves on, so every step shows
+ *   at worst the blurred thumb, never a stale frame.
+ */
+export async function offerTiers(
+  presenter: Presenter,
+  path: string,
+  urls: { thumb?: string; preview?: string },
+  scrubbing: boolean,
+): Promise<void> {
+  if (!scrubbing) {
+    if (urls.thumb) void presenter.offer(path, "thumb", urls.thumb);
+    if (urls.preview) void presenter.offer(path, "preview", urls.preview);
+    return;
+  }
+  if (urls.preview && (await presenter.offer(path, "preview", urls.preview))) return;
+  if (!urls.thumb) return;
+  for (let i = 0; i < SCRUB_THUMB_RETRIES; i++) {
+    if (!presenter.isCurrent(path) || !presenter.snapshot().scrubbing) return;
+    if (await presenter.offer(path, "thumb", urls.thumb)) return;
   }
 }

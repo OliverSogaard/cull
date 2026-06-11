@@ -5,6 +5,7 @@ import { CompareExifRail } from "./ExifRail";
 import { RatingDot } from "./RatingDot";
 import { useImage } from "../image/useImage";
 import { imageStore } from "../image/imageStore";
+import { offerTiers } from "../image/present";
 import { afZoomOrigin } from "../utils/zoom";
 import { sizerSrc } from "../utils/sizer";
 import { HiResLayer } from "./loupe/HiResLayer";
@@ -191,11 +192,19 @@ const ComparePanel = memo(function ComparePanel({
   }, [scrubbing, presenter]);
   useEffect(() => {
     if (!path) return;
-    const thumbUrl = imageStore.thumbUrl(path);
-    if (thumbUrl) void presenter.offer(path, "thumb", thumbUrl);
-    if (img.stage === "full" && img.url) {
-      void presenter.offer(path, "preview", img.url);
-    }
+    // offerTiers sequences the tiers mid-scrub (preview's frame budget, then
+    // the blurred-thumb fallback) — fire-and-forgetting both let the preview
+    // clobber the thumb decode and then lose its race, stalling the pane for
+    // several challenger steps (the WebView2 matrix finding).
+    void offerTiers(
+      presenter,
+      path,
+      {
+        thumb: imageStore.thumbUrl(path),
+        preview: img.stage === "full" && img.url ? img.url : undefined,
+      },
+      scrubbing,
+    );
   }, [path, img.stage, img.url, scrubbing, presenter]);
 
   // Frame aspect ratio: the orientation-correct display dims (known as soon
@@ -394,7 +403,11 @@ const ComparePanel = memo(function ComparePanel({
           />
         )}
 
-        {compositionVisible && !isZooming && (
+        {/* Hidden mid-scrub like its clipping/peaking siblings (and the
+            loupe's grid): over the scrub's blurred thumbs and unknown-dims
+            mattes the grid floats wrongly placed — the WebView2 matrix
+            caught the missing gate here. */}
+        {compositionVisible && !isZooming && !scrubbing && (
           <svg
             className="cull-composition-overlay"
             viewBox="0 0 100 100"

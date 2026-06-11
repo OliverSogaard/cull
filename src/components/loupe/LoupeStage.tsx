@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from "react";
 import type { MutableRefObject } from "react";
 import { imageStore } from "../../image/imageStore";
+import { offerTiers } from "../../image/present";
 import { usePresent } from "../../image/usePresent";
 import type { Resolved } from "../../image/stage";
 import type { ImageDims } from "../../utils/bundle";
@@ -83,18 +84,23 @@ export const LoupeStage = memo(function LoupeStage({
     presenter.setScrubbing(scrubbing);
   }, [scrubbing, presenter]);
 
-  // Offer the store's pixels. Only-upgrade makes ordering free: the thumb is
-  // offered alongside the nav tier and can never replace it. Mid-scrub the
-  // presenter's frame-budget race decides (warm previews snap in SHARP — new
-  // in Phase 4; cold frames keep the blurred thumb); offers above preview are
-  // ignored there. Deps include scrubbing so the release re-offers instantly.
+  // Offer the store's pixels via offerTiers: settled navs fire thumb+preview
+  // in parallel (only-upgrade + the preview clobbering the thumb decode keep
+  // cached navs blur-free); mid-scrub the tiers are SEQUENCED so a preview
+  // that loses its frame-budget race falls back to the blurred thumb instead
+  // of leaving a stale frame (the WebView2 matrix's compare-scrub stall).
+  // Deps include scrubbing so the release re-offers instantly.
   useEffect(() => {
     if (!path) return;
-    const thumbUrl = imageStore.thumbUrl(path);
-    if (thumbUrl) void presenter.offer(path, "thumb", thumbUrl);
-    if (cur.stage === "full" && cur.url) {
-      void presenter.offer(path, "preview", cur.url);
-    }
+    void offerTiers(
+      presenter,
+      path,
+      {
+        thumb: imageStore.thumbUrl(path),
+        preview: cur.stage === "full" && cur.url ? cur.url : undefined,
+      },
+      scrubbing,
+    );
   }, [path, cur.stage, cur.url, scrubbing, presenter]);
 
   // Session lifecycle note: a folder change routes through the staged screen,
