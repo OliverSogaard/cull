@@ -14,6 +14,10 @@ edition = "2021"
 name = "cull_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Re-enables dlog! diagnostics in release builds (debug builds always log).
+verbose-logs = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -23,6 +27,9 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 walkdir = "2"
+# Tauri's runtime IS tokio; declared directly for the IoGate semaphore and the
+# backend-owned read timeouts (io_gate.rs). No new runtime is created.
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 memchr = "2" # SIMD byte scan for finding JPEG EOI in the embedded full-res stream
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 

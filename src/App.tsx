@@ -449,13 +449,21 @@ export default function App() {
   }, [profile]);
 
   // EXIF metadata sink: the store's full-res bundle reads return the full
-  // camera / lens / AF / pixel-dims metadata (including the LrC rating, which
-  // read_bundle fills in). The bundle meta is authoritative, so it OVERWRITES
-  // any seeded lrc-only entry — otherwise
-  // a frame that had a pre-seeded LrC star would never gain its full EXIF.
+  // camera / lens / AF / pixel-dims metadata. The bundle meta replaces the
+  // per-path entry (a pre-seeded lrc-only entry must still gain its EXIF),
+  // EXCEPT lrcRating: the bundle no longer reads the sidecar per navigation
+  // (that cost one NAS round-trip per image — pipeline Phase 0), so the LrC
+  // stars exist only in the analyze-pass seed and must be carried forward.
   useEffect(() => {
     imageStore.setMetaSink((path, meta) => {
-      setMetadata((m) => ({ ...m, [path]: meta }));
+      setMetadata((m) => {
+        const prevLrc = m[path]?.lrcRating ?? null;
+        const merged =
+          meta.lrcRating == null && prevLrc != null
+            ? { ...meta, lrcRating: prevLrc }
+            : meta;
+        return { ...m, [path]: merged };
+      });
     });
     return () => imageStore.setMetaSink(undefined);
   }, []);
@@ -742,7 +750,8 @@ export default function App() {
       // we just did. The grid renders before per-image bundles arrive, so this
       // lets the corner ★ badge appear immediately for any image that already
       // had an .xmp sidecar. The bundle read later fills in the rest of meta
-      // (camera/lens/EXIF) and re-asserts the same lrcRating.
+      // (camera/lens/EXIF); this seed is the ONLY source of lrcRating — the
+      // metaSink merge carries it forward when bundle meta lands without one.
       const seededMeta: Record<string, ImageMetadata> = {};
       const lrcRatings = result.lrcRatings ?? [];
       lrcRatings.forEach((lrc, origIdx) => {

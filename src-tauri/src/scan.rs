@@ -73,7 +73,7 @@ pub(crate) async fn scan_folder(
 
     paths.sort();
 
-    eprintln!(
+    dlog!(
         "[cull] scan_folder({}): {} CR3 files in {:?}",
         path,
         paths.len(),
@@ -131,6 +131,7 @@ pub(crate) async fn analyze_folder(
     window: tauri::Window,
     paths: Vec<String>,
     concurrent_restore: Option<bool>,
+    session: tauri::State<'_, std::sync::Arc<crate::io_gate::SessionGate>>,
 ) -> Result<AnalyzeResult, String> {
     let concurrent_restore = concurrent_restore.unwrap_or(false);
     let n = paths.len();
@@ -206,6 +207,12 @@ pub(crate) async fn analyze_folder(
         "analyze-progress",
         AnalyzeProgress { done: n, total: n, phase: "reading".into() },
     );
+
+    // Feed the session mtime table (Phase 2): extract_thumbnail validates its
+    // disk cache against these instead of stat-ing the source per cached hit —
+    // zero filesystem round-trips for analyzed files. Sound because CR3s are
+    // immutable while culling (the app never writes them).
+    session.note_mtimes(&mtime);
 
     let epoch: Vec<Option<i64>> = paths.iter().map(|p| mtime.get(p).copied()).collect();
 
@@ -300,7 +307,7 @@ pub(crate) async fn analyze_folder(
         "analyze-progress",
         AnalyzeProgress { done: n, total: n, phase: "done".into() },
     );
-    eprintln!(
+    dlog!(
         "[cull] analyze_folder: {} images in {:?} (mtime fast path)",
         n,
         start.elapsed()

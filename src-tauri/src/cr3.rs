@@ -345,7 +345,7 @@ fn strip_app1_exif(jpeg: &mut Vec<u8>) {
 /// Splice an EXIF Orientation tag into a JPEG so the webview rotates it on
 /// display. Orientation 1 (upright) and the mirror-flip values (2/4/5/7) cameras
 /// don't emit pass through untouched. INVARIANT: read-only w.r.t. CR3.
-fn with_exif_orientation(mut jpeg: Vec<u8>, orientation: u32) -> Vec<u8> {
+pub(crate) fn with_exif_orientation(mut jpeg: Vec<u8>, orientation: u32) -> Vec<u8> {
     if !matches!(orientation, 3 | 6 | 8) {
         return jpeg;
     }
@@ -403,6 +403,76 @@ fn moov_range(d: &[u8]) -> Option<(usize, usize)> {
         .into_iter()
         .find(|(f, _, _)| f == b"moov")
         .map(|(_, s, e)| (s, e))
+}
+
+/// First child box with the given fourcc inside [start, end).
+fn child_box(d: &[u8], start: usize, end: usize, want: &[u8; 4]) -> Option<(usize, usize)> {
+    boxes(d, start, end)
+        .into_iter()
+        .find(|(f, _, _)| f == want)
+        .map(|(_, s, e)| (s, e))
+}
+
+/// Exact (offset, length) of the full-res mdat JPEG, derived from moov's sample
+/// tables — the hint that lets `read_fullres_at` replace the 12 MiB head +
+/// 8 MiB grow-loop scan with ONE exact-range read.
+///
+/// Walks every trak → mdia → minf → stbl, taking the first sample's size
+/// (`stsz`) and first chunk's offset (`stco`/`co64`), then picks the candidate
+/// with the SMALLEST offset: the full-res JPEG is the first item inside mdat,
+/// ahead of the CRAW payload (layout doc above). Deliberately does NOT decode
+/// `stsd` to identify the JPEG track — robustness comes from read-time
+/// validation (SOI at offset, EOI inside the range; `read_fullres_at`), with
+/// the legacy scan as the fallback, and from the corpus gate test that asserts
+/// hint == mdat-scan for every sample CR3.
+pub fn full_jpeg_location(d: &[u8], moov_start: usize, moov_end: usize) -> Option<(u64, u64)> {
+    let mut best: Option<(u64, u64)> = None;
+    for (fourcc, ts, te) in boxes(d, moov_start, moov_end) {
+        if &fourcc != b"trak" {
+            continue;
+        }
+        let Some((ms, me)) = child_box(d, ts, te, b"mdia") else { continue };
+        let Some((ns, ne)) = child_box(d, ms, me, b"minf") else { continue };
+        let Some((ss, se)) = child_box(d, ns, ne, b"stbl") else { continue };
+
+        // stsz (full box): ver/flags u32, sample_size u32, sample_count u32,
+        // then per-sample u32 entries when sample_size == 0.
+        let size = child_box(d, ss, se, b"stsz").and_then(|(zs, _)| {
+            let fixed = be_u32(d, zs + 4)?;
+            if fixed != 0 {
+                Some(fixed as u64)
+            } else {
+                let count = be_u32(d, zs + 8)?;
+                if count == 0 {
+                    return None;
+                }
+                be_u32(d, zs + 12).map(|v| v as u64)
+            }
+        });
+        // stco / co64 (full box): ver/flags u32, entry_count u32, then offsets.
+        let offset = child_box(d, ss, se, b"stco")
+            .and_then(|(cs, _)| {
+                if be_u32(d, cs + 4)? == 0 {
+                    return None;
+                }
+                be_u32(d, cs + 8).map(|v| v as u64)
+            })
+            .or_else(|| {
+                child_box(d, ss, se, b"co64").and_then(|(cs, _)| {
+                    if be_u32(d, cs + 4)? == 0 {
+                        return None;
+                    }
+                    be_u64(d, cs + 8)
+                })
+            });
+
+        if let (Some(off), Some(len)) = (offset, size) {
+            if len > 0 && best.is_none_or(|(bo, _)| off < bo) {
+                best = Some((off, len));
+            }
+        }
+    }
+    best
 }
 
 /// Open `path` and read its first `n` bytes (or the whole file if shorter) in a
@@ -564,6 +634,138 @@ pub fn read_bundle(path: &str) -> std::io::Result<Bundle> {
     Ok(Bundle { preview, meta, orientation: orient, file_size: flen as u64 })
 }
 
+/// Everything one ~2 MiB head read yields for the NAVIGATION tier (Phase 2):
+/// the 1620×1080 PRVW preview, full metadata, and the exact-range hint for the
+/// zoom tier's mdat JPEG — all from ONE open and (usually) ONE read.
+pub struct PreviewBundle {
+    pub preview: Vec<u8>, // PRVW JPEG, EXIF-oriented
+    pub meta: Cr3Meta,
+    pub orientation: u32,
+    pub file_size: u64,
+    /// (offset, length) of the full-res mdat JPEG per moov's sample tables;
+    /// `None` when the tables don't yield one (read_fullres falls back to the
+    /// scan). Validated at read time — see [`read_fullres_at`].
+    pub full_hint: Option<(u64, u64)>,
+}
+
+/// Navigation hot path (Phase 2): ONE open, ONE ~2 MiB read capturing
+/// ftyp + moov + the PRVW uuid box (layout doc above) — growing only when one
+/// of them spills past the head (instrument: rare on R6-class bodies). The
+/// 32.5 MP mdat JPEG is NOT read here at all; its exact range ships back as a
+/// hint for the zoom tier. `cancelled` is checked between grow chunks so a
+/// superseded navigation dies within ~one chunk instead of finishing a
+/// multi-MB read. INVARIANT: read-only.
+pub fn read_preview_bundle(
+    path: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> std::io::Result<PreviewBundle> {
+    const HEAD: usize = 2 << 20;
+    const GROW: usize = 2 << 20;
+    const SCAN_CAP: usize = 64 << 20; // malformed-input bound (no moov → no OOM)
+    let (mut buf, mut f, flen) = read_head(path, HEAD)?;
+
+    // Grow until moov AND the preview uuid are fully buffered. `boxes()` only
+    // yields fully-contained boxes, so "present" ⟺ "complete". Seeing mdat's
+    // box header means every preceding top-level box is complete — if PRVW
+    // hasn't shown by then it does not exist (don't grow into the RAW payload).
+    loop {
+        let have_moov = moov_range(&buf).is_some();
+        let have_prvw = boxes(&buf, 0, buf.len())
+            .into_iter()
+            .any(|(fcc, cs, ce)| &fcc == b"uuid" && ce - cs >= 16 && buf[cs..cs + 16] == PREVIEW_UUID);
+        if (have_moov && have_prvw) || top_box_content_start(&buf, b"mdat").is_some() {
+            break;
+        }
+        if cancelled() {
+            return Err(cancelled_err());
+        }
+        if buf.len() >= SCAN_CAP || !grow(&mut f, &mut buf, GROW, flen)? {
+            break;
+        }
+    }
+
+    let meta = metadata_from_prefix(&buf);
+    let orient = meta.orientation;
+    let full_hint = moov_range(&buf).and_then(|(ms, me)| full_jpeg_location(&buf, ms, me));
+    // Edge contract: PRVW absent (other bodies/firmware) → Err("no PRVW"); the
+    // frontend marks the PATH previewUnavailable and routes its nav tier to full.
+    let prvw = preview_jpeg(&buf).ok_or_else(|| io_err("no PRVW"))?;
+    Ok(PreviewBundle {
+        preview: with_exif_orientation(prvw, orient),
+        meta,
+        orientation: orient,
+        file_size: flen as u64,
+        full_hint,
+    })
+}
+
+/// Distinct error for generation-cancelled reads, so command handlers can
+/// tell "superseded, drop quietly" from a real failure (which falls back).
+fn cancelled_err() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled")
+}
+
+/// True when an io::Error is the cancellation sentinel from `cancelled_err`.
+/// Checks kind AND message: `read_exact` already retries OS-level EINTR
+/// internally, but `File::open` does not — an astronomically-rare genuine
+/// Interrupted from the OS must not masquerade as our cancellation.
+pub fn is_cancelled(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::Interrupted && e.to_string() == "cancelled"
+}
+
+/// Zoom tier (Phase 2): seek + ONE exact-range read of the full-res mdat JPEG
+/// using the moov hint — no 12 MiB head, no grow-loop scan. Read in ≤2 MiB
+/// chunks with a cancellation check between chunks (a superseded zoom dies
+/// within ~one chunk). Validation per the edge contract: SOI at byte 0 of the
+/// hinted range AND `jpeg_extent` confirming EOI inside it — anything else is
+/// an InvalidData error the caller answers with the legacy scan fallback.
+/// INVARIANT: read-only.
+pub fn read_fullres_at(
+    path: &str,
+    offset: u64,
+    len: u64,
+    cancelled: &dyn Fn() -> bool,
+) -> std::io::Result<Vec<u8>> {
+    use std::io::{Seek, SeekFrom};
+    const CHUNK: usize = 2 << 20;
+    const MAX_JPEG: u64 = 64 << 20; // same runaway cap as the scan path
+    if len == 0 || len > MAX_JPEG {
+        return Err(io_err("implausible full-res hint"));
+    }
+    let mut f = File::open(path)?;
+    f.seek(SeekFrom::Start(offset))?;
+    let mut buf = vec![0u8; len as usize];
+    let mut done = 0usize;
+    while done < buf.len() {
+        if cancelled() {
+            return Err(cancelled_err());
+        }
+        let end = (done + CHUNK).min(buf.len());
+        f.read_exact(&mut buf[done..end])?;
+        done = end;
+    }
+    if buf.len() < 2 || buf[0] != 0xFF || buf[1] != 0xD8 {
+        return Err(io_err("hint mismatch: no SOI at hinted offset"));
+    }
+    let Some(end) = jpeg_extent(&buf, 0) else {
+        return Err(io_err("hint mismatch: no EOI inside hinted range"));
+    };
+    buf.truncate(end);
+    Ok(buf)
+}
+
+/// Legacy scan fallback for the zoom tier: the pre-hint head+grow mdat scan,
+/// kept as the validation net for any future body that lays out mdat
+/// differently. Rare path — no chunked cancellation (it rides read_bundle's
+/// proven machinery unchanged).
+pub fn read_fullres_scan(path: &str) -> std::io::Result<Vec<u8>> {
+    const HEAD: usize = 12 << 20;
+    const MOOV_SCAN_CAP: usize = 64 << 20;
+    let (mut buf, mut f, flen) = read_head(path, HEAD)?;
+    while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 4 << 20, flen)? {}
+    read_fullres_from(&mut f, &mut buf, flen)
+}
+
 /// What one thumbnail read yields: the (EXIF-oriented) THMB JPEG, the
 /// orientation, and the DISPLAY pixel dimensions (orientation-adjusted) so the
 /// UI can set the correct aspect ratio for a frame before any raster decodes.
@@ -576,6 +778,10 @@ pub struct Thumbnail {
     pub orientation: u32,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Full metadata — the moov head was already parsed for orientation/dims,
+    /// so the complete `Cr3Meta` is free (Phase 2 metadata fast path: EXIF
+    /// rail / status-bar MP populate when the THUMB lands, not the full).
+    pub meta: Cr3Meta,
 }
 
 /// Display dimensions: the EXIF sensor `pixel_width/height` are stored in the
@@ -601,7 +807,8 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
     let (mut buf, mut f, flen) = read_head(path, HEAD)?;
     while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 2 << 20, flen)? {}
     let raw = thumbnail_from_prefix(&buf).ok_or_else(|| io_err("no thumbnail box"))?;
-    // The moov head already holds the CMT TIFF, so orientation + EXIF pixel dims come free.
+    // The moov head already holds the CMT TIFF, so orientation + EXIF pixel dims
+    // — and with them the whole Cr3Meta — come free.
     let meta = metadata_from_prefix(&buf);
     let orient = meta.orientation;
     let (width, height) = display_dims(orient, meta.pixel_width, meta.pixel_height);
@@ -610,6 +817,7 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
         orientation: orient,
         width,
         height,
+        meta,
     })
 }
 
@@ -957,6 +1165,162 @@ mod tests {
                 "    exif {:?}x{:?}  eV={:?}  wb={:?}  drive={:?}",
                 b.meta.pixel_width, b.meta.pixel_height,
                 b.meta.exposure_bias, b.meta.white_balance, b.meta.drive_mode,
+            );
+        }
+    }
+
+    // Edge contract: a CR3-shaped file with NO preview uuid (other bodies /
+    // firmware) must fail fast with "no PRVW" — and must NOT grow-scan into
+    // the (potentially huge) mdat payload hunting for one.
+    #[test]
+    fn preview_bundle_errs_no_prvw_without_scanning_mdat() {
+        let mut d = Vec::new();
+        d.extend_from_slice(&16u32.to_be_bytes());
+        d.extend_from_slice(b"ftyp");
+        d.extend_from_slice(&[0u8; 8]);
+        d.extend_from_slice(&8u32.to_be_bytes());
+        d.extend_from_slice(b"moov"); // empty moov — present is what matters
+        d.extend_from_slice(&16u32.to_be_bytes());
+        d.extend_from_slice(b"mdat");
+        d.extend_from_slice(&[0u8; 8]);
+        let p = std::env::temp_dir().join(format!("cull-noprvw-{}.cr3", std::process::id()));
+        std::fs::write(&p, &d).unwrap();
+        let err = read_preview_bundle(&p.to_string_lossy(), &|| false)
+            .err()
+            .expect("expected the no-PRVW error");
+        assert!(err.to_string().contains("no PRVW"), "got: {err}");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // Range-read edge contract: SOI/EOI validation, mismatch errors (the
+    // command layer answers those with the scan fallback), and cancellation.
+    #[test]
+    fn read_fullres_at_validates_hint_and_honours_cancellation() {
+        let jpeg = sample_jpeg();
+        let off = 1024u64;
+        let mut d = vec![0u8; off as usize];
+        d.extend_from_slice(&jpeg);
+        d.extend_from_slice(&[0u8; 512]); // trailing padding past EOI
+        let p = std::env::temp_dir().join(format!("cull-range-{}.bin", std::process::id()));
+        std::fs::write(&p, &d).unwrap();
+        let ps = p.to_string_lossy().to_string();
+
+        // Exact hint → the JPEG, truncated at its parsed EOI even when the
+        // hinted length overshoots into padding.
+        let got = read_fullres_at(&ps, off, jpeg.len() as u64 + 512, &|| false).unwrap();
+        assert_eq!(got, jpeg);
+
+        // Wrong offset → no SOI → InvalidData mismatch (not cancellation).
+        let err = read_fullres_at(&ps, 0, jpeg.len() as u64, &|| false).unwrap_err();
+        assert!(err.to_string().contains("no SOI"), "got: {err}");
+        assert!(!is_cancelled(&err));
+
+        // Truncated range (EOI outside) → mismatch.
+        let err = read_fullres_at(&ps, off, (jpeg.len() - 4) as u64, &|| false).unwrap_err();
+        assert!(err.to_string().contains("no EOI"), "got: {err}");
+
+        // Cancelled before the first chunk → the Interrupted sentinel.
+        let err = read_fullres_at(&ps, off, jpeg.len() as u64, &|| true).unwrap_err();
+        assert!(is_cancelled(&err));
+
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // End-to-end over the corpus: the navigation-tier read yields a decodable
+    // PRVW + a hint, and the hint feeds an exact-range read that yields the
+    // same JPEG the legacy scan finds. Gated on CULL_TEST_CR3_DIR.
+    #[test]
+    fn preview_bundle_and_range_read_over_sample_dir() {
+        let Ok(dir) = std::env::var("CULL_TEST_CR3_DIR") else {
+            eprintln!("skip: set CULL_TEST_CR3_DIR to a folder of .CR3 files");
+            return;
+        };
+        let mut paths: Vec<_> = walkdir::WalkDir::new(&dir)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().to_path_buf())
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cr3")))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "no CR3 files under {dir}");
+
+        for p in &paths {
+            let ps = p.to_string_lossy().to_string();
+            let b = read_preview_bundle(&ps, &|| false)
+                .unwrap_or_else(|e| panic!("read_preview_bundle({ps}): {e}"));
+            // PRVW is a real 1620-class JPEG.
+            assert_eq!(&b.preview[..2], &[0xFF, 0xD8], "{ps}: PRVW SOI");
+            let img = image::load_from_memory(&b.preview)
+                .unwrap_or_else(|e| panic!("{ps}: PRVW decode {e}"));
+            assert!(img.width() >= 1000, "{ps}: PRVW too small {}", img.width());
+            // The hint feeds the exact-range read; the result matches the scan.
+            let (off, len) = b.full_hint.unwrap_or_else(|| panic!("{ps}: no hint"));
+            let ranged = read_fullres_at(&ps, off, len, &|| false)
+                .unwrap_or_else(|e| panic!("{ps}: range read {e}"));
+            let scanned = read_fullres_scan(&ps)
+                .unwrap_or_else(|e| panic!("{ps}: scan {e}"));
+            assert_eq!(ranged, scanned, "{ps}: ranged JPEG != scanned JPEG");
+        }
+    }
+
+    // THE Phase 2 hard validation gate (IMAGE_PIPELINE_PLAN.md): the moov
+    // sample-table hint must agree with the mdat scan for EVERY corpus CR3
+    // (subfolders included). No frontend work may depend on range-reads until
+    // this passes on all samples. Gated on CULL_TEST_CR3_DIR.
+    #[test]
+    fn full_jpeg_location_hint_matches_mdat_scan_for_every_sample() {
+        let Ok(dir) = std::env::var("CULL_TEST_CR3_DIR") else {
+            eprintln!("skip: set CULL_TEST_CR3_DIR to a folder of .CR3 files");
+            return;
+        };
+        let mut paths: Vec<_> = walkdir::WalkDir::new(&dir)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().to_path_buf())
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cr3")))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "no CR3 files under {dir}");
+
+        for p in &paths {
+            let ps = p.to_string_lossy().to_string();
+            let d = std::fs::read(p).unwrap_or_else(|e| panic!("read {ps}: {e}"));
+
+            // Ground truth: the scan path's result, on the WHOLE file.
+            let mstart = top_box_content_start(&d, b"mdat")
+                .unwrap_or_else(|| panic!("{ps}: no mdat box"));
+            let soi = find_soi(&d, mstart, (mstart + 8192).min(d.len()))
+                .unwrap_or_else(|| panic!("{ps}: no SOI at mdat head"));
+            let end = jpeg_extent(&d, soi).unwrap_or_else(|| panic!("{ps}: no EOI"));
+
+            // The hint, from moov's sample tables alone.
+            let (ms, me) = moov_range(&d).unwrap_or_else(|| panic!("{ps}: no moov"));
+            let hint = full_jpeg_location(&d, ms, me)
+                .unwrap_or_else(|| panic!("{ps}: full_jpeg_location returned None"));
+
+            assert_eq!(
+                hint.0, soi as u64,
+                "{ps}: hint offset {} != scanned SOI {soi}", hint.0
+            );
+            // stsz may legitimately pad past EOI; the hinted range must CONTAIN
+            // the JPEG (read_fullres_at truncates at the parsed EOI), and not
+            // overshoot by more than a sanity margin.
+            let scanned_len = (end - soi) as u64;
+            assert!(
+                hint.1 >= scanned_len,
+                "{ps}: hint len {} < scanned JPEG len {scanned_len}", hint.1
+            );
+            assert!(
+                hint.1 <= scanned_len + 64 * 1024,
+                "{ps}: hint len {} overshoots scanned len {scanned_len} by >64KiB", hint.1
+            );
+            eprintln!(
+                "{:<24} hint=({}, {})  scan=({soi}, {scanned_len})  ok",
+                p.file_name().unwrap().to_string_lossy(),
+                hint.0,
+                hint.1,
             );
         }
     }

@@ -88,11 +88,11 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
     // the expensive part on the NAS this design targets. A brand-new sidecar always
     // differs from fresh_xmp() (a flag was added), so that path still writes.
     if contents == base {
-        eprintln!("[cull] write_xmp_rating({}): {rating} (unchanged, skipped)", xmp_path.display());
+        dlog!("[cull] write_xmp_rating({}): {rating} (unchanged, skipped)", xmp_path.display());
         return Ok(());
     }
     atomic_write_xmp(&xmp_path, &contents)?;
-    eprintln!("[cull] write_xmp_rating({}): {rating}", xmp_path.display());
+    dlog!("[cull] write_xmp_rating({}): {rating}", xmp_path.display());
     Ok(())
 }
 
@@ -130,7 +130,7 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(format!("remove xmp: {e}")),
         }
-        eprintln!("[cull] clear_xmp_rating({}): removed sidecar", xmp_path.display());
+        dlog!("[cull] clear_xmp_rating({}): removed sidecar", xmp_path.display());
         return Ok(());
     }
 
@@ -138,7 +138,7 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
     // data) → no write. Only pay the temp+fsync+rename when bytes actually change.
     if stripped != existing {
         atomic_write_xmp(&xmp_path, &stripped)?;
-        eprintln!("[cull] clear_xmp_rating({}): stripped rating", xmp_path.display());
+        dlog!("[cull] clear_xmp_rating({}): stripped rating", xmp_path.display());
     }
     Ok(())
 }
@@ -166,21 +166,16 @@ pub(crate) fn read_ratings(cr3_path: &str) -> (Option<String>, Option<u8>) {
     }
 }
 
-/// Read the user's Lightroom Classic 1–5★ star rating from a CR3's sidecar.
+/// The user's Lightroom Classic 1–5★ star rating from a sidecar string.
 ///
 /// Returns `Some(n)` for `n ∈ 1..=5` and `None` for absent / zero / unparseable.
 /// This is the RAW `xmp:Rating` value — including the lone 1★ that CULL itself
 /// writes for its favorite mark. Disambiguating "user's pre-existing LrC rating"
 /// vs "CULL's favorite stamp" needs the CULL rating too (a 1★ on a CULL-favorite
 /// is just CULL's flag, not a pre-existing user rating); the frontend already
-/// has both fields and applies that rule when rendering badges.
-pub(crate) fn read_lrc_rating(cr3_path: &str) -> Option<u8> {
-    let xmp = Path::new(cr3_path).with_extension("xmp");
-    let content = std::fs::read_to_string(&xmp).ok()?;
-    parse_lrc_rating(&content)
-}
-
-/// Same as [`read_lrc_rating`] but works on a sidecar string in memory.
+/// has both fields and applies that rule when rendering badges. Reached only
+/// through [`read_ratings`]'s bulk analyze pass — the per-navigation sidecar
+/// read was deleted from `read_bundle` (one NAS round-trip saved per nav).
 fn parse_lrc_rating(content: &str) -> Option<u8> {
     let n = parse_xmp_rating(content)?;
     if (1..=5).contains(&n) {

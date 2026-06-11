@@ -6,7 +6,8 @@
 //! |---------------|---------------------------------------------------------|
 //! | [`cr3`]       | Pure-Rust CR3 parser: preview + EXIF + thumbnail bytes. |
 //! | [`meta`]      | [`meta::ImageMetadata`] for the UI + `From<cr3::Cr3Meta>`. |
-//! | [`bundle`]    | `read_bundle` + `extract_thumbnail` Tauri commands.     |
+//! | [`bundle`]    | `read_bundle` / `read_preview` / `read_fullres` + `extract_thumbnail` Tauri commands. |
+//! | [`io_gate`]   | Read-permit backstop (IoGate), session gen + mtime table (SessionGate), `begin_session` / `set_io_profile`. |
 //! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
 //! | [`xmp`]       | XMP sidecar I/O: `write_xmp_rating` / `clear_xmp_rating` + the parser the analyze step uses to restore ratings. |
 //! | [`file_ops`]  | Post-cull file operations: `move_rejects_to_subfolder` / `copy_keeps_to_export`. |
@@ -24,9 +25,27 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 compile_error!("CULL supports Windows and macOS only.");
 
+/// Diagnostic logging: forwards to `eprintln!` in debug builds (or under the
+/// `verbose-logs` feature); compiles to a no-op in release so per-navigation
+/// hot paths never pay for stderr writes. The no-op arm still type-checks and
+/// evaluates the format arguments, so a release build can neither rot nor warn
+/// about bindings only the log line uses. Defined before the `mod` items so
+/// `macro_rules!` textual scope covers every module — no imports needed.
+macro_rules! dlog {
+    ($($arg:tt)*) => {{
+        #[cfg(any(debug_assertions, feature = "verbose-logs"))]
+        eprintln!($($arg)*);
+        #[cfg(not(any(debug_assertions, feature = "verbose-logs")))]
+        {
+            let _ = format_args!($($arg)*);
+        }
+    }};
+}
+
 mod bundle;
 mod cr3;
 mod file_ops;
+mod io_gate;
 mod meta;
 mod scan;
 mod thumb_cache;
@@ -41,6 +60,8 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir());
             app.manage(std::sync::Arc::new(thumb_cache::ThumbCache::new(dir.join("thumbs"))));
+            app.manage(std::sync::Arc::new(io_gate::IoGate::new()));
+            app.manage(std::sync::Arc::new(io_gate::SessionGate::new()));
 
             // macOS: replace the default menu so Cmd+Q routes through
             // window.close() and the JS close-guard (pending XMP writes) gets
@@ -108,9 +129,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             bundle::read_bundle,
+            bundle::read_preview,
+            bundle::read_fullres,
             bundle::extract_thumbnail,
             bundle::clear_thumb_cache,
             bundle::thumb_cache_size,
+            io_gate::begin_session,
+            io_gate::set_io_profile,
             scan::scan_folder,
             scan::analyze_folder,
             xmp::write_xmp_rating,
