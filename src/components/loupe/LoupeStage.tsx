@@ -50,9 +50,8 @@ type LoupeStageProps = {
  * (cold/cached/scrub/zoom/error) is the plan's table, implemented here.
  *
  * The photo-frame wrapper, overlays, and feedback chip stay in App — this
- * component renders INSIDE the frame (the legacy path remains selectable via
- * localStorage "cull:legacy-loupe"="1" until the dual-engine manual matrix
- * passes; then it is deleted).
+ * component renders INSIDE the frame. (The legacy single-<img> path was
+ * deleted once the dual-engine manual matrix passed on WKWebView + WebView2.)
  */
 export const LoupeStage = memo(function LoupeStage({
   path,

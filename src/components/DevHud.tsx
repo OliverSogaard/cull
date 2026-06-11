@@ -39,6 +39,13 @@ export function DevHud() {
           {t.legacy ? " (legacy)" : ""}
         </div>
       ))}
+      {/* Zoom-tier (full) fetch times — on a local drive ≈ the raw-IPC
+          transfer cost of the ~10 MB full (the Phase 2 Windows benchmark). */}
+      {stats.zoomTimings.map((t, i) => (
+        <div className="cull-devhud__row cull-devhud__row--dim" key={`z${i}`}>
+          zoom {t.ms}ms&nbsp;{t.name}
+        </div>
+      ))}
     </div>
   );
 }

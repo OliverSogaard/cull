@@ -32,7 +32,6 @@ import { ThumbStrip } from "./components/ThumbStrip";
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
 import { LoupeStage } from "./components/loupe/LoupeStage";
-import { sizerSrc } from "./utils/sizer";
 
 import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
@@ -283,7 +282,6 @@ export default function App() {
   // a second copy rendered at the image's native pixel size, which forces a
   // full-resolution raster, so the zoom composites from already-sharp pixels.
   const [hiRes, setHiRes] = useState(false);
-  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const hiResTimer = useRef<number | null>(null);
 
   const [clippingVisible, setClippingVisible] = useState(false);
@@ -309,16 +307,6 @@ export default function App() {
   const [devHudOn] = useState(() => {
     try {
       return localStorage.getItem("cull:devhud") === "1";
-    } catch {
-      return false;
-    }
-  });
-  // Phase 4 escape hatch: the OLD single-<img> loupe path, selectable via
-  // localStorage["cull:legacy-loupe"]="1" until the dual-engine manual matrix
-  // (WebView2 + WKWebView) passes — then the legacy block is deleted.
-  const [legacyLoupe] = useState(() => {
-    try {
-      return localStorage.getItem("cull:legacy-loupe") === "1";
     } catch {
       return false;
     }
@@ -1101,26 +1089,8 @@ export default function App() {
   // curReady gates the hi-res zoom warm-up on the CURRENT image's full preview
   // being ready (so an unrelated prefetch landing doesn't reset it).
   const curReady = cur.stage === "full";
-  // showFull: true only when the full preview is ready AND we are not mid-scrub.
-  // A scrubbed-past frame whose full is already cached must still show as blurred
-  // during scrub — otherwise a cached full renders sharp mid-scrub.
-  const showFull = cur.stage === "full" && !scrubbing;
-  // Sharp as soon as the STORE has the full (and we're not scrubbing). Deliberately
-  // NOT gated on an <img> onLoad/paint signal: that signal gets missed when the full
-  // decodes before React observes it, which left the frame blurred FOREVER. Worst
-  // case now is a ~1-frame soft thumb as the full repaints — it can never get stuck.
-  const fullPainted = showFull;
   // Phase for the loupe matte shimmer, pinned per image so every shimmer syncs.
   const loupeShimmerDelay = useMemo(() => shimmerPhaseMs(), [currentIndex]);
-
-  // Reset the measured full-res size on every navigation, so a fresh image's
-  // shimmer never inherits the PREVIOUS image's aspect (a vertical matte while
-  // landing on a horizontal). Until dims are known the matte is a neutral
-  // square; the new full's onLoad re-sets this.
-  useEffect(() => {
-    setNaturalSize(null);
-  }, [currentIndex]);
-
 
   // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
   // every navigation / compare toggle so rapid arrow-through never pays the heavy
@@ -3083,15 +3053,13 @@ export default function App() {
   // measured imgRect makes it pixel-aligned with the base by construction, so the
   // layer can appear/disappear without any visible shift.
   // Native dims of the ZOOM raster (the 32 MP full) — since Phase 3 the
-  // displayed image is the 1620px preview, so its onLoad naturalSize must NOT
+  // displayed image is the 1620px preview, so measured element sizes must NOT
   // feed the zoom math. Preference: the zoom tier's meta-derived dims → the
   // thumb's sensor display dims (cur.dims is the full sensor size,
-  // orientation-adjusted — not 160×120) → measured naturalSize (legacy
-  // backend, where the displayed image IS the full).
+  // orientation-adjusted — not 160×120).
   const zoomNative =
     cur.full?.dims ??
-    (cur.dims && cur.dims.w > 1 && cur.dims.h > 1 ? cur.dims : undefined) ??
-    naturalSize;
+    (cur.dims && cur.dims.w > 1 && cur.dims.h > 1 ? cur.dims : undefined);
   // True-1:1 scale: rendering the displayed image at this factor lands one image
   // pixel per screen pixel (when fit, displayed = native × fit-ratio; this
   // un-does the fit). Falls back to 5× if dimensions aren't known yet.
@@ -3105,17 +3073,15 @@ export default function App() {
   const hiResTy = imgRect ? (originY / 100) * imgRect.height * (1 - zoomZ) : 0;
 
   // Frame size source: the orientation-correct THMB display dims (w/h > 1 guards
-  // the {1,1} UNKNOWN sentinel), else the current full's measured naturalSize
-  // ({1,1}-THMB edge case), else a NEUTRAL SQUARE while the aspect is unknown.
-  // naturalSize is reset on navigation (below), so it never leaks the previous
-  // image's aspect into a fresh shimmer. Drives BOTH --photo-ar and the sizer.
+  // the {1,1} UNKNOWN sentinel), else a NEUTRAL SQUARE while the aspect is
+  // unknown. Drives BOTH --photo-ar and the sizer.
   const frameDims =
     cur.dims && cur.dims.w > 1 && cur.dims.h > 1
       ? cur.dims
       // Large square (not 1×1): the sizer fills the matte by clamping its
       // intrinsic size DOWN to the stage, so the fallback must EXCEED the stage
       // — a square fills the stage height (width = height), like a portrait.
-      : (naturalSize ?? { w: 10000, h: 10000 });
+      : { w: 10000, h: 10000 };
   const photoAr = `${frameDims.w} / ${frameDims.h}`;
 
   // Rating feedback chip — a brief corner badge. Rendered INSIDE the loupe photo
@@ -3177,11 +3143,11 @@ export default function App() {
               }`}
               style={{ ["--photo-ar" as string]: photoAr } as React.CSSProperties}
             >
-              {!legacyLoupe ? (
-                // Phase 4: the decode-gated presenter path (LoupeStage owns
-                // the sizer, double-buffered layers, shimmer, spinner, error
-                // chip, and the post-decode zoom layer).
-                <LoupeStage
+              {/* The decode-gated presenter (Phase 4): LoupeStage owns the
+                  sizer, double-buffered layers, shimmer, spinner, error chip,
+                  and the post-decode zoom layer. The old single-<img> path was
+                  deleted after the dual-engine manual matrix passed. */}
+              <LoupeStage
                   path={current?.path ?? ""}
                   cur={cur}
                   scrubbing={scrubbing}
@@ -3201,120 +3167,6 @@ export default function App() {
                   imgRef={imgRef}
                   onFrontFlip={bumpMeasureNonce}
                 />
-              ) : (
-                <>
-              {/* Sizer: an in-flow transparent replaced element whose intrinsic
-                  dims equal the KNOWN display ratio (frameDims). It alone sizes
-                  the matte (replaced-element contain), so the frame never shrinks
-                  to the tiny THMB pixels and never collapses while the full <img>
-                  decodes (intrinsic 0). The pixels below are an absolute overlay. */}
-              <img
-                className="cull-photo-frame__sizer"
-                src={sizerSrc(frameDims.w, frameDims.h)}
-                alt=""
-                aria-hidden
-              />
-              <img
-                ref={imgRef}
-                className="cull-image"
-                // During a scrub prefer the thumb so we don't show/decode the
-                // sharp full even when it's already cached (showFull is false
-                // mid-scrub). When not scrubbing, cur.url is already the best
-                // available source (full or thumb per store logic).
-                src={
-                  showFull
-                    ? cur.url
-                    : scrubbing && cur.stage === "full"
-                      ? (imageStore.thumbUrl(images[currentIndex]?.path ?? "") ?? cur.url)
-                      : cur.url
-                }
-                alt=""
-                onLoad={(e) => {
-                  // Only update naturalSize from the FULL preview, not the
-                  // thumbnail fallback — otherwise the matte would briefly
-                  // shrink to the tiny thumbnail's dimensions during scrub
-                  // or load. Gate on showFull so a scrub never updates naturalSize.
-                  if (showFull) {
-                    setMeasureNonce((n) => n + 1);
-                    setNaturalSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
-                  }
-                }}
-                style={{
-                  transform: isZooming ? `scale(${zoomZ})` : undefined,
-                  transformOrigin: `${originX}% ${originY}%`,
-                  transition: "transform 200ms ease-out, filter 200ms ease-out",
-                  // object-fit: cover for the low-res — the THMB's ~4:3 shape would
-                  // letterbox SMALLER than the 3:2 matte under contain; cover fills
-                  // it (the crop is invisible under the blur). contain for the full
-                  // — and ALSO while dims are genuinely unknown (neutral-square
-                  // matte): cover would stretch-crop the thumb into the square.
-                  objectFit: fullPainted
-                    ? "contain"
-                    : (cur.dims && cur.dims.w > 1 && cur.dims.h > 1) || naturalSize
-                      ? "cover"
-                      : "contain",
-                  // Blur until the full has actually PAINTED (fullPainted), not
-                  // merely when the stage flips to "full" — so the low-res never
-                  // flashes sharp before the full appears. Transition fades focus in.
-                  filter: fullPainted ? undefined : "blur(14px) brightness(0.78)",
-                }}
-              />
-              {/* First load: a skeleton shimmer fills the (now definitely-
-                  sized) matte so the frame reads at the photo's true size
-                  instead of collapsing to nothing while we wait on disk. */}
-              {cur.stage === "shimmer" && (
-                <div
-                  className="cull-photo-frame__shimmer"
-                  aria-hidden
-                  style={{ ["--shimmer-delay" as string]: `-${loupeShimmerDelay}ms` }}
-                />
-              )}
-              {/* Spinner overlay shows only while the full is genuinely still
-                  loading — i.e. we have the thumb but not yet the full. Once the
-                  store HAS the full (cur.stage === "full"), we skip it even
-                  though `fullPainted` lags a frame or two behind: for a cached
-                  full that gap would flash the spinner for ~0.1s over an image
-                  that's already there. The blur fade alone covers the paint gap.
-                  At shimmer the skeleton is the indicator; during scrub the
-                  blurred thumb stands in, so a spinner there is just noise. */}
-              {cur.stage === "thumb" && !scrubbing && (
-                <div className="cull-photo-frame__spinner-wrap" aria-hidden>
-                  <div className="cull-loading__spinner" />
-                </div>
-              )}
-              {/* Deferred full-res layer: the ZOOM-TIER blob (fetched on settle
-                  via the exact-range hint since Phase 3 — the base image is the
-                  1620px preview now), rendered at native pixel size and
-                  transformed to coincide with the base image, so the compositor
-                  holds a full-resolution raster and zoom is sharp. Mounts only
-                  once the full has LANDED (cur.full) — until then the preview
-                  upscales under zoom and this layer fades in when ready. On a
-                  legacy backend the nav blob IS the full, so it is reused. */}
-              {hiRes && !clippingVisible && imgRect && zoomNative && cur.stage === "full" &&
-                (cur.full?.url ?? (imageStore.isLegacyNav() ? cur.url : undefined)) && (
-                <img
-                  className="cull-image cull-image--hires"
-                  src={cur.full?.url ?? cur.url}
-                  alt=""
-                  aria-hidden
-                  style={{
-                    position: "absolute",
-                    left: 10,
-                    top: 10,
-                    width: zoomNative.w,
-                    height: zoomNative.h,
-                    maxWidth: "none",
-                    maxHeight: "none",
-                    transformOrigin: "0 0",
-                    transform: `translate(${hiResTx}px, ${hiResTy}px) scale(${hiResScale})`,
-                    transition: "transform 200ms ease-out",
-                    pointerEvents: "none",
-                    willChange: "transform",
-                  }}
-                />
-              )}
-                </>
-              )}
               {/* Overlays inset to match the photo-frame's 14px padding (the
                   matte). They paint over the image area only, never the matte
                   or the stage. They scale with the image transform so they

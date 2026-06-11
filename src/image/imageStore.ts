@@ -154,6 +154,10 @@ export class ImageStore {
   private navLegacy = false;
   // ── Dev HUD stats (cheap counters; read via debugStats) ─────────────────
   private navTimings: { name: string; ms: number; legacy: boolean }[] = [];
+  /** Zoom-tier (full) fetch timings — on a fast local drive this is ≈ the raw
+   *  IPC transfer cost of the ~10 MB full, i.e. the Phase 2 Windows
+   *  benchmark readout. */
+  private zoomTimings: { name: string; ms: number }[] = [];
   private counts = { navLoads: 0, zoomLoads: 0, thumbLoads: 0, previewEvicts: 0, zoomEvicts: 0, errors: 0 };
   // ── Concurrency counters ───────────────────────────────────────────────
   private thumbInFlight = 0;
@@ -374,6 +378,7 @@ export class ImageStore {
     this.fullHints.clear();
     this.nativeDims.clear();
     this.navTimings = [];
+    this.zoomTimings = [];
     this.thumbErrors.clear();
     this.fullErrors.clear();
     this.terminalPaths.clear();
@@ -1043,6 +1048,7 @@ export class ImageStore {
     const gen = this.generation;
     const hint = this.fullHints.get(path);
     try {
+      const t0 = performance.now();
       const result = await fetchFullres(path, gen, {
         fullOffset: hint?.offset ?? null,
         fullLen: hint?.len ?? null,
@@ -1062,6 +1068,7 @@ export class ImageStore {
       });
       this.zoomErrors.delete(path);
       this.counts.zoomLoads++;
+      this.noteZoomTiming(path, performance.now() - t0);
       this.invalidate(path);
       this.evictZoomAround(this.cursor);
     } catch (e) {
@@ -1220,6 +1227,13 @@ export class ImageStore {
     if (this.navTimings.length > 20) this.navTimings.pop();
   }
 
+  /** Ring buffer of the last zoom-tier (full) fetch timings (newest first). */
+  private noteZoomTiming(path: string, ms: number): void {
+    const name = path.slice(path.lastIndexOf("/") + 1).slice(path.lastIndexOf("\\") + 1);
+    this.zoomTimings.unshift({ name, ms: Math.round(ms) });
+    if (this.zoomTimings.length > 20) this.zoomTimings.pop();
+  }
+
   /**
    * Snapshot for the dev HUD — every profile-tuning claim cites these
    * numbers, not feel. Cheap: plain reads over existing state. Decoded-memory
@@ -1228,6 +1242,7 @@ export class ImageStore {
    */
   debugStats(): {
     navTimings: { name: string; ms: number; legacy: boolean }[];
+    zoomTimings: { name: string; ms: number }[];
     navMsAvg: number;
     lanes: { preview: string; zoom: string; thumb: string; bg: string };
     caches: { previews: number; zoomFulls: number; thumbs: number; dims: number };
@@ -1248,6 +1263,7 @@ export class ImageStore {
         : Math.round(this.navTimings.reduce((a, t) => a + t.ms, 0) / this.navTimings.length);
     return {
       navTimings: this.navTimings.slice(0, 8),
+      zoomTimings: this.zoomTimings.slice(0, 5),
       navMsAvg,
       lanes: {
         preview: `${this.fullInFlight}/${this.profile.previewConcurrency} q${this.fullQueue.length}`,

@@ -610,9 +610,10 @@ body,
 }
 
 /* The deferred hi-res zoom layer owns ALL its geometry inline (position:absolute,
-   left/top:10, width/height = naturalSize, max-*:none); the base .cull-image class
-   still supplies object-fit / radius / background. No `.cull-image--hires` rule is
-   needed — inline styles already win over the class, so a body here would be dead. */
+   left/top:10, width/height = the zoom tier's native dims, max-*:none); the base
+   .cull-image class still supplies object-fit / radius / background. No
+   `.cull-image--hires` rule is needed — inline styles already win over the class,
+   so a body here would be dead. */
 
 /* Verdict flash — momentary colored wash over the photo (inside the matte
    padding) when a rating fires. The pseudo-element re-creates itself each
