@@ -58,14 +58,17 @@ export function SettingsDialog({
           {/* ───────────── Storage ───────────── */}
           <Section title="Storage">
             <SettingRow
-              label="Storage mode"
-              help="Network turns down concurrency for slow NAS / SMB shares. Default Local for fast drives."
+              label="Drive speed"
+              help="Normal suits most drives, including fast network storage. Slow throttles reads for genuinely slow drives (e.g. a sluggish NAS or USB disk)."
             >
+              {/* Stored values stay "local"/"network" (profile keys + the
+                  backend's set_io_profile wire format) — only the words are
+                  user-facing: speed describes the drive better than location. */}
               <SegmentToggle<StorageMode>
                 value={settings.storageMode}
                 options={[
-                  { value: "local", label: "Local" },
-                  { value: "network", label: "Network" },
+                  { value: "local", label: "Normal" },
+                  { value: "network", label: "Slow" },
                 ]}
                 onChange={(v) => set("storageMode", v)}
               />

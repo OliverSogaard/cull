@@ -26,6 +26,20 @@ const RECENTS_STORAGE_KEY = "cull:recents:v2";
 /** Pre-multi-folder key — single `path` per entry. Read once for migration. */
 const RECENTS_V1_KEY = "cull:recents:v1";
 export const RECENTS_CAP = 5;
+/** Entries untouched for longer than this fall off the home-screen list. */
+export const RECENTS_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Drop entries whose `lastOpened` is more than {@link RECENTS_MAX_AGE_MS} ago
+ * (or unparseable). Pure — `nowMs` is injected — so the two-week cutoff is
+ * testable; the hook applies it once at load.
+ */
+export function pruneExpiredRecents(list: RecentEntry[], nowMs: number): RecentEntry[] {
+  return list.filter((e) => {
+    const t = Date.parse(e.lastOpened);
+    return Number.isFinite(t) && nowMs - t <= RECENTS_MAX_AGE_MS;
+  });
+}
 
 /**
  * Identity of an entry: the unordered set of its folders. `[A,B]` and `[B,A]`
@@ -132,11 +146,13 @@ export function useRecents(): {
     if (typeof localStorage === "undefined") return [];
     const rawV2 = localStorage.getItem(RECENTS_STORAGE_KEY);
     const rawV1 = localStorage.getItem(RECENTS_V1_KEY);
-    const parsed = parseStoredRecents(rawV2, rawV1);
-    // Persist a v1 migration immediately — the skip-first-write effect below
-    // would otherwise never write it (the list only persists when it changes).
-    // The v1 key stays on disk, harmless, in case an old build runs again.
-    if (rawV2 == null && rawV1 != null) {
+    const stored = parseStoredRecents(rawV2, rawV1);
+    const parsed = pruneExpiredRecents(stored, Date.now());
+    // Persist a v1 migration or an expiry prune immediately — the
+    // skip-first-write effect below would otherwise never write it (the list
+    // only persists when it changes). The v1 key stays on disk, harmless, in
+    // case an old build runs again.
+    if ((rawV2 == null && rawV1 != null) || parsed.length < stored.length) {
       try {
         localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(parsed));
       } catch {

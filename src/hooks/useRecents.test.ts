@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   mergeRecent,
   parseStoredRecents,
+  pruneExpiredRecents,
   recentKey,
   RECENTS_CAP,
+  RECENTS_MAX_AGE_MS,
   type RecentEntry,
 } from "./useRecents";
 
@@ -94,6 +96,36 @@ describe("mergeRecent", () => {
     const out = mergeRecent(list, mk({ paths: ["C:\\B"] }));
     expect(out).toHaveLength(3);
     expect(out.map((e) => e.paths)).toEqual([["C:\\B"], ["C:\\A"], ["C:\\C"]]);
+  });
+});
+
+describe("pruneExpiredRecents", () => {
+  const NOW = Date.parse("2026-06-11T12:00:00.000Z");
+  const daysAgo = (d: number) => new Date(NOW - d * 24 * 60 * 60 * 1000).toISOString();
+
+  it("drops entries untouched for more than two weeks, keeps the rest in order", () => {
+    const list = [
+      mk({ paths: ["C:\\Fresh"], lastOpened: daysAgo(1) }),
+      mk({ paths: ["C:\\Stale"], lastOpened: daysAgo(15) }),
+      mk({ paths: ["C:\\Week"], lastOpened: daysAgo(7) }),
+    ];
+    const out = pruneExpiredRecents(list, NOW);
+    expect(out.map((e) => e.paths)).toEqual([["C:\\Fresh"], ["C:\\Week"]]);
+  });
+
+  it("keeps an entry exactly at the two-week boundary", () => {
+    const list = [mk({ paths: ["C:\\Edge"], lastOpened: new Date(NOW - RECENTS_MAX_AGE_MS).toISOString() })];
+    expect(pruneExpiredRecents(list, NOW)).toHaveLength(1);
+  });
+
+  it("drops entries whose timestamp does not parse", () => {
+    const list = [mk({ paths: ["C:\\Bad"], lastOpened: "not-a-date" })];
+    expect(pruneExpiredRecents(list, NOW)).toHaveLength(0);
+  });
+
+  it("leaves a fully fresh list untouched (same array contents)", () => {
+    const list = [mk({ paths: ["C:\\A"] , lastOpened: daysAgo(0) })];
+    expect(pruneExpiredRecents(list, NOW)).toEqual(list);
   });
 });
 
