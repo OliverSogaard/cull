@@ -31,6 +31,8 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
+import { LoupeStage } from "./components/loupe/LoupeStage";
+import { sizerSrc } from "./utils/sizer";
 
 import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
@@ -79,14 +81,12 @@ const NAV_HOLD_DELAY_MS = 280;
 // visited frame.
 const OVERLAY_CACHE_KEEP = 8;
 
-/**
- * Transparent inline-SVG data URI whose intrinsic width/height carry an aspect
- * ratio. Used as an in-flow "sizer" <img> so the photo matte is sized by the
- * KNOWN display ratio — never by whatever pixels happen to be decoded (the THMB
- * is tiny; a mid-decode full is 0). Renders nothing.
- */
-const sizerSrc = (w: number, h: number) =>
-  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%2F%3E`;
+/** Wait for the layers' 200ms unzoom transform-transition to finish before
+ *  re-measuring — a mid-animation getBoundingClientRect returns a scaled box. */
+const ZOOM_UNSETTLE_MEASURE_DELAY_MS = 260;
+
+// sizerSrc (the aspect-carrying transparent SVG) moved to utils/sizer.ts —
+// shared with LoupeStage and the compare panes.
 
 /**
  * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
@@ -273,6 +273,9 @@ export default function App() {
     height: number;
   } | null>(null);
   const [measureNonce, setMeasureNonce] = useState(0);
+  // True when the measure effect last ran with zoom engaged — its next
+  // unzoomed run delays past the 200ms transform transition (see the effect).
+  const wasZoomingRef = useRef(false);
 
   // Deferred full-res zoom: the browser rasterizes the on-screen JPEG only at
   // screen-fit size (keeps navigation instant), so zooming GPU-upscales that
@@ -310,6 +313,18 @@ export default function App() {
       return false;
     }
   });
+  // Phase 4 escape hatch: the OLD single-<img> loupe path, selectable via
+  // localStorage["cull:legacy-loupe"]="1" until the dual-engine manual matrix
+  // (WebView2 + WKWebView) passes — then the legacy block is deleted.
+  const [legacyLoupe] = useState(() => {
+    try {
+      return localStorage.getItem("cull:legacy-loupe") === "1";
+    } catch {
+      return false;
+    }
+  });
+  // LoupeStage flips its double-buffer → re-measure the (new) front layer.
+  const bumpMeasureNonce = useCallback(() => setMeasureNonce((n) => n + 1), []);
   // RGB histogram (path → rendered data URL), computed from the displayed JPEG
   // only while the EXIF overlay is open.
   const [histograms, setHistograms] = useState<Record<string, string>>({});
@@ -1172,6 +1187,22 @@ export default function App() {
       return;
     }
     if (scrubbing) return; // overlays are hidden mid-scrub; skip measure + RO churn
+    // NEVER measure while zoomed: getBoundingClientRect returns the
+    // TRANSFORMED (scaled) box, and a preview landing mid-zoom re-fires this
+    // effect — the corrupted rect then collapses every zoom factor derived
+    // from it (the "zooms back out and breaks" bug from the macOS matrix).
+    // imgRect keeps its last-good fit-size value; the isZooming dep re-runs
+    // the measure the moment zoom disengages.
+    if (isZooming) {
+      wasZoomingRef.current = true;
+      return;
+    }
+    // …and when zoom JUST disengaged, the layers are still mid-transition
+    // (transform 200ms ease-out back to identity) — measuring immediately
+    // captures the animating, still-scaled box (the "unzoom snaps to a huge
+    // top-left image" bug). Arm the measure + observer after the transition.
+    const justUnzoomed = wasZoomingRef.current;
+    wasZoomingRef.current = false;
     const measure = () => {
       const img = imgRef.current;
       const stage = stageRef.current;
@@ -1192,15 +1223,23 @@ export default function App() {
         height: ir.height,
       });
     };
-    measure();
     const ro = new ResizeObserver(measure);
-    if (stageRef.current) ro.observe(stageRef.current);
-    return () => ro.disconnect();
+    let armTimer: number | null = null;
+    const arm = () => {
+      measure();
+      if (stageRef.current) ro.observe(stageRef.current);
+    };
+    if (justUnzoomed) armTimer = window.setTimeout(arm, ZOOM_UNSETTLE_MEASURE_DELAY_MS);
+    else arm();
+    return () => {
+      ro.disconnect();
+      if (armTimer !== null) clearTimeout(armTimer);
+    };
     // cur.stage/cur.dims: the sizer reflows the frame when dims arrive (thumb
     // stage); the RO is on the stage (which doesn't resize), so re-measure here.
     // images.length (not the array ref) so a folder append doesn't needlessly
     // tear down + rebuild the observer when the displayed frame is unchanged.
-  }, [phase, images.length, currentIndex, measureNonce, scrubbing, cur.stage, cur.dims]);
+  }, [phase, images.length, currentIndex, measureNonce, scrubbing, isZooming, cur.stage, cur.dims]);
 
   // Compute a clipping mask PNG for one image's preview (cached by path). Scans
   // pixels for true clipping and paints diagonal stripes (red 45° highlights /
@@ -3138,6 +3177,32 @@ export default function App() {
               }`}
               style={{ ["--photo-ar" as string]: photoAr } as React.CSSProperties}
             >
+              {!legacyLoupe ? (
+                // Phase 4: the decode-gated presenter path (LoupeStage owns
+                // the sizer, double-buffered layers, shimmer, spinner, error
+                // chip, and the post-decode zoom layer).
+                <LoupeStage
+                  path={current?.path ?? ""}
+                  cur={cur}
+                  scrubbing={scrubbing}
+                  isZooming={isZooming}
+                  zoomZ={zoomZ}
+                  originX={originX}
+                  originY={originY}
+                  frameDims={frameDims}
+                  shimmerDelayMs={loupeShimmerDelay}
+                  hiRes={hiRes}
+                  clippingVisible={clippingVisible}
+                  hasImgRect={!!imgRect}
+                  zoomNative={zoomNative}
+                  hiResTx={hiResTx}
+                  hiResTy={hiResTy}
+                  hiResScale={hiResScale}
+                  imgRef={imgRef}
+                  onFrontFlip={bumpMeasureNonce}
+                />
+              ) : (
+                <>
               {/* Sizer: an in-flow transparent replaced element whose intrinsic
                   dims equal the KNOWN display ratio (frameDims). It alone sizes
                   the matte (replaced-element contain), so the frame never shrinks
@@ -3247,6 +3312,8 @@ export default function App() {
                     willChange: "transform",
                   }}
                 />
+              )}
+                </>
               )}
               {/* Overlays inset to match the photo-frame's 14px padding (the
                   matte). They paint over the image area only, never the matte

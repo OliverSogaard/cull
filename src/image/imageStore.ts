@@ -139,6 +139,10 @@ export class ImageStore {
   private zoomInFlightPaths = new Set<string>();
   private zoomInFlight = 0;
   private zoomErrors = new Map<string, TierError>();
+  /** Zoom requests deferred until the nav read delivers the path's hint —
+   *  fetching without it loses the exact range AND the orientation echo
+   *  (the portrait-zoom-on-arrival bug). loadFull's completion re-issues. */
+  private pendingZoom = new Set<string>();
   /** path → exact-range hint + orientation from the preview header. Derived
    *  from immutable file content — survives reset(), cleared on hardReset. */
   private fullHints = new Map<string, { offset: number | null; len: number | null; orientation: number }>();
@@ -263,6 +267,7 @@ export class ImageStore {
     this.wantFull.clear();
     this.requestedFull.clear();
     this.requestedZoom.clear();
+    this.pendingZoom.clear();
     this.zoomInFlightPaths.clear();
     this.zoomInFlight = 0;
     this.zoomErrors.clear();
@@ -357,6 +362,7 @@ export class ImageStore {
     this.requestedThumb.clear();
     this.requestedFull.clear();
     this.requestedZoom.clear();
+    this.pendingZoom.clear();
     this.fullInFlightPaths.clear();
     this.zoomInFlightPaths.clear();
     this.zoomInFlight = 0;
@@ -917,6 +923,9 @@ export class ImageStore {
       this.fullErrors.delete(path);
       // Surface EXIF metadata to App (camera / lens / AF point / pixel dims).
       if (result.meta) this.metaSink?.(path, result.meta);
+      // A zoom request deferred on this path's missing hint can fire now —
+      // the hint (and orientation echo) just landed above.
+      if (this.pendingZoom.delete(path)) this.requestZoomFull(path);
       this.invalidate(path);
       // also recenter the keep-window on the CURSOR (not just-loaded), so
       // eviction tracks where the user is, not where the last load happened.
@@ -929,6 +938,9 @@ export class ImageStore {
       // re-queue (before this, an errored full was skipped by pumpFull
       // forever), record capped backoff, and auto-retry while it's still
       // wanted. Terminal after MAX_TIER_ATTEMPTS → retry()/revisit only.
+      // A deferred zoom want dies with the failed nav read (its retry path
+      // re-defers via requestZoomFull if the user is still zoomed).
+      this.pendingZoom.delete(path);
       this.requestedFull.delete(path);
       const te = this.recordTierError(this.fullErrors, path, msg);
       this.scheduleFullRetry(path, te, gen);
@@ -989,6 +1001,19 @@ export class ImageStore {
     if (existing?.status === "ready" || existing?.status === "loading") return;
     if (this.requestedZoom.has(path) || this.zoomInFlightPaths.has(path)) return;
     if (inCooldown(this.zoomErrors.get(path), Date.now())) return;
+    // No hint yet and the nav read that delivers it is still underway (zoom
+    // engaged immediately on arrival)? DEFER — a hintless fetch loses the
+    // exact range and, worse, the orientation echo. loadFull re-issues.
+    if (
+      !this.fullHints.has(path) &&
+      (this.fullInFlightPaths.has(path) ||
+        this.requestedFull.has(path) ||
+        this.fullQueue.includes(path) ||
+        this.wantFull.has(path))
+    ) {
+      this.pendingZoom.add(path);
+      return;
+    }
     if (!this.zoomQueue.includes(path)) this.zoomQueue.push(path);
     this.pumpZoom();
   }
@@ -1021,7 +1046,8 @@ export class ImageStore {
       const result = await fetchFullres(path, gen, {
         fullOffset: hint?.offset ?? null,
         fullLen: hint?.len ?? null,
-        orientation: hint?.orientation ?? 1,
+        // null → the backend derives orientation from the file's own moov.
+        orientation: hint?.orientation ?? null,
       });
       if (this.generation !== gen) {
         URL.revokeObjectURL(result.url); // REVOKE SITE 9 (stale session)

@@ -18,11 +18,15 @@ Design notes for the non-obvious parts of CULL. Source comments cover the
 ## Read pipeline
 
 Each image resolves through three display stages — **shimmer → thumb → full**
-— with precedence full > thumb > shimmer. An evicted full falls back to its
-thumb, never back to shimmer. `src/image/stage.ts` is the pure heart of this:
-`resolveStage(ImageState) → Resolved { stage, url, dims, error }`. It has no
-I/O and no React — given which of {thumb, full} are present it returns what to
-paint, so the rule set is unit-tested in isolation.
+— with precedence full > thumb > shimmer. Since the image-pipeline overhaul,
+stage "full" means **the navigation tier is ready**, and that tier is the
+CR3's embedded 1620×1080 PRVW preview (one ~2 MiB read), NOT the 32 MP mdat
+JPEG — the 32 MP **zoom tier** is fetched only on cursor settle or zoom, via
+an exact byte range computed from moov's sample tables. An evicted nav blob
+falls back to its thumb, never back to shimmer. `src/image/stage.ts` is the
+pure heart of this: `resolveStage(ImageState) → Resolved { stage, url, dims,
+error, full }` (`full` = the ready zoom-tier blob, whatever the nav stage).
+It has no I/O and no React, so the rule set is unit-tested in isolation.
 
 `src/image/imageStore.ts` is a framework-agnostic subscription store, consumed
 via `useSyncExternalStore` in `src/image/useImage.ts`:
@@ -30,27 +34,42 @@ via `useSyncExternalStore` in `src/image/useImage.ts`:
 ```
 view → useImage(path, { wantFull })
   ↓ subscribe + request
-imageStore (priority queue, bounded concurrency)
-  ↓ on-demand thumb/full preempt book-order background fill
-fetchThumbnail / fetchBundle → spawn_blocking → cr3 / thumb_cache
-  ↓ blob URL + dims + EXIF
+imageStore (priority queues, bounded lanes: preview / zoom-full / thumb / bg)
+  ↓ on-demand reads preempt book-order background fill
+fetchThumbnail / fetchNav / fetchFullres → IoGate permit + timeout
+  → spawn_blocking → cr3 / thumb_cache
+  ↓ blob URL + dims + EXIF (+ the zoom tier's exact-range hint)
 per-path ImageState → resolveStage → stable Resolved snapshot
 ```
 
 A component calls `useImage(path, { wantFull })` and gets back the current
-`Resolved` for that path; the store handles fetching, caching, eviction, and
-blob-URL lifecycle. `wantFull: false` (grid + strips) requests only the thumb;
-`wantFull: true` (loupe + compare panes) also drives the full-res preview.
+`Resolved` for that path; the store handles fetching, caching, eviction,
+retry/backoff, and blob-URL lifecycle. `wantFull: false` (grid + strips)
+requests only the thumb; `wantFull: true` (loupe + compare panes) also drives
+the navigation preview. The zoom tier is pulled separately
+(`requestZoomFull`) by the settle timer and zoom engage.
+
+In the loupe, what actually paints is decided by the **presenter**
+(`src/image/present.ts` + `usePresent` + `LoupeStage`): a decode-gated,
+double-buffered state machine over two `<img>` layers. The visible frame
+never swaps to undecoded pixels; offers only ever upgrade (a late thumb can
+never replace a shown preview); a nav token drops stale decode completions;
+cached navigations snap (≤48 ms) while cold ones crossfade over the blurred
+thumb; mid-scrub an offer is accepted only if its decode wins a one-frame
+race, which makes scrubbing through prefetched neighbourhoods SHARP.
 
 ### What the store owns
 
 - **All-session in-memory THMB cache** — thumb blob URLs persist for the whole
   session (a ~15 000-entry LRU is only a safety cap for monster shoots), so
   revisiting any frame is instant.
-- **Windowed full-res cache** — full-res blobs are heavy, so they're kept only
-  within `previewKeep` of the cursor and revoked outside it; memory stays flat
-  across an arbitrarily long session. Eviction is cursor-driven, so parking on
-  a frame recenters the window even when nothing new loads.
+- **Windowed preview cache** — nav-tier blobs are kept within `previewKeep`
+  of the cursor (60 network / 150 local — previews are ~15× lighter than the
+  old full blobs) and revoked outside it; the 32 MP **zoom fulls** live in
+  their own much smaller `fullKeep` window (2/3 per side; pins for the zoomed
+  frame, compare pair, and histogram probe override). Memory stays flat
+  across an arbitrarily long session. Eviction is cursor-driven, so parking
+  on a frame recenters both windows even when nothing new loads.
 - **Generation-based cancellation** — `reset(paths)` (folder change) keeps
   thumbs but revokes all fulls and bumps a generation counter; `hardReset()`
   (session end) revokes everything. In-flight reads from a superseded
@@ -154,9 +173,12 @@ won't align to frame boundaries; the rAF loop fires one step per
 `NAV_REPEAT_MS` (~33 ms ≈ 30 images/s), is frame-aligned, and self-
 throttles when paint takes longer than the step interval.
 
-While scrubbing, the loupe renders the cheap thumbnail with a heavy blur
-instead of the full-res preview, so scrub speed isn't bottlenecked by JPEG
-decode. Full-res returns the instant the held key is released.
+While scrubbing, the presenter accepts only offers whose decode wins a
+one-frame race: a frame whose preview is already warm snaps in SHARP; a cold
+frame keeps the blurred thumbnail, so scrub speed is never bottlenecked by
+JPEG decode. Nothing above the preview tier is even considered mid-scrub,
+and zero fetches start. The full-quality view returns the instant the held
+key is released.
 
 Grid is different — single-tap = one cell, hold = OS auto-repeat (~30 Hz).
 Using the rAF loop in grid overshot quick taps: a tap fires keydown
@@ -165,19 +187,20 @@ cells. The single-cell-per-event model fixes that.
 
 ## Deferred full-res zoom
 
-The on-screen image renders at fit-to-stage size, so the browser keeps the
-JPEG at that resolution. CSS `transform: scale()` upscales those pixels
-during zoom — looks soft for ~0.2 s while the browser re-decodes at the
-new size. To make zoom sharp instantly we mount a *second* `<img>` at the
-image's native pixel size after `profile.hiResSettleMs` of cursor rest
-(50 ms on local storage, 150 ms on network). The browser forces a
-full-resolution raster for that copy; zooming composites from already-sharp
-pixels.
+The on-screen image is the 1620 px preview at fit-to-stage size; CSS
+`transform: scale()` alone would upscale those pixels softly. After
+`profile.fullSettleMs` of cursor rest (150 ms local / 400 ms network) the
+store FETCHES the 32 MP zoom-tier JPEG — one exact-range read via the moov
+hint, no head scan — and a second `<img>` mounts at the image's native pixel
+size, revealed only once `el.decode()` resolves (the preview-upscale beneath
+never pops to a half-decoded full). Engaging zoom requests it immediately if
+the settle hadn't already. Compare zoom uses the same decode-gated per-pane
+layer.
 
-The settle delay means rapid arrow-through never pays the heavy native-
-resolution decode. The layer drops on every navigation and on thumb-strip
-toggle (which resizes the stage; without the drop, the layer lingers at
-the old size and overlaps the reflowed base image).
+The settle delay means rapid arrow-through never pays the ~10 MB fetch or
+the native-resolution decode. The layer drops on every navigation and on
+thumb-strip toggle (which resizes the stage; without the drop, the layer
+lingers at the old size and overlaps the reflowed base image).
 
 ## Composition overlays
 
@@ -190,9 +213,10 @@ Three are precomputed from the on-screen JPEG and cached per path:
 - **Focus peaking.** Luminance gradient (central differences,
   `(R + 2G + B)/4` cheap luma) thresholded → yellow stipple on
   high-contrast edges.
-- **RGB histogram.** Computed from the *thumbnail*, not the preview — a
-  histogram is a distribution, so the tiny sample is plenty, and it
-  avoids decoding the 32 MP preview just to paint a 256×64 chart.
+- **RGB histogram.** Computed from the on-screen NAVIGATION preview (the
+  1620 px PRVW) — native 3:2 with no letterbox bars (Canon pads the THMB
+  into a 4:3 frame with pure black, which used to poison the darks bin),
+  and ~15× cheaper than the 32 MP decode it once cost.
 
 All three are downscaled to a working size (~1600 px for masks, ~256 px
 for the histogram), cached per path while their overlay is on, and
@@ -210,12 +234,15 @@ Defaults to `local`; flip to `network` for NAS / SMB / SSHFS.
 
 | | `network` | `local` (default) |
 | --- | --- | --- |
-| Full-preview concurrency | 3 | 12 |
+| Preview (nav-tier) concurrency | 4 | 12 |
+| Zoom full-res concurrency | 2 | 2 |
 | Thumbnail concurrency | 4 | 16 |
 | Background-fill concurrency | 2 | 8 |
-| Full-res keep window (each side) | 18 | 30 |
-| Full-res neighbour prefetch (each side) | 3 | 6 |
-| Hi-res zoom warm-up | 150 ms | 50 ms |
+| Preview keep window (each side) | 60 | 150 |
+| Zoom-full keep window (each side) | 2 | 3 |
+| Preview neighbour prefetch (each side) | 4 | 8 |
+| Zoom-full settle warm-up | 400 ms | 150 ms |
+| Backend IoGate read permits | 6 | 16 |
 | XMP-restore on analyze | sequential | 4-thread scoped pool |
 
 The whole profile is pushed into the imageStore via `setProfile` when the
@@ -247,16 +274,18 @@ types/       — shared TypeScript types
 The backend follows the same shape:
 
 ```
-lib.rs (run() + Tauri command wiring)
+lib.rs (run() + Tauri command wiring + managed state)
   ↓ uses
-bundle / scan / xmp / file_ops (Tauri command modules)
+bundle / scan / xmp / file_ops / io_gate (Tauri command modules)
   ↓ use
-meta / cr3       (data + parser)
+meta / cr3 / thumb_cache   (data + parser + disk cache)
 ```
 
 `cr3.rs` is the parser and stays untouched by everything except
 `bundle.rs` and `scan.rs`. `meta.rs` owns the IPC-facing `ImageMetadata`
-struct and the conversion from `cr3::Cr3Meta`.
+struct and the conversion from `cr3::Cr3Meta`. `io_gate.rs` owns the
+global read-permit backstop (IoGate), the tiered read timeouts, and the
+session generation + mtime table (SessionGate).
 
 ## Test surface
 
@@ -265,7 +294,11 @@ struct and the conversion from `cr3::Cr3Meta`.
   `sample_cr3s/sample_LrCFlaggedCR3s/`, batch_files idempotency +
   non-overwrite + error cap, plus CR3-parser tests env-var-gated against
   real CR3 fixtures in `sample_cr3s/`.
-- **Frontend (`pnpm test`, Vitest).** Pure-helper unit tests:
-  `passesFilter`, all `format*` helpers, `snapToFilter`, `basename` /
-  `stripExt`. No component tests — the components are presentational, and
-  testing them would test JSX shape, not behaviour.
+- **Frontend (`pnpm test`, Vitest).** Pure-helper unit tests
+  (`passesFilter`, all `format*` helpers, `snapToFilter`, `basename` /
+  `stripExt`) plus the image-pipeline invariants: `imageStore.test.ts`
+  (blob-URL pairing, generation scoping, queue priority, LRU + protection
+  predicates, retry/backoff, the zoom-full lane), `stage.test.ts`, and
+  `present.test.ts` (the decode-gated presenter's full rule set with an
+  injected fake decoder). No component tests — the components are
+  presentational, and testing them would test JSX shape, not behaviour.

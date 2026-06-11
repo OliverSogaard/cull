@@ -74,6 +74,12 @@ body,
   padding: 0 60px 0 84px;
 }
 
+/* Native fullscreen hides the traffic lights — reclaim their reserved space
+   (back to the standard 18px) so the brand block doesn't float off a gap. */
+:root[data-platform="mac"][data-fullscreen="1"] .cull-statusbar--top {
+  padding: 0 18px;
+}
+
 /* ── save-status pill (top chrome) ────────────────────────────
    XMP save indicator next to the brand block. Three states driven
    purely from the existing savingCount / failedWrites state. */
@@ -2232,6 +2238,40 @@ body,
 .cull-trouble-chip:hover {
   background: var(--bad);
   color: var(--surface);
+}
+
+/* Quiet per-frame error chip (Phase 4 choreography "Error" row): the thumb
+   stays up; the failure is a small bottom-left pill inside the photo frame. */
+.cull-error-chip {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bad);
+  background: rgba(8, 8, 8, 0.82);
+  border: 1px solid var(--bad);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.cull-error-chip button {
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cull-error-chip button:hover {
+  color: var(--accent);
 }
 
 /* Dev performance HUD (localStorage cull:devhud=1) — read-only overlay,

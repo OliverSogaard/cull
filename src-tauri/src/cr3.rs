@@ -757,13 +757,19 @@ pub fn read_fullres_at(
 /// Legacy scan fallback for the zoom tier: the pre-hint head+grow mdat scan,
 /// kept as the validation net for any future body that lays out mdat
 /// differently. Rare path — no chunked cancellation (it rides read_bundle's
-/// proven machinery unchanged).
-pub fn read_fullres_scan(path: &str) -> std::io::Result<Vec<u8>> {
+/// proven machinery unchanged). Returns the file's own EXIF orientation too:
+/// the moov is already in the head buffer, and a hintless caller has no echo
+/// to splice — stamping orientation 1 on a rotated frame would poison the
+/// cached blob with unrotated pixels (the portrait-zoom bug from the macOS
+/// manual matrix).
+pub fn read_fullres_scan(path: &str) -> std::io::Result<(Vec<u8>, u32)> {
     const HEAD: usize = 12 << 20;
     const MOOV_SCAN_CAP: usize = 64 << 20;
     let (mut buf, mut f, flen) = read_head(path, HEAD)?;
     while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 4 << 20, flen)? {}
-    read_fullres_from(&mut f, &mut buf, flen)
+    let orientation = metadata_from_prefix(&buf).orientation;
+    let jpeg = read_fullres_from(&mut f, &mut buf, flen)?;
+    Ok((jpeg, orientation))
 }
 
 /// What one thumbnail read yields: the (EXIF-oriented) THMB JPEG, the
@@ -1258,9 +1264,12 @@ mod tests {
             let (off, len) = b.full_hint.unwrap_or_else(|| panic!("{ps}: no hint"));
             let ranged = read_fullres_at(&ps, off, len, &|| false)
                 .unwrap_or_else(|e| panic!("{ps}: range read {e}"));
-            let scanned = read_fullres_scan(&ps)
+            let (scanned, scan_orient) = read_fullres_scan(&ps)
                 .unwrap_or_else(|e| panic!("{ps}: scan {e}"));
             assert_eq!(ranged, scanned, "{ps}: ranged JPEG != scanned JPEG");
+            // The scan's self-derived orientation must agree with the preview
+            // header's (the hintless zoom path splices this one).
+            assert_eq!(scan_orient, b.orientation, "{ps}: scan orientation");
         }
     }
 

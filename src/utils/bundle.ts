@@ -90,7 +90,9 @@ type FullresHeader = { fullLen: number };
 export async function fetchFullres(
   path: string,
   gen: number,
-  hint: { fullOffset: number | null; fullLen: number | null; orientation: number },
+  /** `orientation: null` → the backend scans and derives it from the file's
+   *  own moov (never assume 1 — a rotated frame would cache unrotated). */
+  hint: { fullOffset: number | null; fullLen: number | null; orientation: number | null },
 ): Promise<{ url: string }> {
   const buf = await invoke<ArrayBuffer>("read_fullres", {
     path,

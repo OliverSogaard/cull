@@ -6,20 +6,20 @@ import { RatingDot } from "./RatingDot";
 import { useImage } from "../image/useImage";
 import { imageStore } from "../image/imageStore";
 import { afZoomOrigin } from "../utils/zoom";
+import { sizerSrc } from "../utils/sizer";
+import { HiResLayer } from "./loupe/HiResLayer";
+import { PresentLayers } from "./loupe/PresentLayers";
+import { usePresent } from "../image/usePresent";
 
 /**
  * Compare mode: champion (left, green) vs challenger (right, amber).
  *
  * Both panels share a SYNCED zoom origin — the champion's AF point, shifted by
  * the shared pan offset — so zoom + pan always compares the identical region
- * of the frame. Each panel computes its own 1:1 scale from `naturalSize /
- * rect.width`, so 1:1 means "one image pixel per screen pixel" even though the
- * two panels may be different sizes.
+ * of the frame. Each panel computes its own 1:1 scale from its native sensor
+ * dims over its measured rect, so 1:1 means "one image pixel per screen
+ * pixel" even though the two panels may be different sizes.
  */
-/** Transparent inline-SVG sizer (see App.tsx): carries an aspect ratio via its
- *  intrinsic width/height so the matte is sized by the known ratio, not pixels. */
-const sizerSrc = (w: number, h: number) =>
-  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%2F%3E`;
 
 export function CompareView({
   images,
@@ -164,65 +164,63 @@ const ComparePanel = memo(function ComparePanel({
     height: number;
   } | null>(null);
   const [nonce, setNonce] = useState(0);
-  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
-  // Full-res blob URL that has actually decoded — keeps the low-res blurred
-  // until the full has PAINTED, so it never flashes sharp first (see App.tsx).
-  const [paintedFullUrl, setPaintedFullUrl] = useState<string | null>(null);
+  // True when the measure effect last ran with zoom engaged — the next
+  // unzoomed run delays past the 200ms transform transition (see App.tsx).
+  const wasZoomingRef = useRef(false);
   const isChampion = role === "champion";
   // Shimmer phase pinned per image so this pane's shimmer syncs with the others.
   const shimmerDelay = useMemo(() => shimmerPhaseMs(), [path]);
-  // Reset measured size when the pane's image changes (challenger scroll), so a
-  // fresh image's shimmer never inherits the previous one's aspect (neutral
-  // square until its dims are known).
-  useEffect(() => {
-    setNaturalSize(null);
-  }, [path]);
 
   // This panel owns the full-res request for its image (the loupe's `wantFull`
-  // is owned by App). The intermediate thumb stage shows first; the full lands
-  // on top. Source/dims come from the store via useImage now.
-  //
-  // Gate the full-res request on `!scrubbing` exactly as the loupe does
-  // (App.tsx): while the challenger is scrubbing we fly past frames we never
-  // settle on, so requesting each one's full-res would fire a heavy NAS bundle
-  // read + 32 MP decode per step — periodic main-thread stalls that stutter the
-  // strip, made worse on direction reversal when evicted fulls get re-fetched.
-  // The champion passes `scrubbing={false}`, so it keeps its full as the fixed
-  // reference; the challenger's full lands the instant the scrub settles.
+  // is owned by App). Gated on `!scrubbing` exactly as the loupe: a challenger
+  // scrub flies past frames we never settle on; fetching each would stutter.
+  // The champion passes `scrubbing={false}`, so it keeps its preview as the
+  // fixed reference; the challenger's lands the instant the scrub settles.
   const img = useImage(path, { wantFull: !scrubbing });
-  // Show the full preview only once it's ready AND we're not scrubbing past it.
-  const showFull = img.stage === "full" && !scrubbing;
-  const fullPainted = showFull && paintedFullUrl === img.url;
-  // While scrubbing past a frame whose full is cached, paint the cheap THUMB —
-  // not the full — so we don't decode a 32 MP raster per step (the CSS blur only
-  // HIDES a full, it doesn't avoid decoding it). Mirrors the loupe (App.tsx).
-  const displaySrc =
-    img.stage === "shimmer"
-      ? undefined
-      : scrubbing && img.stage === "full"
-        ? (imageStore.thumbUrl(path) ?? img.url)
-        : img.url;
 
-  // If this pane lands on a frame whose full is ALREADY decoded (prefetched
-  // neighbour / revisit), mark it painted at once so the thumb→full blur is
-  // skipped — mirrors the loupe (App.tsx). Keyed on the pane's image + scrub
-  // settle, NOT img.url, so a full arriving while we sit on the thumb still gates
-  // on the <img> onLoad below (no sharp flash before paint).
-  useLayoutEffect(() => {
-    if (showFull && img.url) setPaintedFullUrl(img.url);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, scrubbing]);
+  // Phase 4: each pane is its own presenter consumer — the same decode-gated
+  // double-buffer as the loupe (warm scrub steps show SHARP, cold ones keep
+  // the blurred thumb, nothing ever swaps to undecoded pixels). This replaced
+  // the old displaySrc/fullPainted/paintedFullUrl machinery wholesale.
+  const { presenter, snap, elA, elB } = usePresent(imgRef, () => setNonce((n) => n + 1));
+  useEffect(() => {
+    if (path) presenter.nav(path);
+  }, [path, presenter]);
+  useEffect(() => {
+    presenter.setScrubbing(scrubbing);
+  }, [scrubbing, presenter]);
+  useEffect(() => {
+    if (!path) return;
+    const thumbUrl = imageStore.thumbUrl(path);
+    if (thumbUrl) void presenter.offer(path, "thumb", thumbUrl);
+    if (img.stage === "full" && img.url) {
+      void presenter.offer(path, "preview", img.url);
+    }
+  }, [path, img.stage, img.url, scrubbing, presenter]);
 
-  // Frame aspect ratio: prefer the orientation-correct THMB display dims (known
-  // as soon as the thumb lands) over the frozen full-preview naturalSize.
+  // Frame aspect ratio: the orientation-correct display dims (known as soon
+  // as the thumb lands; the store's dims cache keeps them across eviction).
   const frameDims =
     img.dims && img.dims.w > 1 && img.dims.h > 1
       ? img.dims
       // Large square so the sizer clamps DOWN to fill the pane (see App.tsx).
-      : (naturalSize ?? { w: 10000, h: 10000 });
+      : { w: 10000, h: 10000 };
   const photoAr = `${frameDims.w} / ${frameDims.h}`;
 
   useLayoutEffect(() => {
+    // Mirror the loupe's measure discipline exactly:
+    // - never mid-scrub (warm scrub steps flip the presenter twice; measuring
+    //   per flip forces two synchronous layouts per step — the cost that made
+    //   compare scrub drag behind the loupe). Release re-measures.
+    // - never while zoomed (getBoundingClientRect returns the SCALED box).
+    // - after an unzoom, wait out the 200ms transform transition.
+    if (scrubbing) return;
+    if (isZooming) {
+      wasZoomingRef.current = true;
+      return;
+    }
+    const justUnzoomed = wasZoomingRef.current;
+    wasZoomingRef.current = false;
     const measure = () => {
       const im = imgRef.current;
       const p = panelRef.current;
@@ -243,18 +241,50 @@ const ComparePanel = memo(function ComparePanel({
         height: ir.height,
       });
     };
-    measure();
     // Observe the panel so overlays re-align on any size change — window
     // resize AND the panels growing when the candidate strip toggles.
     const ro = new ResizeObserver(measure);
-    if (panelRef.current) ro.observe(panelRef.current);
-    return () => ro.disconnect();
+    let armTimer: number | null = null;
+    const arm = () => {
+      measure();
+      if (panelRef.current) ro.observe(panelRef.current);
+    };
+    if (justUnzoomed) armTimer = window.setTimeout(arm, 260);
+    else arm();
+    return () => {
+      ro.disconnect();
+      if (armTimer !== null) clearTimeout(armTimer);
+    };
     // img.stage/img.dims: the sizer reflows the frame when dims arrive; the RO
     // is on the panel (which doesn't resize when the inner frame does).
-  }, [displaySrc, nonce, img.stage, img.dims]);
+  }, [snap.front.url, nonce, img.stage, img.dims, isZooming, scrubbing]);
 
-  const oneToOneScale = naturalSize && rect ? naturalSize.w / rect.width : 5;
+  // Native dims of the ZOOM raster (the displayed pane image is the 1620px
+  // preview since Phase 3, so measured element sizes must not drive 1:1).
+  // Same preference order as the loupe: zoom-tier meta dims → the thumb's
+  // sensor display dims.
+  const zoomNativeDims =
+    img.full?.dims ??
+    (img.dims && img.dims.w > 1 && img.dims.h > 1 ? img.dims : undefined);
+  const oneToOneScale = zoomNativeDims && rect ? zoomNativeDims.w / rect.width : 5;
   const zoomZ = isZooming ? zoomLevel * oneToOneScale : 1;
+
+  // Compare zoom fetches + pins fulls for BOTH panes (plan choreography):
+  // App's compare-session pins already protect them from eviction; this
+  // kicks the fetch the moment zoom engages. Preview-upscale until decode.
+  useEffect(() => {
+    if (isZooming && path) imageStore.requestZoomFull(path);
+  }, [isZooming, path]);
+
+  // True while the pane's hi-res pixels are decoded + in place — drives the
+  // pane's zoom loading ring (mirrors the loupe).
+  const [hiResReady, setHiResReady] = useState(false);
+  // Per-pane decode-gated hi-res transform (mirrors the loupe's derivation:
+  // rect is the displayed image's box, the layer reproduces scale(Z) about
+  // the synced origin starting from the native-pixel-size element).
+  const cmpHiResTx = rect ? (originX / 100) * rect.width * (1 - zoomZ) : 0;
+  const cmpHiResTy = rect ? (originY / 100) * rect.height * (1 - zoomZ) : 0;
+  const cmpHiResScale = rect && zoomNativeDims ? (rect.width / zoomNativeDims.w) * zoomZ : 1;
 
   return (
     <div
@@ -282,39 +312,43 @@ const ComparePanel = memo(function ComparePanel({
           aria-hidden
         />
         {/* Photo-frame stays mounted across transitions — see App.tsx for the
-            same pattern. While the full preview loads, the <img> falls back
-            to the thumbnail so the matte never goes blank. While scrubbing,
-            we show the thumbnail without the spinner overlay. */}
-        {displaySrc ? (
-          <img
-            ref={imgRef}
-            className="cull-cmp-img"
-            src={displaySrc}
-            alt=""
-            onLoad={(e) => {
-              // Only the FULL preview sets naturalSize (drives the 1:1 zoom math);
-              // the thumb fallback must not, or the matte/zoom would shrink to it.
-              if (showFull) {
-                setNonce((n) => n + 1);
-                setNaturalSize({
-                  w: e.currentTarget.naturalWidth,
-                  h: e.currentTarget.naturalHeight,
-                });
-                setPaintedFullUrl(img.url ?? null);
-              }
-            }}
-            style={{
-              transform: isZooming ? `scale(${zoomZ})` : undefined,
-              transformOrigin: `${originX}% ${originY}%`,
-              transition: "transform 200ms ease-out, filter 200ms ease-out",
-              // cover for the low-res (THMB ~4:3 would letterbox smaller under
-              // contain); contain for the full. Blur until the full has PAINTED.
-              objectFit: fullPainted ? "contain" : "cover",
-              filter: fullPainted ? undefined : "blur(14px) brightness(0.78)",
-            }}
+            same pattern. The presenter's double-buffer means the pane never
+            goes blank and never swaps to undecoded pixels. */}
+        <PresentLayers
+          snap={snap}
+          elA={elA}
+          elB={elB}
+          className="cull-cmp-img"
+          dimsKnown={!!(img.dims && img.dims.w > 1 && img.dims.h > 1)}
+          isZooming={isZooming}
+          zoomZ={zoomZ}
+          originX={originX}
+          originY={originY}
+        />
+        {/* Decode-gated zoom layer (Phase 4): the 32 MP zoom-tier blob at
+            native size, only while compare zoom is engaged and only once
+            decoded — until then the preview upscales beneath. */}
+        {isZooming && rect && zoomNativeDims && img.full?.url && (
+          <HiResLayer
+            key={path}
+            url={img.full.url}
+            w={zoomNativeDims.w}
+            h={zoomNativeDims.h}
+            tx={cmpHiResTx}
+            ty={cmpHiResTy}
+            scale={cmpHiResScale}
+            className="cull-cmp-img cull-image--hires"
+            onDecoded={setHiResReady}
           />
-        ) : null}
-        {img.stage === "shimmer" && (
+        )}
+        {/* Zoom loading ring (see the loupe): zoomed but the sharp raster
+            isn't in place yet. The 150ms reveal delay avoids cached flashes. */}
+        {isZooming && !hiResReady && (
+          <div className="cull-photo-frame__spinner-wrap" aria-hidden>
+            <div className="cull-loading__spinner" />
+          </div>
+        )}
+        {!snap.front.url && (
           <div
             className="cull-photo-frame__shimmer"
             aria-hidden

@@ -200,15 +200,18 @@ struct FullresHeader {
 
 /// Zoom tier: seek + ONE exact-range chunked read via the moov hint, SOI/EOI
 /// validated; any mismatch falls back to the legacy head+grow mdat scan (with
-/// a dlog line — telemetry for future bodies). Skips the moov re-parse: the
-/// orientation is echoed back from the frontend (it arrived with the preview).
+/// a dlog line — telemetry for future bodies). The orientation to splice is
+/// echoed back from the frontend (it arrived with the preview header); when
+/// the caller has none (zoom raced ahead of the preview read), the scan path
+/// derives it from the file's own moov — orientation 1 must NEVER be assumed
+/// (a rotated frame would cache unrotated).
 #[tauri::command]
 pub(crate) async fn read_fullres(
     path: String,
     gen: u64,
     full_offset: Option<u64>,
     full_len: Option<u64>,
-    orientation: u32,
+    orientation: Option<u32>,
     gate: State<'_, Arc<IoGate>>,
     session: State<'_, Arc<SessionGate>>,
 ) -> Result<Response, String> {
@@ -216,22 +219,32 @@ pub(crate) async fn read_fullres(
     let label = format!("read_fullres({path})");
     gated_read(&gate, Tier::Full, label, move || {
         let start = Instant::now();
-        let raw = match (full_offset, full_len) {
-            (Some(off), Some(len)) => {
+        // The exact-range path needs the echoed orientation (it never sees
+        // moov); without one, scan + self-derive even if a range hint exists.
+        let (raw, orient) = match (full_offset, full_len, orientation) {
+            (Some(off), Some(len), Some(echoed)) => {
                 match cr3::read_fullres_at(&path, off, len, &|| session.is_cancelled(gen)) {
-                    Ok(jpeg) => jpeg,
+                    Ok(jpeg) => (jpeg, echoed),
                     Err(e) if cr3::is_cancelled(&e) => return Err("cancelled".into()),
                     Err(e) => {
                         dlog!(
                             "[cull] read_fullres({path}): hint mismatch ({e}) — mdat scan fallback"
                         );
-                        cr3::read_fullres_scan(&path).map_err(|e| format!("cr3 fullres: {e}"))?
+                        let (jpeg, _) =
+                            cr3::read_fullres_scan(&path).map_err(|e| format!("cr3 fullres: {e}"))?;
+                        // The echo came from this file's own preview header —
+                        // still authoritative even when the range hint wasn't.
+                        (jpeg, echoed)
                     }
                 }
             }
-            _ => cr3::read_fullres_scan(&path).map_err(|e| format!("cr3 fullres: {e}"))?,
+            _ => {
+                let (jpeg, scanned) =
+                    cr3::read_fullres_scan(&path).map_err(|e| format!("cr3 fullres: {e}"))?;
+                (jpeg, orientation.unwrap_or(scanned))
+            }
         };
-        let jpeg = cr3::with_exif_orientation(raw, orientation);
+        let jpeg = cr3::with_exif_orientation(raw, orient);
         let header_json = serde_json::to_vec(&FullresHeader {
             full_len: jpeg.len() as u32,
         })

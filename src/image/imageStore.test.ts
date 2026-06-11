@@ -906,6 +906,45 @@ describe("imageStore — Phase 3 zoom tier", () => {
     await vi.waitUntil(() => fullresCalls.length === 2, { timeout: 2000 });
   });
 
+  it("zoom requested BEFORE the nav read lands is deferred, then fires WITH the hint", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+    const fullresCalls: Record<string, unknown>[] = [];
+    let resolvePreview: ((buf: ArrayBuffer) => void) | null = null;
+    mockInvoke.mockImplementation((cmd: unknown, args?: unknown) => {
+      if (cmd === "read_preview")
+        return new Promise<ArrayBuffer>((r) => {
+          resolvePreview = r;
+        });
+      if (cmd === "read_fullres") {
+        fullresCalls.push(args as Record<string, unknown>);
+        return Promise.resolve(makeFullresBuf());
+      }
+      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(800, 600));
+      return Promise.resolve(undefined);
+    });
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/z/defer.cr3";
+    store.reset([path]);
+
+    // Nav read in flight; zoom engages immediately (the portrait-zoom-on-
+    // arrival repro). The zoom fetch must NOT fire hintless.
+    store.registerWantFull(path);
+    await flush();
+    store.requestZoomFull(path);
+    await flush();
+    expect(fullresCalls).toHaveLength(0);
+
+    // The preview lands (orientation 6 + range hint) → the deferred zoom
+    // fires automatically, carrying the hint and the orientation echo.
+    resolvePreview!(makePreviewBuf(6));
+    await vi.waitUntil(() => store.snapshot(path).full !== undefined, { timeout: 2000 });
+    expect(fullresCalls).toHaveLength(1);
+    expect(fullresCalls[0]).toMatchObject({ fullOffset: 1000, fullLen: 5000, orientation: 6 });
+  });
+
   it("legacy backend: unknown read_preview flips to read_bundle once; zoom lane no-ops", async () => {
     const cmds: unknown[] = [];
     vi.mocked(invoke).mockImplementation((cmd: unknown) => {
