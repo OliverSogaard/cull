@@ -28,7 +28,8 @@
  *    or revoke a url that is still referenced by a live snapshot.
  */
 
-import { fetchBundle, fetchThumbnail } from "../utils/bundle";
+import { invoke } from "@tauri-apps/api/core";
+import { fetchFullres, fetchNav, fetchThumbnail } from "../utils/bundle";
 import type { PerformanceProfile } from "../types/settings";
 import { PERFORMANCE_PROFILES } from "../types/settings";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
@@ -45,8 +46,32 @@ const THUMB_LRU_CAP = 15000;
 /** Placeholder dims used before real dimensions are known. */
 const UNKNOWN_DIMS: ImageDims = { w: 1, h: 1 };
 
-/** Max transient-failure retries before a path is left as shimmer. */
-const MAX_THUMB_ATTEMPTS = 3;
+// ── Tier error model (Phase 1) ─────────────────────────────────────────────
+// Per-path per-tier transient-failure state with capped exponential backoff.
+// attempts 1..MAX retry automatically (1s, 2s, 4s… capped); at MAX the tier is
+// TERMINAL: no auto-retry until the folder is revisited (reset clears these)
+// or the user hits the error panel's retry affordance (retry()).
+
+/** Per-tier failure record. */
+type TierError = { attempts: number; lastError: string; nextRetryAt: number };
+
+/** First-retry delay; doubles per attempt. */
+const RETRY_BASE_MS = 1000;
+/** Backoff ceiling. */
+const RETRY_CAP_MS = 30_000;
+/** Failed attempts before a tier goes terminal. */
+const MAX_TIER_ATTEMPTS = 4;
+/** Distinct terminal-failed paths that trip the folder-unreachable affordance
+ *  (NAS unmounted / sleep-wake) — past this the store stops hammering and App
+ *  surfaces a non-blocking "folder unreachable — retry" chip. */
+const FOLDER_TROUBLE_THRESHOLD = 4;
+
+const backoffMs = (attempts: number): number =>
+  Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** (attempts - 1));
+
+/** True while the tier must NOT be auto-requested (cooling down or terminal). */
+const inCooldown = (te: TierError | undefined, now: number): boolean =>
+  te !== undefined && (te.attempts >= MAX_TIER_ATTEMPTS || now < te.nextRetryAt);
 
 /** Constructor options (test-only knobs kept minimal). */
 export type ImageStoreOptions = {
@@ -80,8 +105,52 @@ export class ImageStore {
    *  Set) so two consumers wanting the same path don't lose eviction-protection
    *  when only one unmounts. `has(p)` ⟺ count > 0 (entries are deleted at 0). */
   private wantFull = new Map<string, number>();
-  /** Per-path transient thumb-failure attempt counter. */
-  private thumbAttempts = new Map<string, number>();
+  /** path → number of mounted consumers DISPLAYING this path (every useImage
+   *  caller — loupe, compare panes, grid/strip cells). Protects the path's
+   *  thumb blob from LRU revocation while a live <img> may be showing it
+   *  (the direct `thumbUrl()` readers all sit inside such a consumer). */
+  private displayRefs = new Map<string, number>();
+  /** path → pin count. A pinned path's full is NEVER evicted: compare pins its
+   *  pair for the session, App pins the zoomed frame, the histogram probe pins
+   *  during its decode. Refcounted like wantFull. */
+  private pinnedFulls = new Map<string, number>();
+  /** Per-path per-tier failure state (capped backoff; see TierError). */
+  private thumbErrors = new Map<string, TierError>();
+  private fullErrors = new Map<string, TierError>();
+  /** Paths whose thumb or full reached MAX_TIER_ATTEMPTS this session. */
+  private terminalPaths = new Set<string>();
+  /** Latched when terminalPaths crosses FOLDER_TROUBLE_THRESHOLD: stop all
+   *  auto-retries + bg sweep until the user retries (App re-runs the scan →
+   *  reset() clears this) or retry()/reset re-arms. */
+  private folderTrouble = false;
+  /** App-registered callback fired once when folderTrouble latches. */
+  private troubleSink: (() => void) | undefined;
+  /** Session-lifetime dims cache: orientation-adjusted display dims, fed by
+   *  thumb meta as it arrives. Never evicted until hardReset (entries are a
+   *  few bytes) — so the matte keeps a frame's true aspect even after its
+   *  thumb/full blobs were evicted. */
+  private pathDims = new Map<string, ImageDims>();
+  // ── Zoom tier (Phase 3: full-res is settle/zoom-only) ──────────────────
+  /** path → zoom full-res state. Tiny windowed cache (profile.fullKeep per
+   *  side; pins override) — full blobs are ~10 MB each. */
+  private zoomFulls = new Map<string, ImageState["zoomFull"]>();
+  private zoomQueue: string[] = [];
+  private requestedZoom = new Set<string>();
+  private zoomInFlightPaths = new Set<string>();
+  private zoomInFlight = 0;
+  private zoomErrors = new Map<string, TierError>();
+  /** path → exact-range hint + orientation from the preview header. Derived
+   *  from immutable file content — survives reset(), cleared on hardReset. */
+  private fullHints = new Map<string, { offset: number | null; len: number | null; orientation: number }>();
+  /** path → NATIVE full-res display dims (sensor pixels, orientation-swapped)
+   *  for the hi-res layer's transform math. Same lifetime as fullHints. */
+  private nativeDims = new Map<string, ImageDims>();
+  /** True once a nav read was served by the legacy `read_bundle` (old
+   *  backend): the nav blob IS the full, and there is no separate zoom tier. */
+  private navLegacy = false;
+  // ── Dev HUD stats (cheap counters; read via debugStats) ─────────────────
+  private navTimings: { name: string; ms: number; legacy: boolean }[] = [];
+  private counts = { navLoads: 0, zoomLoads: 0, thumbLoads: 0, previewEvicts: 0, zoomEvicts: 0, errors: 0 };
   // ── Concurrency counters ───────────────────────────────────────────────
   private thumbInFlight = 0;
   private fullInFlight = 0;
@@ -129,12 +198,34 @@ export class ImageStore {
 
   setProfile(p: PerformanceProfile): void {
     this.profile = p;
-    // Apply the new (possibly smaller) full-res keep window now — don't wait for
-    // the next cursor move to free fulls that are suddenly outside the window.
+    // Mirror the storage mode into the backend's IoGate (permit cap + timeout
+    // tiers). Heuristic on a profile field rather than a mode string so this
+    // stays decoupled from the settings shape.
+    this.pushBackend("set_io_profile", {
+      mode: p.concurrentRestore ? "local" : "network",
+    });
+    // Apply the new (possibly smaller) keep windows now — don't wait for the
+    // next cursor move to free blobs that are suddenly outside the window.
     this.evictFullAround(this.cursor);
+    this.evictZoomAround(this.cursor);
     this.pumpThumbs();
     this.pumpFull();
     this.pumpBg();
+    this.pumpZoom();
+  }
+
+  /** Fire-and-forget backend push (session gen / io profile). Quiet on a
+   *  pre-Phase-2 backend (unknown command) and skipped entirely in unit tests
+   *  (node env, no webview). */
+  private pushBackend(cmd: "begin_session" | "set_io_profile", args: Record<string, unknown>): void {
+    if (typeof window === "undefined") return;
+    void (async () => {
+      try {
+        await invoke(cmd, args);
+      } catch {
+        // old backend — the feature simply stays dormant
+      }
+    })();
   }
 
   /** Current session generation — bumped by reset()/hardReset(). Consumers (e.g.
@@ -160,18 +251,40 @@ export class ImageStore {
   reset(newPaths: string[]): void {
     this.generation++;
     const gen = this.generation;
+    // Tell the backend the session moved: superseded chunked reads bail
+    // within ~one 2 MiB chunk instead of finishing multi-MB transfers.
+    this.pushBackend("begin_session", { gen });
 
     // Cancel queued work
     this.thumbQueue = [];
     this.fullQueue = [];
     this.bgQueue = [];
+    this.zoomQueue = [];
     this.wantFull.clear();
     this.requestedFull.clear();
+    this.requestedZoom.clear();
+    this.zoomInFlightPaths.clear();
+    this.zoomInFlight = 0;
+    this.zoomErrors.clear();
+    // Revoke all zoom full-res blob URLs — REVOKE SITE 8 (they are the
+    // heaviest blobs in the app; a folder switch must drop them at once).
+    for (const [, state] of this.zoomFulls) {
+      if (state?.status === "ready") URL.revokeObjectURL(state.url);
+    }
+    this.zoomFulls.clear();
     // old-gen thumb loads bailed without populating `thumbs`; if we keep
     // their paths in requestedThumb they'd be excluded from bg-fill forever
     // (permanent shimmer). Clear it so the new session can re-schedule them.
     this.requestedThumb.clear();
-    this.thumbAttempts.clear();
+    // Folder revisit re-arms every failed tier (terminal included) — an
+    // unmounted NAS that reconnected gets a clean slate. pathDims survives
+    // (it's a session-lifetime cache, like thumbs; hardReset clears it).
+    // displayRefs/pinnedFulls are component-lifetime, not generation-scoped:
+    // mounted consumers unregister on their own unmount.
+    this.thumbErrors.clear();
+    this.fullErrors.clear();
+    this.terminalPaths.clear();
+    this.folderTrouble = false;
 
     // zero in-flight counters. Late decrements from superseded loads are
     // now gen-scoped (they no-op), so zeroing here can't be driven negative.
@@ -234,15 +347,32 @@ export class ImageStore {
    */
   hardReset(): void {
     this.generation++;
+    this.pushBackend("begin_session", { gen: this.generation });
 
     this.thumbQueue = [];
     this.fullQueue = [];
     this.bgQueue = [];
+    this.zoomQueue = [];
     this.wantFull.clear();
     this.requestedThumb.clear();
     this.requestedFull.clear();
+    this.requestedZoom.clear();
     this.fullInFlightPaths.clear();
-    this.thumbAttempts.clear();
+    this.zoomInFlightPaths.clear();
+    this.zoomInFlight = 0;
+    this.zoomErrors.clear();
+    for (const [, state] of this.zoomFulls) {
+      if (state?.status === "ready") URL.revokeObjectURL(state.url); // REVOKE SITE 8
+    }
+    this.zoomFulls.clear();
+    this.fullHints.clear();
+    this.nativeDims.clear();
+    this.navTimings = [];
+    this.thumbErrors.clear();
+    this.fullErrors.clear();
+    this.terminalPaths.clear();
+    this.folderTrouble = false;
+    this.pathDims.clear();
     // gen-scoped finally blocks make zeroing safe (no negative drift).
     this.thumbInFlight = 0;
     this.fullInFlight = 0;
@@ -273,30 +403,37 @@ export class ImageStore {
 
   setCursor(index: number, scrubbing = false): void {
     this.cursor = index;
-    // full-res eviction is cursor-driven — recenter the keep-window on the
-    // cursor even when no new full just landed (parking on a frame recenters).
+    // Eviction is cursor-driven — recenter both keep-windows on the cursor
+    // even when no new load just landed (parking on a frame recenters).
     this.evictFullAround(index);
-    this.rescheduleBg(scrubbing);
+    this.evictZoomAround(index);
+    // bg priority needs no re-sort: pickBg() reads the live cursor at pump time.
+    this.pumpBg();
     this.pumpFull();
     // Warm neighbours' full-res once the cursor SETTLES — so a single tap to an
     // adjacent frame is already decoded. Never mid-scrub: a scrub flies past
-    // frames it never lands on, and prefetching each would flood the NAS. Also NOT
-    // until the first full has landed (bgStarted): on cull entry the neighbour
-    // prefetch (12 MB reads each) would race the one full the user is waiting on.
-    if (!scrubbing && this.bgStarted) this.prefetchFullsAround(index);
+    // frames it never lands on, and prefetching each would flood the NAS.
+    // Before the first full lands (bgStarted=false) prefetch only ±1 at the
+    // BACK of the queue — the first-tap warm: the displayed frame's wantFull
+    // unshifts to the front so it still wins a lane, and the bg-sweep deferral
+    // (the actual starvation guard) is untouched. Today's "second tap is
+    // always cold" dies here. Full radius once the first full has landed.
+    if (!scrubbing) {
+      this.prefetchFullsAround(index, this.bgStarted ? undefined : 1);
+    }
   }
 
   setGridRange(start: number, end: number): void {
     this.gridStart = start;
     this.gridEnd = end;
-    this.rescheduleBg();
+    this.pumpBg();
   }
 
   /** Clear the grid viewport so bg-fill prioritizes purely by cursor distance. */
   clearGridRange(): void {
     this.gridStart = -1;
     this.gridEnd = -1;
-    this.rescheduleBg();
+    this.pumpBg();
   }
 
   private rebuildPathIndex(): void {
@@ -312,40 +449,51 @@ export class ImageStore {
     return i === undefined ? -1 : i;
   }
 
-  private rescheduleBg(scrubbing = false): void {
-    // During a scrub the cursor moves ~30×/s; re-sorting the whole bg queue every
-    // step is wasted O(n log n) on the UI thread (the order only decides which
-    // not-yet-loaded thumb pumpBg pops next, and on-demand thumb/full reads always
-    // preempt bg anyway). Skip the sort mid-scrub but still pump so in-flight bg
-    // slots keep filling; the scrub-settle re-fires setCursor with scrubbing=false
-    // and performs the deferred re-sort.
-    if (!scrubbing) this.bgQueue = this.sortByPriority(this.bgQueue);
-    this.pumpBg();
-  }
-
   /**
-   * Order paths grid-viewport-first, then nearest-cursor. Index lookups are
-   * precomputed once (O(n)) rather than two Map.gets per comparison (which made
-   * the comparator O(n log n) Map lookups on a queue of thousands).
+   * Pick the highest-priority bg candidate by O(n) argmin scan at pump time —
+   * grid-viewport paths first, then nearest-to-cursor — replacing the old
+   * O(n log n) whole-queue re-sort per cursor move (P8). Always computed
+   * against the LIVE cursor, so no scrub-time staleness either. Skips paths
+   * cooling down after a failed read. Returns an index into bgQueue, or -1.
    */
-  private sortByPriority(q: string[]): string[] {
+  private pickBg(): number {
+    const now = Date.now();
     const cursor = this.cursor;
     const gridStart = this.gridStart;
     const gridEnd = this.gridEnd;
-    const tagged = q.map((p) => {
+    let best = -1;
+    let bestG = 2;
+    let bestD = Infinity;
+    for (let k = 0; k < this.bgQueue.length; k++) {
+      const p = this.bgQueue[k];
+      if (inCooldown(this.thumbErrors.get(p), now)) continue;
       const i = this.indexOf(p);
-      return { p, i, g: i >= gridStart && i <= gridEnd ? 0 : 1 };
-    });
-    tagged.sort((a, b) =>
-      a.g !== b.g ? a.g - b.g : Math.abs(a.i - cursor) - Math.abs(b.i - cursor),
-    );
-    return tagged.map((t) => t.p);
+      const g = i >= gridStart && i <= gridEnd ? 0 : 1;
+      const d = Math.abs(i - cursor);
+      if (g < bestG || (g === bestG && d < bestD)) {
+        best = k;
+        bestG = g;
+        bestD = d;
+        if (g === 0 && d === 0) break; // can't beat the cursor's own cell
+      }
+    }
+    return best;
   }
 
   registerWantFull(path: string): void {
     if (!path) return;
     this.wantFull.set(path, (this.wantFull.get(path) ?? 0) + 1);
     if (!this.requestedFull.has(path)) {
+      // Failed earlier? Respect the backoff instead of hammering: the
+      // scheduled retry (or the manual retry affordance) re-queues. Terminal
+      // paths wait for retry()/folder revisit.
+      const te = this.fullErrors.get(path);
+      if (inCooldown(te, Date.now())) {
+        if (te && te.attempts < MAX_TIER_ATTEMPTS) {
+          this.scheduleFullRetry(path, te, this.generation);
+        }
+        return;
+      }
       this.fullQueue.unshift(path); // high priority: front of queue
       this.pumpFull();
       return;
@@ -371,9 +519,114 @@ export class ImageStore {
     else this.wantFull.set(path, n - 1);
   }
 
+  /** A mounted consumer is displaying this path (any tier). Protects the
+   *  path's THUMB blob from LRU revocation while a live <img> may show it. */
+  registerDisplay(path: string): void {
+    if (!path) return;
+    this.displayRefs.set(path, (this.displayRefs.get(path) ?? 0) + 1);
+  }
+
+  unregisterDisplay(path: string): void {
+    if (!path) return;
+    const n = this.displayRefs.get(path);
+    if (n === undefined) return;
+    if (n <= 1) this.displayRefs.delete(path);
+    else this.displayRefs.set(path, n - 1);
+  }
+
+  /** Pin a path's full against eviction (compare pair for the session, the
+   *  zoomed frame, the histogram probe mid-decode). Refcounted. */
+  pinFull(path: string): void {
+    if (!path) return;
+    this.pinnedFulls.set(path, (this.pinnedFulls.get(path) ?? 0) + 1);
+  }
+
+  unpinFull(path: string): void {
+    if (!path) return;
+    const n = this.pinnedFulls.get(path);
+    if (n === undefined) return;
+    if (n <= 1) this.pinnedFulls.delete(path);
+    else this.pinnedFulls.set(path, n - 1);
+  }
+
+  /**
+   * Manual retry affordance (the error panel / folder-trouble chip): wipe the
+   * path's failure state and immediately re-queue whatever is missing, at the
+   * front of the on-demand lanes.
+   */
+  retry(path: string): void {
+    if (!path) return;
+    this.thumbErrors.delete(path);
+    this.fullErrors.delete(path);
+    this.zoomErrors.delete(path);
+    this.terminalPaths.delete(path);
+    if (this.fulls.get(path)?.status === "error") {
+      this.fulls.delete(path);
+      this.requestedFull.delete(path);
+    }
+    if (this.zoomFulls.get(path)?.status === "error") {
+      this.zoomFulls.delete(path);
+      this.requestedZoom.delete(path);
+    }
+    if (!this.thumbs.has(path)) {
+      this.requestedThumb.delete(path);
+      if (!this.thumbQueue.includes(path)) this.thumbQueue.unshift(path);
+    }
+    if (
+      this.wantFull.has(path) &&
+      !this.requestedFull.has(path) &&
+      !this.fullInFlightPaths.has(path) &&
+      this.fulls.get(path)?.status !== "ready" &&
+      !this.fullQueue.includes(path)
+    ) {
+      this.fullQueue.unshift(path);
+    }
+    this.invalidate(path);
+    this.pumpThumbs();
+    this.pumpFull();
+  }
+
+  /** App registers this to surface the non-blocking "folder unreachable —
+   *  retry" affordance. Fired once when the trouble threshold latches. */
+  setTroubleSink(sink: (() => void) | undefined): void {
+    this.troubleSink = sink;
+  }
+
+  /**
+   * Re-arm everything in place after folder trouble (App calls this once its
+   * re-scan probe confirms the folder is reachable again): wipe all failure
+   * state, restart the bg sweep over still-missing thumbs, re-queue any
+   * wanted-but-missing fulls. Keeps every loaded blob and the user's place —
+   * reconnect self-heals without restarting the session.
+   */
+  rearm(): void {
+    this.thumbErrors.clear();
+    this.fullErrors.clear();
+    this.terminalPaths.clear();
+    this.folderTrouble = false;
+    for (const p of this.wantFull.keys()) {
+      if (
+        this.fulls.get(p)?.status !== "ready" &&
+        !this.requestedFull.has(p) &&
+        !this.fullInFlightPaths.has(p) &&
+        !this.fullQueue.includes(p)
+      ) {
+        this.fullQueue.unshift(p);
+      }
+    }
+    this.pumpThumbs();
+    this.pumpFull();
+    // Failed thumbs dropped their request markers — rebuild the sweep queue.
+    this.scheduleBgFill(this.generation);
+  }
+
   requestThumbFor(path: string): void {
     if (!path) return;
     if (this.requestedThumb.has(path) || this.thumbs.has(path)) return;
+    // Cooling down or terminal → don't queue; the bg-sweep retry (re-added to
+    // bgQueue on failure) picks it up when the backoff expires, and the cell
+    // is notified via invalidate when the thumb finally lands.
+    if (inCooldown(this.thumbErrors.get(path), Date.now())) return;
     this.thumbQueue.push(path);
     this.pumpThumbs();
   }
@@ -414,6 +667,8 @@ export class ImageStore {
     return {
       thumb: this.thumbs.get(path),
       full: this.fulls.get(path),
+      zoomFull: this.zoomFulls.get(path),
+      knownDims: this.pathDims.get(path),
     };
   }
 
@@ -425,6 +680,8 @@ export class ImageStore {
     const newState: ImageState = {
       thumb: this.thumbs.get(path),
       full: this.fulls.get(path),
+      zoomFull: this.zoomFulls.get(path),
+      knownDims: this.pathDims.get(path),
     };
     this.states.set(path, newState);
     const newResolved = resolveStage(newState);
@@ -435,6 +692,7 @@ export class ImageStore {
       old.stage !== newResolved.stage ||
       old.url !== newResolved.url ||
       old.error !== newResolved.error ||
+      old.full?.url !== newResolved.full?.url ||
       old.dims?.w !== newResolved.dims?.w ||
       old.dims?.h !== newResolved.dims?.h
     ) {
@@ -481,20 +739,32 @@ export class ImageStore {
         h: result.height ?? UNKNOWN_DIMS.h,
       };
       this.thumbs.set(path, { url: result.url, dims });
-      this.thumbAttempts.delete(path);
+      // Feed the session-lifetime dims cache (real dims only, never the
+      // {1,1} sentinel) — survives thumb AND full eviction until hardReset.
+      if (dims.w > 1 && dims.h > 1) this.pathDims.set(path, dims);
+      // Metadata fast path (Phase 3): fresh thumb parses carry the complete
+      // Cr3Meta, so the EXIF rail / status-bar MP populate when the THUMB
+      // lands — the bg sweep guarantees that for every frame eventually.
+      if (result.meta) this.metaSink?.(path, result.meta);
+      this.counts.thumbLoads++;
+      this.thumbErrors.delete(path);
       this.enforceThumbLru(path);
       this.invalidate(path);
-    } catch {
-      // transient failure — drop the request marker so it can be retried,
-      // but cap retries so a genuinely-missing THMB doesn't hot-loop. Only act
-      // for the current generation (a superseded load must not touch state).
+    } catch (e) {
+      // Transient failure — record per-tier backoff, drop the request marker
+      // so the path CAN re-arm (backoff expiry, folder revisit, manual retry),
+      // and re-join the bg sweep, which skips it until nextRetryAt. Terminal
+      // after MAX_TIER_ATTEMPTS. Only act for the current generation.
       if (this.generation === gen) {
-        const attempts = (this.thumbAttempts.get(path) ?? 0) + 1;
-        this.thumbAttempts.set(path, attempts);
-        if (attempts < MAX_THUMB_ATTEMPTS) {
-          this.requestedThumb.delete(path);
+        const msg = e instanceof Error ? e.message : String(e);
+        const te = this.recordTierError(this.thumbErrors, path, msg);
+        this.requestedThumb.delete(path);
+        if (te.attempts < MAX_TIER_ATTEMPTS && !this.folderTrouble) {
+          if (!this.bgQueue.includes(path)) this.bgQueue.push(path);
+          setTimeout(() => {
+            if (this.generation === gen && !this.folderTrouble) this.pumpBg();
+          }, backoffMs(te.attempts));
         }
-        // else: leave it requested → stays shimmer, no further retries.
       }
     } finally {
       // gen-scoped decrement. A superseded load must NOT touch the current
@@ -508,24 +778,61 @@ export class ImageStore {
     }
   }
 
+  /**
+   * THE eviction-protection predicate (Phase 1, P5): the one place that
+   * answers "may this path's blob be revoked right now?". Tier-aware —
+   * display refcounts protect only the thumb (a mounted cell may be showing
+   * it via the direct `thumbUrl()` fallbacks); wantFull / pins / in-flight /
+   * the keep window protect both tiers. Every eviction site routes through
+   * here so a new protection class can never be forgotten at one of them.
+   */
+  private isProtected(path: string, tier: "thumb" | "full", centerIndex: number): boolean {
+    if (this.wantFull.has(path)) return true;
+    if (this.pinnedFulls.has(path)) return true;
+    // An in-flight full's thumb is the visible fallback the user is staring
+    // at; its full entry is "loading" (not evictable) but the thumb matters.
+    if (this.fullInFlightPaths.has(path)) return true;
+    if (tier === "thumb" && this.displayRefs.has(path)) return true;
+    const idx = this.indexOf(path);
+    return idx !== -1 && Math.abs(idx - centerIndex) <= this.profile.previewKeep;
+  }
+
+  /** Record a failed read for one tier; latches folder-trouble at threshold. */
+  private recordTierError(map: Map<string, TierError>, path: string, msg: string): TierError {
+    const attempts = (map.get(path)?.attempts ?? 0) + 1;
+    const te: TierError = {
+      attempts,
+      lastError: msg,
+      nextRetryAt: Date.now() + backoffMs(attempts),
+    };
+    map.set(path, te);
+    this.counts.errors++;
+    if (attempts >= MAX_TIER_ATTEMPTS) {
+      this.terminalPaths.add(path);
+      if (!this.folderTrouble && this.terminalPaths.size >= FOLDER_TROUBLE_THRESHOLD) {
+        // Several distinct paths went terminal — the folder itself is almost
+        // certainly unreachable (NAS unmount / sleep-wake). Stop hammering;
+        // App surfaces the retry affordance, whose re-scan reset()s us clean.
+        this.folderTrouble = true;
+        this.troubleSink?.();
+      }
+    }
+    return te;
+  }
+
   /** LRU cap enforcement, shared by both thumb lanes — REVOKE SITE 1. */
   private enforceThumbLru(justLoaded: string): void {
     if (this.thumbs.size <= this.thumbLruCap) return;
-    // Evict the oldest-inserted thumb that is NOT protected. A thumb is protected
-    // if it's the one just loaded, currently wanted full (on screen), or within
-    // the full-res keep-window of the cursor. Without this guard a >cap shoot
-    // could revoke the blob URL of a thumb a live <img> is still displaying
-    // (loupe scrub fallback / compare / histogram probe read thumbUrl directly),
-    // blanking the frame. Fall back to the strict oldest only if all are
-    // protected (the protected set is bounded, so the cap can't run away).
-    const keep = this.profile.previewKeep;
+    // Evict the oldest-inserted thumb that is NOT protected (see isProtected).
+    // Without the guard a >cap shoot could revoke the blob URL of a thumb a
+    // live <img> is still displaying, blanking the frame. Fall back to the
+    // strict oldest only if all are protected (the protected set is bounded,
+    // so the cap can't run away).
     const cursor = this.cursor;
     let victim: string | undefined;
     for (const key of this.thumbs.keys()) {
       if (key === justLoaded) continue;
-      if (this.wantFull.has(key)) continue;
-      const idx = this.indexOf(key);
-      if (idx !== -1 && Math.abs(idx - cursor) <= keep) continue;
+      if (this.isProtected(key, "thumb", cursor)) continue;
       victim = key;
       break;
     }
@@ -546,7 +853,7 @@ export class ImageStore {
 
   private pumpFull(): void {
     while (
-      this.fullInFlight < this.profile.bundleConcurrency &&
+      this.fullInFlight < this.profile.previewConcurrency &&
       this.fullQueue.length > 0
     ) {
       const path = this.fullQueue.shift()!;
@@ -573,21 +880,41 @@ export class ImageStore {
     // guarantees this is the only in-flight loadFull for it.
     const gen = this.generation;
     try {
-      const result = await fetchBundle(path);
+      const t0 = performance.now();
+      const result = await fetchNav(path, gen);
+      const ms = performance.now() - t0;
       if (this.generation !== gen) {
         // Stale session — revoke the freshly created blob
         URL.revokeObjectURL(result.previewUrl);
         return;
+      }
+      this.noteNavTiming(path, ms, result.legacy);
+      this.navLegacy = result.legacy;
+      if (!result.legacy) {
+        // Zoom-tier plumbing from the preview header: the exact-range hint +
+        // orientation (echoed to read_fullres), and the NATIVE display dims
+        // (sensor pixels, swapped for the rotating orientations) that the
+        // hi-res layer's transform math needs.
+        const orientation = result.orientation ?? 1;
+        this.fullHints.set(path, { offset: result.fullOffset, len: result.fullLen, orientation });
+        const pw = result.meta?.pixelWidth;
+        const ph = result.meta?.pixelHeight;
+        if (pw && ph) {
+          const swap = orientation === 6 || orientation === 8;
+          this.nativeDims.set(path, swap ? { w: ph, h: pw } : { w: pw, h: ph });
+        }
       }
       // If there was already a ready full-res (race), revoke the old one — REVOKE SITE 3
       const existing = this.fulls.get(path);
       if (existing?.status === "ready") {
         URL.revokeObjectURL(existing.url);
       }
-      // Use thumb dims as authoritative aspect (orientation-adjusted)
+      // Use thumb dims as authoritative aspect (orientation-adjusted); the
+      // dims cache stands in when the thumb itself was already evicted.
       const thumbEntry = this.thumbs.get(path);
-      const dims: ImageDims = thumbEntry?.dims ?? UNKNOWN_DIMS;
+      const dims: ImageDims = thumbEntry?.dims ?? this.pathDims.get(path) ?? UNKNOWN_DIMS;
       this.fulls.set(path, { status: "ready", url: result.previewUrl, dims });
+      this.fullErrors.delete(path);
       // Surface EXIF metadata to App (camera / lens / AF point / pixel dims).
       if (result.meta) this.metaSink?.(path, result.meta);
       this.invalidate(path);
@@ -598,6 +925,13 @@ export class ImageStore {
       if (this.generation !== gen) return;
       const msg = e instanceof Error ? e.message : String(e);
       this.fulls.set(path, { status: "error", error: msg });
+      // Phase 1 retry model (P6): clear the request marker so the path CAN
+      // re-queue (before this, an errored full was skipped by pumpFull
+      // forever), record capped backoff, and auto-retry while it's still
+      // wanted. Terminal after MAX_TIER_ATTEMPTS → retry()/revisit only.
+      this.requestedFull.delete(path);
+      const te = this.recordTierError(this.fullErrors, path, msg);
+      this.scheduleFullRetry(path, te, gen);
       this.invalidate(path);
     } finally {
       // clear in-flight marker regardless of generation (it's path-keyed
@@ -624,27 +958,139 @@ export class ImageStore {
   /**
    * Evict full-res entries that are far from `centerIndex`, keeping at most
    * `previewKeep` on each side. Revokes their blob URLs. — REVOKE SITE 2.
-   * Cursor-driven: callable from setCursor and after a load.
+   * Cursor-driven: callable from setCursor and after a load. Protection
+   * (wantFull, pins, in-flight, keep window) lives in isProtected — e.g. in
+   * compare the cursor follows the challenger, so without the champion's
+   * wantFull/pin it would be evicted + re-fetched on every challenger step.
    */
   private evictFullAround(centerIndex: number): void {
     if (centerIndex < 0) return;
-    const keep = this.profile.previewKeep;
     for (const [p, state] of this.fulls) {
       if (state?.status !== "ready") continue;
-      // Never evict a full that something is actively displaying (loupe current,
-      // or BOTH compare panes). In compare the cursor follows the challenger, so
-      // without this the champion — far from the cursor — would be evicted and
-      // re-fetched on every challenger step, thrashing it back to a blurred load.
-      if (this.wantFull.has(p)) continue;
-      const idx = this.indexOf(p);
-      if (idx === -1) continue;
-      if (Math.abs(idx - centerIndex) > keep) {
-        URL.revokeObjectURL(state.url);
-        this.fulls.delete(p);
-        this.requestedFull.delete(p);
-        this.invalidate(p);
+      if (this.isProtected(p, "full", centerIndex)) continue;
+      URL.revokeObjectURL(state.url);
+      this.fulls.delete(p);
+      this.requestedFull.delete(p);
+      this.counts.previewEvicts++;
+      this.invalidate(p);
+    }
+  }
+
+  // ── Zoom tier (Phase 3): full-res on settle/zoom only ───────────────────
+
+  /**
+   * Warm/fetch the zoom full-res for `path` (App calls this from the settle
+   * timer and on zoom engage). No-op on a legacy backend — there the nav blob
+   * IS the full and the hi-res layer reuses it directly.
+   */
+  requestZoomFull(path: string): void {
+    if (!path || this.navLegacy) return;
+    const existing = this.zoomFulls.get(path);
+    if (existing?.status === "ready" || existing?.status === "loading") return;
+    if (this.requestedZoom.has(path) || this.zoomInFlightPaths.has(path)) return;
+    if (inCooldown(this.zoomErrors.get(path), Date.now())) return;
+    if (!this.zoomQueue.includes(path)) this.zoomQueue.push(path);
+    this.pumpZoom();
+  }
+
+  /** True when nav reads are served by the legacy `read_bundle` (the nav blob
+   *  is already the 32 MP full; no separate zoom tier exists). */
+  isLegacyNav(): boolean {
+    return this.navLegacy;
+  }
+
+  private pumpZoom(): void {
+    while (this.zoomInFlight < this.profile.fullConcurrency && this.zoomQueue.length > 0) {
+      const path = this.zoomQueue.shift()!;
+      const prev = this.zoomFulls.get(path);
+      if (prev?.status === "ready") continue;
+      if (this.requestedZoom.has(path) || this.zoomInFlightPaths.has(path)) continue;
+      this.requestedZoom.add(path);
+      this.zoomInFlightPaths.add(path);
+      this.zoomFulls.set(path, { status: "loading" });
+      this.invalidate(path);
+      this.zoomInFlight++;
+      void this.loadZoomFull(path);
+    }
+  }
+
+  private async loadZoomFull(path: string): Promise<void> {
+    const gen = this.generation;
+    const hint = this.fullHints.get(path);
+    try {
+      const result = await fetchFullres(path, gen, {
+        fullOffset: hint?.offset ?? null,
+        fullLen: hint?.len ?? null,
+        orientation: hint?.orientation ?? 1,
+      });
+      if (this.generation !== gen) {
+        URL.revokeObjectURL(result.url); // REVOKE SITE 9 (stale session)
+        return;
+      }
+      const existing = this.zoomFulls.get(path);
+      if (existing?.status === "ready") URL.revokeObjectURL(existing.url);
+      this.zoomFulls.set(path, {
+        status: "ready",
+        url: result.url,
+        dims: this.nativeDims.get(path),
+      });
+      this.zoomErrors.delete(path);
+      this.counts.zoomLoads++;
+      this.invalidate(path);
+      this.evictZoomAround(this.cursor);
+    } catch (e) {
+      if (this.generation !== gen) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      this.requestedZoom.delete(path);
+      if (/^cancelled$/i.test(msg)) {
+        // Superseded by a session change the backend saw first — quiet drop.
+        this.zoomFulls.delete(path);
+      } else {
+        this.zoomFulls.set(path, { status: "error", error: msg });
+        this.recordTierError(this.zoomErrors, path, msg);
+      }
+      this.invalidate(path);
+    } finally {
+      this.zoomInFlightPaths.delete(path);
+      if (this.generation === gen) {
+        this.zoomInFlight--;
+        this.pumpZoom();
       }
     }
+  }
+
+  /** Evict zoom fulls outside the (tiny) fullKeep window — REVOKE SITE 10.
+   *  Pins (zoomed frame, compare pair, histogram probe) and in-flight reads
+   *  are protected; full blobs are ~10 MB each so the window stays small. */
+  private evictZoomAround(centerIndex: number): void {
+    if (centerIndex < 0) return;
+    const keep = this.profile.fullKeep;
+    for (const [p, state] of this.zoomFulls) {
+      if (state?.status !== "ready") continue;
+      if (this.pinnedFulls.has(p) || this.zoomInFlightPaths.has(p)) continue;
+      const idx = this.indexOf(p);
+      if (idx !== -1 && Math.abs(idx - centerIndex) <= keep) continue;
+      URL.revokeObjectURL(state.url);
+      this.zoomFulls.delete(p);
+      this.requestedZoom.delete(p);
+      this.counts.zoomEvicts++;
+      this.invalidate(p);
+    }
+  }
+
+  /** Re-queue an errored-but-still-wanted full when its backoff expires.
+   *  Gen-scoped; every guard re-checks at fire time, so stacked timers from
+   *  register/unregister churn are harmless no-ops. */
+  private scheduleFullRetry(path: string, te: TierError, gen: number): void {
+    if (te.attempts >= MAX_TIER_ATTEMPTS || this.folderTrouble) return;
+    setTimeout(() => {
+      if (this.generation !== gen || this.folderTrouble) return;
+      if (!this.wantFull.has(path)) return; // nobody's looking — re-register retries
+      if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) return;
+      if (this.fulls.get(path)?.status === "ready") return;
+      if (!this.fullQueue.includes(path)) this.fullQueue.unshift(path);
+      this.pumpFull();
+    }, Math.max(0, te.nextRetryAt - Date.now()));
   }
 
   /**
@@ -668,17 +1114,18 @@ export class ImageStore {
   }
 
   /**
-   * Prefetch full-res previews for frames within `fullPrefetchRadius` of the
+   * Prefetch nav-tier previews for frames within `previewPrefetchRadius` of the
    * cursor (nearest-first), so a single tap to a neighbour shows the full
    * immediately instead of waiting on an on-demand read. Enqueued at the BACK of
    * the full queue, so the on-demand wantFull for the displayed frame (which
    * unshifts to the front) always wins. Bounded by previewKeep eviction, so it
    * never grows unbounded. Called only when the cursor is settled (see setCursor).
    */
-  private prefetchFullsAround(centerIndex: number): void {
+  private prefetchFullsAround(centerIndex: number, radiusOverride?: number): void {
     if (centerIndex < 0) return;
-    const radius = this.profile.fullPrefetchRadius;
+    const radius = radiusOverride ?? this.profile.previewPrefetchRadius;
     if (radius <= 0) return;
+    const now = Date.now();
     let enqueued = false;
     // Nearest-first so the most likely next tap (±1) decodes before ±radius.
     for (let d = 1; d <= radius; d++) {
@@ -688,6 +1135,9 @@ export class ImageStore {
         const prev = this.fulls.get(path);
         if (prev?.status === "ready" || prev?.status === "loading") continue;
         if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) continue;
+        // A neighbour that failed recently retries on ITS schedule, not on
+        // every cursor settle (prefetch must never hammer a sick NAS).
+        if (inCooldown(this.fullErrors.get(path), now)) continue;
         if (this.fullQueue.includes(path)) continue;
         this.fullQueue.push(path);
         enqueued = true;
@@ -700,16 +1150,18 @@ export class ImageStore {
 
   private scheduleBgFill(gen: number): void {
     if (this.generation !== gen) return;
-    // Build the background queue using cursor-outward / grid-viewport-first order.
-    // Paths inside the grid viewport come first, then cursor-outward for the rest.
-    const unloaded = this.paths.filter(
+    // The queue is UNORDERED — pickBg() finds the grid-viewport-first /
+    // nearest-cursor candidate by argmin at pump time, against the live cursor.
+    this.bgQueue = this.paths.filter(
       (p) => !this.thumbs.has(p) && !this.requestedThumb.has(p),
     );
-    this.bgQueue = this.sortByPriority(unloaded);
     this.pumpBg();
   }
 
   private pumpBg(): void {
+    // Folder unreachable — every new read would hang/fail for its full
+    // timeout. The retry affordance (re-scan → reset) re-arms everything.
+    if (this.folderTrouble) return;
     const cap = this.profile.backgroundFillConcurrency;
     while (
       this.bgInFlight < cap &&
@@ -722,12 +1174,71 @@ export class ImageStore {
       this.fullInFlightPaths.size === 0 &&
       this.bgQueue.length > 0
     ) {
-      const path = this.bgQueue.shift()!;
+      const k = this.pickBg();
+      if (k === -1) break; // every remaining candidate is cooling down
+      const path = this.bgQueue.splice(k, 1)[0];
       if (this.thumbs.has(path) || this.requestedThumb.has(path)) continue;
       this.requestedThumb.add(path);
       this.bgInFlight++;
       void this.loadThumbInto("bg", path);
     }
+  }
+
+  // ── Dev HUD (Phase 3) ────────────────────────────────────────────────────
+
+  /** Ring buffer of the last nav fetch timings (newest first). */
+  private noteNavTiming(path: string, ms: number, legacy: boolean): void {
+    this.counts.navLoads++;
+    const name = path.slice(path.lastIndexOf("/") + 1).slice(path.lastIndexOf("\\") + 1);
+    this.navTimings.unshift({ name, ms: Math.round(ms), legacy });
+    if (this.navTimings.length > 20) this.navTimings.pop();
+  }
+
+  /**
+   * Snapshot for the dev HUD — every profile-tuning claim cites these
+   * numbers, not feel. Cheap: plain reads over existing state. Decoded-memory
+   * is an ESTIMATE (preview ≈ 7 MB RGBA at 1620×1080; zoom full from native
+   * dims ×4 B/px; thumbs ≈ 0.08 MB); the webview's decoded cache is opaque.
+   */
+  debugStats(): {
+    navTimings: { name: string; ms: number; legacy: boolean }[];
+    navMsAvg: number;
+    lanes: { preview: string; zoom: string; thumb: string; bg: string };
+    caches: { previews: number; zoomFulls: number; thumbs: number; dims: number };
+    counts: { navLoads: number; zoomLoads: number; thumbLoads: number; previewEvicts: number; zoomEvicts: number; errors: number };
+    decodedMB: number;
+    legacyNav: boolean;
+  } {
+    const previews = [...this.fulls.values()].filter((s) => s?.status === "ready").length;
+    const zooms = [...this.zoomFulls.entries()].filter(([, s]) => s?.status === "ready");
+    let zoomMB = 0;
+    for (const [p] of zooms) {
+      const d = this.nativeDims.get(p);
+      zoomMB += d ? (d.w * d.h * 4) / 1_048_576 : 130;
+    }
+    const navMsAvg =
+      this.navTimings.length === 0
+        ? 0
+        : Math.round(this.navTimings.reduce((a, t) => a + t.ms, 0) / this.navTimings.length);
+    return {
+      navTimings: this.navTimings.slice(0, 8),
+      navMsAvg,
+      lanes: {
+        preview: `${this.fullInFlight}/${this.profile.previewConcurrency} q${this.fullQueue.length}`,
+        zoom: `${this.zoomInFlight}/${this.profile.fullConcurrency} q${this.zoomQueue.length}`,
+        thumb: `${this.thumbInFlight}/${this.profile.thumbConcurrency} q${this.thumbQueue.length}`,
+        bg: `${this.bgInFlight}/${this.profile.backgroundFillConcurrency} q${this.bgQueue.length}`,
+      },
+      caches: {
+        previews,
+        zoomFulls: zooms.length,
+        thumbs: this.thumbs.size,
+        dims: this.pathDims.size,
+      },
+      counts: { ...this.counts },
+      decodedMB: Math.round((this.navLegacy ? previews * 130 : previews * 7) + zoomMB + this.thumbs.size * 0.08),
+      legacyNav: this.navLegacy,
+    };
   }
 }
 

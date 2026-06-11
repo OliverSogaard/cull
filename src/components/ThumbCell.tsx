@@ -76,7 +76,10 @@ export const ThumbCell = memo(function ThumbCell({
         style={{ ["--thumb-outline" as string]: outlineColor }}
       >
         {url ? (
-          <img className="cull-thumb__img" src={url} alt="" />
+          // decoding="sync": these are ~15 KB JPEGs — decode with layout so a
+          // remounted cell paints its cached thumb immediately instead of
+          // flashing blank for 1–2 frames while an async decode round-trips.
+          <img className="cull-thumb__img" src={url} alt="" decoding="sync" />
         ) : (
           <div
             className="cull-thumb__placeholder"

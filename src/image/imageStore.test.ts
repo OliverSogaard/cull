@@ -20,6 +20,8 @@ import { invoke } from "@tauri-apps/api/core";
 // ── Mock @tauri-apps/api/core before importing imageStore ──────────────────
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
+import { resetNavCommandForTests } from "../utils/bundle";
+
 // ── Mock URL.createObjectURL / URL.revokeObjectURL ─────────────────────────
 let urlCounter = 0;
 const liveUrls = new Set<string>();
@@ -31,6 +33,9 @@ beforeEach(() => {
   // Fully reset the shared invoke mock between tests so a deferred
   // mockImplementation from one test cannot leak into the next.
   vi.mocked(invoke).mockReset();
+  // A test that exercised the legacy read_bundle fallback must not leak the
+  // flipped routing into the next test.
+  resetNavCommandForTests();
   urlCounter = 0;
   liveUrls.clear();
   globalThis.URL.createObjectURL = vi.fn((_blob: Blob) => {
@@ -65,9 +70,40 @@ function makeThumbnailBuf(w: number, h: number): ArrayBuffer {
   return buf;
 }
 
-/** Build a minimal ArrayBuffer that fetchBundle parses. */
+/** Build a minimal ArrayBuffer that fetchNav parses (legacy bundle shape —
+ *  no orientation/hint fields, exactly what an old read_bundle returns). */
 function makeBundleBuf(): ArrayBuffer {
   const header = JSON.stringify({ meta: null, previewLen: 3 });
+  const headerBytes = new TextEncoder().encode(header);
+  const buf = new ArrayBuffer(4 + headerBytes.length + 3);
+  const dv = new DataView(buf);
+  dv.setUint32(0, headerBytes.length, true);
+  new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
+  new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
+  return buf;
+}
+
+/** read_preview-shaped frame: meta + orientation + the zoom range hint. */
+function makePreviewBuf(orientation = 1, fullOffset = 1000, fullLen = 5000): ArrayBuffer {
+  const header = JSON.stringify({
+    meta: { pixelWidth: 6000, pixelHeight: 4000 },
+    orientation,
+    previewLen: 3,
+    fullOffset,
+    fullLen,
+  });
+  const headerBytes = new TextEncoder().encode(header);
+  const buf = new ArrayBuffer(4 + headerBytes.length + 3);
+  const dv = new DataView(buf);
+  dv.setUint32(0, headerBytes.length, true);
+  new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
+  new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
+  return buf;
+}
+
+/** read_fullres-shaped frame. */
+function makeFullresBuf(): ArrayBuffer {
+  const header = JSON.stringify({ fullLen: 3 });
   const headerBytes = new TextEncoder().encode(header);
   const buf = new ArrayBuffer(4 + headerBytes.length + 3);
   const dv = new DataView(buf);
@@ -540,7 +576,7 @@ describe("imageStore — generation & concurrency", () => {
     expect(snap.url).toBeDefined();
   });
 
-  it("transient thumb failure clears requestedThumb so a retry succeeds", async () => {
+  it("transient thumb failure backs off (no immediate hammer); retry() bypasses and succeeds", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const mockInvoke = vi.mocked(invoke);
 
@@ -556,13 +592,20 @@ describe("imageStore — generation & concurrency", () => {
       .mockResolvedValueOnce(makeThumbnailBuf(800, 600));
 
     store.requestThumbFor(path);
-    // Wait for the first (failed) attempt to settle and clear requestedThumb.
+    // Wait for the first (failed) attempt to settle and record the backoff.
     await flush();
     await flush();
     expect(store.snapshot(path).stage).toBe("shimmer");
 
-    // Retry — requestedThumb was cleared, so this is NOT an early-return no-op.
+    // Re-requesting inside the backoff window must NOT fire a second read —
+    // a failing NAS is never hammered. Only the failed invoke has happened.
     store.requestThumbFor(path);
+    await flush();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(store.snapshot(path).stage).toBe("shimmer");
+
+    // The manual retry affordance clears the backoff and re-queues at once.
+    store.retry(path);
     await vi.waitUntil(() => store.snapshot(path).stage === "thumb", {
       timeout: 2000,
     });
@@ -606,5 +649,285 @@ describe("imageStore — generation & concurrency", () => {
     }
     // Exactly one fetch total — the core assertion.
     expect(deferreds.length).toBe(1);
+  });
+});
+
+// ── Phase 1 hardening invariants ────────────────────────────────────────────
+describe("imageStore — Phase 1 hardening", () => {
+  it("errored full clears requestedFull; retry() re-queues and succeeds", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/err/refetch.cr3";
+    store.reset([]);
+
+    // Route by command: retry() also re-queues the missing THUMB, so the
+    // mock must serve both lanes. The first full read fails, the retry works.
+    let failFull = true;
+    mockInvoke.mockImplementation((cmd: unknown) => {
+      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(800, 600));
+      if (failFull) {
+        failFull = false;
+        return Promise.reject(new Error("read failed"));
+      }
+      return Promise.resolve(makeBundleBuf());
+    });
+
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.snapshot(path).error !== undefined, {
+      timeout: 2000,
+    });
+    expect(store.snapshot(path).error).toBe("read failed");
+
+    // Before Phase 1 this path was a dead end: requestedFull kept the path and
+    // pumpFull skipped it forever. retry() must produce a fresh fetch.
+    store.retry(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "full", {
+      timeout: 2000,
+    });
+    expect(store.snapshot(path).error).toBeUndefined();
+  });
+
+  it("errored full auto-retries after the backoff while still wanted", async () => {
+    vi.useFakeTimers();
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const mockInvoke = vi.mocked(invoke);
+
+      const Store = await getStoreClass();
+      const store = new Store();
+      const path = "/err/auto.cr3";
+      store.reset([]);
+
+      mockInvoke
+        .mockRejectedValueOnce(new Error("nas hiccup"))
+        .mockResolvedValueOnce(makeBundleBuf());
+
+      store.registerWantFull(path);
+      await flush();
+      await flush();
+      expect(store.snapshot(path).error).toBe("nas hiccup");
+
+      // First-attempt backoff is 1s; the scheduled retry must re-queue it.
+      await vi.advanceTimersByTimeAsync(1100);
+      await flush();
+      expect(store.snapshot(path).stage).toBe("full");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pinFull protects a far-from-cursor full from window eviction; unpin releases it", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/pin/p.cr3";
+    store.reset([]);
+
+    mockInvoke.mockResolvedValueOnce(makeBundleBuf());
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "full", {
+      timeout: 2000,
+    });
+    const url = store.snapshot(path).url!;
+
+    // Drop the wantFull protection but pin; the path is NOT in the session
+    // path list (indexOf -1), so without the pin any eviction pass takes it.
+    store.pinFull(path);
+    store.unregisterWantFull(path);
+    store.setCursor(0); // runs evictFullAround
+    expect(store.snapshot(path).stage).toBe("full");
+    expect(liveUrls.has(url)).toBe(true);
+
+    store.unpinFull(path);
+    store.setCursor(0);
+    expect(store.snapshot(path).stage).not.toBe("full");
+    expect(liveUrls.has(url)).toBe(false);
+  });
+
+  it("a display ref protects a thumb from LRU eviction (refcounted thumbUrl consumers)", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+    const deferreds = deferredInvoke(mockInvoke);
+
+    const Store = await getStoreClass();
+    const store = new Store({ thumbLruCap: 2 });
+    const paths = ["/disp/a.cr3", "/disp/b.cr3", "/disp/c.cr3"];
+    store.reset([]);
+
+    for (let i = 0; i < 3; i++) {
+      store.requestThumbFor(paths[i]);
+      await flush();
+      // Protect a (the LRU victim-to-be) as a mounted consumer would.
+      if (i === 0) store.registerDisplay(paths[0]);
+      deferreds[i].resolve(makeThumbnailBuf(800, 600));
+      await flush();
+    }
+
+    // Cap 2, three thumbs: a is oldest but display-protected → b evicted instead.
+    expect(store.snapshot(paths[0]).stage).toBe("thumb");
+    expect(store.snapshot(paths[1]).stage).toBe("shimmer");
+    expect(store.snapshot(paths[2]).stage).toBe("thumb");
+
+    // Release the ref; the next over-cap load takes a.
+    store.unregisterDisplay(paths[0]);
+    store.requestThumbFor(paths[1]);
+    await flush();
+    deferreds[3].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+    expect(store.snapshot(paths[0]).stage).toBe("shimmer");
+  });
+
+  it("dims survive thumb eviction AND full eviction (dims cache)", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const mockInvoke = vi.mocked(invoke);
+    const deferreds = deferredInvoke(mockInvoke);
+
+    const Store = await getStoreClass();
+    const store = new Store({ thumbLruCap: 1 });
+    const paths = ["/dims/a.cr3", "/dims/b.cr3"];
+    store.reset([]);
+
+    store.requestThumbFor(paths[0]);
+    await flush();
+    deferreds[0].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+    expect(store.snapshot(paths[0]).dims).toEqual({ w: 800, h: 600 });
+
+    // Second thumb evicts the first (cap 1) — but its dims must survive, so
+    // the matte never flashes neutral-square on revisit.
+    store.requestThumbFor(paths[1]);
+    await flush();
+    deferreds[1].resolve(makeThumbnailBuf(600, 400));
+    await flush();
+    const snapA = store.snapshot(paths[0]);
+    expect(snapA.stage).toBe("shimmer");
+    expect(snapA.dims).toEqual({ w: 800, h: 600 });
+
+    // hardReset is the only eviction point for the dims cache.
+    store.hardReset();
+    expect(store.snapshot(paths[0]).dims).toBeUndefined();
+  });
+});
+
+// ── Phase 3: preview nav tier + zoom-full lane ──────────────────────────────
+describe("imageStore — Phase 3 zoom tier", () => {
+  /** Route the invoke mock by command so lane interleaving can't shift
+   *  deferred indices. Returns the read_fullres call args for assertions. */
+  function routeInvoke(opts?: { orientation?: number; rejectFullres?: string }) {
+    const { invoke: inv } = { invoke };
+    const fullresCalls: Record<string, unknown>[] = [];
+    vi.mocked(inv).mockImplementation((cmd: unknown, args?: unknown) => {
+      if (cmd === "read_preview")
+        return Promise.resolve(makePreviewBuf(opts?.orientation ?? 1));
+      if (cmd === "read_fullres") {
+        fullresCalls.push(args as Record<string, unknown>);
+        if (opts?.rejectFullres) return Promise.reject(opts.rejectFullres);
+        return Promise.resolve(makeFullresBuf());
+      }
+      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(800, 600));
+      return Promise.resolve(undefined);
+    });
+    return fullresCalls;
+  }
+
+  it("zoom request uses the hint + orientation from the preview header; dims swap for orientation 6", async () => {
+    const fullresCalls = routeInvoke({ orientation: 6 });
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/z/a.cr3";
+    store.reset([path]); // tracked → the landed zoom full sits inside fullKeep
+
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "full", { timeout: 2000 });
+    expect(store.snapshot(path).full).toBeUndefined(); // zoom not fetched yet
+
+    store.requestZoomFull(path);
+    await vi.waitUntil(() => store.snapshot(path).full !== undefined, { timeout: 2000 });
+
+    // The hint + orientation were echoed to read_fullres verbatim.
+    expect(fullresCalls[0]).toMatchObject({ fullOffset: 1000, fullLen: 5000, orientation: 6 });
+    // Native dims: sensor 6000×4000 swapped for the rotated orientation.
+    expect(store.snapshot(path).full!.dims).toEqual({ w: 4000, h: 6000 });
+    // The nav stage is untouched by the zoom tier.
+    expect(store.snapshot(path).stage).toBe("full");
+  });
+
+  it("zoom fulls evict outside the fullKeep window; pinFull protects them", async () => {
+    routeInvoke();
+    const Store = await getStoreClass();
+    const store = new Store();
+    const paths = Array.from({ length: 12 }, (_, i) => `/z/evict-${i}.cr3`);
+    store.reset(paths);
+
+    store.registerWantFull(paths[0]);
+    await vi.waitUntil(() => store.snapshot(paths[0]).stage === "full", { timeout: 2000 });
+    store.requestZoomFull(paths[0]);
+    await vi.waitUntil(() => store.snapshot(paths[0]).full !== undefined, { timeout: 2000 });
+    const url = store.snapshot(paths[0]).full!.url;
+
+    // Cursor far past the local fullKeep (3) → evicted + revoked.
+    store.setCursor(10);
+    expect(store.snapshot(paths[0]).full).toBeUndefined();
+    expect(liveUrls.has(url)).toBe(false);
+
+    // Re-fetch, pin, move away again → survives.
+    store.setCursor(0);
+    store.requestZoomFull(paths[0]);
+    await vi.waitUntil(() => store.snapshot(paths[0]).full !== undefined, { timeout: 2000 });
+    store.pinFull(paths[0]);
+    store.setCursor(10);
+    expect(store.snapshot(paths[0]).full).toBeDefined();
+    store.unpinFull(paths[0]);
+  });
+
+  it("a 'cancelled' zoom read drops quietly: no error, no cooldown, re-request works", async () => {
+    const fullresCalls = routeInvoke({ rejectFullres: "cancelled" });
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/z/c.cr3";
+    store.reset([path]);
+
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "full", { timeout: 2000 });
+    store.requestZoomFull(path);
+    await vi.waitUntil(() => fullresCalls.length === 1, { timeout: 2000 });
+    await flush();
+    const snap = store.snapshot(path);
+    expect(snap.full).toBeUndefined();
+    expect(snap.error).toBeUndefined(); // quiet drop, not an error state
+
+    // No backoff recorded → an immediate re-request fires a fresh read.
+    store.requestZoomFull(path);
+    await vi.waitUntil(() => fullresCalls.length === 2, { timeout: 2000 });
+  });
+
+  it("legacy backend: unknown read_preview flips to read_bundle once; zoom lane no-ops", async () => {
+    const cmds: unknown[] = [];
+    vi.mocked(invoke).mockImplementation((cmd: unknown) => {
+      cmds.push(cmd);
+      if (cmd === "read_preview")
+        return Promise.reject(new Error("Command read_preview not found"));
+      if (cmd === "read_bundle") return Promise.resolve(makeBundleBuf());
+      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(800, 600));
+      return Promise.resolve(undefined);
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/z/legacy.cr3";
+    store.reset([path]);
+
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "full", { timeout: 2000 });
+    expect(store.isLegacyNav()).toBe(true);
+
+    // The zoom tier doesn't exist on a legacy backend — request must no-op.
+    store.requestZoomFull(path);
+    await flush();
+    expect(cmds.filter((c) => c === "read_fullres")).toHaveLength(0);
   });
 });

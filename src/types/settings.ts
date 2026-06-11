@@ -116,41 +116,53 @@ export const normalizeRejectedSubfolder = (s: string): string => {
  * truth for every tunable so adding a third profile later is a single edit.
  */
 export type PerformanceProfile = {
-  /** Max simultaneous full-preview reads. */
-  bundleConcurrency: number;
+  /** Max simultaneous PREVIEW (navigation-tier, ~2 MiB) reads. */
+  previewConcurrency: number;
+  /** Max simultaneous zoom full-res reads — rare now (settle/zoom only);
+   *  2×10 MB concurrent NAS reads ≈ link saturation. */
+  fullConcurrency: number;
   /** Max simultaneous thumbnail reads. */
   thumbConcurrency: number;
-  /** Full-res ring buffer size, each side of the cursor (windowed eviction). */
+  /** Preview-blob retention, each side of the cursor (windowed eviction).
+   *  Previews are ~15× lighter than the old full blobs, so the window is wide. */
   previewKeep: number;
-  /** Cursor must rest this long before the full-res zoom layer warms. */
-  hiResSettleMs: number;
+  /** Zoom full-res blobs kept per side; pins (zoom/compare) override. */
+  fullKeep: number;
+  /** Cursor must rest this long before the zoom full-res WARMS (it now
+   *  FETCHES ~10 MB + a 32 MP decode — must only charge deliberately-parked
+   *  frames, never an arrow-through). */
+  fullSettleMs: number;
   /** Parallel-restore XMP sidecars during analyze (sent to the backend). */
   concurrentRestore: boolean;
   /** Max simultaneous background-fill thumbnail reads (book-order sweep). */
   backgroundFillConcurrency: number;
-  /** Full-res previews to prefetch on each side of the cursor once it settles,
-   *  so a single tap to a neighbour is already decoded (no on-demand wait). Kept
-   *  ≤ previewKeep so prefetched fulls aren't immediately evicted. 0 disables. */
-  fullPrefetchRadius: number;
+  /** Previews to prefetch on each side of the cursor once it settles. Kept
+   *  ≤ previewKeep so prefetched previews aren't immediately evicted.
+   *  (Direction bias 2:1 lands with the Phase 5 decode pool.) 0 disables. */
+  previewPrefetchRadius: number;
 };
 
 export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
   network: {
-    bundleConcurrency: 3,
+    previewConcurrency: 4,
+    fullConcurrency: 2,
     thumbConcurrency: 4,
-    previewKeep: 18,
-    hiResSettleMs: 150,
+    previewKeep: 60,
+    fullKeep: 2,
+    fullSettleMs: 400,
     concurrentRestore: false,
     backgroundFillConcurrency: 2,
-    fullPrefetchRadius: 3,
+    previewPrefetchRadius: 4,
   },
   local: {
-    bundleConcurrency: 12,
+    previewConcurrency: 12,
+    fullConcurrency: 2,
     thumbConcurrency: 16,
-    previewKeep: 30,
-    hiResSettleMs: 50,
+    previewKeep: 150,
+    fullKeep: 3,
+    fullSettleMs: 150,
     concurrentRestore: true,
     backgroundFillConcurrency: 8,
-    fullPrefetchRadius: 6,
+    previewPrefetchRadius: 8,
   },
 };

@@ -30,6 +30,7 @@ import { HelpOverlay } from "./components/HelpOverlay";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { WindowControls } from "./components/WindowControls";
+import { DevHud } from "./components/DevHud";
 
 import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
@@ -298,6 +299,17 @@ export default function App() {
   // static rectangles didn't add anything thirds + the image itself can't.
   const [compositionVisible, setCompositionVisible] = useState(false);
 
+  // Latched by the store when several paths reach terminal read-failure (NAS
+  // unmounted / sleep-wake): shows the non-blocking "folder unreachable" chip.
+  const [folderTrouble, setFolderTrouble] = useState(false);
+  // Dev HUD flag, read once at mount: localStorage["cull:devhud"]="1" + reload.
+  const [devHudOn] = useState(() => {
+    try {
+      return localStorage.getItem("cull:devhud") === "1";
+    } catch {
+      return false;
+    }
+  });
   // RGB histogram (path → rendered data URL), computed from the displayed JPEG
   // only while the EXIF overlay is open.
   const [histograms, setHistograms] = useState<Record<string, string>>({});
@@ -440,7 +452,7 @@ export default function App() {
   // sink — and tells it when the folder / session changes.
   // `?? local` is belt-and-suspenders: useSettings now validates storageMode, but
   // a future bug or out-of-range value must never make this undefined (the store
-  // would then read .previewKeep/.bundleConcurrency off undefined and crash).
+  // would then read .previewKeep/.previewConcurrency off undefined and crash).
   const profile = PERFORMANCE_PROFILES[settings.storageMode] ?? PERFORMANCE_PROFILES.local;
 
   // Storage-mode profile → store concurrency caps + keep-window sizes.
@@ -473,6 +485,73 @@ export default function App() {
   useEffect(() => {
     imageStore.setCursor(compareMode ? challengerIndex : currentIndex, scrubbing);
   }, [currentIndex, compareMode, challengerIndex, scrubbing]);
+
+  // Folder-trouble chip: the store latches once when several paths go
+  // terminal; any new path-set (re-open / append → reset) clears it.
+  useEffect(() => {
+    imageStore.setTroubleSink(() => setFolderTrouble(true));
+    return () => imageStore.setTroubleSink(undefined);
+  }, []);
+  useEffect(() => {
+    setFolderTrouble(false);
+  }, [images]);
+
+  // Pin the compare pair's fulls for the whole compare session. The cursor
+  // follows the CHALLENGER, so without the pin the champion — far from the
+  // cursor — would be evicted and re-fetched on every challenger step,
+  // thrashing back to a blurred load (P5).
+  useEffect(() => {
+    if (!compareMode) return undefined;
+    const champ = images[championIndex]?.path;
+    const chal = images[challengerIndex]?.path;
+    if (champ) imageStore.pinFull(champ);
+    if (chal && chal !== champ) imageStore.pinFull(chal);
+    return () => {
+      if (champ) imageStore.unpinFull(champ);
+      if (chal && chal !== champ) imageStore.unpinFull(chal);
+    };
+  }, [compareMode, championIndex, challengerIndex, images]);
+
+  // Pin the zoomed frame: a keep-window eviction mid-zoom would blur the
+  // very pixels the user is inspecting (P5). Engaging zoom also fetches the
+  // zoom-tier full immediately (Phase 3) — if the settle already warmed it
+  // this is a no-op; if not, the preview upscales until the full lands.
+  useEffect(() => {
+    if (!isZooming) return undefined;
+    const p = images[currentIndex]?.path;
+    if (!p) return undefined;
+    imageStore.pinFull(p);
+    imageStore.requestZoomFull(p);
+    return () => imageStore.unpinFull(p);
+  }, [isZooming, currentIndex, images]);
+
+  // Folder-trouble retry: re-run the scan as a reachability probe on every
+  // source folder, then re-arm the store's queues IN PLACE — same session,
+  // same cursor, no phase change — so a NAS reconnect self-heals without
+  // restarting the app. Still unreachable → the chip re-latches.
+  const retryUnreachableFolders = useCallback(async () => {
+    setFolderTrouble(false);
+    const seen = new Set<string>();
+    const folders: string[] = [];
+    for (const im of imagesRef.current) {
+      if (!seen.has(im.srcFolder)) {
+        seen.add(im.srcFolder);
+        folders.push(im.srcFolder);
+      }
+    }
+    for (const f of folders) {
+      try {
+        await invoke<string[]>("scan_folder", {
+          path: f,
+          ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
+        });
+      } catch {
+        setFolderTrouble(true);
+        return;
+      }
+    }
+    imageStore.rearm();
+  }, [settings.rejectedSubfolder]);
 
   // Grid viewport range → store background-fill prioritisation (visible cells
   // first). Wired to GridView's onViewportChange.
@@ -1030,24 +1109,29 @@ export default function App() {
 
   // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
   // every navigation / compare toggle so rapid arrow-through never pays the heavy
-  // native-resolution decode. Also resets when the thumbnail strip toggles: that
-  // resizes the stage, and the deferred layer (positioned from the measured rect)
+  // fetch + native-resolution decode. Since Phase 3 the settle FETCHES the full
+  // (the displayed nav tier is the 1620px preview): requestZoomFull pulls the
+  // ~10 MB mdat JPEG via the exact-range hint; the layer mounts when it lands
+  // (cur.full). fullSettleMs (400 net / 150 local) only charges deliberately-
+  // parked frames. Also resets when the thumbnail strip toggles: that resizes
+  // the stage, and the deferred layer (positioned from the measured rect)
   // would otherwise linger at the OLD size, overlapping the reflowed base image.
-  // Dropping it here lets it re-mount cleanly at the new size after the settle.
   useEffect(() => {
     setHiRes(false);
     if (hiResTimer.current) clearTimeout(hiResTimer.current);
     if (phase !== "culling" || compareMode || !curReady) return;
-    hiResTimer.current = window.setTimeout(
-      () => setHiRes(true),
-      profile.hiResSettleMs,
-    );
+    const path = images[currentIndex]?.path;
+    hiResTimer.current = window.setTimeout(() => {
+      setHiRes(true);
+      if (path) imageStore.requestZoomFull(path);
+    }, profile.fullSettleMs);
     return () => {
       if (hiResTimer.current) clearTimeout(hiResTimer.current);
     };
     // exifVisible included: toggling the info rail resizes the stage too, so the
     // hi-res layer must drop + re-derive at the new rect (same reason as thumbsVisible).
-  }, [phase, currentIndex, compareMode, curReady, thumbsVisible, exifVisible, profile.hiResSettleMs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, currentIndex, compareMode, curReady, thumbsVisible, exifVisible, profile.fullSettleMs]);
 
   // NOTE: preview/thumbnail eviction, the unmount blob-cleanup, and compare's
   // full-res scheduling are all owned by `imageStore` now — its windowed
@@ -1287,8 +1371,12 @@ export default function App() {
       const fullUrl = snap.url;
       requestedHistograms.current.add(path);
       const reqGen = imageStore.getGeneration();
+      // Pin the full while the probe decodes it — a keep-window eviction
+      // mid-decode would revoke the very blob URL the probe is reading.
+      imageStore.pinFull(path);
       const probe = new Image();
       probe.onload = () => {
+        imageStore.unpinFull(path);
         if (imageStore.getGeneration() !== reqGen) {
           requestedHistograms.current.delete(path);
           return; // session changed mid-decode — don't write a stale histogram
@@ -1346,7 +1434,10 @@ export default function App() {
         drawChannel(b, "rgba(59,130,246,0.65)");
         setHistograms((prev) => ({ ...prev, [path]: hc.toDataURL("image/png") }));
       };
-      probe.onerror = () => requestedHistograms.current.delete(path);
+      probe.onerror = () => {
+        imageStore.unpinFull(path);
+        requestedHistograms.current.delete(path);
+      };
       probe.src = fullUrl;
     },
     [],
@@ -2952,12 +3043,22 @@ export default function App() {
   // native-pixel-size element, so it rasterizes at full resolution. Reusing the
   // measured imgRect makes it pixel-aligned with the base by construction, so the
   // layer can appear/disappear without any visible shift.
+  // Native dims of the ZOOM raster (the 32 MP full) — since Phase 3 the
+  // displayed image is the 1620px preview, so its onLoad naturalSize must NOT
+  // feed the zoom math. Preference: the zoom tier's meta-derived dims → the
+  // thumb's sensor display dims (cur.dims is the full sensor size,
+  // orientation-adjusted — not 160×120) → measured naturalSize (legacy
+  // backend, where the displayed image IS the full).
+  const zoomNative =
+    cur.full?.dims ??
+    (cur.dims && cur.dims.w > 1 && cur.dims.h > 1 ? cur.dims : undefined) ??
+    naturalSize;
   // True-1:1 scale: rendering the displayed image at this factor lands one image
-  // pixel per screen pixel (when fit, displayed = naturalSize × fit-ratio; this
+  // pixel per screen pixel (when fit, displayed = native × fit-ratio; this
   // un-does the fit). Falls back to 5× if dimensions aren't known yet.
-  const oneToOneScale = naturalSize && imgRect ? naturalSize.w / imgRect.width : 5;
+  const oneToOneScale = zoomNative && imgRect ? zoomNative.w / imgRect.width : 5;
   const zoomZ = isZooming ? zoomLevel * oneToOneScale : 1;
-  const hiResScale = imgRect && naturalSize ? (imgRect.width / naturalSize.w) * zoomZ : 1;
+  const hiResScale = imgRect && zoomNative ? (imgRect.width / zoomNative.w) * zoomZ : 1;
   // The hi-res layer lives INSIDE the content-clip box (at 0,0 — the clip IS
   // exactly the displayed image area), so we only need the origin offset INSIDE
   // the image area. imgRect.width/height still report the displayed image's size.
@@ -3011,6 +3112,13 @@ export default function App() {
           <div className="cull-message">
             <div className="cull-message__title">preview failed</div>
             <pre className="cull-message__body">{cur.error}</pre>
+            <button
+              type="button"
+              className="cull-message__retry"
+              onClick={() => current && imageStore.retry(current.path)}
+            >
+              retry
+            </button>
           </div>
         ) : (
           // Photo-frame stays mounted across image transitions AND across
@@ -3072,8 +3180,14 @@ export default function App() {
                   transition: "transform 200ms ease-out, filter 200ms ease-out",
                   // object-fit: cover for the low-res — the THMB's ~4:3 shape would
                   // letterbox SMALLER than the 3:2 matte under contain; cover fills
-                  // it (the crop is invisible under the blur). contain for the full.
-                  objectFit: fullPainted ? "contain" : "cover",
+                  // it (the crop is invisible under the blur). contain for the full
+                  // — and ALSO while dims are genuinely unknown (neutral-square
+                  // matte): cover would stretch-crop the thumb into the square.
+                  objectFit: fullPainted
+                    ? "contain"
+                    : (cur.dims && cur.dims.w > 1 && cur.dims.h > 1) || naturalSize
+                      ? "cover"
+                      : "contain",
                   // Blur until the full has actually PAINTED (fullPainted), not
                   // merely when the stage flips to "full" — so the low-res never
                   // flashes sharp before the full appears. Transition fades focus in.
@@ -3103,25 +3217,27 @@ export default function App() {
                   <div className="cull-loading__spinner" />
                 </div>
               )}
-              {/* Deferred full-res layer: same blob, rendered at native pixel size and
-                  transformed to coincide with the base image, so the compositor holds a
-                  full-resolution raster and zoom is sharp immediately. Mounts only after
-                  the cursor settles (profile.hiResSettleMs — 50ms local / 150ms
-                  network); the base image stays beneath as the
-                  instant-nav fallback. Gated on the full preview being ready too —
-                  the thumbnail fallback isn't worth pinning a hi-res raster of. */}
-              {hiRes && !clippingVisible && imgRect && naturalSize && cur.stage === "full" && cur.url && (
+              {/* Deferred full-res layer: the ZOOM-TIER blob (fetched on settle
+                  via the exact-range hint since Phase 3 — the base image is the
+                  1620px preview now), rendered at native pixel size and
+                  transformed to coincide with the base image, so the compositor
+                  holds a full-resolution raster and zoom is sharp. Mounts only
+                  once the full has LANDED (cur.full) — until then the preview
+                  upscales under zoom and this layer fades in when ready. On a
+                  legacy backend the nav blob IS the full, so it is reused. */}
+              {hiRes && !clippingVisible && imgRect && zoomNative && cur.stage === "full" &&
+                (cur.full?.url ?? (imageStore.isLegacyNav() ? cur.url : undefined)) && (
                 <img
                   className="cull-image cull-image--hires"
-                  src={cur.url}
+                  src={cur.full?.url ?? cur.url}
                   alt=""
                   aria-hidden
                   style={{
                     position: "absolute",
                     left: 10,
                     top: 10,
-                    width: naturalSize.w,
-                    height: naturalSize.h,
+                    width: zoomNative.w,
+                    height: zoomNative.h,
                     maxWidth: "none",
                     maxHeight: "none",
                     transformOrigin: "0 0",
@@ -3434,6 +3550,7 @@ export default function App() {
   return (
     <main className="cull-app" data-thumbs-pos={settings.thumbsPosition}>
       {quitGuardOverlay}
+      {devHudOn && <DevHud />}
       <WindowControls onSettings={() => setSettingsOpen(true)} />
       {/* Top chrome / title bar — brand block + view name + save status pill.
           Top-right chrome (settings · minimize · close) is fixed by
@@ -3453,6 +3570,16 @@ export default function App() {
             savingCount={savingCount}
             onRetry={retryFailed}
           />
+          {folderTrouble && (
+            <button
+              type="button"
+              className="cull-trouble-chip"
+              onClick={() => void retryUnreachableFolders()}
+              title="several reads failed — the folder may be unreachable (NAS asleep / unmounted)"
+            >
+              folder unreachable · retry
+            </button>
+          )}
         </div>
       </header>
 

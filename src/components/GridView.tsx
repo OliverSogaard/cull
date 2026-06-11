@@ -244,7 +244,9 @@ const GridCell = memo(function GridCell({
           aren't invisible just because their thumb hasn't arrived. */}
       <div className="cull-grid__frame">
         {url ? (
-          <img className="cull-grid__img" src={url} alt="" />
+          // decoding="sync": tiny JPEG — paint with layout, no remount blank
+          // (see ThumbCell; same 1–2-frame re-shimmer fix).
+          <img className="cull-grid__img" src={url} alt="" decoding="sync" />
         ) : (
           <div
             className="cull-grid__placeholder"
