@@ -136,10 +136,22 @@ export type PerformanceProfile = {
   concurrentRestore: boolean;
   /** Max simultaneous background-fill thumbnail reads (book-order sweep). */
   backgroundFillConcurrency: number;
-  /** Previews to prefetch on each side of the cursor once it settles. Kept
-   *  ≤ previewKeep so prefetched previews aren't immediately evicted.
-   *  (Direction bias 2:1 lands with the Phase 5 decode pool.) 0 disables. */
-  previewPrefetchRadius: number;
+  /** Previews to prefetch AHEAD of the cursor (travel direction) once it
+   *  settles — direction-biased 2:1 against previewPrefetchBehind (Phase 5).
+   *  Kept ≤ previewKeep so prefetched previews aren't immediately evicted.
+   *  0 (both) disables prefetch. */
+  previewPrefetchAhead: number;
+  /** Previews to prefetch BEHIND the cursor (against travel direction). */
+  previewPrefetchBehind: number;
+  /** Decode-ahead pool cap (Phase 5): previews held DECODED via detached
+   *  image refs so neighbour taps snap and warm scrub is sharp. Decoded RGBA
+   *  is the real budget — ~7 MB per 1620px preview. NOTE: with the current
+   *  radii the band (1 + ahead + behind) sits BELOW this cap, so it is a
+   *  backstop that only binds if the radii grow past it. */
+  decodedPoolPreviews: number;
+  /** Decode-ahead pool cap for zoom-tier fulls (~130 MB decoded at 32.5 MP) —
+   *  keeps the settled frame's full raster warm across hi-res layer remounts. */
+  decodedPoolFulls: number;
 };
 
 export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
@@ -152,7 +164,10 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     fullSettleMs: 400,
     concurrentRestore: false,
     backgroundFillConcurrency: 2,
-    previewPrefetchRadius: 4,
+    previewPrefetchAhead: 4,
+    previewPrefetchBehind: 2,
+    decodedPoolPreviews: 9,
+    decodedPoolFulls: 1,
   },
   local: {
     previewConcurrency: 12,
@@ -163,6 +178,9 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     fullSettleMs: 150,
     concurrentRestore: true,
     backgroundFillConcurrency: 8,
-    previewPrefetchRadius: 8,
+    previewPrefetchAhead: 8,
+    previewPrefetchBehind: 4,
+    decodedPoolPreviews: 18,
+    decodedPoolFulls: 2,
   },
 };

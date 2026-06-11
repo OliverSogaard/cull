@@ -32,6 +32,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetchFullres, fetchNav, fetchThumbnail } from "../utils/bundle";
 import type { PerformanceProfile } from "../types/settings";
 import { PERFORMANCE_PROFILES } from "../types/settings";
+import { DecodePool } from "./decodePool";
+import type { PoolEntry, PoolImage } from "./decodePool";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
 import type { ImageDims } from "../utils/bundle";
 import type { ImageMetadata } from "../types";
@@ -77,6 +79,9 @@ const inCooldown = (te: TierError | undefined, now: number): boolean =>
 export type ImageStoreOptions = {
   /** Override the thumb LRU cap (test-only — exercise eviction with a small N). */
   thumbLruCap?: number;
+  /** Decode-ahead pool element factory (Phase 5) — tests inject fakes; the
+   *  default uses `new Image()` and disables the pool when no DOM exists. */
+  poolImageFactory?: () => PoolImage;
 };
 
 /** Which in-flight counter a thumb load services. */
@@ -152,6 +157,10 @@ export class ImageStore {
   /** True once a nav read was served by the legacy `read_bundle` (old
    *  backend): the nav blob IS the full, and there is no separate zoom tier. */
   private navLegacy = false;
+  /** Decode-ahead warm pool (Phase 5) — null when no DOM (unit tests). */
+  private readonly pool: DecodePool | null;
+  /** Last cursor travel direction: biases prefetch + the pool band 2:1. */
+  private lastDir: 1 | -1 = 1;
   // ── Dev HUD stats (cheap counters; read via debugStats) ─────────────────
   private navTimings: { name: string; ms: number; legacy: boolean }[] = [];
   /** Zoom-tier (full) fetch timings — on a fast local drive this is ≈ the raw
@@ -200,6 +209,10 @@ export class ImageStore {
 
   constructor(opts: ImageStoreOptions = {}) {
     this.thumbLruCap = opts.thumbLruCap ?? THUMB_LRU_CAP;
+    const poolFactory =
+      opts.poolImageFactory ??
+      (typeof Image !== "undefined" ? () => new Image() : undefined);
+    this.pool = poolFactory ? new DecodePool(poolFactory) : null;
   }
 
   // ── Public API ─────────────────────────────────────────────────────────
@@ -216,6 +229,9 @@ export class ImageStore {
     // next cursor move to free blobs that are suddenly outside the window.
     this.evictFullAround(this.cursor);
     this.evictZoomAround(this.cursor);
+    // Re-aim the pool under the new caps/radii (a network→local flip may
+    // shrink it; eviction above may have dropped blobs it referenced).
+    this.refreshPool();
     this.pumpThumbs();
     this.pumpFull();
     this.pumpBg();
@@ -281,6 +297,8 @@ export class ImageStore {
       if (state?.status === "ready") URL.revokeObjectURL(state.url);
     }
     this.zoomFulls.clear();
+    // The pool's decoded refs point at blob URLs this reset revokes.
+    this.pool?.clear();
     // old-gen thumb loads bailed without populating `thumbs`; if we keep
     // their paths in requestedThumb they'd be excluded from bg-fill forever
     // (permanent shimmer). Clear it so the new session can re-schedule them.
@@ -317,6 +335,7 @@ export class ImageStore {
     this.paths = newPaths;
     this.rebuildPathIndex();
     this.cursor = 0;
+    this.lastDir = 1; // stale travel direction must not aim the new session's first prefetch backwards
     this.gridStart = -1;
     this.gridEnd = -1;
 
@@ -379,6 +398,7 @@ export class ImageStore {
     this.nativeDims.clear();
     this.navTimings = [];
     this.zoomTimings = [];
+    this.pool?.clear();
     this.thumbErrors.clear();
     this.fullErrors.clear();
     this.terminalPaths.clear();
@@ -408,11 +428,14 @@ export class ImageStore {
     this.paths = [];
     this.pathIndex.clear();
     this.cursor = 0;
+    this.lastDir = 1; // stale travel direction must not aim the new session's first prefetch backwards
     this.gridStart = -1;
     this.gridEnd = -1;
   }
 
   setCursor(index: number, scrubbing = false): void {
+    if (index > this.cursor) this.lastDir = 1;
+    else if (index < this.cursor) this.lastDir = -1;
     this.cursor = index;
     // Eviction is cursor-driven — recenter both keep-windows on the cursor
     // even when no new load just landed (parking on a frame recenters).
@@ -432,11 +455,18 @@ export class ImageStore {
     if (!scrubbing) {
       this.prefetchFullsAround(index, this.bgStarted ? undefined : 1);
     }
+    // Re-aim the decode-ahead pool on EVERY cursor move — including mid-
+    // scrub, where re-prioritizing already-fetched previews (zero fetches)
+    // is exactly what keeps scrubbing across a warm region sharp.
+    this.refreshPool();
   }
 
   setGridRange(start: number, end: number): void {
     this.gridStart = start;
     this.gridEnd = end;
+    // Grid view never zooms — release the pool's decoded zoom fulls
+    // (~130 MB each); the previews stay warm for the return to loupe.
+    this.pool?.retain("full", [], 0);
     this.pumpBg();
   }
 
@@ -444,6 +474,7 @@ export class ImageStore {
   clearGridRange(): void {
     this.gridStart = -1;
     this.gridEnd = -1;
+    this.refreshPool(); // back in loupe — re-warm the band (incl. zoom fulls)
     this.pumpBg();
   }
 
@@ -935,6 +966,8 @@ export class ImageStore {
       // also recenter the keep-window on the CURSOR (not just-loaded), so
       // eviction tracks where the user is, not where the last load happened.
       this.evictFullAround(this.cursor);
+      // A preview that landed inside the warm band starts decoding now.
+      this.refreshPool();
     } catch (e) {
       if (this.generation !== gen) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -1071,6 +1104,8 @@ export class ImageStore {
       this.noteZoomTiming(path, performance.now() - t0);
       this.invalidate(path);
       this.evictZoomAround(this.cursor);
+      // Warm the landed full so zoom stays sharp across hi-res remounts.
+      this.refreshPool();
     } catch (e) {
       if (this.generation !== gen) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -1144,25 +1179,34 @@ export class ImageStore {
       this.requestedFull.delete(path);
     }
     this.invalidate(path);
+    // Every revoke site re-aims the pool MECHANICALLY (never by caller
+    // discipline) — a slot must not outlive its blob by more than this call.
+    this.refreshPool();
   }
 
   /**
-   * Prefetch nav-tier previews for frames within `previewPrefetchRadius` of the
-   * cursor (nearest-first), so a single tap to a neighbour shows the full
-   * immediately instead of waiting on an on-demand read. Enqueued at the BACK of
-   * the full queue, so the on-demand wantFull for the displayed frame (which
-   * unshifts to the front) always wins. Bounded by previewKeep eviction, so it
-   * never grows unbounded. Called only when the cursor is settled (see setCursor).
+   * Prefetch nav-tier previews around the cursor — DIRECTION-BIASED 2:1
+   * (Phase 5): `previewPrefetchAhead` frames in the travel direction,
+   * `previewPrefetchBehind` against it, nearest-first with ahead winning
+   * ties, so a single tap to the likely-next neighbour shows the preview
+   * immediately. Enqueued at the BACK of the full queue, so the on-demand
+   * wantFull for the displayed frame (which unshifts to the front) always
+   * wins. Bounded by previewKeep eviction, so it never grows unbounded.
+   * Called only when the cursor is settled (see setCursor).
    */
   private prefetchFullsAround(centerIndex: number, radiusOverride?: number): void {
     if (centerIndex < 0) return;
-    const radius = radiusOverride ?? this.profile.previewPrefetchRadius;
-    if (radius <= 0) return;
+    const ahead = radiusOverride ?? this.profile.previewPrefetchAhead;
+    const behind = radiusOverride ?? this.profile.previewPrefetchBehind;
+    if (ahead <= 0 && behind <= 0) return;
+    const dir = this.lastDir;
     const now = Date.now();
     let enqueued = false;
-    // Nearest-first so the most likely next tap (±1) decodes before ±radius.
-    for (let d = 1; d <= radius; d++) {
-      for (const idx of [centerIndex - d, centerIndex + d]) {
+    for (let d = 1; d <= Math.max(ahead, behind); d++) {
+      const candidates: number[] = [];
+      if (d <= ahead) candidates.push(centerIndex + d * dir);
+      if (d <= behind) candidates.push(centerIndex - d * dir);
+      for (const idx of candidates) {
         if (idx < 0 || idx >= this.paths.length) continue;
         const path = this.paths[idx];
         const prev = this.fulls.get(path);
@@ -1177,6 +1221,41 @@ export class ImageStore {
       }
     }
     if (enqueued) this.pumpFull();
+  }
+
+  /**
+   * Re-aim the decode-ahead pool (Phase 5) at the cursor's neighbourhood:
+   * already-fetched preview blobs in the direction-biased band decode on
+   * detached elements, so the presenter's `decode()` later resolves from the
+   * engine's decoded-image cache — neighbour taps snap inside the 48 ms
+   * window, warm-scrub steps win their one-frame race. The band's zoom fulls
+   * (usually just the settled frame's) stay warm across hi-res layer
+   * remounts. Advisory only (see decodePool.ts); zero fetches happen here;
+   * a null pool (no DOM — unit tests) is a no-op.
+   */
+  private refreshPool(): void {
+    if (!this.pool) return;
+    const c = this.cursor;
+    if (c < 0 || c >= this.paths.length) return;
+    const previews: PoolEntry[] = [];
+    const fulls: PoolEntry[] = [];
+    const collect = (idx: number) => {
+      if (idx < 0 || idx >= this.paths.length) return;
+      const path = this.paths[idx];
+      const f = this.fulls.get(path);
+      if (f?.status === "ready") previews.push({ path, url: f.url });
+      const z = this.zoomFulls.get(path);
+      if (z?.status === "ready") fulls.push({ path, url: z.url });
+    };
+    collect(c); // the displayed frame is always highest priority
+    const ahead = this.profile.previewPrefetchAhead;
+    const behind = this.profile.previewPrefetchBehind;
+    for (let d = 1; d <= Math.max(ahead, behind); d++) {
+      if (d <= ahead) collect(c + d * this.lastDir);
+      if (d <= behind) collect(c - d * this.lastDir);
+    }
+    this.pool.retain("preview", previews, this.profile.decodedPoolPreviews);
+    this.pool.retain("full", fulls, this.profile.decodedPoolFulls);
   }
 
   // ── Background-fill pump ────────────────────────────────────────────────
@@ -1243,6 +1322,7 @@ export class ImageStore {
   debugStats(): {
     navTimings: { name: string; ms: number; legacy: boolean }[];
     zoomTimings: { name: string; ms: number }[];
+    pool: { previews: number; fulls: number };
     navMsAvg: number;
     lanes: { preview: string; zoom: string; thumb: string; bg: string };
     caches: { previews: number; zoomFulls: number; thumbs: number; dims: number };
@@ -1264,6 +1344,7 @@ export class ImageStore {
     return {
       navTimings: this.navTimings.slice(0, 8),
       zoomTimings: this.zoomTimings.slice(0, 5),
+      pool: this.pool?.counts() ?? { previews: 0, fulls: 0 },
       navMsAvg,
       lanes: {
         preview: `${this.fullInFlight}/${this.profile.previewConcurrency} q${this.fullQueue.length}`,

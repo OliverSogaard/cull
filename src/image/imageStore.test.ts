@@ -970,3 +970,94 @@ describe("imageStore — Phase 3 zoom tier", () => {
     expect(cmds.filter((c) => c === "read_fullres")).toHaveLength(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Phase 5 — direction-biased prefetch + decode pool", () => {
+  it("prefetches ahead:behind = 4:2 in the travel direction (network profile)", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const mockInvoke = vi.mocked(invoke);
+    const previewsRequested: string[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_preview") {
+        previewsRequested.push((args as { path: string }).path);
+        return Promise.resolve(makePreviewBuf());
+      }
+      if (cmd === "extract_thumbnail")
+        return Promise.resolve(makeThumbnailBuf(60, 40));
+      return Promise.resolve(new ArrayBuffer(0)); // begin_session / set_io_profile
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    const paths = Array.from({ length: 30 }, (_, i) => `/p/${i}.cr3`);
+    store.reset(paths);
+
+    // First settle: bgStarted=false → ±1 only; those landing flip bgStarted.
+    store.setCursor(10);
+    // First-tap-warm pin (Phase 1/3 contract, re-implemented by Phase 5's
+    // ahead/behind split): pre-first-land prefetch is EXACTLY ±1, ahead first.
+    expect(previewsRequested).toEqual(["/p/11.cr3", "/p/9.cr3"]);
+    await vi.waitUntil(() => store.snapshot("/p/9.cr3").stage === "full");
+    await flush();
+    previewsRequested.length = 0;
+
+    // The first full landing already ran a full-radius prefetch from cursor
+    // 10 (dir → right): ahead 11..14 + behind 9,8 are ready. Stepping RIGHT
+    // to 11 therefore requests exactly the NEW ahead edge (15) and the new
+    // behind frame (10) — nearest-ready frames are skipped, nothing beyond
+    // ahead=4 / behind=2 is touched.
+    store.setCursor(11);
+    await flush();
+    expect(new Set(previewsRequested)).toEqual(
+      new Set(["/p/15.cr3", "/p/10.cr3"]),
+    );
+
+    previewsRequested.length = 0;
+    // Jump LEFT to 5: travel direction flips → ahead = 4,3,2,1; behind = 6,7.
+    // ORDERED assertion: nearest-first with ahead winning ties is a stated
+    // plan semantic (it decides who gets the 4 network lanes first).
+    store.setCursor(5);
+    await flush();
+    expect(previewsRequested).toEqual([
+      "/p/4.cr3",
+      "/p/6.cr3",
+      "/p/3.cr3",
+      "/p/7.cr3",
+      "/p/2.cr3",
+      "/p/1.cr3",
+    ]);
+  });
+
+  it("the decode pool warms ready previews around the cursor and clears on reset", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
+      if (cmd === "extract_thumbnail")
+        return Promise.resolve(makeThumbnailBuf(60, 40));
+      return Promise.resolve(new ArrayBuffer(0));
+    });
+    const poolImages: { src: string }[] = [];
+    const Store = await getStoreClass();
+    const store = new Store({
+      poolImageFactory: () => {
+        const img = { src: "", decode: () => Promise.resolve() };
+        poolImages.push(img);
+        return img;
+      },
+    });
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    const paths = Array.from({ length: 10 }, (_, i) => `/p/${i}.cr3`);
+    store.reset(paths);
+
+    store.setCursor(4); // ±1 prefetch fetches 3 and 5
+    await vi.waitUntil(() => store.snapshot("/p/5.cr3").stage === "full");
+    await flush();
+    // The landed previews inside the band are being held decoded.
+    expect(poolImages.some((i) => i.src.startsWith("blob:"))).toBe(true);
+
+    // A session reset revokes the blobs — the pool must release every ref.
+    store.reset(paths.slice(0, 2));
+    expect(poolImages.every((i) => i.src === "")).toBe(true);
+  });
+});

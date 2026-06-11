@@ -27,7 +27,8 @@ export function DevHud() {
       </div>
       <div className="cull-devhud__row">
         cache&nbsp; prvw {stats.caches.previews} · zoom {stats.caches.zoomFulls} · thumb{" "}
-        {stats.caches.thumbs} · dims {stats.caches.dims}
+        {stats.caches.thumbs} · dims {stats.caches.dims} · pool {stats.pool.previews}+
+        {stats.pool.fulls}
       </div>
       <div className="cull-devhud__row">
         loads n{stats.counts.navLoads} z{stats.counts.zoomLoads} t{stats.counts.thumbLoads} · evict p
