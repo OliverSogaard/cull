@@ -27,8 +27,10 @@ export function CompareView({
   championIndex,
   challengerIndex,
   metadata,
-  clipMasks,
-  peakingMasks,
+  championClipMask,
+  challengerClipMask,
+  championPeakingMask,
+  challengerPeakingMask,
   ratings,
   exifVisible,
   clippingVisible,
@@ -44,8 +46,12 @@ export function CompareView({
   championIndex: number;
   challengerIndex: number;
   metadata: Record<string, ImageMetadata>;
-  clipMasks: Record<string, string>;
-  peakingMasks: Record<string, string>;
+  /** Resolved per-pane mask data URLs (App reads them from overlayService —
+   *  Phase 6 — so this component stays dumb about the overlay cache). */
+  championClipMask: string | undefined;
+  challengerClipMask: string | undefined;
+  championPeakingMask: string | undefined;
+  challengerPeakingMask: string | undefined;
   ratings: Record<number, Rating>;
   exifVisible: boolean;
   clippingVisible: boolean;
@@ -76,9 +82,9 @@ export function CompareView({
             originX={originX}
             originY={originY}
             clippingVisible={clippingVisible}
-            clipMaskUrl={clipMasks[champion.path]}
+            clipMaskUrl={championClipMask}
             peakingVisible={peakingVisible}
-            peakingMaskUrl={peakingMasks[champion.path]}
+            peakingMaskUrl={championPeakingMask}
             compositionVisible={compositionVisible}
             suppressRating={!!(feedback && feedback.imageId === champion.id)}
             flashRating={
@@ -95,9 +101,9 @@ export function CompareView({
             originX={originX}
             originY={originY}
             clippingVisible={clippingVisible}
-            clipMaskUrl={clipMasks[challenger.path]}
+            clipMaskUrl={challengerClipMask}
             peakingVisible={peakingVisible}
-            peakingMaskUrl={peakingMasks[challenger.path]}
+            peakingMaskUrl={challengerPeakingMask}
             compositionVisible={compositionVisible}
             suppressRating={!!(feedback && feedback.imageId === challenger.id)}
             flashRating={

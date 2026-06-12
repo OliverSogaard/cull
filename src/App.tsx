@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -38,8 +38,7 @@ import { useSettings } from "./hooks/useSettings";
 
 import { PERFORMANCE_PROFILES, normalizeRejectedSubfolder } from "./types/settings";
 import { imageStore } from "./image/imageStore";
-import { runMaskScan, type MaskKind } from "./overlays/maskScans";
-import { maskWorkerAvailable, requestMaskOffThread } from "./overlays/maskClient";
+import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
@@ -73,12 +72,6 @@ const NAV_REPEAT_MS = 33;
 // auto-repeat kicks in — so a quick tap moves exactly one image, while a
 // sustained hold pauses briefly then ramps into the ~30/s repeat above.
 const NAV_HOLD_DELAY_MS = 280;
-
-// How many frames either side of the cursor keep their computed analysis-overlay
-// (clip / peak / histogram) PNG cached. Beyond this the cache is pruned, so
-// leaving an overlay on across a long shoot doesn't accumulate one PNG per
-// visited frame.
-const OVERLAY_CACHE_KEEP = 8;
 
 /** Wait for the layers' 200ms unzoom transform-transition to finish before
  *  re-measuring — a mid-animation getBoundingClientRect returns a scaled box. */
@@ -285,15 +278,20 @@ export default function App() {
   const hiResTimer = useRef<number | null>(null);
 
   const [clippingVisible, setClippingVisible] = useState(false);
-  const [clipMasks, setClipMasks] = useState<Record<string, string>>({});
-  const requestedClipMasks = useRef<Set<string>>(new Set());
 
   // Focus peaking (P) — high-contrast edge overlay highlighting in-focus regions.
-  // Computed from the preview JPEG (downscaled to a working size) and cached per
-  // path, just like the clipping mask.
   const [peakingVisible, setPeakingVisible] = useState(false);
-  const [peakingMasks, setPeakingMasks] = useState<Record<string, string>>({});
-  const requestedPeaks = useRef<Set<string>>(new Set());
+
+  // The overlay pixels themselves (clip/peak masks + the EXIF histogram) live
+  // in overlayService (Phase 6) — per-kind bounded LRUs of data URLs computed
+  // off-thread from the nav-tier preview. This one version subscription
+  // re-renders every consumer (loupe overlays, compare panes, EXIF rail) when
+  // a result lands or a kind is cleared. The version is ALSO a dep of the
+  // ensure effects below: LRU recency is refreshed by ensure(), but commits
+  // land async — without re-ensuring per landing, a compare challenger tap-
+  // burst (≥16 same-kind landings after the champion's last touch) could
+  // evict the on-screen champion's mask out from under its pane.
+  const overlayVersion = useSyncExternalStore(overlayService.subscribe, overlayService.getVersion);
 
   // Composition overlay for the loupe — thirds grid (O). Hidden when zoomed
   // (it's for evaluating the whole-frame look). Aspect-crop overlay was removed:
@@ -313,10 +311,6 @@ export default function App() {
   });
   // LoupeStage flips its double-buffer → re-measure the (new) front layer.
   const bumpMeasureNonce = useCallback(() => setMeasureNonce((n) => n + 1), []);
-  // RGB histogram (path → rendered data URL), computed from the displayed JPEG
-  // only while the EXIF overlay is open.
-  const [histograms, setHistograms] = useState<Record<string, string>>({});
-  const requestedHistograms = useRef<Set<string>>(new Set());
 
   const pan = useCallback((dx: number, dy: number) => {
     setPanOffset((o) => ({
@@ -850,6 +844,9 @@ export default function App() {
       // full-res blobs, keep thumbs, and kick off background thumb fill in
       // cursor-outward / grid-viewport order. Same array we just set.
       imageStore.reset(sorted.map((im) => im.path));
+      // Same-session folder switch: drop overlays computed for the previous
+      // set (resetSession isn't on this path; the store generation just moved).
+      overlayService.reset();
 
       // Refresh the home-screen recents entry with the restored rated counts
       // straight off the sidecar pass — so reopening home shows "327 / 372"
@@ -944,17 +941,13 @@ export default function App() {
     // entry, not replace this one's.
     sessionRecentsKeyRef.current = null;
     setClippingVisible(false);
-    setClipMasks({});
-    requestedClipMasks.current.clear();
-    // Mirror the clip handling for the other overlay families — these were leaking
-    // their PNG caches + requested Sets across sessions.
     setPeakingVisible(false);
-    setPeakingMasks({});
-    requestedPeaks.current.clear();
     setCompositionVisible(false);
-    setHistograms({});
-    requestedHistograms.current.clear();
     setExifVisible(false);
+    // One call drops every overlay cache + request-set (the per-family clears
+    // that used to live here); in-flight probes die on the generation bump
+    // from hardReset() above.
+    overlayService.reset();
     resetZoom();
     setFeedback(null);
     setPhase("start");
@@ -1211,306 +1204,85 @@ export default function App() {
     // tear down + rebuild the observer when the displayed frame is unchanged.
   }, [phase, images.length, currentIndex, measureNonce, scrubbing, isZooming, cur.stage, cur.dims]);
 
-  // Compute a clipping mask PNG for one image's preview (cached by path). Scans
-  // pixels for true clipping and paints diagonal stripes (red 45° highlights /
-  // blue −45° shadows). Detection uses ALL THREE channels (blown → white /
-  // crushed → black): "any channel" flags saturated colours falsely (a yellow
-  // flower ≈ R255 G210 B0 trips the blue=0 test). Small tolerance (250/5) since
-  // JPEG quantization rarely lands exactly on 255/0. Checks the preview, not RAW.
-  // Shared generator for the clip + peak masks — they differ ONLY in the
-  // per-pixel scan (runMaskScan dispatches by kind). Downscales the full preview
-  // to a bounded working size (~1600px): the mask is a diagnostic overlay CSS
-  // stretches to the image rect, so scanning + PNG-encoding the full 32 MP preview
-  // would hang the toggle for ~1s for no visible gain. Bails if the session
-  // generation changes while the probe decodes, so a folder switch can't write a
-  // stale mask into the new set.
-  const buildMask = useCallback(
-    (
-      path: string,
-      kind: MaskKind,
-      requestedRef: { current: Set<string> },
-      setMasks: (updater: (prev: Record<string, string>) => Record<string, string>) => void,
-    ) => {
-      if (requestedRef.current.has(path)) return;
-      const snap = imageStore.snapshot(path);
-      if (snap.stage !== "full" || !snap.url) return; // retried once the full lands
-      requestedRef.current.add(path);
-      const reqGen = imageStore.getGeneration();
-      const MAX = 1600;
-      const probe = new Image();
-      // Commit a finished mask, unless the session changed between decode start
-      // and encode completion (the off-thread path adds a round-trip).
-      const commit = (url: string) => {
-        if (imageStore.getGeneration() !== reqGen) return;
-        setMasks((prev) => ({ ...prev, [path]: url }));
-      };
-      // Main-thread path — also the fallback when the worker is unavailable/errors.
-      const inline = () => {
-        const scale = Math.min(1, MAX / Math.max(probe.naturalWidth, probe.naturalHeight));
-        const w = Math.max(1, Math.round(probe.naturalWidth * scale));
-        const h = Math.max(1, Math.round(probe.naturalHeight * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        if (!ctx) {
-          requestedRef.current.delete(path);
-          return;
-        }
-        ctx.drawImage(probe, 0, 0, w, h);
-        const srcData = ctx.getImageData(0, 0, w, h).data;
-        const mask = ctx.createImageData(w, h);
-        runMaskScan(kind, srcData, mask.data, w, h);
-        ctx.putImageData(mask, 0, 0);
-        commit(canvas.toDataURL("image/png"));
-      };
-      probe.onload = () => {
-        if (imageStore.getGeneration() !== reqGen) {
-          requestedRef.current.delete(path);
-          return; // session changed mid-decode — don't write a stale mask
-        }
-        // Prefer the OffscreenCanvas worker (scan + PNG encode off the UI thread).
-        // ANY failure (unsupported runtime / decode / worker crash) falls back to
-        // the inline path, so behaviour never regresses below the main-thread one.
-        if (maskWorkerAvailable()) {
-          createImageBitmap(probe).then(
-            (bitmap) => requestMaskOffThread(kind, bitmap, MAX).then(commit, inline),
-            inline,
-          );
-        } else {
-          inline();
-        }
-      };
-      probe.onerror = () => requestedRef.current.delete(path);
-      probe.src = snap.url;
-    },
-    [],
-  );
-
-  const loadClipMask = useCallback(
-    (path: string) => buildMask(path, "clip", requestedClipMasks, setClipMasks),
-    [buildMask],
-  );
-
-  // Ensure masks exist for the on-screen image(s) when clipping is on; clear when
-  // off (clipping does not persist).
+  // Ensure clip masks exist for the on-screen image(s) while clipping is on;
+  // toggling off drops the kind's cache + request-set in the service (clipping
+  // does not persist). Skipped mid-scrub: the overlays are hidden then, and
+  // computing a mask per flown-past warm frame would churn the LRU + worker
+  // for nothing — the release re-fires this via the scrubbing dep. The service
+  // bails per path until its PREVIEW lands; the .stage deps re-fire it then.
+  // (Mask/histogram pixel work itself lives in overlayService/overlayCompute —
+  // worker-first with an inline fallback, generation-guarded. Phase 6.)
   useEffect(() => {
     if (!clippingVisible) {
-      // Idempotent reset: while clipping is off this effect still re-runs on every
-      // scrub frame (currentIndex/cur.* deps), so a fresh {} would force a render
-      // each frame. Keep the same ref when already empty so React bails out.
-      if (requestedClipMasks.current.size > 0) requestedClipMasks.current.clear();
-      setClipMasks((prev) => (Object.keys(prev).length ? {} : prev));
+      overlayService.clearKind("clip");
       return;
     }
+    if (scrubbing) return;
     if (compareMode) {
-      if (images[championIndex]) loadClipMask(images[championIndex].path);
-      if (images[challengerIndex]) loadClipMask(images[challengerIndex].path);
+      if (images[championIndex]) overlayService.ensure("clip", images[championIndex].path);
+      if (images[challengerIndex]) overlayService.ensure("clip", images[challengerIndex].path);
     } else if (images[currentIndex]) {
-      loadClipMask(images[currentIndex].path);
+      overlayService.ensure("clip", images[currentIndex].path);
     }
   }, [
     clippingVisible,
+    scrubbing,
     compareMode,
     championIndex,
     challengerIndex,
     currentIndex,
     images,
-    // .stage drives the retry-once-the-full-lands; the loader reads the url
-    // itself, so the .url deps were just redundant re-fires (thumb-url→full-url).
-    // cur.* is the LOUPE subscription, champShot/chalShot the COMPARE pair; the
-    // off-mode subscription is pinned to "" (stable), so its dep is inert.
+    // .stage drives the compute-once-the-preview-lands retry; cur.* is the
+    // LOUPE subscription, champShot/chalShot the COMPARE pair; the off-mode
+    // subscription is pinned to "" (stable), so its dep is inert.
     cur.stage,
     champShot.stage,
     chalShot.stage,
-    loadClipMask,
+    // every async commit re-runs this so ensure() re-touches the on-screen
+    // paths' LRU recency — see the subscription comment above.
+    overlayVersion,
   ]);
-
-  // Focus peaking: paint yellow on pixels whose luminance gradient is strong (in-
-  // focus edges), transparent elsewhere. Same mechanics as the clipping mask —
-  // computed off the downscaled preview, cached per path. Threshold tuned for
-  // typical JPEG noise floors; bump it if peaking lights up smooth regions.
-  const loadPeakingMask = useCallback(
-    (path: string) => buildMask(path, "peak", requestedPeaks, setPeakingMasks),
-    [buildMask],
-  );
 
   // Mirror of the clipping effect: ensure peaking masks exist while P is on.
   useEffect(() => {
     if (!peakingVisible) {
-      // Idempotent reset (see the clipping effect) — avoid a per-scrub-frame render.
-      if (requestedPeaks.current.size > 0) requestedPeaks.current.clear();
-      setPeakingMasks((prev) => (Object.keys(prev).length ? {} : prev));
+      overlayService.clearKind("peak");
       return;
     }
+    if (scrubbing) return;
     if (compareMode) {
-      if (images[championIndex]) loadPeakingMask(images[championIndex].path);
-      if (images[challengerIndex]) loadPeakingMask(images[challengerIndex].path);
+      if (images[championIndex]) overlayService.ensure("peak", images[championIndex].path);
+      if (images[challengerIndex]) overlayService.ensure("peak", images[challengerIndex].path);
     } else if (images[currentIndex]) {
-      loadPeakingMask(images[currentIndex].path);
+      overlayService.ensure("peak", images[currentIndex].path);
     }
   }, [
     peakingVisible,
+    scrubbing,
     compareMode,
     championIndex,
     challengerIndex,
     currentIndex,
     images,
-    // .stage only (see the clipping effect) — .url deps were redundant re-fires.
     cur.stage,
     champShot.stage,
     chalShot.stage,
-    loadPeakingMask,
+    overlayVersion, // re-touch on-screen LRU recency per landing (see above)
   ]);
 
-  // Compute an RGB histogram PNG for one image (cached by path). Sourced from the
-  // FULL-RES preview (the bare sensor JPEG, no letterbox) — NOT the embedded THMB,
-  // which Canon pads into a fixed 4:3 frame with pure-black bars that dumped a
-  // false spike into the darks (0) bin. We wait for the full to be ready; it's the
-  // on-screen loupe frame so it loads anyway, and the effect re-fires when the
-  // stage flips to "full". NOTE: coarse distribution, not pixel-level — use
-  // clipping (h) for that. Channels draw additively; the 0/255 bins set the scale.
-  const loadHistogram = useCallback(
-    (path: string) => {
-      if (requestedHistograms.current.has(path)) return;
-      const snap = imageStore.snapshot(path);
-      // Guard BEFORE marking requested, so an early thumb-stage call doesn't
-      // freeze an uncomputed (or letterboxed) entry that the guard then blocks.
-      if (snap.stage !== "full" || !snap.url) return;
-      const fullUrl = snap.url;
-      requestedHistograms.current.add(path);
-      const reqGen = imageStore.getGeneration();
-      // Pin the full while the probe decodes it — a keep-window eviction
-      // mid-decode would revoke the very blob URL the probe is reading.
-      imageStore.pinFull(path);
-      const probe = new Image();
-      probe.onload = () => {
-        imageStore.unpinFull(path);
-        if (imageStore.getGeneration() !== reqGen) {
-          requestedHistograms.current.delete(path);
-          return; // session changed mid-decode — don't write a stale histogram
-        }
-        const SAMPLE = 256;
-        const scale = Math.min(1, SAMPLE / Math.max(probe.naturalWidth, probe.naturalHeight));
-        const w = Math.max(1, Math.round(probe.naturalWidth * scale));
-        const h = Math.max(1, Math.round(probe.naturalHeight * scale));
-        const sc = document.createElement("canvas");
-        sc.width = w;
-        sc.height = h;
-        const sctx = sc.getContext("2d", { willReadFrequently: true });
-        if (!sctx) {
-          requestedHistograms.current.delete(path);
-          return;
-        }
-        sctx.drawImage(probe, 0, 0, w, h);
-        const data = sctx.getImageData(0, 0, w, h).data;
-        const r = new Uint32Array(256);
-        const g = new Uint32Array(256);
-        const b = new Uint32Array(256);
-        for (let i = 0; i < data.length; i += 4) {
-          r[data[i]]++;
-          g[data[i + 1]]++;
-          b[data[i + 2]]++;
-        }
-        let max = 1; // include the 0/255 bins so a clipping spike doesn't rescale away
-        for (let v = 0; v < 256; v++) max = Math.max(max, r[v], g[v], b[v]);
-
-        const HW = 256;
-        const HH = 64;
-        const hc = document.createElement("canvas");
-        hc.width = HW;
-        hc.height = HH;
-        const hctx = hc.getContext("2d");
-        if (!hctx) {
-          requestedHistograms.current.delete(path);
-          return;
-        }
-        hctx.globalCompositeOperation = "lighter"; // additive: R+G+B overlap → white
-        const drawChannel = (bins: Uint32Array, color: string) => {
-          hctx.fillStyle = color;
-          hctx.beginPath();
-          hctx.moveTo(0, HH);
-          for (let v = 0; v < 256; v++) {
-            const y = HH - Math.min(1, bins[v] / max) * HH;
-            hctx.lineTo((v / 255) * HW, y);
-          }
-          hctx.lineTo(HW, HH);
-          hctx.closePath();
-          hctx.fill();
-        };
-        drawChannel(r, "rgba(239,68,68,0.65)");
-        drawChannel(g, "rgba(16,185,129,0.65)");
-        drawChannel(b, "rgba(59,130,246,0.65)");
-        setHistograms((prev) => ({ ...prev, [path]: hc.toDataURL("image/png") }));
-      };
-      probe.onerror = () => {
-        imageStore.unpinFull(path);
-        requestedHistograms.current.delete(path);
-      };
-      probe.src = fullUrl;
-    },
-    [],
-  );
-
-  // Compute the RGB histogram for the on-screen image while the EXIF overlay is
-  // open; drop the cache when it closes. Single view ONLY — the compare rail
-  // renders no histogram, so computing one per champion/challenger was dead work.
+  // RGB histogram for the on-screen image while the EXIF overlay is open; the
+  // kind drops when it closes. Single view ONLY — the compare rail renders no
+  // histogram, so computing one per champion/challenger would be dead work;
+  // scrub skipped like the masks (the settle re-fires via the scrubbing dep).
   useEffect(() => {
     if (!exifVisible) {
-      // Idempotent reset (see the clipping effect) — avoid a per-scrub-frame render.
-      if (requestedHistograms.current.size > 0) requestedHistograms.current.clear();
-      setHistograms((prev) => (Object.keys(prev).length ? {} : prev));
+      overlayService.clearKind("histogram");
       return;
     }
-    // The histogram is thumb-sourced, so (unlike clip/peak, which bail on
-    // stage!=="full") it would recompute for every scrubbed-past frame. Skip
-    // during scrub; the settle re-fires it via the scrubbing dep. Compare has no
-    // histogram UI, so skip it there entirely.
     if (scrubbing || compareMode) return;
-    const img = images[currentIndex];
-    if (img) loadHistogram(img.path);
-  }, [exifVisible, scrubbing, compareMode, currentIndex, images, cur.stage, loadHistogram]);
-
-  // Bound the per-path overlay caches to a window around the cursor so leaving an
-  // overlay on while arrowing through a long shoot doesn't accumulate a PNG per
-  // visited frame. Skipped during scrub (overlays are hidden then). The requested
-  // Set is pruned in lock-step, so a revisited frame recomputes its mask cleanly.
-  useEffect(() => {
-    if (scrubbing) return;
-    if (
-      requestedClipMasks.current.size === 0 &&
-      requestedPeaks.current.size === 0 &&
-      requestedHistograms.current.size === 0
-    )
-      return;
-    const near = new Set<string>();
-    const add = (i: number) => {
-      const p = images[i]?.path;
-      if (p) near.add(p);
-    };
-    for (let d = -OVERLAY_CACHE_KEEP; d <= OVERLAY_CACHE_KEEP; d++) add(currentIndex + d);
-    if (compareMode) {
-      add(championIndex);
-      add(challengerIndex);
-    }
-    const pruneSet = (req: Set<string>) =>
-      req.forEach((k) => {
-        if (!near.has(k)) req.delete(k);
-      });
-    pruneSet(requestedClipMasks.current);
-    pruneSet(requestedPeaks.current);
-    pruneSet(requestedHistograms.current);
-    const pruneRec = (rec: Record<string, string>) => {
-      const keys = Object.keys(rec);
-      if (keys.length === 0 || keys.every((k) => near.has(k))) return rec; // stable ref
-      const next: Record<string, string> = {};
-      for (const k of keys) if (near.has(k)) next[k] = rec[k];
-      return next;
-    };
-    setClipMasks(pruneRec);
-    setPeakingMasks(pruneRec);
-    setHistograms(pruneRec);
-  }, [currentIndex, images, scrubbing, compareMode, championIndex, challengerIndex]);
+    if (images[currentIndex]) overlayService.ensure("histogram", images[currentIndex].path);
+    // overlayVersion: re-touch on-screen LRU recency per landing (see above).
+  }, [exifVisible, scrubbing, compareMode, currentIndex, images, cur.stage, overlayVersion]);
 
   const advance = useCallback(
     (dir: 1 | -1, step = 1): boolean => {
@@ -3102,6 +2874,16 @@ export default function App() {
     </div>
   );
 
+  // Analysis-overlay pixels for the displayed frame, read from the service's
+  // bounded LRUs (the useSyncExternalStore subscription above re-renders this
+  // component when one lands, so plain reads here stay fresh).
+  const currentClipMask =
+    clippingVisible && current ? overlayService.get("clip", current.path) : undefined;
+  const currentPeakMask =
+    peakingVisible && current ? overlayService.get("peak", current.path) : undefined;
+  const currentHistogram =
+    exifVisible && current ? overlayService.get("histogram", current.path) : undefined;
+
   const singleModeBody = (
       <div className="cull-stage">
         <div className="cull-loupe-body">
@@ -3178,10 +2960,10 @@ export default function App() {
                   photo-frame's intrinsic size (which is what was causing
                   the image to visibly resize when clipping toggled).
                   Inline style is reserved for the zoom transform. */}
-              {clippingVisible && !scrubbing && current && clipMasks[current.path] && (
+              {!scrubbing && currentClipMask && (
                 <img
                   className="cull-clip-overlay"
-                  src={clipMasks[current.path]}
+                  src={currentClipMask}
                   alt=""
                   style={{
                     transform: isZooming ? `scale(${zoomZ})` : undefined,
@@ -3190,10 +2972,10 @@ export default function App() {
                   }}
                 />
               )}
-              {peakingVisible && !scrubbing && current && peakingMasks[current.path] && (
+              {!scrubbing && currentPeakMask && (
                 <img
                   className="cull-peaking-overlay"
-                  src={peakingMasks[current.path]}
+                  src={currentPeakMask}
                   alt=""
                   style={{
                     transform: isZooming ? `scale(${zoomZ})` : undefined,
@@ -3229,7 +3011,7 @@ export default function App() {
         {exifVisible && current && (
           <ExifRail
             metadata={currentMeta}
-            histogramUrl={histograms[current.path]}
+            histogramUrl={currentHistogram}
             cullRating={currentRating}
           />
         )}
@@ -3510,8 +3292,18 @@ export default function App() {
             championIndex={championIndex}
             challengerIndex={challengerIndex}
             metadata={metadata}
-            clipMasks={clipMasks}
-            peakingMasks={peakingMasks}
+            championClipMask={
+              images[championIndex] && overlayService.get("clip", images[championIndex].path)
+            }
+            challengerClipMask={
+              images[challengerIndex] && overlayService.get("clip", images[challengerIndex].path)
+            }
+            championPeakingMask={
+              images[championIndex] && overlayService.get("peak", images[championIndex].path)
+            }
+            challengerPeakingMask={
+              images[challengerIndex] && overlayService.get("peak", images[challengerIndex].path)
+            }
             ratings={ratings}
             exifVisible={exifVisible}
             clippingVisible={clippingVisible}
