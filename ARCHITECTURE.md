@@ -37,7 +37,7 @@ view → useImage(path, { wantFull })
 imageStore (priority queues, bounded lanes: preview / zoom-full / thumb / bg)
   ↓ on-demand reads preempt book-order background fill
 fetchThumbnail / fetchNav / fetchFullres → IoGate permit + timeout
-  → spawn_blocking → cr3 / thumb_cache
+  → spawn_blocking → cr3 / tier_cache
   ↓ blob URL + dims + EXIF (+ the zoom tier's exact-range hint)
 per-path ImageState → resolveStage → stable Resolved snapshot
 ```
@@ -93,15 +93,21 @@ stays NAS-polite and never starves on-screen reads. Cursor moves and grid
 scrolling re-prioritize the queue toward the viewport; leaving the grid clears
 its range so prefetch follows the loupe cursor.
 
-### On-disk thumbnail cache
+### On-disk tier cache (v2)
 
-`src-tauri/src/thumb_cache.rs` sits behind `extract_thumbnail`: a 500 MB LRU
-on-disk cache in the OS cache dir. Each cache file stores the source mtime in
-its header, so a hit survives an app relaunch (a new `ThumbCache` over the same
-dir re-serves it) yet still misses if the source CR3 changed. This is what
-makes a close-and-reopen of a folder shimmer once and then paint instantly. The
-`clear_thumb_cache` / `thumb_cache_size` commands back the Settings "Thumbnail
-cache" control.
+`src-tauri/src/tier_cache.rs` (pipeline Phase 7) is a per-tier LRU on-disk
+cache in the OS cache dir: `thumb/` (500 MB) behind `extract_thumbnail`,
+`prvw/` (2 GB) behind `read_preview` (filled by piggyback on misses only),
+`mid/` (4 GB) reserved for Phase 8. Each v2 entry stores dual validators —
+source mtime in MILLISECONDS plus file size, checked against the session stat
+table fed by analyze's dir listings, so a hit costs zero source-file
+round-trips — alongside the command's wire header (metadata included) and the
+JPEG payload. Hits survive an app relaunch yet miss if the source CR3 changed;
+corrupted, truncated, or oversized entries are refused and regenerate
+silently. This is what makes a close-and-reopen of a folder paint thumbnails
+AND previews instantly with zero NAS image reads. The `clear_thumb_cache` /
+`thumb_cache_size` commands (v1 wire names) span all tiers and back the
+Settings "Image cache" control.
 
 ## Rating writes (XMP sidecars)
 
@@ -278,7 +284,7 @@ lib.rs (run() + Tauri command wiring + managed state)
   ↓ uses
 bundle / scan / xmp / file_ops / io_gate (Tauri command modules)
   ↓ use
-meta / cr3 / thumb_cache   (data + parser + disk cache)
+meta / cr3 / tier_cache    (data + parser + disk cache)
 ```
 
 `cr3.rs` is the parser and stays untouched by everything except

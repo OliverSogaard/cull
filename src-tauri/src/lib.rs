@@ -9,6 +9,7 @@
 //! | [`bundle`]    | `read_bundle` / `read_preview` / `read_fullres` + `extract_thumbnail` Tauri commands. |
 //! | [`io_gate`]   | Read-permit backstop (IoGate), session gen + mtime table (SessionGate), `begin_session` / `set_io_profile`. |
 //! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
+//! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid), format v2. |
 //! | [`xmp`]       | XMP sidecar I/O: `write_xmp_rating` / `clear_xmp_rating` + the parser the analyze step uses to restore ratings. |
 //! | [`file_ops`]  | Post-cull file operations: `move_rejects_to_subfolder` / `copy_keeps_to_export`. |
 //!
@@ -48,7 +49,7 @@ mod file_ops;
 mod io_gate;
 mod meta;
 mod scan;
-mod thumb_cache;
+mod tier_cache;
 mod xmp;
 
 use tauri::Manager;
@@ -59,9 +60,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir());
-            app.manage(std::sync::Arc::new(thumb_cache::ThumbCache::new(dir.join("thumbs"))));
+            app.manage(std::sync::Arc::new(tier_cache::TierCache::new(dir.join("tiers"))));
             app.manage(std::sync::Arc::new(io_gate::IoGate::new()));
             app.manage(std::sync::Arc::new(io_gate::SessionGate::new()));
+            // One-time cleanup of the v1 thumbnail cache (format v2 lives under
+            // tiers/): without this, up to 500 MB of dead v1 files sit in
+            // app-cache forever. Best-effort and detached — it's a local-disk
+            // delete that must not delay startup.
+            let legacy = dir.join("thumbs");
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = std::fs::remove_dir_all(&legacy);
+            });
 
             // macOS: replace the default menu so Cmd+Q routes through
             // window.close() and the JS close-guard (pending XMP writes) gets

@@ -452,8 +452,8 @@ function ThumbCacheRow() {
 
   return (
     <SettingRow
-      label="Thumbnail cache"
-      help={`Low-res previews cached on disk for instant re-opens. Lives in the OS cache folder; safe to clear anytime.${mbLabel}`}
+      label="Image cache"
+      help={`Thumbnails + screen-size previews cached on disk for instant re-opens. Lives in the OS cache folder; safe to clear anytime.${mbLabel}`}
     >
       <button
         type="button"

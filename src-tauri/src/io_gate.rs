@@ -119,6 +119,9 @@ impl IoGate {
 pub struct SessionGate {
     gen: AtomicU64,
     mtimes: RwLock<HashMap<String, i64>>,
+    /// File sizes from the same dir listings (Phase 7): the tier cache's
+    /// SECOND validator, free for the same reason the mtimes are.
+    sizes: RwLock<HashMap<String, u64>>,
 }
 
 impl SessionGate {
@@ -126,6 +129,7 @@ impl SessionGate {
         SessionGate {
             gen: AtomicU64::new(0),
             mtimes: RwLock::new(HashMap::new()),
+            sizes: RwLock::new(HashMap::new()),
         }
     }
 
@@ -158,6 +162,29 @@ impl SessionGate {
                 m.insert(p.clone(), *ms);
             }
         }
+    }
+
+    pub fn note_size(&self, path: &str, size: u64) {
+        if let Ok(mut m) = self.sizes.write() {
+            m.insert(path.to_string(), size);
+        }
+    }
+
+    /// Bulk feed from analyze's directory listings (Phase 7).
+    pub fn note_sizes(&self, entries: &HashMap<String, u64>) {
+        if let Ok(mut m) = self.sizes.write() {
+            for (p, size) in entries {
+                m.insert(p.clone(), *size);
+            }
+        }
+    }
+
+    /// (mtime ms, file size) when BOTH are known — the tier cache's dual
+    /// validators in one lookup; None sends the caller to a one-time stat.
+    pub fn file_stat(&self, path: &str) -> Option<(i64, u64)> {
+        let ms = self.mtime_ms(path)?;
+        let size = self.sizes.read().ok()?.get(path).copied()?;
+        Some((ms, size))
     }
 }
 

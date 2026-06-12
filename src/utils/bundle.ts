@@ -122,8 +122,9 @@ type ThumbHeader = {
   width: number | null;
   height: number | null;
   jpegLen: number;
-  /** Full metadata on fresh parses (Phase 2 metadata fast path); null on
-   *  disk-cache hits (the cache file stores no metadata) and old backends. */
+  /** Full metadata on fresh parses (Phase 2 metadata fast path) AND on v2
+   *  disk-cache hits (the stored header carries it — Phase 7); null only on
+   *  old backends. */
   meta?: ImageMetadata | null;
 };
 
@@ -136,7 +137,7 @@ export type ThumbResult = {
   /** Display pixel dimensions (orientation-adjusted), or null if EXIF lacked them. */
   width: number | null;
   height: number | null;
-  /** Full metadata when the backend parsed the CR3 fresh (null on cache hits). */
+  /** Full metadata — fresh parses and v2 cache hits alike (null on old backends). */
   meta: ImageMetadata | null;
 };
 

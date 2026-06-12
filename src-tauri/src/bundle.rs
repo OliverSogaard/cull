@@ -27,7 +27,22 @@ use tauri::State;
 use crate::cr3;
 use crate::io_gate::{IoGate, SessionGate, Tier};
 use crate::meta::ImageMetadata;
-use crate::thumb_cache::{mtime_of, ThumbCache};
+use crate::tier_cache::{stat_of, CacheTier, TierCache};
+
+/// (mtime ms, file size) for tier-cache validation WITHOUT a hot-path stat:
+/// the session table (fed by analyze's dir listings) when known; ONE memoized
+/// stat for un-analyzed paths. None (stat failed) → skip the cache entirely.
+fn resolve_stat(session: &SessionGate, path: &str) -> Option<(i64, u64)> {
+    if let Some(s) = session.file_stat(path) {
+        return Some(s);
+    }
+    let s = stat_of(path);
+    if let Some((ms, size)) = s {
+        session.note_mtime(path, ms);
+        session.note_size(path, size);
+    }
+    s
+}
 
 /// u32 LE header-length + JSON header + raw payload — the one binary frame
 /// shape every image read shares (no base64; the frontend slices the
@@ -154,17 +169,36 @@ struct PreviewHeader {
 /// Navigation hot path: ONE open, ONE ~2 MiB read → 1620×1080 PRVW + metadata
 /// + the zoom tier's range hint. `Err("… no PRVW")` per the edge contract when
 /// the body writes none (frontend routes that path's nav tier to full).
+///
+/// Phase 7: served from the on-disk prvw tier cache when current (validated
+/// against the session stat table — a hit costs ZERO source-file round-trips
+/// and returns the frame byte-identical to a fresh parse, header included);
+/// misses piggyback their result into the cache — never a standalone sweep.
 #[tauri::command]
 pub(crate) async fn read_preview(
     path: String,
     gen: u64,
+    cache: State<'_, Arc<TierCache>>,
     gate: State<'_, Arc<IoGate>>,
     session: State<'_, Arc<SessionGate>>,
 ) -> Result<Response, String> {
+    let cache = Arc::clone(&cache);
     let session = Arc::clone(&session);
     let label = format!("read_preview({path})");
     gated_read(&gate, Tier::Small, label, move || {
         let start = Instant::now();
+        let stat = resolve_stat(&session, &path);
+        if let Some((ms, size)) = stat {
+            if let Some((header, payload)) = cache.get(CacheTier::Prvw, &path, ms, size) {
+                dlog!(
+                    "[cull] read_preview({}): prvw cache hit {}B in {:?}",
+                    path,
+                    payload.len(),
+                    start.elapsed()
+                );
+                return Ok(frame(header, &payload));
+            }
+        }
         let b = cr3::read_preview_bundle(&path, &|| session.is_cancelled(gen))
             .map_err(|e| format!("cr3 preview: {e}"))?;
         let mut meta = ImageMetadata::from(b.meta);
@@ -178,6 +212,9 @@ pub(crate) async fn read_preview(
         };
         let header_json =
             serde_json::to_vec(&header).map_err(|e| format!("preview header: {e}"))?;
+        if let Some((ms, size)) = stat {
+            cache.put(CacheTier::Prvw, &path, ms, size, &header_json, &b.preview);
+        }
         dlog!(
             "[cull] read_preview({}): orient={} prvw={}B hint={:?} in {:?}",
             path,
@@ -265,8 +302,8 @@ pub(crate) async fn read_fullres(
 /// Binary frame returned by [`extract_thumbnail`]: a small JSON header
 /// ({display width/height, jpeg length, metadata}), then the THMB JPEG bytes.
 /// `meta` ships on fresh parses (the moov head is already parsed — Phase 2
-/// metadata fast path); disk-cache hits carry `meta: null` (the v1 cache file
-/// stores no metadata) and the EXIF arrives with the preview/bundle instead.
+/// metadata fast path) AND on v2 disk-cache hits (the stored header carries
+/// it — Phase 7 closed the v1 `meta: null` gap).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThumbHeader {
@@ -277,14 +314,14 @@ struct ThumbHeader {
 }
 
 /// Tiny embedded thumbnail (160×120), already EXIF-oriented, plus display
-/// dimensions. Served from the on-disk LRU cache when available — validated
-/// against the SESSION MTIME TABLE (fed by analyze's dir listings), so a
-/// cache hit costs ZERO filesystem round-trips; un-analyzed paths stat once
-/// and memoize. Misses parse the CR3 and return full metadata for free.
+/// dimensions. Served from the on-disk tier cache when current — validated
+/// against the SESSION STAT TABLE (mtime ms + size, fed by analyze's dir
+/// listings), so a cache hit costs ZERO source-file round-trips; un-analyzed
+/// paths stat once and memoize. Misses parse the CR3 and cache header+JPEG.
 #[tauri::command]
 pub(crate) async fn extract_thumbnail(
     path: String,
-    cache: State<'_, Arc<ThumbCache>>,
+    cache: State<'_, Arc<TierCache>>,
     gate: State<'_, Arc<IoGate>>,
     session: State<'_, Arc<SessionGate>>,
 ) -> Result<Response, String> {
@@ -292,47 +329,44 @@ pub(crate) async fn extract_thumbnail(
     let session = Arc::clone(&session);
     let label = format!("extract_thumbnail({path})");
     gated_read(&gate, Tier::Small, label, move || {
-        // Seconds-resolution mtime for cache validation, WITHOUT a stat on the
-        // hot path: the analyze pass already recorded every staged file's
-        // mtime (ms) in the session table.
-        let mtime = match session.mtime_ms(&path) {
-            Some(ms) => Some(ms.div_euclid(1000)),
-            None => {
-                let s = mtime_of(&path);
-                if let Some(s) = s {
-                    session.note_mtime(&path, s * 1000);
-                }
-                s
+        let stat = resolve_stat(&session, &path);
+        if let Some((ms, size)) = stat {
+            if let Some((header, payload)) = cache.get(CacheTier::Thumb, &path, ms, size) {
+                return Ok(frame(header, &payload));
             }
-        };
-        let (jpeg, w, h, meta) = match mtime.and_then(|mt| cache.get(&path, mt)) {
-            Some((jpeg, w, h)) => (jpeg, w, h, None),
-            None => {
-                let t = cr3::read_thumbnail(&path).map_err(|e| format!("cr3 thumbnail: {e}"))?;
-                if let Some(mt) = mtime {
-                    cache.put(&path, mt, &t.jpeg, t.width, t.height);
-                }
-                (t.jpeg, t.width, t.height, Some(ImageMetadata::from(t.meta)))
-            }
-        };
+        }
+        let t = cr3::read_thumbnail(&path).map_err(|e| format!("cr3 thumbnail: {e}"))?;
+        let mut meta = ImageMetadata::from(t.meta);
+        // file_size rides along from the stat already in hand: the frontend's
+        // metaSink merge is wholesale, so a thumb landing AFTER the preview
+        // must carry the same complete metadata (plan's idempotent-merge
+        // contract) — a null here would wipe the EXIF rail's file size.
+        if let Some((_, size)) = stat {
+            meta.file_size = Some(size);
+        }
         let header = ThumbHeader {
-            width: w,
-            height: h,
-            jpeg_len: jpeg.len() as u32,
-            meta,
+            width: t.width,
+            height: t.height,
+            jpeg_len: t.jpeg.len() as u32,
+            meta: Some(meta),
         };
         let header_json = serde_json::to_vec(&header).map_err(|e| format!("thumb header: {e}"))?;
-        Ok(frame(header_json, &jpeg))
+        if let Some((ms, size)) = stat {
+            cache.put(CacheTier::Thumb, &path, ms, size, &header_json, &t.jpeg);
+        }
+        Ok(frame(header_json, &t.jpeg))
     })
     .await
 }
 
+/// Wire names kept from v1 (the settings dialog invokes them); since Phase 7
+/// they cover EVERY tier subdir, not just thumbnails.
 #[tauri::command]
-pub(crate) async fn clear_thumb_cache(cache: State<'_, Arc<ThumbCache>>) -> Result<(), String> {
+pub(crate) async fn clear_thumb_cache(cache: State<'_, Arc<TierCache>>) -> Result<(), String> {
     cache.clear(); Ok(())
 }
 
 #[tauri::command]
-pub(crate) async fn thumb_cache_size(cache: State<'_, Arc<ThumbCache>>) -> Result<u64, String> {
+pub(crate) async fn thumb_cache_size(cache: State<'_, Arc<TierCache>>) -> Result<u64, String> {
     Ok(cache.size_bytes())
 }

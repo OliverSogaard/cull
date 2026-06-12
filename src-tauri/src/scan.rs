@@ -146,6 +146,7 @@ pub(crate) async fn analyze_folder(
     let parents: HashSet<&Path> = paths.iter().filter_map(|p| Path::new(p).parent()).collect();
 
     let mut mtime: HashMap<String, i64> = HashMap::new();
+    let mut sizes: HashMap<String, u64> = HashMap::new();
     let mut xmp_stems: HashSet<String> = HashSet::new(); // lowercased path, no ext
     let step = (n / 100).max(1); // ≤ ~100 progress events
     let mut done = 0usize;
@@ -178,8 +179,12 @@ pub(crate) async fn analyze_folder(
             if !want.contains(pstr) {
                 continue;
             }
-            if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
-                if let Ok(since) = modified.duration_since(std::time::UNIX_EPOCH) {
+            if let Ok(md) = entry.metadata() {
+                if let Some(since) = md
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                {
                     // Milliseconds, not whole seconds: Canon burst frames are
                     // written many-per-second, so second-resolution mtime ties
                     // a whole burst and falls back to filename order (which a
@@ -187,6 +192,9 @@ pub(crate) async fn analyze_folder(
                     // them in actual write order; the path tiebreak below then
                     // only fires on a genuine exact-millisecond tie.
                     mtime.insert(pstr.to_string(), since.as_millis() as i64);
+                    // Size rides along for free (Phase 7): the tier cache's
+                    // second validator, from the metadata already in hand.
+                    sizes.insert(pstr.to_string(), md.len());
                 }
             }
             done += 1;
@@ -208,11 +216,12 @@ pub(crate) async fn analyze_folder(
         AnalyzeProgress { done: n, total: n, phase: "reading".into() },
     );
 
-    // Feed the session mtime table (Phase 2): extract_thumbnail validates its
-    // disk cache against these instead of stat-ing the source per cached hit —
-    // zero filesystem round-trips for analyzed files. Sound because CR3s are
-    // immutable while culling (the app never writes them).
+    // Feed the session stat table (Phase 2, sizes added in Phase 7): the tier
+    // cache validates its entries against these instead of stat-ing the source
+    // per cached hit — zero filesystem round-trips for analyzed files. Sound
+    // because CR3s are immutable while culling (the app never writes them).
     session.note_mtimes(&mtime);
+    session.note_sizes(&sizes);
 
     let epoch: Vec<Option<i64>> = paths.iter().map(|p| mtime.get(p).copied()).collect();
 
