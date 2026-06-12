@@ -754,6 +754,34 @@ pub fn read_fullres_at(
     Ok(buf)
 }
 
+/// Locate the full-res mdat range + orientation from a ~2 MiB moov head —
+/// the cheap prelude for HINTLESS full reads (Phase 8's idle sweep generates
+/// mids for paths whose preview was never read, so no echoed hint exists):
+/// ~2 MiB + one exact-range read instead of resurrecting the 12 MiB+ grow
+/// scan as a common path. Returns `(range hint, orientation)`; a `None` hint
+/// (or any later range-validation failure) falls back to the scan as usual.
+/// INVARIANT: read-only.
+pub fn locate_fullres(
+    path: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> std::io::Result<(Option<(u64, u64)>, u32)> {
+    const HEAD: usize = 2 << 20;
+    const GROW: usize = 2 << 20;
+    const SCAN_CAP: usize = 64 << 20; // malformed-input bound (no moov → no OOM)
+    let (mut buf, mut f, flen) = read_head(path, HEAD)?;
+    while moov_range(&buf).is_none() && buf.len() < SCAN_CAP {
+        if cancelled() {
+            return Err(cancelled_err());
+        }
+        if !grow(&mut f, &mut buf, GROW, flen)? {
+            break;
+        }
+    }
+    let orientation = metadata_from_prefix(&buf).orientation;
+    let hint = moov_range(&buf).and_then(|(ms, me)| full_jpeg_location(&buf, ms, me));
+    Ok((hint, orientation))
+}
+
 /// Legacy scan fallback for the zoom tier: the pre-hint head+grow mdat scan,
 /// kept as the validation net for any future body that lays out mdat
 /// differently. Rare path — no chunked cancellation (it rides read_bundle's

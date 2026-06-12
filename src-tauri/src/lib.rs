@@ -6,8 +6,9 @@
 //! |---------------|---------------------------------------------------------|
 //! | [`cr3`]       | Pure-Rust CR3 parser: preview + EXIF + thumbnail bytes. |
 //! | [`meta`]      | [`meta::ImageMetadata`] for the UI + `From<cr3::Cr3Meta>`. |
-//! | [`bundle`]    | `read_bundle` / `read_preview` / `read_fullres` + `extract_thumbnail` Tauri commands. |
+//! | [`bundle`]    | `read_bundle` / `read_preview` / `read_fullres` / `read_mid` / `generate_mid` + `extract_thumbnail` Tauri commands. |
 //! | [`io_gate`]   | Read-permit backstop (IoGate), session gen + mtime table (SessionGate), `begin_session` / `set_io_profile`. |
+//! | [`midtier`]   | Phase 8 mid-tier generation: decode → SIMD resize ≤2560 → q80 encode + the MidGen concurrency gate. |
 //! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
 //! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid), format v2. |
 //! | [`xmp`]       | XMP sidecar I/O: `write_xmp_rating` / `clear_xmp_rating` + the parser the analyze step uses to restore ratings. |
@@ -48,6 +49,7 @@ mod cr3;
 mod file_ops;
 mod io_gate;
 mod meta;
+mod midtier;
 mod scan;
 mod tier_cache;
 mod xmp;
@@ -63,6 +65,7 @@ pub fn run() {
             app.manage(std::sync::Arc::new(tier_cache::TierCache::new(dir.join("tiers"))));
             app.manage(std::sync::Arc::new(io_gate::IoGate::new()));
             app.manage(std::sync::Arc::new(io_gate::SessionGate::new()));
+            app.manage(std::sync::Arc::new(midtier::MidGen::new()));
             // One-time cleanup of the v1 thumbnail cache (format v2 lives under
             // tiers/): without this, up to 500 MB of dead v1 files sit in
             // app-cache forever. Best-effort and detached — it's a local-disk
@@ -140,6 +143,8 @@ pub fn run() {
             bundle::read_bundle,
             bundle::read_preview,
             bundle::read_fullres,
+            bundle::read_mid,
+            bundle::generate_mid,
             bundle::extract_thumbnail,
             bundle::clear_thumb_cache,
             bundle::thumb_cache_size,

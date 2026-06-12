@@ -27,9 +27,9 @@
  *    impossible. The binding maps it to styles.
  */
 
-export type PresentTier = "thumb" | "preview" | "full";
+export type PresentTier = "thumb" | "preview" | "mid" | "full";
 
-const TIER_RANK: Record<PresentTier, number> = { thumb: 0, preview: 1, full: 2 };
+const TIER_RANK: Record<PresentTier, number> = { thumb: 0, preview: 1, mid: 2, full: 3 };
 
 /** Fixed per-tier presentation facts (consumed by the React binding). */
 export const TIER_PRESENTATION: Record<
@@ -38,6 +38,9 @@ export const TIER_PRESENTATION: Record<
 > = {
   thumb: { objectFit: "cover", filter: "blur(12px) brightness(0.82)" },
   preview: { objectFit: "contain", filter: undefined },
+  // Phase 8: the generated ≤2560px tier — presentation-identical to the
+  // preview (contain, no filter); only the pixel density differs.
+  mid: { objectFit: "contain", filter: undefined },
   full: { objectFit: "contain", filter: undefined },
 };
 
@@ -232,26 +235,32 @@ const SCRUB_THUMB_RETRIES = 8;
  * each other: the later `el.src =` aborts the earlier offer's in-flight
  * decode (usePresent's decode contract).
  *
- * - SETTLED: fire both in tier order. When both urls are in hand (cached
- *   nav) the preview's src-set aborts the thumb decode — desired: the
- *   preview presents directly and blur never mounts.
- * - SCRUB: sequence them, best first. Fire-and-forgetting both would let the
- *   preview abort the thumb and then LOSE its one-frame race — leaving
- *   nothing to present for the step (the compare-scrub stall found in the
- *   WebView2 matrix). Instead the preview gets its frame budget; on a loss
- *   the thumb decodes and RETRIES frame by frame (same src — re-offers don't
- *   abort it) until it presents or the scrub moves on, so every step shows
- *   at worst the blurred thumb, never a stale frame.
+ * - SETTLED: fire all available tiers in tier order. When several urls are
+ *   in hand (cached nav) the later src-set aborts the earlier decode —
+ *   desired: the BEST tier presents directly and blur never mounts. The mid
+ *   (Phase 8) rides the same rule above the preview: it's the settled fit
+ *   view's tier on high-DPI stages, and a frame whose mid is in hand should
+ *   present it, not pay a preview decode first.
+ * - SCRUB: sequence them, best first — and never above the preview (the
+ *   presenter enforces it too): mid-scrub is the preview's snap territory.
+ *   Fire-and-forgetting both would let the preview abort the thumb and then
+ *   LOSE its one-frame race — leaving nothing to present for the step (the
+ *   compare-scrub stall found in the WebView2 matrix). Instead the preview
+ *   gets its frame budget; on a loss the thumb decodes and RETRIES frame by
+ *   frame (same src — re-offers don't abort it) until it presents or the
+ *   scrub moves on, so every step shows at worst the blurred thumb, never a
+ *   stale frame.
  */
 export async function offerTiers(
   presenter: Presenter,
   path: string,
-  urls: { thumb?: string; preview?: string },
+  urls: { thumb?: string; preview?: string; mid?: string },
   scrubbing: boolean,
 ): Promise<void> {
   if (!scrubbing) {
     if (urls.thumb) void presenter.offer(path, "thumb", urls.thumb);
     if (urls.preview) void presenter.offer(path, "preview", urls.preview);
+    if (urls.mid) void presenter.offer(path, "mid", urls.mid);
     return;
   }
   if (urls.preview && (await presenter.offer(path, "preview", urls.preview))) return;

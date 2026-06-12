@@ -32,12 +32,21 @@ walkdir = "2"
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 memchr = "2" # SIMD byte scan for finding JPEG EOI in the embedded full-res stream
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# Phase 8 mid tier: pure-Rust decode → SIMD resize → encode (no C deps).
+# Encoder choice (jpeg-encoder over zenjpeg) was benchmarked at implementation
+# time — numbers + decision recorded in IMAGE_PIPELINE_PLAN.md Phase 8 note.
+zune-jpeg = "0.5"
+fast_image_resize = "6"
+jpeg-encoder = { version = "0.7", features = ["simd"] }
 
 [dev-dependencies]
 # Only used by cr3.rs tests to validate our EXIF-orientation injection against an
 # independent EXIF parser. Not on the runtime path: previews are oriented by
 # splicing an EXIF tag (no decode/re-encode), so the webview rotates them.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Benchmark-only (midtier.rs gated test): the encoder candidate jpeg-encoder
+# was measured against. Not on the runtime path.
+zenjpeg = "0.8"
 
 # Optimize dependency crates even in dev builds, AND give our own crate opt-level 1
 # so the hot byte-scan loops (JPEG extent detection) aren't interpreted at -O0 in

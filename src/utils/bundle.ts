@@ -112,6 +112,58 @@ export async function fetchFullres(
   return { url };
 }
 
+/** Header for `read_mid` (Phase 8): JPEG length + (unrotated) pixel dims. */
+type MidHeader = { midLen: number; width: number; height: number };
+
+/** Matches the backend's quiet-miss sentinel: no cached mid and this profile
+ *  may not generate one (network hard rule / another producer pending). The
+ *  store treats it as "stay on preview", never as a tier failure. */
+export const MID_UNCACHED_RE = /mid uncached/i;
+
+/** Mid-tier read (Phase 8): the generated ≤2560px JPEG from the disk cache;
+ *  on the local profile a miss generates inline (exact-range full read →
+ *  decode → resize → q80 encode → orientation splice). Hint semantics match
+ *  `fetchFullres` (null orientation → backend self-derives via scan). */
+export async function fetchMid(
+  path: string,
+  gen: number,
+  hint: { fullOffset: number | null; fullLen: number | null; orientation: number | null },
+): Promise<{ url: string; width: number; height: number }> {
+  const buf = await invoke<ArrayBuffer>("read_mid", {
+    path,
+    gen,
+    fullOffset: hint.fullOffset,
+    fullLen: hint.fullLen,
+    orientation: hint.orientation,
+  });
+  const view = new DataView(buf);
+  const headerLen = view.getUint32(0, true);
+  const header = JSON.parse(
+    new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
+  ) as MidHeader;
+  const url = URL.createObjectURL(
+    new Blob([new Uint8Array(buf, 4 + headerLen, header.midLen)], { type: "image/jpeg" }),
+  );
+  return { url, width: header.width, height: header.height };
+}
+
+/** Idle-sweep generation (Phase 8, local profile only): generate + cache the
+ *  mid without shipping bytes back. True = a current mid is cached; false =
+ *  skipped (another producer holds the path's pending claim). */
+export async function invokeGenerateMid(
+  path: string,
+  gen: number,
+  hint: { fullOffset: number | null; fullLen: number | null; orientation: number | null },
+): Promise<boolean> {
+  return invoke<boolean>("generate_mid", {
+    path,
+    gen,
+    fullOffset: hint.fullOffset,
+    fullLen: hint.fullLen,
+    orientation: hint.orientation,
+  });
+}
+
 /**
  * Parse the binary frame from `extract_thumbnail`: `u32 LE` header length, that
  * many bytes of JSON (`{ width, height, jpegLen }`), then `jpegLen` bytes of

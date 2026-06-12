@@ -27,6 +27,7 @@ use tauri::State;
 use crate::cr3;
 use crate::io_gate::{IoGate, SessionGate, Tier};
 use crate::meta::ImageMetadata;
+use crate::midtier::{self, MidGen};
 use crate::tier_cache::{stat_of, CacheTier, TierCache};
 
 /// (mtime ms, file size) for tier-cache validation WITHOUT a hot-path stat:
@@ -55,19 +56,23 @@ fn frame(header_json: Vec<u8>, payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Run one blocking read under the IoGate with the tier's timeout.
+/// Run one blocking operation under the IoGate with the tier's timeout.
 ///
 /// On timeout the invoke REJECTS — the frontend's lane slot frees instantly —
 /// while the orphaned blocking task keeps its owned permit and self-heals when
 /// the syscall eventually returns (blocking fs reads can't be safely aborted
 /// on Windows/macOS, so detach + ignore is the decision; see io_gate.rs). The
 /// watcher logs when the orphan lands: the stuck-permit detector.
-async fn gated_read(
+///
+/// Generic over the result so multi-stage commands (`read_mid`'s probe-then-
+/// generate) can run each stage gated without re-implementing the machinery;
+/// [`gated_read`] is the Response-producing wrapper every one-shot read uses.
+async fn gated<T: Send + 'static>(
     gate: &IoGate,
     tier: Tier,
     label: String,
-    work: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
-) -> Result<Response, String> {
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
     let dur = gate.read_timeout(tier);
     // Bound the WAIT for a permit too: if every backstop permit is held by
     // hung orphans (NAS gone with many reads in flight), an unbounded acquire
@@ -83,9 +88,7 @@ async fn gated_read(
         work()
     });
     match tokio::time::timeout(dur, &mut handle).await {
-        Ok(joined) => Ok(Response::new(
-            joined.map_err(|e| format!("read task failed: {e}"))??,
-        )),
+        Ok(joined) => joined.map_err(|e| format!("read task failed: {e}"))?,
         Err(_) => {
             let msg = format!("{label}: read timed out after {}s", dur.as_secs());
             tauri::async_runtime::spawn(async move {
@@ -99,6 +102,16 @@ async fn gated_read(
             Err(msg)
         }
     }
+}
+
+/// One gated blocking read producing a raw-binary IPC frame.
+async fn gated_read(
+    gate: &IoGate,
+    tier: Tier,
+    label: String,
+    work: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
+) -> Result<Response, String> {
+    gated(gate, tier, label, work).await.map(Response::new)
 }
 
 // ── Legacy bundle (full-res as the navigation tier; dies in Phase 3) ────────
@@ -235,13 +248,72 @@ struct FullresHeader {
     full_len: u32,
 }
 
-/// Zoom tier: seek + ONE exact-range chunked read via the moov hint, SOI/EOI
-/// validated; any mismatch falls back to the legacy head+grow mdat scan (with
-/// a dlog line — telemetry for future bodies). The orientation to splice is
-/// echoed back from the frontend (it arrived with the preview header); when
-/// the caller has none (zoom raced ahead of the preview read), the scan path
-/// derives it from the file's own moov — orientation 1 must NEVER be assumed
-/// (a rotated frame would cache unrotated).
+/// The zoom/mid tiers' shared full-res ladder: exact-range chunked read via
+/// the moov hint (SOI/EOI validated), any mismatch → the legacy head+grow
+/// mdat scan (with a dlog line — telemetry for future bodies). Returns the
+/// raw JPEG plus the authoritative orientation: the echoed one when the
+/// caller has it (it arrived with the preview header), else the scan's
+/// self-derived value — orientation 1 must NEVER be assumed (a rotated frame
+/// would cache unrotated).
+fn full_with_orientation(
+    label: &str,
+    path: &str,
+    full_offset: Option<u64>,
+    full_len: Option<u64>,
+    orientation: Option<u32>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<u8>, u32), String> {
+    match (full_offset, full_len, orientation) {
+        // The exact-range path needs the echoed orientation (it never sees
+        // moov); without one, scan + self-derive even if a range hint exists.
+        (Some(off), Some(len), Some(echoed)) => {
+            match cr3::read_fullres_at(path, off, len, cancelled) {
+                Ok(jpeg) => Ok((jpeg, echoed)),
+                Err(e) if cr3::is_cancelled(&e) => Err("cancelled".into()),
+                Err(e) => {
+                    dlog!("[cull] {label}: hint mismatch ({e}) — mdat scan fallback");
+                    let (jpeg, _) =
+                        cr3::read_fullres_scan(path).map_err(|e| format!("cr3 fullres: {e}"))?;
+                    // The echo came from this file's own preview header —
+                    // still authoritative even when the range hint wasn't.
+                    Ok((jpeg, echoed))
+                }
+            }
+        }
+        _ => {
+            // Hintless (the idle sweep over never-navigated paths; rare zoom
+            // races): derive the range + orientation from a ~2 MiB moov head,
+            // then ONE exact-range read — the 12 MiB+ grow scan must not
+            // become a common path again (review F2; the plan's cut list
+            // deleted buf_pool.rs on the premise the scan stays rare). The
+            // scan remains the net under any locate/validation failure.
+            match cr3::locate_fullres(path, cancelled) {
+                Ok((Some((off, len)), derived)) => {
+                    match cr3::read_fullres_at(path, off, len, cancelled) {
+                        Ok(jpeg) => return Ok((jpeg, orientation.unwrap_or(derived))),
+                        Err(e) if cr3::is_cancelled(&e) => return Err("cancelled".into()),
+                        Err(e) => {
+                            dlog!(
+                                "[cull] {label}: derived hint mismatch ({e}) — mdat scan fallback"
+                            );
+                        }
+                    }
+                }
+                Err(e) if cr3::is_cancelled(&e) => return Err("cancelled".into()),
+                _ => {} // no hint derivable / head unreadable → the scan decides
+            }
+            let (jpeg, scanned) =
+                cr3::read_fullres_scan(path).map_err(|e| format!("cr3 fullres: {e}"))?;
+            Ok((jpeg, orientation.unwrap_or(scanned)))
+        }
+    }
+}
+
+/// Zoom tier: seek + ONE exact-range chunked read via the moov hint (see
+/// [`full_with_orientation`] for the validation/fallback/orientation ladder).
+/// Phase 8: a successful read also feeds the OPPORTUNISTIC mid generator —
+/// the full's bytes are already in memory, so the ≤2560px tier costs CPU
+/// only, zero extra I/O (this is how the mid cache fills on network mode).
 #[tauri::command]
 pub(crate) async fn read_fullres(
     path: String,
@@ -249,39 +321,27 @@ pub(crate) async fn read_fullres(
     full_offset: Option<u64>,
     full_len: Option<u64>,
     orientation: Option<u32>,
+    cache: State<'_, Arc<TierCache>>,
     gate: State<'_, Arc<IoGate>>,
     session: State<'_, Arc<SessionGate>>,
+    midgen: State<'_, Arc<MidGen>>,
 ) -> Result<Response, String> {
+    let cache = Arc::clone(&cache);
     let session = Arc::clone(&session);
+    let midgen = Arc::clone(&midgen);
     let label = format!("read_fullres({path})");
-    gated_read(&gate, Tier::Full, label, move || {
+    gated_read(&gate, Tier::Full, label.clone(), move || {
         let start = Instant::now();
-        // The exact-range path needs the echoed orientation (it never sees
-        // moov); without one, scan + self-derive even if a range hint exists.
-        let (raw, orient) = match (full_offset, full_len, orientation) {
-            (Some(off), Some(len), Some(echoed)) => {
-                match cr3::read_fullres_at(&path, off, len, &|| session.is_cancelled(gen)) {
-                    Ok(jpeg) => (jpeg, echoed),
-                    Err(e) if cr3::is_cancelled(&e) => return Err("cancelled".into()),
-                    Err(e) => {
-                        dlog!(
-                            "[cull] read_fullres({path}): hint mismatch ({e}) — mdat scan fallback"
-                        );
-                        let (jpeg, _) =
-                            cr3::read_fullres_scan(&path).map_err(|e| format!("cr3 fullres: {e}"))?;
-                        // The echo came from this file's own preview header —
-                        // still authoritative even when the range hint wasn't.
-                        (jpeg, echoed)
-                    }
-                }
-            }
-            _ => {
-                let (jpeg, scanned) =
-                    cr3::read_fullres_scan(&path).map_err(|e| format!("cr3 fullres: {e}"))?;
-                (jpeg, orientation.unwrap_or(scanned))
-            }
-        };
+        let (raw, orient) = full_with_orientation(
+            &label,
+            &path,
+            full_offset,
+            full_len,
+            orientation,
+            &|| session.is_cancelled(gen),
+        )?;
         let jpeg = cr3::with_exif_orientation(raw, orient);
+        maybe_generate_mid_opportunistic(&cache, &session, &midgen, gen, &path, orient, &jpeg);
         let header_json = serde_json::to_vec(&FullresHeader {
             full_len: jpeg.len() as u32,
         })
@@ -295,6 +355,258 @@ pub(crate) async fn read_fullres(
         Ok(frame(header_json, &jpeg))
     })
     .await
+}
+
+// ── Mid tier (Phase 8): the display-adaptive ≤2560px generated tier ─────────
+
+/// Header for [`read_mid`]: JPEG length + the mid's (unrotated) pixel dims.
+/// Stored VERBATIM in the tier cache (the bump-VERSION-on-header-change
+/// contract applies to this shape from now on).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidHeader {
+    mid_len: u32,
+    width: u32,
+    height: u32,
+}
+
+/// Error sentinel for "no cached mid and this call may not generate one".
+/// The frontend treats it as a quiet miss (stays on preview, re-probes after
+/// the opportunistic generator has had a chance) — never as a tier failure.
+const MID_UNCACHED: &str = "mid uncached";
+
+/// Generate the mid from in-memory full bytes and publish it to the cache.
+/// Returns (header JSON, jpeg) exactly as cached — `read_mid` frames them.
+/// Runs on a blocking thread with the caller holding a [`MidGen`] permit.
+fn generate_and_cache_mid(
+    cache: &TierCache,
+    path: &str,
+    stat: (i64, u64),
+    full_jpeg: &[u8],
+    orientation: u32,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let m = midtier::generate_mid_jpeg(full_jpeg, orientation, cancelled)?;
+    let header = MidHeader {
+        mid_len: m.jpeg.len() as u32,
+        width: m.width,
+        height: m.height,
+    };
+    let header_json = serde_json::to_vec(&header).map_err(|e| format!("mid header: {e}"))?;
+    cache.put(CacheTier::Mid, path, stat.0, stat.1, &header_json, &m.jpeg);
+    Ok((header_json, m.jpeg))
+}
+
+/// Opportunistic mid generation (Phase 8): the zoom read already paid for the
+/// full's bytes — clone them and generate the mid DETACHED (the zoom response
+/// returns immediately; the CPU work runs on the blocking pool under a MidGen
+/// permit, generation-cancelled between pipeline stages). Runs on EVERY
+/// profile: on network mode this is the ONLY way the mid cache fills, per the
+/// hard rule that the NAS profile never fetches a full solely to generate.
+/// The pending-set claim dedups against `read_mid`/`generate_mid` racing on
+/// the same path; the ~10 MB clone is bounded by that dedup plus the zoom
+/// lane's own concurrency (2).
+fn maybe_generate_mid_opportunistic(
+    cache: &Arc<TierCache>,
+    session: &Arc<SessionGate>,
+    midgen: &Arc<MidGen>,
+    gen: u64,
+    path: &str,
+    orientation: u32,
+    full_jpeg: &[u8],
+) {
+    let Some(stat) = resolve_stat(session, path) else { return };
+    if cache.has_current(CacheTier::Mid, path, stat.0, stat.1) {
+        return;
+    }
+    if session.is_cancelled(gen) {
+        return;
+    }
+    if !midgen.try_begin(path) {
+        return; // another producer is already generating this path's mid
+    }
+    let cache = Arc::clone(cache);
+    let session = Arc::clone(session);
+    let midgen = Arc::clone(midgen);
+    let path = path.to_string();
+    let full = full_jpeg.to_vec();
+    tauri::async_runtime::spawn(async move {
+        let permit = midgen.acquire().await;
+        let start = Instant::now();
+        let (c2, s2, p2) = (Arc::clone(&cache), Arc::clone(&session), path.clone());
+        let joined = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            generate_and_cache_mid(&c2, &p2, stat, &full, orientation, &|| s2.is_cancelled(gen))
+                .map(|(_, jpeg)| jpeg.len())
+        })
+        .await;
+        midgen.end(&path);
+        match joined {
+            Ok(Ok(len)) => dlog!(
+                "[cull] midgen({path}): opportunistic {len}B in {:?}",
+                start.elapsed()
+            ),
+            Ok(Err(e)) if e == "cancelled" => {}
+            Ok(Err(e)) => dlog!("[cull] midgen({path}): {e}"),
+            Err(e) => dlog!("[cull] midgen({path}): task failed: {e}"),
+        }
+    });
+}
+
+/// Display-adaptive mid tier (Phase 8). Serves the generated ≤2560px JPEG
+/// from the `mid/` disk cache; a hit costs ZERO source-file round-trips and
+/// replays the stored wire header verbatim. On a miss:
+/// - network profile (or profile unset): `Err("mid uncached …")` — the HARD
+///   RULE: the NAS profile never fetches a full SOLELY to generate. The
+///   cache fills opportunistically as the user zooms.
+/// - local profile: read the full by exact range (scan fallback), decode →
+///   resize → q80 encode → splice orientation, cache, return — under a
+///   MidGen permit (concurrency 2 local / 1 network).
+#[tauri::command]
+pub(crate) async fn read_mid(
+    path: String,
+    gen: u64,
+    full_offset: Option<u64>,
+    full_len: Option<u64>,
+    orientation: Option<u32>,
+    cache: State<'_, Arc<TierCache>>,
+    gate: State<'_, Arc<IoGate>>,
+    session: State<'_, Arc<SessionGate>>,
+    midgen: State<'_, Arc<MidGen>>,
+) -> Result<Response, String> {
+    let cache = Arc::clone(&cache);
+    let session = Arc::clone(&session);
+    let label = format!("read_mid({path})");
+    // Stage 1 — cache probe (app-cache disk, cheap; Small tier).
+    let probe = {
+        let (cache, session, path) = (Arc::clone(&cache), Arc::clone(&session), path.clone());
+        gated(&gate, Tier::Small, label.clone(), move || {
+            let start = Instant::now();
+            let stat = resolve_stat(&session, &path);
+            let hit = stat.and_then(|(ms, size)| cache.get(CacheTier::Mid, &path, ms, size));
+            if let Some((_, payload)) = &hit {
+                dlog!(
+                    "[cull] read_mid({}): mid cache hit {}B in {:?}",
+                    path,
+                    payload.len(),
+                    start.elapsed()
+                );
+            }
+            Ok((hit, stat))
+        })
+        .await?
+    };
+    let (hit, stat) = probe;
+    if let Some((header, payload)) = hit {
+        return Ok(Response::new(frame(header, &payload)));
+    }
+    // Miss. Generation is a LOCAL-profile privilege (the plan's hard rule).
+    if !gate.is_local() {
+        return Err(format!("{MID_UNCACHED} (network profile)"));
+    }
+    let Some(stat) = stat else {
+        return Err(format!("{label}: source stat failed"));
+    };
+    // Claim the path: a pending opportunistic/sweep generation will publish
+    // the same mid momentarily — bounce now, the frontend re-probes shortly.
+    if !midgen.try_begin(&path) {
+        return Err(format!("{MID_UNCACHED} (generation pending)"));
+    }
+    let permit = midgen.acquire().await;
+    let result = {
+        let (cache, session, path, label) =
+            (Arc::clone(&cache), Arc::clone(&session), path.clone(), label.clone());
+        gated(&gate, Tier::Full, label.clone(), move || {
+            let _permit = permit;
+            let start = Instant::now();
+            let cancelled = || session.is_cancelled(gen);
+            let (raw, orient) =
+                full_with_orientation(&label, &path, full_offset, full_len, orientation, &cancelled)?;
+            let (header, payload) =
+                generate_and_cache_mid(&cache, &path, stat, &raw, orient, &cancelled)?;
+            dlog!(
+                "[cull] read_mid({}): generated {}B in {:?}",
+                path,
+                payload.len(),
+                start.elapsed()
+            );
+            Ok(frame(header, &payload))
+        })
+        .await
+    };
+    midgen.end(&path);
+    result.map(Response::new)
+}
+
+/// Idle-sweep generation (Phase 8): generate + cache the mid WITHOUT shipping
+/// payload bytes back over IPC. `Ok(true)` = a current mid is cached (fresh
+/// or pre-existing); `Ok(false)` = skipped because another producer holds the
+/// path's pending claim (the sweep just moves on). Backend-enforced
+/// local-only — the frontend's sweep gates on the profile too, but the hard
+/// rule must not depend on frontend discipline.
+#[tauri::command]
+pub(crate) async fn generate_mid(
+    path: String,
+    gen: u64,
+    full_offset: Option<u64>,
+    full_len: Option<u64>,
+    orientation: Option<u32>,
+    cache: State<'_, Arc<TierCache>>,
+    gate: State<'_, Arc<IoGate>>,
+    session: State<'_, Arc<SessionGate>>,
+    midgen: State<'_, Arc<MidGen>>,
+) -> Result<bool, String> {
+    if !gate.is_local() {
+        return Err("midgen disabled on the network profile".into());
+    }
+    let cache = Arc::clone(&cache);
+    let session = Arc::clone(&session);
+    let label = format!("generate_mid({path})");
+    // Currency probe: prelude-only, no LRU bump (sweeping thousands of
+    // already-cached paths must not churn recency under the on-demand hits).
+    let (current, stat) = {
+        let (cache, session, path) = (Arc::clone(&cache), Arc::clone(&session), path.clone());
+        gated(&gate, Tier::Small, label.clone(), move || {
+            let stat = resolve_stat(&session, &path);
+            let current =
+                stat.is_some_and(|(ms, size)| cache.has_current(CacheTier::Mid, &path, ms, size));
+            Ok((current, stat))
+        })
+        .await?
+    };
+    if current {
+        return Ok(true);
+    }
+    let Some(stat) = stat else {
+        return Err(format!("{label}: source stat failed"));
+    };
+    if !midgen.try_begin(&path) {
+        return Ok(false);
+    }
+    let permit = midgen.acquire().await;
+    let result = {
+        let (cache, session, path, label) =
+            (Arc::clone(&cache), Arc::clone(&session), path.clone(), label.clone());
+        gated(&gate, Tier::Full, label.clone(), move || {
+            let _permit = permit;
+            let start = Instant::now();
+            let cancelled = || session.is_cancelled(gen);
+            let (raw, orient) =
+                full_with_orientation(&label, &path, full_offset, full_len, orientation, &cancelled)?;
+            let (_, payload) =
+                generate_and_cache_mid(&cache, &path, stat, &raw, orient, &cancelled)?;
+            dlog!(
+                "[cull] generate_mid({}): swept {}B in {:?}",
+                path,
+                payload.len(),
+                start.elapsed()
+            );
+            Ok(())
+        })
+        .await
+    };
+    midgen.end(&path);
+    result.map(|()| true)
 }
 
 // ── Thumbnail ────────────────────────────────────────────────────────────────

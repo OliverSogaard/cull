@@ -34,6 +34,15 @@ export function DevHud() {
         loads n{stats.counts.navLoads} z{stats.counts.zoomLoads} t{stats.counts.thumbLoads} · evict p
         {stats.counts.previewEvicts} z{stats.counts.zoomEvicts} · err {stats.counts.errors}
       </div>
+      {/* Phase 8: the display-adaptive readout the manual matrix cites —
+          needPx (stage height × DPR) and which side of the hysteresis band
+          it sits on; sweep counts down on the local profile while idle. */}
+      <div className="cull-devhud__row">
+        mid&nbsp; {stats.mid.lane} · cache {stats.mid.cached} · needPx{" "}
+        {stats.mid.needPx ?? "—"} {stats.mid.engaged ? "ENGAGED" : "off"} · gen{" "}
+        {stats.counts.midLoads}+{stats.counts.midGens} · evict {stats.counts.midEvicts} · sweep{" "}
+        {stats.mid.sweepLeft}
+      </div>
       {stats.navTimings.map((t, i) => (
         <div className="cull-devhud__row cull-devhud__row--dim" key={i}>
           {t.ms}ms&nbsp;{t.name}

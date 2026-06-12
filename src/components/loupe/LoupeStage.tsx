@@ -83,12 +83,15 @@ export const LoupeStage = memo(function LoupeStage({
     presenter.setScrubbing(scrubbing);
   }, [scrubbing, presenter]);
 
-  // Offer the store's pixels via offerTiers: settled navs fire thumb+preview
-  // in parallel (only-upgrade + the preview clobbering the thumb decode keep
-  // cached navs blur-free); mid-scrub the tiers are SEQUENCED so a preview
-  // that loses its frame-budget race falls back to the blurred thumb instead
-  // of leaving a stale frame (the WebView2 matrix's compare-scrub stall).
-  // Deps include scrubbing so the release re-offers instantly.
+  // Offer the store's pixels via offerTiers: settled navs fire all available
+  // tiers in parallel, best last (only-upgrade + the best tier clobbering the
+  // lesser decodes keep cached navs blur-free); mid-scrub the tiers are
+  // SEQUENCED so a preview that loses its frame-budget race falls back to the
+  // blurred thumb instead of leaving a stale frame (the WebView2 matrix's
+  // compare-scrub stall). The mid (Phase 8) is offered whenever the store has
+  // it — request gating (needPx) lives in the store; a ready mid is simply
+  // the best fit-view pixels available. Deps include scrubbing so the release
+  // re-offers instantly.
   useEffect(() => {
     if (!path) return;
     void offerTiers(
@@ -97,10 +100,11 @@ export const LoupeStage = memo(function LoupeStage({
       {
         thumb: imageStore.thumbUrl(path),
         preview: cur.stage === "full" && cur.url ? cur.url : undefined,
+        mid: cur.mid?.url,
       },
       scrubbing,
     );
-  }, [path, cur.stage, cur.url, scrubbing, presenter]);
+  }, [path, cur.stage, cur.url, cur.mid?.url, scrubbing, presenter]);
 
   // Session lifecycle note: a folder change routes through the staged screen,
   // which unmounts this component — the next mount gets a FRESH presenter, so

@@ -457,6 +457,50 @@ export default function App() {
     imageStore.setProfile(profile);
   }, [profile]);
 
+  // Display-adaptive mid tier (Phase 8). The store owns the tier choice; App
+  // supplies the measurement and the re-evaluation triggers:
+  // 1) the FRESH needPx provider — stage rect height × devicePixelRatio,
+  //    measured at CALL time, never cached at mount. (The stage div itself is
+  //    never transformed — zoom scales the layers inside it — so measuring it
+  //    is safe even while zoomed, unlike the img-rect measure below.)
+  useEffect(() => {
+    imageStore.setNeedPxProvider(() => {
+      const el = stageRef.current;
+      if (!el) return null;
+      const h = el.getBoundingClientRect().height;
+      return h >= 1 ? h * window.devicePixelRatio : null;
+    });
+    return () => imageStore.setNeedPxProvider(undefined);
+  }, []);
+  // 2) stage resizes (strip/rail toggles, window resize) re-run the choice.
+  //    Deps re-attach when the loupe stage (re)mounts — compare/grid render
+  //    different bodies, so stageRef points elsewhere or nowhere there.
+  useEffect(() => {
+    if (phase !== "culling" || compareMode || gridVisible) return;
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => imageStore.reevaluateMid());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [phase, compareMode, gridVisible]);
+  // 3) DPR flips (window dragged 4K ↔ 1440p) — tier choice flips without a
+  //    restart. matchMedia('(resolution: Xdppx)') fires ONCE when the DPR
+  //    leaves the armed value, so the handler re-arms at the new DPR.
+  useEffect(() => {
+    let mql: MediaQueryList | null = null;
+    const onChange = () => {
+      imageStore.reevaluateMid();
+      arm();
+    };
+    const arm = () => {
+      mql?.removeEventListener("change", onChange);
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mql.addEventListener("change", onChange);
+    };
+    arm();
+    return () => mql?.removeEventListener("change", onChange);
+  }, []);
+
   // EXIF metadata sink: the store's full-res bundle reads return the full
   // camera / lens / AF / pixel-dims metadata. The bundle meta replaces the
   // per-path entry (a pre-seeded lrc-only entry must still gain its EXIF),
@@ -1101,7 +1145,12 @@ export default function App() {
     const path = images[currentIndex]?.path;
     hiResTimer.current = window.setTimeout(() => {
       setHiRes(true);
-      if (path) imageStore.requestZoomFull(path);
+      if (path) {
+        // Phase 8: the settled fit view prefers the mid on high-DPI stages —
+        // the store re-checks needPx fresh and no-ops below the threshold.
+        imageStore.maybeRequestMid(path);
+        imageStore.requestZoomFull(path);
+      }
     }, profile.fullSettleMs);
     return () => {
       if (hiResTimer.current) clearTimeout(hiResTimer.current);

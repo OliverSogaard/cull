@@ -17,6 +17,9 @@
  *  6. loadThumbInto — stale-generation arrival: revoke the just-created thumb
  *     blob when the session changed while the read was in flight
  *  7. loadFull — stale-generation arrival: revoke the just-created preview blob
+ *  8–10. zoom tier (reset/hardReset, loadZoomFull stale/replace, evictZoomAround)
+ *  11–12. mid tier (Phase 8): reset/hardReset + loadMid stale/replace (11),
+ *     evictMidAround window eviction (12)
  *
  * Concurrency-correctness invariants:
  *  - Every in-flight counter decrement is generation-scoped: a load whose
@@ -29,7 +32,15 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { fetchFullres, fetchNav, fetchThumbnail } from "../utils/bundle";
+import {
+  fetchFullres,
+  fetchMid,
+  fetchNav,
+  fetchThumbnail,
+  invokeGenerateMid,
+  MID_UNCACHED_RE,
+} from "../utils/bundle";
+import { nextMidEngaged } from "./midSelect";
 import type { PerformanceProfile } from "../types/settings";
 import { PERFORMANCE_PROFILES } from "../types/settings";
 import { DecodePool } from "./decodePool";
@@ -70,6 +81,23 @@ const FOLDER_TROUBLE_THRESHOLD = 4;
 
 const backoffMs = (attempts: number): number =>
   Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** (attempts - 1));
+
+/** Delay before re-probing `read_mid` after a quiet miss (Phase 8): the
+ *  opportunistic generator needs ~300–400 ms of CPU after its zoom read
+ *  returns, plus slack for the MidGen queue. */
+const MID_REPROBE_MS = 1500;
+
+/** The idle sweep waits for this much cursor quiet before (re)starting —
+ *  warm-region navigation and scrubbing issue zero reads, so the on-demand
+ *  queues alone can't tell "user active" from "user parked" (review F3). */
+const MID_SWEEP_QUIET_MS = 1500;
+
+/** Sweep budget: the mid tier's disk cap (4 GiB, low-water 90%) over a
+ *  realistic ~1.05 MB q80 entry ≈ 3,500 entries — sweeping past it would
+ *  LRU-evict the user's own working neighbourhood to write far-end mids
+ *  (review F1). Nearest-cursor-first ordering makes the budget cover the
+ *  frames that matter; on-demand read_mid still serves anything beyond it. */
+const MID_SWEEP_BUDGET = 3400;
 
 /** True while the tier must NOT be auto-requested (cooling down or terminal). */
 const inCooldown = (te: TierError | undefined, now: number): boolean =>
@@ -157,6 +185,48 @@ export class ImageStore {
   /** True once a nav read was served by the legacy `read_bundle` (old
    *  backend): the nav blob IS the full, and there is no separate zoom tier. */
   private navLegacy = false;
+  // ── Mid tier (Phase 8: display-adaptive ≤2560px settled fit view) ───────
+  /** path → mid state. Windowed like the zoom tier (fullKeep per side) —
+   *  mid blobs are ~1 MB, but their decoded rasters (~17 MB) are the budget. */
+  private mids = new Map<string, ImageState["mid"]>();
+  private midQueue: string[] = [];
+  private requestedMid = new Set<string>();
+  private midInFlightPaths = new Set<string>();
+  private midInFlight = 0;
+  private midErrors = new Map<string, TierError>();
+  /** Paths whose `read_mid` answered the quiet-miss sentinel (network
+   *  profile / generation pending) — NOT failures. Cleared by the re-probe
+   *  triggers (zoom-tier landing, the scheduled re-probe, reset). */
+  private midUncached = new Set<string>();
+  /** Paths whose quiet miss already spent its ONE catch-scheduled re-probe —
+   *  without this, miss → re-probe → miss → re-schedule would poll read_mid
+   *  every 1.5 s forever while parked (review finding). A fresh zoom landing
+   *  clears the mark: new bytes mean a new chance the generator published. */
+  private midReprobed = new Set<string>();
+  /** Mid requests deferred until the nav read delivers the path's hint —
+   *  mirror of pendingZoom (a hintless local generation would pay a 12 MiB
+   *  scan instead of two exact-range reads). loadFull's completion re-issues. */
+  private pendingMid = new Set<string>();
+  /** Latched once `read_mid` is rejected as an unknown command (Phase-8
+   *  frontend on an older backend): the tier stays dormant for the session. */
+  private midUnsupported = false;
+  /** Hysteresis latch for the display-adaptive choice (midSelect.ts):
+   *  engage >1750 device px, release <1650, hold in between. */
+  private midEngaged = false;
+  /** App-injected provider returning the FRESH needPx (stage rect height ×
+   *  devicePixelRatio) — called at each tier request, never cached at mount. */
+  private needPxProvider: (() => number | null) | undefined;
+  // Local-profile idle sweep (paused while any on-demand lane has work):
+  /** Paths already attempted this session (success OR failure — best-effort,
+   *  one shot each; on-demand read_mid still covers misses). */
+  private midSweepDone = new Set<string>();
+  private midSweepInFlight = 0;
+  /** Last cursor move (any kind) — the sweep waits out MID_SWEEP_QUIET_MS of
+   *  cursor quiet so warm-region arrowing / scrubbing (which issue no reads)
+   *  don't share the CPU with generation. */
+  private lastCursorMoveAt = 0;
+  /** One-shot re-pump timer for the quiet window (armed at most once). */
+  private midSweepTimerArmed = false;
   /** Decode-ahead warm pool (Phase 5) — null when no DOM (unit tests). */
   private readonly pool: DecodePool | null;
   /** Last cursor travel direction: biases prefetch + the pool band 2:1. */
@@ -167,7 +237,7 @@ export class ImageStore {
    *  IPC transfer cost of the ~10 MB full, i.e. the Phase 2 Windows
    *  benchmark readout. */
   private zoomTimings: { name: string; ms: number }[] = [];
-  private counts = { navLoads: 0, zoomLoads: 0, thumbLoads: 0, previewEvicts: 0, zoomEvicts: 0, errors: 0 };
+  private counts = { navLoads: 0, zoomLoads: 0, thumbLoads: 0, midLoads: 0, midGens: 0, previewEvicts: 0, zoomEvicts: 0, midEvicts: 0, errors: 0 };
   // ── Concurrency counters ───────────────────────────────────────────────
   private thumbInFlight = 0;
   private fullInFlight = 0;
@@ -229,6 +299,7 @@ export class ImageStore {
     // next cursor move to free blobs that are suddenly outside the window.
     this.evictFullAround(this.cursor);
     this.evictZoomAround(this.cursor);
+    this.evictMidAround(this.cursor);
     // Re-aim the pool under the new caps/radii (a network→local flip may
     // shrink it; eviction above may have dropped blobs it referenced).
     this.refreshPool();
@@ -236,6 +307,8 @@ export class ImageStore {
     this.pumpFull();
     this.pumpBg();
     this.pumpZoom();
+    this.pumpMid();
+    this.pumpMidSweep();
   }
 
   /** Fire-and-forget backend push (session gen / io profile). Quiet on a
@@ -297,6 +370,23 @@ export class ImageStore {
       if (state?.status === "ready") URL.revokeObjectURL(state.url);
     }
     this.zoomFulls.clear();
+    // Mid tier (Phase 8): same session scope as the zoom tier — REVOKE SITE 11.
+    // midEngaged survives (the display didn't change); midUnsupported too
+    // (the backend can't change mid-run).
+    for (const [, state] of this.mids) {
+      if (state?.status === "ready") URL.revokeObjectURL(state.url);
+    }
+    this.mids.clear();
+    this.midQueue = [];
+    this.requestedMid.clear();
+    this.pendingMid.clear();
+    this.midInFlightPaths.clear();
+    this.midInFlight = 0;
+    this.midErrors.clear();
+    this.midUncached.clear();
+    this.midReprobed.clear();
+    this.midSweepDone.clear();
+    this.midSweepInFlight = 0;
     // The pool's decoded refs point at blob URLs this reset revokes.
     this.pool?.clear();
     // old-gen thumb loads bailed without populating `thumbs`; if we keep
@@ -394,6 +484,20 @@ export class ImageStore {
       if (state?.status === "ready") URL.revokeObjectURL(state.url); // REVOKE SITE 8
     }
     this.zoomFulls.clear();
+    for (const [, state] of this.mids) {
+      if (state?.status === "ready") URL.revokeObjectURL(state.url); // REVOKE SITE 11
+    }
+    this.mids.clear();
+    this.midQueue = [];
+    this.requestedMid.clear();
+    this.pendingMid.clear();
+    this.midInFlightPaths.clear();
+    this.midInFlight = 0;
+    this.midErrors.clear();
+    this.midUncached.clear();
+    this.midReprobed.clear();
+    this.midSweepDone.clear();
+    this.midSweepInFlight = 0;
     this.fullHints.clear();
     this.nativeDims.clear();
     this.navTimings = [];
@@ -437,10 +541,12 @@ export class ImageStore {
     if (index > this.cursor) this.lastDir = 1;
     else if (index < this.cursor) this.lastDir = -1;
     this.cursor = index;
-    // Eviction is cursor-driven — recenter both keep-windows on the cursor
+    this.lastCursorMoveAt = Date.now();
+    // Eviction is cursor-driven — recenter the keep-windows on the cursor
     // even when no new load just landed (parking on a frame recenters).
     this.evictFullAround(index);
     this.evictZoomAround(index);
+    this.evictMidAround(index);
     // bg priority needs no re-sort: pickBg() reads the live cursor at pump time.
     this.pumpBg();
     this.pumpFull();
@@ -459,6 +565,10 @@ export class ImageStore {
     // scrub, where re-prioritizing already-fetched previews (zero fetches)
     // is exactly what keeps scrubbing across a warm region sharp.
     this.refreshPool();
+    // Warm-region navigation issues zero reads, so no load-completion would
+    // ever re-pump the sweep once the user parks — poke it here (it bails
+    // instantly into the quiet-window timer while the cursor is moving).
+    this.pumpMidSweep();
   }
 
   setGridRange(start: number, end: number): void {
@@ -601,6 +711,9 @@ export class ImageStore {
     this.thumbErrors.delete(path);
     this.fullErrors.delete(path);
     this.zoomErrors.delete(path);
+    this.midErrors.delete(path);
+    this.midUncached.delete(path);
+    this.midReprobed.delete(path);
     this.terminalPaths.delete(path);
     if (this.fulls.get(path)?.status === "error") {
       this.fulls.delete(path);
@@ -644,6 +757,9 @@ export class ImageStore {
   rearm(): void {
     this.thumbErrors.clear();
     this.fullErrors.clear();
+    this.midErrors.clear();
+    this.midUncached.clear();
+    this.midReprobed.clear();
     this.terminalPaths.clear();
     this.folderTrouble = false;
     for (const p of this.wantFull.keys()) {
@@ -710,6 +826,7 @@ export class ImageStore {
       thumb: this.thumbs.get(path),
       full: this.fulls.get(path),
       zoomFull: this.zoomFulls.get(path),
+      mid: this.mids.get(path),
       knownDims: this.pathDims.get(path),
     };
   }
@@ -723,6 +840,7 @@ export class ImageStore {
       thumb: this.thumbs.get(path),
       full: this.fulls.get(path),
       zoomFull: this.zoomFulls.get(path),
+      mid: this.mids.get(path),
       knownDims: this.pathDims.get(path),
     };
     this.states.set(path, newState);
@@ -735,6 +853,7 @@ export class ImageStore {
       old.url !== newResolved.url ||
       old.error !== newResolved.error ||
       old.full?.url !== newResolved.full?.url ||
+      old.mid?.url !== newResolved.mid?.url ||
       old.dims?.w !== newResolved.dims?.w ||
       old.dims?.h !== newResolved.dims?.h
     ) {
@@ -816,6 +935,7 @@ export class ImageStore {
         else this.bgInFlight--;
         this.pumpThumbs();
         this.pumpBg();
+        this.pumpMidSweep();
       }
     }
   }
@@ -962,6 +1082,8 @@ export class ImageStore {
       // A zoom request deferred on this path's missing hint can fire now —
       // the hint (and orientation echo) just landed above.
       if (this.pendingZoom.delete(path)) this.requestZoomFull(path);
+      // Same for a deferred mid request (re-checks display engagement fresh).
+      if (this.pendingMid.delete(path)) this.maybeRequestMid(path);
       this.invalidate(path);
       // also recenter the keep-window on the CURSOR (not just-loaded), so
       // eviction tracks where the user is, not where the last load happened.
@@ -977,8 +1099,10 @@ export class ImageStore {
       // forever), record capped backoff, and auto-retry while it's still
       // wanted. Terminal after MAX_TIER_ATTEMPTS → retry()/revisit only.
       // A deferred zoom want dies with the failed nav read (its retry path
-      // re-defers via requestZoomFull if the user is still zoomed).
+      // re-defers via requestZoomFull if the user is still zoomed); same for
+      // a deferred mid (the next settle re-requests).
       this.pendingZoom.delete(path);
+      this.pendingMid.delete(path);
       this.requestedFull.delete(path);
       const te = this.recordTierError(this.fullErrors, path, msg);
       this.scheduleFullRetry(path, te, gen);
@@ -999,8 +1123,10 @@ export class ImageStore {
           this.prefetchFullsAround(this.cursor);
         }
         this.pumpFull();
-        // finishing the last on-demand full must wake the bg sweep.
+        // finishing the last on-demand full must wake the bg sweep — and the
+        // mid sweep, which idles while any on-demand lane has work.
         this.pumpBg();
+        this.pumpMidSweep();
       }
     }
   }
@@ -1106,6 +1232,13 @@ export class ImageStore {
       this.evictZoomAround(this.cursor);
       // Warm the landed full so zoom stays sharp across hi-res remounts.
       this.refreshPool();
+      // Phase 8: the backend's opportunistic generator is (likely) producing
+      // this path's mid from the bytes this read just paid for — clear the
+      // quiet-miss memo (and the spent re-probe mark: fresh bytes grant a
+      // fresh re-probe) and re-probe shortly if the display wants mids.
+      this.midUncached.delete(path);
+      this.midReprobed.delete(path);
+      if (this.evaluateMidEngaged()) this.scheduleMidReprobe(path, gen);
     } catch (e) {
       if (this.generation !== gen) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -1123,6 +1256,7 @@ export class ImageStore {
       if (this.generation === gen) {
         this.zoomInFlight--;
         this.pumpZoom();
+        this.pumpMidSweep();
       }
     }
   }
@@ -1159,6 +1293,280 @@ export class ImageStore {
       if (!this.fullQueue.includes(path)) this.fullQueue.unshift(path);
       this.pumpFull();
     }, Math.max(0, te.nextRetryAt - Date.now()));
+  }
+
+  // ── Mid tier (Phase 8): the display-adaptive ≤2560px settled fit view ───
+
+  /** App injects the FRESH needPx provider (stage rect height × DPR). The
+   *  store calls it at each tier-choice moment — never cached at mount. */
+  setNeedPxProvider(provider: (() => number | null) | undefined): void {
+    this.needPxProvider = provider;
+  }
+
+  /** Re-run the hysteresis against a fresh needPx; returns the latch. */
+  private evaluateMidEngaged(): boolean {
+    this.midEngaged = nextMidEngaged(this.midEngaged, this.needPxProvider?.() ?? null);
+    return this.midEngaged;
+  }
+
+  /**
+   * Display change (stage ResizeObserver fire / matchMedia dppx flip): re-run
+   * the tier choice for the CURRENT frame without waiting for a navigation —
+   * dragging the window 4K → 1440p and back flips tier choice live. A release
+   * only stops future requests; an already-presented mid stays (it's sharper
+   * than needed, and the presenter's only-upgrade rule owns what shows).
+   */
+  reevaluateMid(): void {
+    if (this.evaluateMidEngaged()) {
+      const path = this.paths[this.cursor];
+      if (path) this.requestMid(path);
+    }
+    this.pumpMidSweep();
+  }
+
+  /**
+   * Request the mid for `path` IF the display needs it — needPx is computed
+   * fresh here, per request. App calls this from the settle timer (the mid is
+   * the settled fit view's tier); the store calls it from its own re-probe
+   * triggers. No-op below the threshold, mid-scrub never reaches it (the
+   * settle timer doesn't run there).
+   */
+  maybeRequestMid(path: string): void {
+    if (!this.evaluateMidEngaged()) return;
+    this.requestMid(path);
+  }
+
+  private requestMid(path: string): void {
+    if (!path || this.navLegacy || this.midUnsupported) return;
+    const existing = this.mids.get(path);
+    if (existing?.status === "ready" || existing?.status === "loading") return;
+    if (this.requestedMid.has(path) || this.midInFlightPaths.has(path)) return;
+    // Quiet-miss memo (network profile / generation pending): wait for a
+    // re-probe trigger instead of spamming a read that can't succeed yet.
+    if (this.midUncached.has(path)) return;
+    if (inCooldown(this.midErrors.get(path), Date.now())) return;
+    // No hint yet and the nav read that delivers it is underway? Defer —
+    // mirror of pendingZoom (loadFull's completion re-issues).
+    if (
+      !this.fullHints.has(path) &&
+      (this.fullInFlightPaths.has(path) ||
+        this.requestedFull.has(path) ||
+        this.fullQueue.includes(path) ||
+        this.wantFull.has(path))
+    ) {
+      this.pendingMid.add(path);
+      return;
+    }
+    if (!this.midQueue.includes(path)) this.midQueue.push(path);
+    this.pumpMid();
+  }
+
+  private pumpMid(): void {
+    while (this.midInFlight < this.profile.midGenConcurrency && this.midQueue.length > 0) {
+      const path = this.midQueue.shift()!;
+      const prev = this.mids.get(path);
+      if (prev?.status === "ready") continue;
+      if (this.requestedMid.has(path) || this.midInFlightPaths.has(path)) continue;
+      this.requestedMid.add(path);
+      this.midInFlightPaths.add(path);
+      this.mids.set(path, { status: "loading" });
+      this.invalidate(path);
+      this.midInFlight++;
+      void this.loadMid(path);
+    }
+  }
+
+  private async loadMid(path: string): Promise<void> {
+    const gen = this.generation;
+    const hint = this.fullHints.get(path);
+    try {
+      const result = await fetchMid(path, gen, {
+        fullOffset: hint?.offset ?? null,
+        fullLen: hint?.len ?? null,
+        // null → the backend self-derives orientation from moov (never 1).
+        orientation: hint?.orientation ?? null,
+      });
+      if (this.generation !== gen) {
+        URL.revokeObjectURL(result.url); // REVOKE SITE 11 (stale session)
+        return;
+      }
+      const existing = this.mids.get(path);
+      if (existing?.status === "ready") URL.revokeObjectURL(existing.url);
+      this.mids.set(path, { status: "ready", url: result.url });
+      this.midErrors.delete(path);
+      this.midUncached.delete(path);
+      this.counts.midLoads++;
+      this.invalidate(path);
+      this.evictMidAround(this.cursor);
+    } catch (e) {
+      if (this.generation !== gen) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      this.requestedMid.delete(path);
+      this.mids.delete(path);
+      if (/^cancelled$/i.test(msg)) {
+        // Superseded by a session change the backend saw first — quiet drop.
+      } else if (MID_UNCACHED_RE.test(msg)) {
+        // Not a failure: nothing cached and this call may not generate (the
+        // hard rule) or another producer is mid-generation. Stay on preview;
+        // remember so navs don't spam; re-probe ONCE when a zoom landing
+        // makes success plausible (a second catch for the same landing stays
+        // quiet — without the mark this would poll read_mid every 1.5 s).
+        this.midUncached.add(path);
+        if (!this.midReprobed.has(path)) {
+          this.midReprobed.add(path);
+          this.scheduleMidReprobe(path, gen);
+        }
+      } else if (/not found|unknown command|no handler/i.test(msg)) {
+        // Phase-8 frontend on an older backend: the tier stays dormant.
+        this.midUnsupported = true;
+      } else {
+        this.recordTierError(this.midErrors, path, msg);
+      }
+      this.invalidate(path);
+    } finally {
+      this.midInFlightPaths.delete(path);
+      if (this.generation === gen) {
+        this.midInFlight--;
+        this.pumpMid();
+        this.pumpMidSweep();
+      }
+    }
+  }
+
+  /** One delayed re-probe after a quiet miss: the opportunistic generator
+   *  needs ~300–400 ms of CPU after its zoom read returns. Fires only when a
+   *  zoom-tier read is in play for the path (otherwise nothing will have
+   *  filled the cache) and only re-requests if the user is still on the
+   *  frame. Stacked timers are harmless — every guard re-checks at fire time. */
+  private scheduleMidReprobe(path: string, gen: number): void {
+    const z = this.zoomFulls.get(path);
+    if (!z || z.status === "error") return;
+    setTimeout(() => {
+      if (this.generation !== gen) return;
+      this.midUncached.delete(path);
+      if (this.paths[this.cursor] === path) this.maybeRequestMid(path);
+    }, MID_REPROBE_MS);
+  }
+
+  /** Evict mids outside the fullKeep window — REVOKE SITE 12. Mid blobs are
+   *  ~1 MB and share the zoom tier's settled-frame cadence, so they share its
+   *  window too. displayRefs additionally protect any mounted consumer's
+   *  frame (the presenter may still be showing its decoded raster). */
+  private evictMidAround(centerIndex: number): void {
+    if (centerIndex < 0) return;
+    const keep = this.profile.fullKeep;
+    for (const [p, state] of this.mids) {
+      if (state?.status !== "ready") continue;
+      if (this.midInFlightPaths.has(p) || this.displayRefs.has(p)) continue;
+      const idx = this.indexOf(p);
+      if (idx !== -1 && Math.abs(idx - centerIndex) <= keep) continue;
+      URL.revokeObjectURL(state.url);
+      this.mids.delete(p);
+      this.requestedMid.delete(p);
+      this.counts.midEvicts++;
+      this.invalidate(p);
+    }
+  }
+
+  // ── Mid-tier idle sweep (Phase 8, LOCAL profile only) ────────────────────
+
+  /** True while every on-demand lane is empty AND idle — the sweep's gate
+   *  (the plan: "paused while any on-demand queue is non-empty"; the bg
+   *  thumb sweep is background, not on-demand, and doesn't pause it). */
+  private onDemandIdle(): boolean {
+    return (
+      this.thumbQueue.length === 0 &&
+      this.fullQueue.length === 0 &&
+      this.zoomQueue.length === 0 &&
+      this.midQueue.length === 0 &&
+      this.fullInFlightPaths.size === 0 &&
+      this.zoomInFlightPaths.size === 0 &&
+      this.midInFlightPaths.size === 0
+    );
+  }
+
+  /**
+   * Pre-generate mids nearest-to-cursor while the session is idle, so every
+   * settled view on a high-DPI display is eventually a cache hit. Gates:
+   * LOCAL profile only (the backend refuses otherwise — generating from a
+   * NAS would fetch fulls solely to generate, the hard rule), display
+   * actually engaged (a 1440p session must not burn CPU + 4 GB of disk on
+   * mids it never shows), first-full window respected (bgStarted), paused
+   * while any on-demand lane has work. Each path is attempted once per
+   * session; failures are best-effort quiet (read_mid covers on-demand).
+   */
+  private pumpMidSweep(): void {
+    if (this.folderTrouble || this.navLegacy || this.midUnsupported) return;
+    if (!this.profile.concurrentRestore) return; // network profile — local only
+    if (!this.bgStarted || !this.midEngaged) return;
+    // Disk budget (review F1): past ~the tier cap's worth of entries, more
+    // sweeping only LRU-evicts the working neighbourhood's own mids.
+    if (this.midSweepDone.size >= MID_SWEEP_BUDGET) return;
+    // Cursor quiet (review F3): warm-region arrowing and scrubbing issue no
+    // reads, so the on-demand-idle check alone can't see the user — wait out
+    // a quiet window and re-pump from a one-shot timer.
+    if (Date.now() - this.lastCursorMoveAt < MID_SWEEP_QUIET_MS) {
+      this.armMidSweepTimer();
+      return;
+    }
+    while (
+      this.midSweepInFlight < this.profile.midGenConcurrency &&
+      this.onDemandIdle()
+    ) {
+      const path = this.pickMidSweep();
+      if (!path) return;
+      this.midSweepDone.add(path);
+      this.midSweepInFlight++;
+      void this.sweepMid(path);
+    }
+  }
+
+  /** One-shot quiet-window re-pump (gen-scoped; at most one armed timer). */
+  private armMidSweepTimer(): void {
+    if (this.midSweepTimerArmed) return;
+    this.midSweepTimerArmed = true;
+    const gen = this.generation;
+    setTimeout(() => {
+      this.midSweepTimerArmed = false;
+      if (this.generation === gen) this.pumpMidSweep();
+    }, MID_SWEEP_QUIET_MS);
+  }
+
+  /** Nearest-to-cursor argmin over not-yet-attempted paths (pickBg's style). */
+  private pickMidSweep(): string | null {
+    let best: string | null = null;
+    let bestD = Infinity;
+    for (let i = 0; i < this.paths.length; i++) {
+      const p = this.paths[i];
+      if (this.midSweepDone.has(p)) continue;
+      if (this.mids.get(p)?.status === "ready") continue;
+      const d = Math.abs(i - this.cursor);
+      if (d < bestD) {
+        best = p;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  private async sweepMid(path: string): Promise<void> {
+    const gen = this.generation;
+    const hint = this.fullHints.get(path);
+    try {
+      const ok = await invokeGenerateMid(path, gen, {
+        fullOffset: hint?.offset ?? null,
+        fullLen: hint?.len ?? null,
+        orientation: hint?.orientation ?? null,
+      });
+      if (this.generation === gen && ok) this.counts.midGens++;
+    } catch {
+      // Best-effort: attempted once; on-demand read_mid still covers it.
+    } finally {
+      if (this.generation === gen) {
+        this.midSweepInFlight--;
+        this.pumpMidSweep();
+      }
+    }
   }
 
   /**
@@ -1326,12 +1734,14 @@ export class ImageStore {
     navMsAvg: number;
     lanes: { preview: string; zoom: string; thumb: string; bg: string };
     caches: { previews: number; zoomFulls: number; thumbs: number; dims: number };
-    counts: { navLoads: number; zoomLoads: number; thumbLoads: number; previewEvicts: number; zoomEvicts: number; errors: number };
+    counts: { navLoads: number; zoomLoads: number; thumbLoads: number; midLoads: number; midGens: number; previewEvicts: number; zoomEvicts: number; midEvicts: number; errors: number };
+    mid: { engaged: boolean; needPx: number | null; lane: string; cached: number; sweepLeft: number };
     decodedMB: number;
     legacyNav: boolean;
   } {
     const previews = [...this.fulls.values()].filter((s) => s?.status === "ready").length;
     const zooms = [...this.zoomFulls.entries()].filter(([, s]) => s?.status === "ready");
+    const mids = [...this.mids.values()].filter((s) => s?.status === "ready").length;
     let zoomMB = 0;
     for (const [p] of zooms) {
       const d = this.nativeDims.get(p);
@@ -1359,7 +1769,23 @@ export class ImageStore {
         dims: this.pathDims.size,
       },
       counts: { ...this.counts },
-      decodedMB: Math.round((this.navLegacy ? previews * 130 : previews * 7) + zoomMB + this.thumbs.size * 0.08),
+      // The needPx readout is the manual matrix's instrument: it shows the
+      // LIVE display demand and which side of the hysteresis band it sits on.
+      mid: {
+        engaged: this.midEngaged,
+        needPx: (() => {
+          const v = this.needPxProvider?.() ?? null;
+          return v === null ? null : Math.round(v);
+        })(),
+        lane: `${this.midInFlight}/${this.profile.midGenConcurrency} q${this.midQueue.length}`,
+        cached: mids,
+        sweepLeft: this.profile.concurrentRestore && this.midEngaged
+          ? Math.max(0, this.paths.length - this.midSweepDone.size)
+          : 0,
+      },
+      decodedMB: Math.round(
+        (this.navLegacy ? previews * 130 : previews * 7) + zoomMB + mids * 17 + this.thumbs.size * 0.08,
+      ),
       legacyNav: this.navLegacy,
     };
   }

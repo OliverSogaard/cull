@@ -22,11 +22,17 @@ Each image resolves through three display stages — **shimmer → thumb → ful
 stage "full" means **the navigation tier is ready**, and that tier is the
 CR3's embedded 1620×1080 PRVW preview (one ~2 MiB read), NOT the 32 MP mdat
 JPEG — the 32 MP **zoom tier** is fetched only on cursor settle or zoom, via
-an exact byte range computed from moov's sample tables. An evicted nav blob
-falls back to its thumb, never back to shimmer. `src/image/stage.ts` is the
-pure heart of this: `resolveStage(ImageState) → Resolved { stage, url, dims,
-error, full }` (`full` = the ready zoom-tier blob, whatever the nav stage).
-It has no I/O and no React, so the rule set is unit-tested in isolation.
+an exact byte range computed from moov's sample tables. On high-DPI displays
+a generated **mid tier** (≤2560 px long edge, q80, Phase 8) additionally
+serves the SETTLED fit view: the store requests it only when the measured
+display demand (`needPx` = stage rect height × devicePixelRatio, evaluated
+fresh per request with ~100 px of hysteresis around ~1700) exceeds what the
+preview can show sharply; the fallback chain mid → preview always renders.
+An evicted nav blob falls back to its thumb, never back to shimmer.
+`src/image/stage.ts` is the pure heart of this: `resolveStage(ImageState) →
+Resolved { stage, url, dims, error, full, mid }` (`full`/`mid` = the ready
+zoom/mid blobs, whatever the nav stage). It has no I/O and no React, so the
+rule set is unit-tested in isolation.
 
 `src/image/imageStore.ts` is a framework-agnostic subscription store, consumed
 via `useSyncExternalStore` in `src/image/useImage.ts`:
@@ -67,9 +73,11 @@ race, which makes scrubbing through prefetched neighbourhoods SHARP.
   of the cursor (60 network / 150 local — previews are ~15× lighter than the
   old full blobs) and revoked outside it; the 32 MP **zoom fulls** live in
   their own much smaller `fullKeep` window (2/3 per side; pins for the zoomed
-  frame, compare pair, and histogram probe override). Memory stays flat
+  frame, compare pair, and histogram probe override), and the **mids** share
+  that window (~1 MB blobs on the same settled-frame cadence; mounted
+  consumers' displayRefs additionally protect a shown mid). Memory stays flat
   across an arbitrarily long session. Eviction is cursor-driven, so parking
-  on a frame recenters both windows even when nothing new loads.
+  on a frame recenters the windows even when nothing new loads.
 - **Generation-based cancellation** — `reset(paths)` (folder change) keeps
   thumbs but revokes all fulls and bumps a generation counter; `hardReset()`
   (session end) revokes everything. In-flight reads from a superseded
@@ -98,7 +106,10 @@ its range so prefetch follows the loupe cursor.
 `src-tauri/src/tier_cache.rs` (pipeline Phase 7) is a per-tier LRU on-disk
 cache in the OS cache dir: `thumb/` (500 MB) behind `extract_thumbnail`,
 `prvw/` (2 GB) behind `read_preview` (filled by piggyback on misses only),
-`mid/` (4 GB) reserved for Phase 8. Each v2 entry stores dual validators —
+`mid/` (4 GB) behind `read_mid` (Phase 8) — filled opportunistically from
+zoom reads' in-memory bytes on every profile, by `read_mid` misses on the
+local profile, and by the local idle sweep (`generate_mid`); the NAS profile
+NEVER fetches a full solely to generate. Each v2 entry stores dual validators —
 source mtime in MILLISECONDS plus file size, checked against the session stat
 table fed by analyze's dir listings, so a hit costs zero source-file
 round-trips — alongside the command's wire header (metadata included) and the
@@ -208,6 +219,25 @@ the native-resolution decode. The layer drops on every navigation and on
 thumb-strip toggle (which resizes the stage; without the drop, the layer
 lingers at the old size and overlaps the reflowed base image).
 
+### Display-adaptive mid tier (Phase 8)
+
+On a 4K/Retina-class stage the 1620 px preview upscales ~1.6–1.8× in the fit
+view — visibly soft. The same settle timer therefore also requests the
+**mid tier**: a ≤2560-px-long-edge q80 JPEG generated in Rust (zune-jpeg
+decode → fast_image_resize Lanczos3 → jpeg-encoder, the source's EXIF
+orientation APP1 spliced — pixels are never rotated) and disk-cached under
+`mid/`. The store decides per request from `needPx` = stage rect height ×
+devicePixelRatio (fresh each time; re-evaluated on stage resizes and on DPR
+flips via a matchMedia listener, so dragging the window between a 4K and a
+1440p monitor flips the tier choice live, with ~100 px hysteresis against
+jitter). On 1440p-class displays the mid is never requested. Generation is
+profile-aware: the local profile generates on `read_mid` misses and runs a
+budgeted idle sweep (paused whenever any on-demand lane has work or the
+cursor moved recently); the network profile only ever serves the cache —
+mids appear there as a free by-product of zoom reads (the bytes are already
+in memory; CPU only). The presenter treats the mid as one more upgrade tier
+between preview and full; mid-scrub it is never offered.
+
 ## Composition overlays
 
 Three are precomputed from the on-screen JPEG and cached per path:
@@ -248,6 +278,8 @@ Defaults to `local`; flip to `network` for NAS / SMB / SSHFS.
 | Zoom-full keep window (each side) | 2 | 3 |
 | Preview neighbour prefetch (each side) | 4 | 8 |
 | Zoom-full settle warm-up | 400 ms | 150 ms |
+| Mid-tier generation concurrency (Phase 8) | 1 | 2 |
+| Mid-tier generation on `read_mid` miss / idle sweep | never (cache-only) | yes / yes |
 | Backend IoGate read permits | 6 | 16 |
 | XMP-restore on analyze | sequential | 4-thread scoped pool |
 

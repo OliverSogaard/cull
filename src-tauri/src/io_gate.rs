@@ -104,6 +104,15 @@ impl IoGate {
         sem.acquire_owned().await.expect("IoGate semaphore closed")
     }
 
+    /// True only when the frontend explicitly pushed the LOCAL profile.
+    /// This is the mid tier's generation privilege (Phase 8 hard rule: the
+    /// NAS profile never fetches a full SOLELY to generate) — so UNSET is
+    /// treated as network: no speculative source reads before the frontend
+    /// has told us where the photos live.
+    pub fn is_local(&self) -> bool {
+        self.mode.load(Ordering::Relaxed) == MODE_LOCAL
+    }
+
     /// Tiered read timeout for the current profile.
     pub fn read_timeout(&self, tier: Tier) -> Duration {
         let network = self.mode.load(Ordering::Relaxed) != MODE_LOCAL;
@@ -200,13 +209,17 @@ pub(crate) async fn begin_session(
 }
 
 /// Storage-mode push (Phase 3 wires it next to the frontend's setProfile):
-/// swaps the backstop permit cap + timeout tier live.
+/// swaps the backstop permit cap + timeout tier live, plus the mid tier's
+/// generation concurrency (Phase 8: 1 network / 2 local).
 #[tauri::command]
 pub(crate) async fn set_io_profile(
     mode: String,
     gate: tauri::State<'_, Arc<IoGate>>,
+    midgen: tauri::State<'_, Arc<crate::midtier::MidGen>>,
 ) -> Result<(), String> {
-    gate.set_profile(mode == "network");
+    let network = mode == "network";
+    gate.set_profile(network);
+    midgen.set_profile(network);
     Ok(())
 }
 

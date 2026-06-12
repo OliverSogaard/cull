@@ -1061,3 +1061,221 @@ describe("Phase 5 — direction-biased prefetch + decode pool", () => {
     expect(poolImages.every((i) => i.src === "")).toBe(true);
   });
 });
+
+// ── Mid tier (Phase 8): display-adaptive needPx selection ───────────────────
+
+describe("mid tier (Phase 8)", () => {
+  /** read_mid-shaped frame: { midLen, width, height } header + 3 JPEG bytes. */
+  function makeMidBuf(): ArrayBuffer {
+    const header = JSON.stringify({ midLen: 3, width: 2560, height: 1707 });
+    const headerBytes = new TextEncoder().encode(header);
+    const buf = new ArrayBuffer(4 + headerBytes.length + 3);
+    const dv = new DataView(buf);
+    dv.setUint32(0, headerBytes.length, true);
+    new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
+    new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
+    return buf;
+  }
+
+  /** Route invoke by command; records calls. Unrouted commands resolve to a
+   *  valid frame of their kind so background machinery never poisons a test. */
+  function routeMidInvoke(
+    overrides: Record<string, (args: unknown) => Promise<unknown>> = {},
+  ) {
+    const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+    vi.mocked(invoke).mockImplementation((cmd: unknown, args?: unknown) => {
+      calls.push({ cmd: cmd as string, args: (args ?? {}) as Record<string, unknown> });
+      const route = overrides[cmd as string];
+      if (route) return route(args) as Promise<never>;
+      if (cmd === "read_preview") return Promise.resolve(makePreviewBuf()) as Promise<never>;
+      if (cmd === "extract_thumbnail")
+        return Promise.resolve(makeThumbnailBuf(60, 40)) as Promise<never>;
+      if (cmd === "read_mid") return Promise.resolve(makeMidBuf()) as Promise<never>;
+      if (cmd === "generate_mid") return Promise.resolve(true) as Promise<never>;
+      return Promise.resolve(new ArrayBuffer(0)) as Promise<never>;
+    });
+    return calls;
+  }
+
+  const midCalls = (calls: { cmd: string }[]) => calls.filter((c) => c.cmd === "read_mid");
+  const genCalls = (calls: { cmd: string }[]) => calls.filter((c) => c.cmd === "generate_mid");
+
+  it("requests read_mid only when the display engages (needPx fresh per request)", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const calls = routeMidInvoke();
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(["/p/a.cr3"]);
+
+    // 1440p-class display: the mid is NEVER requested.
+    store.setNeedPxProvider(() => 1240);
+    store.maybeRequestMid("/p/a.cr3");
+    await flush();
+    expect(midCalls(calls)).toHaveLength(0);
+    expect(store.snapshot("/p/a.cr3").mid).toBeUndefined();
+
+    // 4K-class display: requested, and the snapshot gains the mid url.
+    store.setNeedPxProvider(() => 1860);
+    store.maybeRequestMid("/p/a.cr3");
+    await vi.waitUntil(() => store.snapshot("/p/a.cr3").mid !== undefined, { timeout: 2000 });
+    expect(midCalls(calls)).toHaveLength(1);
+    expect(store.snapshot("/p/a.cr3").mid?.url).toMatch(/^blob:/);
+  });
+
+  it("the hysteresis latch holds through the band and releases below it", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const calls = routeMidInvoke();
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    const paths = ["/p/0.cr3", "/p/1.cr3", "/p/2.cr3"];
+    store.reset(paths);
+    let needPx = 1860;
+    store.setNeedPxProvider(() => needPx);
+
+    store.maybeRequestMid(paths[0]); // engages
+    await vi.waitUntil(() => midCalls(calls).length === 1, { timeout: 2000 });
+    needPx = 1700; // resize jitter inside the band — choice held
+    store.maybeRequestMid(paths[1]);
+    await vi.waitUntil(() => midCalls(calls).length === 2, { timeout: 2000 });
+    needPx = 1240; // dragged to the 1440p display — released
+    store.maybeRequestMid(paths[2]);
+    await flush();
+    expect(midCalls(calls)).toHaveLength(2);
+  });
+
+  it("'mid uncached' is a quiet miss: nothing surfaced, no request spam", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const calls = routeMidInvoke({
+      read_mid: () => Promise.reject(new Error("mid uncached (network profile)")),
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(["/p/a.cr3"]);
+    store.setNeedPxProvider(() => 1860);
+
+    store.maybeRequestMid("/p/a.cr3");
+    await vi.waitUntil(() => midCalls(calls).length === 1, { timeout: 2000 });
+    await flush();
+    // Not an error (the fallback chain keeps rendering the preview)…
+    expect(store.snapshot("/p/a.cr3").mid).toBeUndefined();
+    expect(store.snapshot("/p/a.cr3").error).toBeUndefined();
+    // …and memoized: re-requests don't hammer a read that can't succeed yet.
+    store.maybeRequestMid("/p/a.cr3");
+    await flush();
+    expect(midCalls(calls)).toHaveLength(1);
+  });
+
+  it("a mid wanted mid-nav defers until the hint lands, then carries it", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    let releaseNav: ((buf: ArrayBuffer) => void) | undefined;
+    const calls = routeMidInvoke({
+      read_preview: () =>
+        releaseNav
+          ? Promise.resolve(makePreviewBuf())
+          : new Promise((resolve) => {
+              releaseNav = resolve as (buf: ArrayBuffer) => void;
+            }),
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(["/p/a.cr3"]);
+    store.setNeedPxProvider(() => 1860);
+
+    store.registerWantFull("/p/a.cr3"); // nav read now in flight (deferred)
+    await flush();
+    store.maybeRequestMid("/p/a.cr3"); // no hint yet → defers, no read_mid
+    await flush();
+    expect(midCalls(calls)).toHaveLength(0);
+
+    releaseNav!(makePreviewBuf(6, 1234, 5678)); // hint + orientation echo land
+    await vi.waitUntil(() => midCalls(calls).length === 1, { timeout: 2000 });
+    expect(midCalls(calls)[0].args).toMatchObject({
+      fullOffset: 1234,
+      fullLen: 5678,
+      orientation: 6,
+    });
+  });
+
+  it("mids outside the keep window are revoked; displayRefs protect a mounted frame", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    routeMidInvoke();
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network); // fullKeep 2
+    const paths = Array.from({ length: 10 }, (_, i) => `/p/${i}.cr3`);
+    store.reset(paths);
+    store.setNeedPxProvider(() => 1860);
+
+    store.maybeRequestMid(paths[0]);
+    await vi.waitUntil(() => store.snapshot(paths[0]).mid !== undefined, { timeout: 2000 });
+    const url0 = store.snapshot(paths[0]).mid!.url;
+    expect(liveUrls.has(url0)).toBe(true);
+
+    // A mounted consumer (the presenter may still show its raster) survives…
+    store.registerDisplay(paths[0]);
+    store.setCursor(5);
+    expect(store.snapshot(paths[0]).mid?.url).toBe(url0);
+    // …and is evicted + revoked once unmounted and outside the window.
+    store.unregisterDisplay(paths[0]);
+    store.setCursor(6);
+    expect(store.snapshot(paths[0]).mid).toBeUndefined();
+    expect(liveUrls.has(url0)).toBe(false);
+  });
+
+  it("the idle sweep pre-generates on LOCAL only, paused while on-demand work runs", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    let releaseNav: ((buf: ArrayBuffer) => void) | undefined;
+    const calls = routeMidInvoke({
+      read_preview: () =>
+        releaseNav
+          ? Promise.resolve(makePreviewBuf())
+          : new Promise((resolve) => {
+              releaseNav = resolve as (buf: ArrayBuffer) => void;
+            }),
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.local);
+    const paths = ["/p/a.cr3", "/p/b.cr3", "/p/c.cr3"];
+    store.reset(paths);
+    store.setNeedPxProvider(() => 1860);
+
+    store.registerWantFull(paths[0]); // first nav read in flight (deferred)
+    store.reevaluateMid(); // engages; the sweep must NOT start yet
+    await flush();
+    expect(genCalls(calls)).toHaveLength(0);
+
+    releaseNav!(makePreviewBuf()); // nav lands → bg starts → lanes drain
+    // The sweep eventually covers the paths without a ready mid.
+    await vi.waitUntil(() => genCalls(calls).length >= 2, { timeout: 4000 });
+    const sweptPaths = genCalls(calls).map((c) => c.args.path);
+    expect(sweptPaths).toContain("/p/b.cr3");
+    expect(sweptPaths).toContain("/p/c.cr3");
+    // Pause discipline: generation only began after the on-demand mid read
+    // (the cursor frame's read_mid) had been issued — never alongside it.
+    const firstGen = calls.findIndex((c) => c.cmd === "generate_mid");
+    const midRead = calls.findIndex((c) => c.cmd === "read_mid");
+    expect(midRead).toBeGreaterThanOrEqual(0);
+    expect(firstGen).toBeGreaterThan(midRead);
+  });
+
+  it("the sweep never runs on the network profile", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const calls = routeMidInvoke();
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(["/p/a.cr3", "/p/b.cr3"]);
+    store.setNeedPxProvider(() => 1860);
+
+    store.registerWantFull("/p/a.cr3");
+    store.reevaluateMid();
+    await vi.waitUntil(() => store.snapshot("/p/a.cr3").mid !== undefined, { timeout: 2000 });
+    await new Promise((r) => setTimeout(r, 50)); // give a wrong sweep time to fire
+    expect(genCalls(calls)).toHaveLength(0);
+  });
+});

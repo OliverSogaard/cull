@@ -152,6 +152,11 @@ export type PerformanceProfile = {
   /** Decode-ahead pool cap for zoom-tier fulls (~130 MB decoded at 32.5 MP) —
    *  keeps the settled frame's full raster warm across hi-res layer remounts. */
   decodedPoolFulls: number;
+  /** Mid-tier (Phase 8) concurrency: the store's `read_mid` lane cap AND the
+   *  local idle sweep's lane cap (the backend's MidGen semaphore mirrors the
+   *  same 1 network / 2 local numbers). Generation is ~250–400 ms of CPU per
+   *  image, so this is a CPU knob, not an I/O one. */
+  midGenConcurrency: number;
 };
 
 export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
@@ -168,6 +173,7 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     previewPrefetchBehind: 2,
     decodedPoolPreviews: 9,
     decodedPoolFulls: 1,
+    midGenConcurrency: 1,
   },
   local: {
     previewConcurrency: 12,
@@ -182,5 +188,6 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     previewPrefetchBehind: 4,
     decodedPoolPreviews: 18,
     decodedPoolFulls: 2,
+    midGenConcurrency: 2,
   },
 };

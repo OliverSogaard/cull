@@ -111,12 +111,33 @@ describe("Presenter", () => {
     expect(h.p.snapshot().front.tier).toBe("full");
   });
 
+  it("mid (Phase 8) upgrades a shown preview; a late preview never replaces a shown mid", async () => {
+    const h = harness();
+    h.p.nav("/a");
+    const prv = h.p.offer("/a", "preview", "blob:p1");
+    await flush();
+    h.pending[0].resolve();
+    await prv;
+    expect(h.p.snapshot().front.tier).toBe("preview");
+    // The mid ranks above the preview → decodes and presents.
+    const mid = h.p.offer("/a", "mid", "blob:m1");
+    await flush();
+    h.pending[1].resolve();
+    expect(await mid).toBe(true);
+    expect(h.p.snapshot().front).toMatchObject({ tier: "mid", url: "blob:m1" });
+    // Only-upgrade: a re-offered preview is rejected synchronously.
+    expect(await h.p.offer("/a", "preview", "blob:p1")).toBe(false);
+    expect(h.pending).toHaveLength(2);
+    expect(h.p.snapshot().front.tier).toBe("mid");
+  });
+
   it("scrub: offers above preview are ignored; the frame budget gates acceptance", async () => {
     const h = harness();
     h.p.setScrubbing(true);
     h.p.nav("/a");
-    // Full is never even decoded mid-scrub.
+    // Full AND mid are never even decoded mid-scrub (preview's territory).
     expect(await h.p.offer("/a", "full", "blob:f1")).toBe(false);
+    expect(await h.p.offer("/a", "mid", "blob:m1")).toBe(false);
     expect(h.pending).toHaveLength(0);
 
     // Budget LOSS: the frame fires before the decode → keep current, false.
@@ -323,5 +344,45 @@ describe("offerTiers", () => {
     const s = h.p.snapshot();
     expect(s.front).toMatchObject({ path: "/a", tier: "preview" });
     expect(s.transitionMs).toBe(0); // snap — no blur ever mounted
+  });
+
+  it("settled with a cached mid (Phase 8): the mid clobbers the lesser decodes and presents alone", async () => {
+    const h = clobberHarness();
+    h.p.nav("/a");
+    const done = offerTiers(
+      h.p,
+      "/a",
+      { thumb: "blob:t1", preview: "blob:p1", mid: "blob:m1" },
+      false,
+    );
+    await flush();
+    // All three offered in tier order on the shared back layer: the mid's
+    // src-set aborted both lesser decodes — the best tier presents directly.
+    expect(h.decodes.map((d) => d.url)).toEqual(["blob:t1", "blob:p1", "blob:m1"]);
+    expect(h.decodes[0].settled).toBe(true);
+    expect(h.decodes[1].settled).toBe(true);
+    h.advance(SNAP_WINDOW_MS - 1);
+    h.finish("blob:m1");
+    await done;
+    const s = h.p.snapshot();
+    expect(s.front).toMatchObject({ path: "/a", tier: "mid", url: "blob:m1" });
+    expect(s.transitionMs).toBe(0);
+  });
+
+  it("scrub with a cached mid: the mid is NOT offered (preview territory)", async () => {
+    const h = clobberHarness();
+    h.p.setScrubbing(true);
+    h.p.nav("/a");
+    const done = offerTiers(
+      h.p,
+      "/a",
+      { thumb: "blob:t1", preview: "blob:p1", mid: "blob:m1" },
+      true,
+    );
+    await flush();
+    h.finish("blob:p1"); // preview wins its frame budget
+    await done;
+    expect(h.p.snapshot().front).toMatchObject({ path: "/a", tier: "preview" });
+    expect(h.decodes.some((d) => d.url === "blob:m1")).toBe(false);
   });
 });

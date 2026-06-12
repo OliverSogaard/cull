@@ -13,6 +13,10 @@ export type ImageState = {
   full: FullState | undefined;
   /** Zoom tier (Phase 3): the 32 MP mdat JPEG, fetched on settle/zoom only. */
   zoomFull?: { status: "loading" } | { status: "ready"; url: string; dims: ImageDims | undefined } | { status: "error"; error: string };
+  /** Mid tier (Phase 8): the generated ≤2560px JPEG serving the settled fit
+   *  view on high-DPI stages. Errors are tracked in the store's midErrors
+   *  (never displayed — the fallback chain mid→preview always renders). */
+  mid?: { status: "loading" } | { status: "ready"; url: string };
   /** Session-lifetime dims cache entry (orientation-adjusted display dims).
    *  Present even after the thumb/full blobs are evicted, so a revisited
    *  frame's matte keeps its true aspect instead of flashing neutral-square. */
@@ -28,14 +32,18 @@ export type Resolved = {
   /** Ready zoom-tier full for the hi-res layer (url + NATIVE display dims),
    *  whatever the nav stage — undefined while unfetched/loading/errored. */
   full: { url: string; dims: ImageDims | undefined } | undefined;
+  /** Ready mid tier (Phase 8) for the settled fit view on high-DPI stages —
+   *  offered to the presenter ABOVE the preview; undefined while absent. */
+  mid: { url: string } | undefined;
 };
 
 export function resolveStage(s: ImageState): Resolved {
   const error = s.full?.status === "error" ? s.full.error : undefined;
   const full =
     s.zoomFull?.status === "ready" ? { url: s.zoomFull.url, dims: s.zoomFull.dims } : undefined;
+  const mid = s.mid?.status === "ready" ? { url: s.mid.url } : undefined;
   if (s.full?.status === "ready")
-    return { stage: "full", url: s.full.url, dims: s.full.dims, error: undefined, full };
-  if (s.thumb) return { stage: "thumb", url: s.thumb.url, dims: s.thumb.dims, error, full };
-  return { stage: "shimmer", url: undefined, dims: s.knownDims, error, full };
+    return { stage: "full", url: s.full.url, dims: s.full.dims, error: undefined, full, mid };
+  if (s.thumb) return { stage: "thumb", url: s.thumb.url, dims: s.thumb.dims, error, full, mid };
+  return { stage: "shimmer", url: undefined, dims: s.knownDims, error, full, mid };
 }

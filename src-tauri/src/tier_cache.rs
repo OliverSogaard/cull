@@ -49,9 +49,8 @@ static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 pub enum CacheTier {
     Thumb,
     Prvw,
-    /// Phase 8 (generated ≤2560px tier). The subdir + caps exist now so the
-    /// format is settled; nothing writes it yet.
-    #[allow(dead_code)]
+    /// Generated ≤2560px tier (Phase 8) — written by `read_mid` misses, the
+    /// opportunistic generator, and the local-profile idle sweep.
     Mid,
 }
 
@@ -327,6 +326,32 @@ impl TierStore {
         victims
     }
 
+    /// Cheap currency check WITHOUT reading the payload or bumping LRU
+    /// recency: index membership plus a prelude-only read validating
+    /// magic/version/tier/mtime/size. Used by the opportunistic mid
+    /// generator to skip already-cached paths before cloning a ~10 MB full;
+    /// a stale or torn entry just reads false — the imminent `put`
+    /// overwrites it (and a later `get` would drop it anyway).
+    fn has_current(&self, src_path: &str, mtime_ms: i64, file_size: u64) -> bool {
+        let key = key_for(src_path);
+        {
+            let Ok(idx) = self.index.lock() else { return false };
+            if !idx.entries.contains_key(&key) {
+                return false;
+            }
+        }
+        let mut buf = [0u8; PRELUDE];
+        let Ok(mut f) = std::fs::File::open(self.dir.join(&key)) else { return false };
+        if std::io::Read::read_exact(&mut f, &mut buf).is_err() {
+            return false;
+        }
+        &buf[0..4] == MAGIC
+            && buf[4] == VERSION
+            && buf[5] == self.tier_byte
+            && buf[6..14] == mtime_ms.to_le_bytes()
+            && buf[14..22] == file_size.to_le_bytes()
+    }
+
     fn clear(&self) {
         // Same outside-the-lock discipline as eviction.
         let keys: Vec<String> = {
@@ -392,6 +417,12 @@ impl TierCache {
         payload: &[u8],
     ) {
         self.store(tier).put(src_path, mtime_ms, file_size, header, payload);
+    }
+
+    /// True when a current entry exists for `src_path` (prelude validation
+    /// only — no payload read, no LRU bump). See [`TierStore::has_current`].
+    pub fn has_current(&self, tier: CacheTier, src_path: &str, mtime_ms: i64, file_size: u64) -> bool {
+        self.store(tier).has_current(src_path, mtime_ms, file_size)
     }
 
     /// Wipe every tier (the settings dialog's "clear cache").
@@ -567,6 +598,50 @@ mod tests {
         assert_eq!(cache.size_bytes(), 0);
         assert!(cache.get(CacheTier::Thumb, &src, 1000, 3).is_none());
         assert!(cache.get(CacheTier::Prvw, &src, 1000, 3).is_none());
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Phase 8: the mid tier roundtrips through the REAL production caps and
+    /// refuses an entry past its 4 MiB per-entry ceiling (a pathological
+    /// generation must not crowd out hundreds of real mids).
+    #[test]
+    fn mid_tier_roundtrips_and_refuses_oversized_entries() {
+        let work = tmp("mid");
+        std::fs::create_dir_all(&work).unwrap();
+        let cache = TierCache::new(work.join("tiers"));
+        let src = src_file(&work, "a.cr3", b"cr3");
+        let jpeg = vec![0xFFu8; 1_200_000]; // a realistic q80 2560px payload
+        cache.put(CacheTier::Mid, &src, 1000, 3, b"{\"midLen\":1200000}", &jpeg);
+        let (h, p) = cache.get(CacheTier::Mid, &src, 1000, 3).expect("mid hit");
+        assert_eq!(h.as_slice(), b"{\"midLen\":1200000}");
+        assert_eq!(p.len(), jpeg.len());
+        // Over the 4 MiB cap → refused outright, the old entry replaced by
+        // nothing (put bails before touching the index or the disk).
+        let huge = vec![0u8; 4 * 1024 * 1024];
+        let before = cache.size_bytes();
+        cache.put(CacheTier::Mid, &src, 2000, 4, b"{}", &huge);
+        assert_eq!(cache.size_bytes(), before, "oversized put must be a no-op");
+        assert!(cache.get(CacheTier::Mid, &src, 2000, 4).is_none());
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// has_current: true only for a present + validator-matching entry; never
+    /// bumps recency and never deletes (the stale answer is just `false`).
+    #[test]
+    fn has_current_validates_without_mutating() {
+        let work = tmp("hascur");
+        std::fs::create_dir_all(&work).unwrap();
+        let store = small_store(work.join("t"), 10_000, 1_000);
+        let src = src_file(&work, "a.cr3", b"cr3");
+        assert!(!store.has_current(&src, 1000, 3), "empty store");
+        store.put(&src, 1000, 3, b"{}", b"jpeg");
+        assert!(store.has_current(&src, 1000, 3));
+        // Stale validators → false, but the entry survives for the matching
+        // stat (unlike get(), which deletes on mismatch).
+        assert!(!store.has_current(&src, 2000, 3));
+        assert!(!store.has_current(&src, 1000, 4));
+        assert!(store.has_current(&src, 1000, 3), "mismatch probe must not evict");
+        assert!(store.get(&src, 1000, 3).is_some());
         let _ = std::fs::remove_dir_all(&work);
     }
 
