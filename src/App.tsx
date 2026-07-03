@@ -166,6 +166,7 @@ export default function App() {
   const {
     scores: qualityScores,
     analyzing: qualityAnalyzing,
+    progress: qualityProgress,
     startAnalysis,
   } = useSmartCulling({
     enabled: settings.smartCulling,
@@ -2988,7 +2989,7 @@ export default function App() {
         {images.length === 0 ? (
           <div className="cull-message">no images</div>
         ) : positionInFilter === -1 ? (
-          <EmptyFilter filter={filter} analyzing={qualityAnalyzing} scoredCount={Object.keys(qualityScores).length} />
+          <EmptyFilter filter={filter} analyzing={qualityAnalyzing} scoredCount={Object.keys(qualityScores).length} progress={qualityProgress} />
         ) : cur.stage === "shimmer" && cur.error ? (
           // Full-screen error only when there's NO thumb to fall back to. If a
           // thumb exists, resolveStage keeps stage "thumb" (with error set) and
@@ -3316,7 +3317,9 @@ export default function App() {
                 }}
                 title="5 · show unrated frames with a smart-culling suggestion"
               >
-                {qualityAnalyzing ? "Sugg…" : "Sugg"}
+                {qualityAnalyzing && qualityProgress
+                  ? `Sugg ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
+                  : "Sugg"}
               </button>
             )}
           </div>
@@ -3436,7 +3439,7 @@ export default function App() {
         <>
           <div className="cull-grid-wrap">
             {visibleIndices.length === 0 ? (
-              <EmptyFilter filter={filter} analyzing={qualityAnalyzing} scoredCount={Object.keys(qualityScores).length} />
+              <EmptyFilter filter={filter} analyzing={qualityAnalyzing} scoredCount={Object.keys(qualityScores).length} progress={qualityProgress} />
             ) : (
               <GridView
                 images={images}
@@ -3555,12 +3558,17 @@ function EmptyFilter({
   filter,
   analyzing,
   scoredCount,
+  progress,
 }: {
   filter: Filter;
   analyzing?: boolean;
   /** How many frames the smart pass has scored — distinguishes "analyzed,
    *  no obvious calls" (the healthy quiet case) from "never analyzed". */
   scoredCount?: number;
+  /** Live pass progress — on a 5000-frame NAS folder the pass runs for many
+   *  minutes (by design: it always yields to interactive reads), and without
+   *  a count "analyzing" is indistinguishable from "hung". */
+  progress?: { done: number; total: number } | null;
 }) {
   // The suggested filter has three empty states, and telling them apart is
   // the difference between "working as designed" and "looks broken":
@@ -3571,9 +3579,12 @@ function EmptyFilter({
         <div className="cull-empty-state">
           <div className="cull-empty-state__icon">…</div>
           <div className="cull-empty-state__eyebrow">Analyzing</div>
-          <div className="cull-empty-state__title">Looking for obvious calls</div>
+          <div className="cull-empty-state__title">
+            Looking for obvious calls
+            {progress ? ` — ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} scored` : ""}
+          </div>
           <div className="cull-empty-state__hint">
-            suggestions appear here as frames are scored · <kbd>1</kbd> for all
+            fills in as frames are scored — culling always takes priority · <kbd>1</kbd> for all
           </div>
         </div>
       );
