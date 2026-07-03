@@ -19,6 +19,7 @@ export function FilmStrip({
   buffer,
   keyForItem,
   renderItem,
+  overlays,
 }: {
   className: string;
   count: number;
@@ -29,6 +30,10 @@ export function FilmStrip({
   buffer: number;
   keyForItem: (listIndex: number) => string | number;
   renderItem: (listIndex: number) => ReactNode;
+  /** Absolutely-positioned siblings rendered over the track (burst run boxes).
+   *  Positioned in track coordinates (`index * stride`), so they scroll with
+   *  the cells; keep them `pointer-events: none`. */
+  overlays?: ReactNode;
 }) {
   const { containerRef, trackWidth, first, last } = useStripVirtualizer({
     count,
@@ -67,6 +72,7 @@ export function FilmStrip({
         }}
       >
         {items}
+        {overlays}
       </div>
     </div>
   );

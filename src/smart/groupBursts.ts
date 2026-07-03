@@ -1,15 +1,41 @@
-import type { ImageScore } from "../types/ipc";
 import type { Img } from "../types/image";
 
-/** Burst membership + winner context for one frame, derived in TS. */
+/**
+ * Per-frame grouping inputs, SOURCE-AGNOSTIC: built from smart-culling scores
+ * when the pass has run, else from the EXIF metadata every frame already
+ * receives via its thumbnail — bursts are a standing fact about the shoot and
+ * render whether or not smart culling is enabled (see `buildBurstInputs`).
+ */
+export type BurstInput = {
+  srcFolder: string;
+  driveMode: number | null;
+  focalLengthMm: number | null;
+  /** captured_at + SubSec combined to ms (deltas only). */
+  capturedAtMs: number | null;
+  /** SubSec present ⇒ capturedAtMs is ms-precise (the fine cadence source). */
+  hasSubSec: boolean;
+  /** Write time — only known via the scores path; null from metadata. */
+  mtimeMs: number | null;
+};
+
+/** Winner-selection inputs — only available once the smart pass scored a frame. */
+export type SharpInput = {
+  afSharpness: number;
+  globalSharpness: number;
+  /** blownPct + crushedPct (winner tiebreak: lowest clipping). */
+  clipSum: number;
+};
+
+/** Burst membership + (when every member is scored) winner context. */
 export type BurstCtx = {
   /** 0-based group id (session-local, stable per derivation pass). */
   group: number;
   /** 1-based position within the group (for "3 of 7"). */
   pos: number;
   len: number;
+  /** Sharpest of the run — false everywhere while any member is unscored. */
   isWinner: boolean;
-  /** winner.afSharpness − this frame's (0 for the winner) — verdict confidence input. */
+  /** winner.afSharpness − this frame's (0 for the winner / while unscored). */
   marginToWinner: number;
 };
 
@@ -19,19 +45,18 @@ export const BURST_GAP_MS = 700;
 export const CAPTURED_COARSE_GUARD_MS = 2000;
 
 /** Strict "a beats b" for winner selection (ties fall through → earliest wins). */
-function beats(a: ImageScore, b: ImageScore): boolean {
+function beats(a: SharpInput, b: SharpInput): boolean {
   if (a.afSharpness !== b.afSharpness) return a.afSharpness > b.afSharpness;
   if (a.globalSharpness !== b.globalSharpness) return a.globalSharpness > b.globalSharpness;
-  const ac = a.blownPct + a.crushedPct;
-  const bc = b.blownPct + b.crushedPct;
-  return ac < bc;
+  return a.clipSum < b.clipSum;
 }
 
-type RunEntry = { id: number; s: ImageScore };
-
 /** Does `cur` extend the burst ending at `prev`? All gates must hold. */
-function extendsRun(prev: { img: Img; s: ImageScore }, cur: { img: Img; s: ImageScore }): boolean {
-  const [a, b] = [prev.s, cur.s];
+function extendsRun(
+  prev: { img: Img; input: BurstInput },
+  cur: { img: Img; input: BurstInput },
+): boolean {
+  const [a, b] = [prev.input, cur.input];
   if (!(a.driveMode != null && a.driveMode > 0) || !(b.driveMode != null && b.driveMode > 0)) {
     return false;
   }
@@ -42,11 +67,11 @@ function extendsRun(prev: { img: Img; s: ImageScore }, cur: { img: Img; s: Image
   // Cadence source: SubSec-precise capture clock when BOTH frames carry it —
   // immune to buffer-dump mtime stretch and copy-tool mtime flattening.
   const fine =
-    a.capturedAtMs != null && b.capturedAtMs != null && a.subSecMs != null && b.subSecMs != null;
+    a.capturedAtMs != null && b.capturedAtMs != null && a.hasSubSec && b.hasSubSec;
   if (fine) return Math.abs(b.capturedAtMs! - a.capturedAtMs!) < BURST_GAP_MS;
 
-  // mtime fallback, with the coarse capture-time guard: frames captured
-  // seconds apart NEVER group, no matter what a copy tool did to mtimes.
+  // mtime fallback (scores path only), with the coarse capture-time guard:
+  // frames captured seconds apart NEVER group, whatever a copy tool did.
   if (
     a.capturedAtMs != null &&
     b.capturedAtMs != null &&
@@ -54,37 +79,45 @@ function extendsRun(prev: { img: Img; s: ImageScore }, cur: { img: Img; s: Image
   ) {
     return false;
   }
+  if (a.mtimeMs == null || b.mtimeMs == null) return false; // no fine source at all
   return Math.abs(b.mtimeMs - a.mtimeMs) < BURST_GAP_MS;
 }
 
 /**
- * Pure derivation over the accumulated scores map + the session's image order.
- * Frames without a usable score are transparent walls: they split runs and get
- * no ctx — groups and winners self-correct as later chunks land (this re-runs
- * in the same useMemo as the verdicts).
+ * Pure derivation over the session's image order. Frames without usable
+ * inputs are transparent walls: they split runs and get no ctx — groups (and,
+ * once every member is scored, winners) self-correct as data lands.
+ * Winner selection needs `sharp` for EVERY member of a run — a half-scored
+ * burst has no winner yet rather than a premature one.
  */
 export function groupBursts(
   images: readonly Img[],
-  scores: Readonly<Record<number, ImageScore>>,
+  inputs: Readonly<Record<number, BurstInput>>,
+  sharp?: Readonly<Record<number, SharpInput>>,
 ): Map<number, BurstCtx> {
   const out = new Map<number, BurstCtx>();
-  let run: RunEntry[] = [];
+  let run: { id: number }[] = [];
   let groupId = 0;
 
   const flush = () => {
     if (run.length >= 2) {
-      let w = 0;
-      for (let i = 1; i < run.length; i++) {
-        if (beats(run[i].s, run[w].s)) w = i;
+      const sharps = run.map((r) => sharp?.[r.id]);
+      const winnerKnown = sharps.every((s) => s != null);
+      let w = -1;
+      if (winnerKnown) {
+        w = 0;
+        for (let i = 1; i < run.length; i++) {
+          if (beats(sharps[i]!, sharps[w]!)) w = i;
+        }
       }
-      const winnerSharp = run[w].s.afSharpness;
+      const winnerSharp = w >= 0 ? sharps[w]!.afSharpness : 0;
       run.forEach((r, i) => {
         out.set(r.id, {
           group: groupId,
           pos: i + 1,
           len: run.length,
           isWinner: i === w,
-          marginToWinner: i === w ? 0 : winnerSharp - r.s.afSharpness,
+          marginToWinner: w >= 0 && i !== w ? winnerSharp - sharps[i]!.afSharpness : 0,
         });
       });
       groupId += 1;
@@ -92,20 +125,20 @@ export function groupBursts(
     run = [];
   };
 
-  let prev: { img: Img; s: ImageScore } | null = null;
+  let prev: { img: Img; input: BurstInput } | null = null;
   for (const img of images) {
-    const s = scores[img.id];
-    if (!s || !s.decodeOk) {
+    const input = inputs[img.id];
+    if (!input) {
       flush();
       prev = null;
       continue;
     }
-    const cur = { img, s };
+    const cur = { img, input };
     if (prev && extendsRun(prev, cur)) {
-      run.push({ id: img.id, s });
+      run.push({ id: img.id });
     } else {
       flush();
-      run = [{ id: img.id, s }];
+      run = [{ id: img.id }];
     }
     prev = cur;
   }

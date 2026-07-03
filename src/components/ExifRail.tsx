@@ -71,32 +71,21 @@ export function ExifRail({
 
   return (
     <aside className="cull-exif-rail" aria-label="Image info">
-      {(ghost || burst) && (
+      {ghost && (
         <div className="cull-exif-rail__section">
-          <div className="cull-exif-rail__label">Analysis</div>
+          <div className="cull-exif-rail__label">Suggestion</div>
           <div className="cull-exif-rail__rows">
-            {ghost && (
-              <div className="cull-exif-rail__row">
-                <span
-                  className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}
-                >
-                  {ghost.verdict === "reject" ? "Reject" : "Keep"} ·{" "}
-                  {Math.round(ghost.confidence * 100)}%
-                </span>
-                <span className="cull-exif-rail__v cull-exif-rail__v--dim">
-                  {ghost.reasons.join(", ")}
-                </span>
-              </div>
-            )}
-            {burst && (
-              <div className="cull-exif-rail__row">
-                <span className="cull-exif-rail__k">Burst</span>
-                <span className="cull-exif-rail__v">
-                  {burst.pos} of {burst.len}
-                  {burst.isWinner ? " · sharpest" : ""}
-                </span>
-              </div>
-            )}
+            <div className="cull-exif-rail__row">
+              <span
+                className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}
+              >
+                {ghost.verdict === "reject" ? "Reject" : "Keep"} ·{" "}
+                {Math.round(ghost.confidence * 100)}%
+              </span>
+              <span className="cull-exif-rail__v cull-exif-rail__v--dim">
+                {ghost.reasons.join(", ")}
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -157,6 +146,20 @@ export function ExifRail({
           )}
         </div>
       </div>
+
+      {/* Burst membership — its own section at the BOTTOM: bursts are a fact
+          about the shoot (shown with smart culling off too), not a suggestion. */}
+      {burst && (
+        <div className="cull-exif-rail__section">
+          <div className="cull-exif-rail__label">Burst</div>
+          <div className="cull-exif-rail__rows">
+            <RailRow k="Frame" v={`${burst.pos} of ${burst.len}`} />
+            {burst.isWinner && (
+              <RailRow k="Pick" v="sharpest of the burst (AF-area detail)" />
+            )}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

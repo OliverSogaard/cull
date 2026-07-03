@@ -22,6 +22,9 @@ export type Img = {
  */
 export type ImageMetadata = {
   capturedAt: string | null;
+  /** Sub-second fraction of capturedAt in ms (EXIF SubSecTimeOriginal) —
+   *  the fine burst cadence. On the wire since the smart-culling backend. */
+  subSecMs: number | null;
   camera: string | null;
   lens: string | null;
   focalLengthMm: number | null;

@@ -31,6 +31,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { useSmartCulling } from "./smart/useSmartCulling";
 import { groupBursts } from "./smart/groupBursts";
+import { buildBurstInputs } from "./smart/burstInputs";
 import { deriveVerdict, type Suggestion } from "./smart/deriveVerdict";
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
@@ -90,6 +91,7 @@ const ZOOM_UNSETTLE_MEASURE_DELAY_MS = 260;
  */
 const EMPTY_METADATA: ImageMetadata = Object.freeze({
   capturedAt: null,
+  subSecMs: null,
   camera: null,
   lens: null,
   focalLengthMm: null,
@@ -175,19 +177,6 @@ export default function App() {
     images,
     storageMode: settings.storageMode,
   });
-  const burstCtx = useMemo(() => groupBursts(images, qualityScores), [images, qualityScores]);
-  // Only frames with an emitted verdict land in the map — the badge/filter
-  // predicate is a simple presence check.
-  const suggestions = useMemo(() => {
-    if (!settings.smartCulling) return {};
-    const out: Record<number, Suggestion> = {};
-    for (const [idStr, s] of Object.entries(qualityScores)) {
-      const id = Number(idStr);
-      const sug = deriveVerdict(s, burstCtx.get(id), settings.smartCullingConfidence);
-      if (sug.verdict) out[id] = sug;
-    }
-    return out;
-  }, [qualityScores, burstCtx, settings.smartCulling, settings.smartCullingConfidence]);
 
   // Recent sessions list rendered on the home screen. One entry per folder
   // SET, written once a session ENTERS CULLING (staging alone leaves no trace,
@@ -250,6 +239,31 @@ export default function App() {
   // from the analyze pass. Pixel URLs + display dims now live in the store
   // (consumed via useImage); this map holds only the descriptive metadata.
   const [metadata, setMetadata] = useState<Record<string, ImageMetadata>>({});
+
+  // Bursts are a standing fact about the shoot, NOT a smart-culling feature:
+  // grouping inputs come from the EXIF metadata every frame's thumbnail
+  // already delivered, upgraded in place by scores (which add the mtime
+  // fallback and the sharpness that determines a winner) when the pass runs.
+  const burstData = useMemo(
+    () => buildBurstInputs(images, qualityScores, metadata),
+    [images, qualityScores, metadata],
+  );
+  const burstCtx = useMemo(
+    () => groupBursts(images, burstData.inputs, burstData.sharp),
+    [images, burstData],
+  );
+  // Only frames with an emitted verdict land in the map — the badge/filter
+  // predicate is a simple presence check.
+  const suggestions = useMemo(() => {
+    if (!settings.smartCulling) return {};
+    const out: Record<number, Suggestion> = {};
+    for (const [idStr, s] of Object.entries(qualityScores)) {
+      const id = Number(idStr);
+      const sug = deriveVerdict(s, burstCtx.get(id), settings.smartCullingConfidence);
+      if (sug.verdict) out[id] = sug;
+    }
+    return out;
+  }, [qualityScores, burstCtx, settings.smartCulling, settings.smartCullingConfidence]);
 
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);

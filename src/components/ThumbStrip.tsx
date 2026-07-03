@@ -38,6 +38,38 @@ export function ThumbStrip({
 }) {
   const visibleSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
 
+  // One hairline box per burst RUN (bursts are contiguous in capture order, so
+  // a run is a [first..last] index span), with the count riding the top-left
+  // of the outline. Drawn as track overlays so the box spans the gaps between
+  // cells — a per-cell border can't read as "one long square".
+  const burstBoxes = useMemo(() => {
+    if (!bursts || bursts.size === 0) return null;
+    const runs = new Map<number, { first: number; last: number; len: number }>();
+    images.forEach((im, i) => {
+      const c = bursts.get(im.id);
+      if (!c) return;
+      const r = runs.get(c.group);
+      if (!r) runs.set(c.group, { first: i, last: i, len: c.len });
+      else {
+        r.first = Math.min(r.first, i);
+        r.last = Math.max(r.last, i);
+      }
+    });
+    return [...runs.entries()].map(([group, r]) => (
+      <div
+        key={`burst-${group}`}
+        className="cull-burst-box"
+        style={{
+          left: r.first * CELL_STRIDE - 3,
+          width: (r.last - r.first) * CELL_STRIDE + CELL_W + 6,
+        }}
+        aria-hidden
+      >
+        <span className="cull-burst-box__count">×{r.len}</span>
+      </div>
+    ));
+  }, [bursts, images]);
+
   return (
     <FilmStrip
       className="cull-thumbs"
@@ -47,6 +79,7 @@ export function ThumbStrip({
       trackHeight={CELL_H}
       centerOffset={currentIndex}
       buffer={STRIP_BUFFER}
+      overlays={burstBoxes}
       keyForItem={(i) => images[i].id}
       renderItem={(i) => (
         <ThumbCell

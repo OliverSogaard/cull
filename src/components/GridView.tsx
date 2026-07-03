@@ -170,9 +170,47 @@ export const GridView = memo(function GridView({
     onViewportChange(viewportFirst, viewportLast);
   }, [viewportFirst, viewportLast, onViewportChange]);
 
+  // Burst run boxes, one per (group, row) segment of RENDERED cells — grid
+  // rows wrap, so "one long square" becomes one box per row the run crosses.
+  // The ×N count rides the segment containing the run's first frame.
+  const burstSegs: { key: string; row: number; c0: number; c1: number; label: number | null }[] =
+    [];
+  if (bursts) {
+    const segs = new Map<string, { row: number; c0: number; c1: number; label: number | null }>();
+    for (const { idx, row, col } of cells) {
+      const c = bursts.get(images[idx].id);
+      if (!c) continue;
+      const key = `${c.group}:${row}`;
+      const seg = segs.get(key);
+      const label = c.pos === 1 ? c.len : null;
+      if (!seg) segs.set(key, { row, c0: col, c1: col, label });
+      else {
+        seg.c0 = Math.min(seg.c0, col);
+        seg.c1 = Math.max(seg.c1, col);
+        if (label != null) seg.label = label;
+      }
+    }
+    for (const [key, s] of segs) burstSegs.push({ key, ...s });
+  }
+
   return (
     <div className="cull-grid" ref={containerRef}>
       <div className="cull-grid__inner" style={{ height: totalH }}>
+        {burstSegs.map((s) => (
+          <div
+            key={`burst-${s.key}`}
+            className="cull-burst-box cull-burst-box--grid"
+            style={{
+              left: s.c0 * cellW + 1,
+              top: s.row * rowH + 1,
+              width: (s.c1 - s.c0 + 1) * cellW - 2,
+              height: rowH - 2,
+            }}
+            aria-hidden
+          >
+            {s.label != null && <span className="cull-burst-box__count">×{s.label}</span>}
+          </div>
+        ))}
         {cells.map(({ idx, row, col }) => (
           <GridCell
             key={images[idx].id}
@@ -235,15 +273,16 @@ const GridCell = memo(function GridCell({
   const dotIcon = verdictGlyph(rating, 12);
   const dotClass = verdictDotClass(rating, "cull-grid__dot");
   const showLrc = hasLrcRating(lrcRating, rating);
-  // Ghost suggestion only while unrated — the committed dot supersedes in place.
-  const ghost = !rating && suggestion?.verdict ? suggestion.verdict : null;
+  // Ghost suggestion only while unrated — the committed dot supersedes in
+  // place. The burst winner wears the same ghost ✓; the run outline is drawn
+  // at the grid level (segment boxes), not per cell.
+  const ghost =
+    !rating && (suggestion?.verdict ?? (burst?.isWinner ? ("keep" as const) : null));
   const cellClass = [
     "cull-grid__cell",
     isCurrent ? "is-current" : "",
     isReject ? "is-reject" : "",
     isMultiSelected ? "is-multi-selected" : "",
-    burst ? "cull-grid__cell--burst" : "",
-    burst?.isWinner ? "cull-grid__cell--burst-winner" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -298,11 +337,6 @@ const GridCell = memo(function GridCell({
       {/* Multi-select tint sits above the photo but below the rating dot, so
           the dot remains legible. Outline (accent) comes from .is-multi-selected. */}
       {isMultiSelected && <div className="cull-grid__multi-tint" aria-hidden />}
-      {burst && burst.pos === 1 && (
-        <div className="cull-grid__burst-pill" aria-hidden>
-          Burst · {burst.len}
-        </div>
-      )}
       {dotIcon ? (
         <div className={`cull-grid__dot ${dotClass}`} aria-hidden>
           {dotIcon}

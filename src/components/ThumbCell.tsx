@@ -74,18 +74,14 @@ export const ThumbCell = memo(function ThumbCell({
 
   // Ghost suggestion renders ONLY while unrated — a keypress paints the solid
   // dot and this guard stops rendering it (superseded in place, never stored).
-  const ghost = !rating && suggestion?.verdict ? suggestion.verdict : null;
-  const rootClass = [
-    "cull-thumb",
-    burst ? "cull-thumb--burst" : "",
-    burst?.isWinner ? "cull-thumb--burst-winner" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  // The burst WINNER wears the same ghost ✓ (its "why" lives in the info
+  // rail's Burst row); the run itself is outlined by the strip-level box.
+  const ghost =
+    !rating && (suggestion?.verdict ?? (burst?.isWinner ? ("keep" as const) : null));
 
   return (
     <div
-      className={rootClass}
+      className="cull-thumb"
       onClick={() => onPick(index)}
       role="button"
       aria-label={`${stripExt(img.filename)}${rating ? `, ${rating}` : ""}${
@@ -137,13 +133,6 @@ export const ThumbCell = memo(function ThumbCell({
           )
         )}
       </div>
-      {/* Compact ×N at strip size — the word "Burst" doesn't fit a 76px cell;
-          the grid's larger cells keep the full label. */}
-      {burst && burst.pos === 1 && (
-        <div className="cull-thumb__burst-pill" aria-hidden>
-          ×{burst.len}
-        </div>
-      )}
       {dotIcon ? (
         <div className={`cull-thumb__dot ${dotClass}`} aria-hidden>
           {dotIcon}

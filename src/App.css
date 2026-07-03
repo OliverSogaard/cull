@@ -2506,17 +2506,20 @@ body,
   line-height: 0;
 }
 
-/* ── smart-culling advisories (ghost dots, burst visuals) ──────────────────
+/* ── smart-culling advisories (ghost dots) + burst run boxes ───────────────
    The suggestion is itself a verdict, rendered in the SAME bottom-right slot
-   as the committed dot but styled provisional: dashed outline, hollow glyph,
-   ~55% opacity. It only ever renders while the frame is unrated, so the two
-   can never collide. Burst runs get a faint shared tint, a "Burst · N" pill
-   on the first cell, and a solid border on the winner. */
+   as the committed dot but styled provisional: dashed outline + hollow glyph.
+   High-contrast on purpose (near-opaque dark fill, bright glyph, dark halo) —
+   the first draft's 55%-opacity version disappeared at a glance.
+   Bursts: ONE hairline box around the whole run (drawn as a strip/grid
+   overlay so it spans the gaps between cells), ×N count riding the top-left
+   of the outline. The winner wears the ghost ✓ like any keep suggestion;
+   no per-cell tints, pills, or winner borders. */
 .cull-thumb__dot--ghost,
 .cull-grid__dot--ghost {
-  background: rgba(10, 10, 12, 0.55);
-  box-shadow: none;
-  opacity: 0.55;
+  background: rgba(8, 8, 10, 0.82);
+  opacity: 0.95;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.7); /* dark halo lifts it off any photo */
 }
 .cull-thumb__dot--ghost-keep,
 .cull-grid__dot--ghost-keep {
@@ -2529,34 +2532,32 @@ body,
   color: var(--bad);
 }
 
-.cull-thumb--burst .cull-thumb__frame,
-.cull-grid__cell--burst .cull-grid__frame {
-  background: rgba(214, 178, 120, 0.08); /* faint champagne wash across the run */
-}
-.cull-thumb--burst-winner .cull-thumb__frame,
-.cull-grid__cell--burst-winner .cull-grid__frame {
-  outline: 1.5px solid var(--ok);
-  outline-offset: -1.5px;
-}
-.cull-thumb__burst-pill,
-.cull-grid__burst-pill {
+/* One box per burst run (strip) / per run-row segment (grid, where runs wrap). */
+.cull-burst-box {
   position: absolute;
-  top: 2px;
-  right: 2px; /* top-right is the one free corner in both cell layouts */
-  font-size: 7px;
-  line-height: 11px;
-  letter-spacing: 0.02em;
-  padding: 0 3px;
-  color: var(--accent);
-  background: rgba(0, 0, 0, 0.65);
-  border-radius: 2px;
-  z-index: 2;
+  top: 1px;
+  bottom: 1px;
+  border: 1px solid rgba(214, 178, 120, 0.45); /* hairline champagne */
+  border-radius: 3px;
+  z-index: 3;
   pointer-events: none;
 }
-.cull-grid__burst-pill {
-  font-size: 10px;
-  line-height: 15px;
+.cull-burst-box--grid {
+  /* Grid variant is sized explicitly (top/height inline) — undo the inset pair. */
+  bottom: auto;
+}
+.cull-burst-box__count {
+  position: absolute;
+  top: -1px; /* sits ON the outline's top-left corner */
+  left: -1px;
+  font-size: 8px;
+  line-height: 12px;
+  letter-spacing: 0.03em;
   padding: 0 4px;
+  color: var(--accent);
+  background: rgba(10, 10, 12, 0.9);
+  border: 1px solid rgba(214, 178, 120, 0.45);
+  border-radius: 3px 0 3px 0;
 }
 
 /* ExifRail suggestion row — verdict-coloured key, dim reasons. */

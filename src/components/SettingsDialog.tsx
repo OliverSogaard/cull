@@ -79,7 +79,7 @@ export function SettingsDialog({
           <Section title="Smart culling">
             <SettingRow
               label="Suggestions"
-              help="Advisory only: a background pass flags obvious calls (soft focus, motion blur, not-best-of-burst) as ghost dots. You confirm every verdict — nothing is ever rated or written automatically."
+              help="A background pass measures per-frame sharpness (AF-area detail vs. noise), exposure, and burst redundancy, then marks clear technical misses with a dashed dot. Advisory only: every verdict requires your keypress, and nothing is ever written to a file by the analysis. Burst detection stays on regardless of this setting."
             >
               <Chip
                 label="Enabled"
@@ -90,22 +90,22 @@ export function SettingsDialog({
             {settings.smartCulling && (
               <>
                 <SettingRow
-                  label="Confidence"
-                  help="How sure a reject suggestion must be before it shows. Higher = fewer, safer suggestions."
+                  label="Suggestion threshold"
+                  help="Minimum confidence a reject suggestion must reach before it is shown — Low ≥ 50%, Medium ≥ 65%, High ≥ 80%. Higher shows fewer, surer suggestions; changing it re-derives instantly without re-analyzing."
                 >
                   <SegmentToggle<SmartLevel>
                     value={settings.smartCullingConfidence}
                     options={[
-                      { value: "low", label: "Chatty" },
-                      { value: "medium", label: "Balanced" },
-                      { value: "high", label: "Strict" },
+                      { value: "low", label: "Low" },
+                      { value: "medium", label: "Medium" },
+                      { value: "high", label: "High" },
                     ]}
                     onChange={(v) => set("smartCullingConfidence", v)}
                   />
                 </SettingRow>
                 <SettingRow
                   label="Analyze on open"
-                  help="Start scoring automatically when a folder opens. Off = press 5 (or the Sugg tab) to analyze on demand."
+                  help="Start the analysis pass automatically when a folder opens (it always yields to your navigation). Off: press 5 or the Sugg tab to analyze on demand."
                 >
                   <Chip
                     label="Auto"
