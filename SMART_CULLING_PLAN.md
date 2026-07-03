@@ -13,7 +13,9 @@ User-chosen direction (firm):
 - **Batch pass runs in the Rust backend** (`analyze.rs`), not the JS overlay worker — the metadata it needs (AF point, drive mode, ms timestamps) lives in Rust, a 500-image pass must not fight the webview display-decode pipeline, and Tier-2 ONNX must run natively anyway. We **port the gradient math** from `src/overlays/maskScans.ts` to Rust; the JS worker keeps doing its interactive single-image overlays.
 - **Two layers — this is the key to mid-cull settings changes:** the *expensive* layer (decode + raw metrics) runs once in Rust and is cached; the *cheap* layer (verdict from `metrics + settings`) is a **pure TS function**. So toggling a signal or the confidence level re-derives verdicts **instantly with no re-decode**. Only enabling Tier-2 ML triggers a real re-pass.
 
-> **Re-anchored 2026-07-03** (mandated by IMAGE_PIPELINE_PLAN's cross-doc section, after all 8 pipeline phases landed at `1778d8a`): every `file:line` below re-verified against the current tree; command names updated (`read_bundle` → `read_fullres` for the AF-crop fallback); the imageStore backpressure references rewritten for the lane split (nav-preview / zoom / mid). Two substantive corrections beyond anchors: (1) **burst deltas must come from mtime-ms, not `captured_at`** — `Cr3Meta.captured_at` is second-precision (`cr3.rs:864`) and cannot resolve `BURST_GAP_MS = 700`; (2) the pipeline gave this plan two free upgrades — every `analyze_quality` read goes through the **IoGate** (`io_gate.rs`) like all fs-touching commands, and Phase B should probe the **prvw tier cache** (`tier_cache.rs`) before touching the source file, making re-analysis of a cached folder near-zero-I/O.
+> **Re-anchored 2026-07-03** (mandated by IMAGE_PIPELINE_PLAN's cross-doc section, after all 8 pipeline phases landed at `1778d8a`): every `file:line` below re-verified against the current tree; command names updated (`read_bundle` → `read_fullres` for the AF-crop fallback); the imageStore backpressure references rewritten for the lane split (nav-preview / zoom / mid). Two substantive corrections beyond anchors: (1) **burst deltas must come from capture cadence, not `captured_at`** — `Cr3Meta.captured_at` is second-precision (`cr3.rs:864`) and cannot resolve `BURST_GAP_MS = 700`; (2) the pipeline gave this plan two free upgrades — every `analyze_quality` read goes through the **IoGate** (`io_gate.rs`) like all fs-touching commands, and reads route through the **prvw tier cache** (`tier_cache.rs`), making re-analysis of a cached folder near-zero-I/O.
+>
+> **Final design review (2026-07-03, pre-Phase-1; adversarial pass, findings adjudicated and folded in below):** (a) the old "Phase A metadata over the full path list" implied a hidden N-file NAS head-read pass — DELETED; the backend now does **one gated, cache-routed head read per file** (`read_preview_bundle` returns meta AND PRVW pixels together) and **all cross-frame derivation (burst grouping, winner, verdict) moves to pure TS**, which also fixes bursts spanning chunk boundaries; (b) clipping is **annotation-only, never a solo reject** (PRVW clipping is baked 8-bit JPEG on a RAW-culling app — highlights are often recoverable; backlit/silhouette frames are intentional); (c) soft-focus rejects are gated on a **texture floor** and a defined normalization (low-texture crops = "can't judge" = silent; noise floor normalizes high-ISO); (d) burst-loser reject confidence **scales with the sharpness margin to the winner** (near-ties stay silent) and correlated reasons are not multiplied; (e) `analyze_quality` takes the session `gen` and checks `is_cancelled` **between files** (folder switch kills the pass mid-chunk, not on arrival); (f) burst cadence: parse **EXIF `SubSecTimeOriginal` (0x9291)** in `metadata_from_prefix` (CMT2 IFD is already parsed there; ISO 0x8827 already is) — SubSec-ms primary, mtime-ms fallback (NAS copies can flatten mtimes; buffer-limited writes can stretch them); (g) a **calibration harness** (confusion matrix vs the user's restored real ratings) is part of Phase 1's verification, not an afterthought.
 
 ## UI / interaction design (pinned)
 
@@ -34,29 +36,36 @@ User-chosen direction (firm):
 - **Double-run guard.** Mirror `analyzingRef` (`App.tsx:128`, guard `:849–850`) with a `qualityRef` so a re-trigger can't start two passes.
 - **Keying by `Img.id`.** Backend returns scores in input order; map `scores[i] → dispatchedImages[i].id` (same pattern as the ratings remap at `App.tsx:863–867`). `id` is stable from append (`App.tsx:706`, `id: startId + i`); images are frozen after the `beginCulling` sort, so index→id is valid as long as we capture the dispatched array and gen-guard. State holds `scores: Record<number, ImageScore>` keyed by id.
 - **Suppress ghosts on already-rated frames.** `analyze_folder` restores keep/reject/favorite into `ratings` **before** our pass runs; the badge checks `!ratings[id]` so restored frames show their real dot, never a ghost.
-- **Read-pool contention (the NAS bullet).** A separate Rust decode batch **bypasses imageStore's bounded-concurrency lanes and shares Tauri's blocking pool**, which will **starve interactive reads on a NAS**. Post-pipeline the store runs THREE lanes: nav-preview (`fullInFlightPaths` `imageStore.ts:136`, counter `:243` — "full" stage name = nav-ready preview), zoom (`zoomInFlight`/`zoomInFlightPaths` `:172–173` — the real ~10 MB fulls), and mid (`:194–195`); profiles in `types/settings.ts:118` (`PerformanceProfile`) / `:162` (`PERFORMANCE_PROFILES`), fields now `previewConcurrency`/`fullConcurrency`/`previewKeep`. Mitigation: the pass is **storage-aware and cooperative** — concurrency cap **1 on `network`, a few on `local`**; it **starts only after the first screenful of thumbs has settled**; it runs in **small chunks** and between chunks **backs off while the user is actively loading** — the backpressure probe is `zoomInFlight > 0 || fullInFlightPaths.size > 0` (zoom = heavy fulls, nav previews = the interactive hot path; expose one `isBusyLoading()` accessor rather than reading privates). Two backstops now exist beneath the courtesy layer: `analyze_quality`'s file reads acquire the **IoGate** (`io_gate.rs`, 6 network / 16 local permits) like every fs-touching command, and Phase B should probe the **prvw tier cache first** (`tier_cache.rs`, `Tier::Prvw`) — a warm folder re-analyzes with near-zero source I/O. Plus a settings escape hatch: "Analyze on open" can be turned off for a manual **Analyze** button. On NAS it simply fills in slowly in the background without harming interaction — acceptable because it's advisory.
+- **Read-pool contention (the NAS bullet).** A separate Rust decode batch **bypasses imageStore's bounded-concurrency lanes and shares Tauri's blocking pool**, which will **starve interactive reads on a NAS**. Post-pipeline the store runs THREE lanes: nav-preview (`fullInFlightPaths` `imageStore.ts:136`, counter `:243` — "full" stage name = nav-ready preview), zoom (`zoomInFlight`/`zoomInFlightPaths` `:172–173` — the real ~10 MB fulls), and mid (`:194–195`); profiles in `types/settings.ts:118` (`PerformanceProfile`) / `:162` (`PERFORMANCE_PROFILES`), fields now `previewConcurrency`/`fullConcurrency`/`previewKeep`. Mitigation: the pass is **storage-aware and cooperative** — concurrency cap **1 on `network`, a few on `local`**; it **starts only after the first screenful of thumbs has settled**; it runs in **small chunks** and between chunks **backs off while the user is actively loading** — the backpressure probe is `zoomInFlight > 0 || fullInFlightPaths.size > 0` (zoom = heavy fulls, nav previews = the interactive hot path; expose one `isBusyLoading()` accessor rather than reading privates). Two backstops now exist beneath the courtesy layer: `analyze_quality`'s file reads acquire the **IoGate** (`io_gate.rs`, 6 network / 16 local permits) like every fs-touching command, and the pass probes the **prvw tier cache first** (`tier_cache.rs`, `Tier::Prvw`) — a warm folder re-analyzes with near-zero source I/O. Plus a settings escape hatch: "Analyze on open" can be turned off for a manual **Analyze** button. On NAS it simply fills in slowly in the background without harming interaction — acceptable because it's advisory.
 
 ## Scoring model (`src-tauri/src/analyze.rs`, new)
 
-Backend returns **raw metrics only** (verdict is derived in TS). camelCase wire (mirrors `meta.rs`):
+Backend returns **raw per-file metrics only** — ALL cross-frame derivation (burst grouping, winner selection, verdict) lives in TS over the accumulated `scores` map, so it is chunk-boundary-safe and re-derives instantly on settings changes. camelCase wire (mirrors `meta.rs`):
 
 ```rust
 #[derive(Clone, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageScore {
-    pub index: usize,            // input-order index of the dispatched batch
+    pub index: usize,            // ABSOLUTE input-order index into the dispatched full list
+                                 // (chunk_start + within-chunk offset) — asserted in the gen-guard test
     // Tier 1 (classical, MVP)
-    pub af_sharpness: f32,       // variance-of-Laplacian over AF-region crop, normalized 0..1
+    pub af_sharpness: f32,       // noise-normalized variance-of-Laplacian over AF-region crop (see formulas)
     pub af_valid: bool,          // false when AF point absent → TS halves its weight
+    pub af_texture: f32,         // AF-crop local contrast (p95−p5 luma spread): low ⇒ "can't judge focus" ⇒ TS stays silent
     pub global_sharpness: f32,
-    pub blown_pct: f32,          // % pixels all-3-channels >= CLIP_HIGH
-    pub crushed_pct: f32,        // % pixels all-3-channels <= CLIP_LOW
+    pub noise_floor: f32,        // flat-region Laplacian variance estimate (high-ISO normalizer)
+    pub blown_pct: f32,          // % pixels all-3-channels >= CLIP_HIGH  (annotation input, never a solo reject)
+    pub crushed_pct: f32,        // % pixels all-3-channels <= CLIP_LOW   (annotation input, never a solo reject)
     pub exposure_score: f32,     // 0..1
     pub motion_blur_likelihood: f32,
-    pub burst_group: Option<u32>,
-    pub burst_pos: Option<u32>,  // 1-based position within group (for "3 of 7")
-    pub burst_len: Option<u32>,
-    pub is_burst_winner: bool,
+    // Per-file inputs for TS-side burst grouping, echoed from the same head read:
+    pub mtime_ms: i64,           // from the SessionGate mtime table / the read's stat — the frontend
+                                 // has NO timestamps (Img carries none; analyze_folder returns order only)
+    pub drive_mode: Option<u32>,
+    pub focal_length_mm: Option<f32>,
+    pub shutter_seconds: Option<f64>,
+    pub iso: Option<u32>,        // already parsed (cr3.rs:909, tag 0x8827)
+    pub sub_sec_ms: Option<u16>, // EXIF SubSecTimeOriginal (0x9291) — NEW one-tag parse in metadata_from_prefix
     // Tier 2 (ML, later) — present now so the wire contract is stable
     pub faces: Vec<FaceScore>,   // empty in MVP
     pub aesthetic: Option<f32>,  // None in MVP
@@ -71,26 +80,36 @@ pub struct FaceScore { pub bbox: [f32;4], pub eyes_open: f32, pub face_sharpness
 Named thresholds (no magic numbers; calibrated against the 1620×1080 PRVW — starting values, tuned in Phase 1):
 
 ```rust
+// Rust (metric computation)
 const CLIP_HIGH: u8 = 250; const CLIP_LOW: u8 = 5;            // ported from clipScan all-3-channel test
-const BLOWN_REJECT_PCT: f32 = 0.25; const CRUSHED_REJECT_PCT: f32 = 0.35;
-const SHARP_REJECT: f32 = 0.15; const SHARP_STRONG: f32 = 0.55;
 const SLOW_SHUTTER_S: f64 = 1.0/60.0; const HANDHELD_RECIPROCAL_K: f64 = 1.0; // blur thresh ≈ 1/(K·focal)
-const BURST_GAP_MS: i64 = 700; const AF_CROP_FRAC: f32 = 0.20;
+const AF_CROP_FRAC: f32 = 0.20; const LOG_SHARP_SCALE: f32 = /* corpus-calibrated */;
+const NOISE_TILES: usize = 16;                                // flat-tile count for the noise floor
 ```
-TS-side (so they live with the verdict function): `REJECT_MIN_CONFIDENCE = 0.6` and the confidence-level → threshold map (Low/Med/High).
+TS-side (they live with the verdict/grouping functions): `REJECT_MIN_CONFIDENCE = 0.6` + the confidence-level → threshold map (Low/Med/High); `SHARP_REJECT = 0.15`, `SHARP_STRONG = 0.55`; `TEXTURE_MIN` (soft-focus judgeability gate); `MARGIN_SCALE` (burst-loser confidence); `BURST_GAP_MS = 700` (grouping moved to TS); `BLOWN_NOTE_PCT = 0.25`, `CRUSHED_NOTE_PCT = 0.35` (annotation thresholds — clipping never rejects alone).
 
 Formulas:
-- **Sharpness** = variance of the 4-neighbour Laplacian over the region (Welford one-pass), normalized + clamped; **Tenengrad** (Sobel) computed alongside as a cross-check (large disagreement lowers TS confidence). Reuse the central-difference loop shape from `peakScan` (`maskScans.ts:50`).
+- **Sharpness** = variance of the 4-neighbour Laplacian over the region (Welford one-pass); **Tenengrad** (Sobel) computed alongside as a cross-check (large disagreement lowers TS confidence). Reuse the central-difference loop shape from `peakScan` (`maskScans.ts:50`). **Normalization is defined, not hand-waved** (raw variance is unbounded and scene-dependent): `af_sharpness = clamp(log1p(varLap / max(noise_floor, ε)) / LOG_SHARP_SCALE)` — dividing by the flat-region `noise_floor` makes the score "detail above noise", which both survives high ISO and makes 0..1 comparable across scenes; `LOG_SHARP_SCALE` is calibrated on the corpus. **Absolute thresholds are the weak use of this signal; relative per-burst/per-folder ranking is the strong use** — the cascade reflects that.
+- **Texture gate** (`af_texture`): p95−p5 luma spread over the AF crop. Below `TEXTURE_MIN`, sharpness is unjudgeable there (smooth skin, sky, bokeh wash) — TS emits **no soft-focus verdict** regardless of `af_sharpness`.
+- **Noise floor**: median Laplacian variance over the N lowest-variance tiles of the preview (flat regions) — the high-ISO normalizer above.
 - **AF-region crop:** AF percentages are in *display* coords (orientation-applied, `meta.rs:29-34`) but the decoded PRVW is the *un-rotated* sensor frame — **map display-% back through the inverse of `orientation`** before cropping (for orientations 6/8 width/height swap — a real correctness trap). Crop centred at the mapped point, size `AF_CROP_FRAC·min(w,h)`. AF absent → centre crop + `af_valid=false`.
 - **Clipping %** = faithful all-three-channel port of `clipScan` (needs RGB).
 - **Exposure score** from a 64-bin luma histogram; `exposure_bias` only annotates a reason, never penalizes.
 - **Motion-blur vs focus-miss** (`shutter_seconds`): `blur_thresh = HANDHELD_RECIPROCAL_K / focal_length_mm`. Slow shutter + low global & AF sharpness → motion blur. Fast shutter + low AF but ok global → missed focus. `motion_blur_likelihood = clamp(shutter/blur_thresh)·(1−global_sharpness)`.
 
-**Verdict derivation lives in TS** (`src/smart/deriveVerdict.ts`, pure): `deriveVerdict(score, settings) → {verdict: Rating|null, confidence, reasons[]}`. Cascade: (1) blown/crushed past threshold → reject; (2) `af_sharpness < SHARP_REJECT` (weighted by `af_valid`) → reject ("soft focus"/"motion blur"); (3) in a burst and `!is_burst_winner` → reject ("not best of burst (pos of len)"); (4) none fire + sharp + well-exposed → low-confidence keep. Confidence `= 1 − Π(1−cᵢ)`; reject below the level threshold → `verdict: null` (stay silent). `decode_ok===false` → null. **Never emit `favorite` in Tier 1.**
+**Verdict derivation lives in TS** (`src/smart/deriveVerdict.ts`, pure): `deriveVerdict(score, burstCtx, settings) → {verdict: Rating|null, confidence, reasons[]}`, where `burstCtx` comes from `groupBursts.ts` (group id, position, winner, sharpness margin to winner). Cascade — **rejects only fire on judgeable evidence; the costly error is the false reject**:
+1. Clipping (`blown_pct`/`crushed_pct`) is **annotation-only** — it adds a reason ("blown highlights") and nudges confidence of an existing reject, but NEVER rejects alone: PRVW clipping is baked 8-bit JPEG on a RAW workflow (highlights often recoverable), and backlit/high-key/silhouette frames are intentional.
+2. `af_sharpness < SHARP_REJECT` **AND `af_texture ≥ TEXTURE_MIN`** (weighted by `af_valid`) → reject ("soft focus"/"motion blur" per the shutter heuristic). Low texture ⇒ silent, never "soft".
+3. In a burst and not the winner → reject ("not best of burst (pos of len)") with confidence **scaled by the sharpness margin to the winner**: `c₃ = clamp((winner.af_sharpness − score.af_sharpness) / MARGIN_SCALE)` — near-identical frames produce near-zero confidence and fall below the emit threshold (a 60-frame burst of equally sharp frames must NOT ghost-reject 59 of them on noise-level differences).
+4. None fire + sharp + well-exposed → low-confidence keep.
 
-## Burst grouping (`analyze.rs`)
+Confidence: `= 1 − Π(1−cᵢ)` over **independent** signals only; soft-focus and burst-loser both derive from `af_sharpness`, so when both fire take `max(c₂, c₃)` (+ a small bump), never the product (correlated reasons must not inflate). Reject below the level threshold → `verdict: null` (stay silent). `decode_ok===false` → null. **Never emit `favorite` in Tier 1.**
 
-Metadata-only pass before pixel scoring. Walking capture order, extend the current group vs the previous frame when ALL hold: `drive_mode>0` on both, `|Δmtime_ms| < BURST_GAP_MS`, `focal_length` equal (epsilon), **and same `srcFolder`** (multi-folder opens merge into one global mtime order — `scan.rs:130` `analyze_folder` — so without the folder key two different shoots with colliding mtimes would falsely group). **Δ source is mtime-ms** (re-anchored 2026-07-03): `Cr3Meta.captured_at` is second-precision `"YYYY-MM-DDTHH:MM:SS"` (`cr3.rs:864`) and cannot resolve a 700 ms gap, while `scan.rs` already gathers sub-second mtimes and in-camera writes track capture order; `captured_at` serves only as a coarse cross-check (frames whose seconds differ by > ~2 s never group). If mtimes ever prove unreliable (files copied without mtime preservation), the precise fix is parsing EXIF `SubSecTimeOriginal` (0x9291) in `cr3.rs` — do not build it speculatively. Size-1 → `burst_group=None`. Winner = max `af_sharpness`, tiebreak global sharpness, then lowest clipping, then earliest. `srcFolder` must be passed into the command (it's on `Img`, not in the CR3) or derived from each path's parent dir.
+## Burst grouping (`src/smart/groupBursts.ts` — pure TS)
+
+**Lives in TS, not the backend** (final review 2026-07-03): grouping and winner selection are cross-frame reductions over data that arrives chunk-by-chunk — computing them per-chunk in Rust gives wrong winners whenever a 12 fps burst spans a chunk boundary, and they are exactly the "cheap layer" that should re-derive instantly. `groupBursts(scores, images)` is a pure function over the accumulated `scores` map (which echoes `mtime_ms` + the meta fields per file — the frontend holds NO timestamps of its own) + the session's image order and each `Img`'s `srcFolder`; it re-runs in the same `useMemo` as `deriveVerdict` — groups and winners self-correct as chunks land. Frames whose scores haven't arrived yet are simply ungrouped until they do.
+
+Walking capture order, extend the current group vs the previous frame when ALL hold: `drive_mode>0` on both, `Δcadence < BURST_GAP_MS`, `focal_length` equal (epsilon), **and same `srcFolder`** (multi-folder opens merge into one global mtime order — `scan.rs:130` — so without the folder key two shoots with colliding times would falsely group). **Cadence source, in order:** (1) `captured_at`-seconds + `sub_sec_ms` (EXIF `SubSecTimeOriginal`, the true capture clock — one-tag parse added to `metadata_from_prefix`, same CMT2 IFD as ISO `cr3.rs:909`) when present on both frames; (2) else mtime-ms — serviceable but degradable in BOTH directions: NAS copy tools that don't preserve mtimes flatten intervals (false merges), and buffer-limited card writes stretch them (false splits). `captured_at`-seconds always applies as a coarse guard (Δ > ~2 s never groups). Size-1 → no group. **Winner** = max `af_sharpness` (noise-normalized), tiebreak `global_sharpness`, then lowest clipping, then earliest; the winner's **margin** to each loser feeds the verdict confidence (near-ties stay silent — see cascade rule 3).
 
 ## Backend changes
 
@@ -98,13 +117,15 @@ Metadata-only pass before pixel scoring. Walking capture order, extend the curre
   ```rust
   #[tauri::command]
   pub(crate) async fn analyze_quality(
-      window: tauri::Window, paths: Vec<String>, folders: Vec<String>,
-      concurrent: Option<bool>, chunk_start: usize, chunk_len: usize,
+      paths: Vec<String>,            // the chunk's paths only — no full-list pass exists
+      chunk_start: usize,            // absolute base index for ImageScore.index
+      gen: u64,                      // session generation — checked BETWEEN FILES
+      gate: State<'_, IoGate>, session: State<'_, SessionGate>, cache: State<'_, Arc<TierCache>>,
   ) -> Result<Vec<ImageScore>, String>
   ```
-  Called in **chunks** from JS (cooperative backoff). Body in `spawn_blocking`. Phase A (metadata + burst grouping over the *full* path list, cached or recomputed cheaply) → Phase B (decode the chunk's PRVW via `cr3::preview_jpeg` `cr3.rs:108` + `zune-jpeg` → metrics) → emit `quality-progress`. Per-image decode failure → `decode_ok=false`, never fails the batch.
-- **Concurrency mirrors `analyze_folder`:** sequential on `network`, small fixed pool on `local` (start with `std::thread::scope` like `scan.rs`, no new dep; add `rayon` only if profiling demands).
-- **`Cargo.toml`:** add `zune-jpeg = "0.4"` (pure-Rust, baseline-SOF0, can decode luma-only). Keep `image` dev-only; do **not** promote it.
+  Called in **chunks** from JS (cooperative backoff). **One gated, cache-routed head read per file, total** (final review 2026-07-03 — the old "Phase A metadata over the full path list" implied a hidden N-file NAS read pass and is deleted): each file goes through the same path as `read_preview` (`bundle.rs:201` — prvw tier-cache probe → miss = `read_preview_bundle`, which returns **metadata AND PRVW pixels from the single ~2 MiB head read**, and piggy-back-fills the prvw cache so analysis also pre-warms navigation). Metrics decode via `zune-jpeg`; the meta fields TS-side grouping needs are echoed on `ImageScore`. **Cancellation is backend-real, not drop-on-arrival:** `session.is_cancelled(gen)` checked between files (and passed as the `cancelled` closure into the read, which `read_preview_bundle` already accepts) — a folder switch kills the pass within ~one file, and its IoGate permits free instead of competing with the new folder's interactive reads. Per-image decode failure → `decode_ok=false`, never fails the batch. Emits `quality-progress` per chunk.
+- **Concurrency mirrors `analyze_folder`:** sequential on `network`, small fixed pool on `local` (start with `std::thread::scope` like `scan.rs`, no new dep; add `rayon` only if profiling demands) — beneath the IoGate backstop either way.
+- **`Cargo.toml`:** add `zune-jpeg = "0.4"` (pure-Rust). Decode RGB — the clipping port needs all three channels, so luma-only decode is not an available shortcut. Keep `image` dev-only; do **not** promote it.
 - **`lib.rs`:** `mod analyze;` + register `analyze::analyze_quality`.
 - **No write path exists in this module — the never-modify-CR3 invariant is structural.**
 
@@ -112,8 +133,9 @@ Metadata-only pass before pixel scoring. Walking capture order, extend the curre
 
 - **`src/types/ipc.ts`:** add `ImageScore`, `FaceScore`. Reuse `AnalyzeProgress` shape for `quality-progress`.
 - **`src/types/rating.ts`:** extend `Filter` with `"suggested"`.
-- **`src/smart/deriveVerdict.ts`** (new, pure): `Suggestion` type + `deriveVerdict(score, settings)`. Unit-testable in isolation.
-- **`src/smart/useSmartCulling.ts`** (new hook): owns the chunked, gen-guarded, backpressure-aware driver; the `quality-progress` listener; `scores` state keyed by `Img.id`; restart on folder change; abort via generation. Exposes `scores` + an `analyzing` flag.
+- **`src/smart/groupBursts.ts`** (new, pure): grouping + winner + per-loser margin over the accumulated `scores` map (see Burst grouping). Unit-testable in isolation.
+- **`src/smart/deriveVerdict.ts`** (new, pure): `Suggestion` type + `deriveVerdict(score, burstCtx, settings)`. Unit-testable in isolation.
+- **`src/smart/useSmartCulling.ts`** (new hook): owns the chunked, gen-guarded, backpressure-aware driver; the `quality-progress` listener; `scores` state keyed by `Img.id`; restart on folder change; abort via generation (frontend drop) AND passes `gen` so the backend kills mid-chunk. Exposes `scores` + an `analyzing` flag.
 - **`App.tsx`:** hold `scores: Record<number, ImageScore>`; `suggestions = useMemo(() => derive over scores + settings)` (instant re-derive on settings change); trigger the hook after `beginCulling` (`App.tsx:847`) settles and first thumbs load; `qualityRef` guard. `visibleIndices` memo (`App.tsx:342`): special-case `filter==="suggested"` → ids with `suggestions[id]?.verdict && !ratings[id]`. Keyboard `case "5"` after `"4"` (`App.tsx:2538`) + status-bar button.
 - **Badge:** `ThumbCell.tsx` / `GridView.tsx` take `suggestion?` + `burst?`; render the ghost dot in the bottom-right slot **only when `!rating`**, plus burst tint/count/winner-border. Suppress ghosts in compare panes.
 - **`ExifRail.tsx`:** "Suggestion" row (glyph + confidence bar + reasons).
@@ -121,24 +143,25 @@ Metadata-only pass before pixel scoring. Walking capture order, extend the curre
 
 ## Tier-2 ML (later, outline)
 
-Populates the already-present `faces`/`aesthetic` on the same decoded buffer in the same `analyze.rs` Phase B. YuNet (~300 KB ONNX) → `eyes_open` + face sharpness ("closed eyes" reason, sharpest-face burst tiebreak). NIMA (~5-15 MB ONNX) → `aesthetic` (tiebreak/sort; *enables* a conservative, capped `favorite` suggestion — the one verdict Tier 1 withholds). Add `ort = "2"` behind a cargo feature; EP: CoreML (macOS) / DirectML (Windows) / CPU. Bundle `.onnx` as Tauri `bundle.resources`, lazy-load, cache `ort::Session` in managed state. Advisory/no-sidecar invariant unchanged.
+Populates the already-present `faces`/`aesthetic` on the same decoded buffer inside the same `analyze.rs` metric stage. YuNet (~300 KB ONNX) → `eyes_open` + face sharpness ("closed eyes" reason, sharpest-face burst tiebreak). NIMA (~5-15 MB ONNX) → `aesthetic` (tiebreak/sort; *enables* a conservative, capped `favorite` suggestion — the one verdict Tier 1 withholds). Add `ort = "2"` behind a cargo feature; EP: CoreML (macOS) / DirectML (Windows) / CPU. Bundle `.onnx` as Tauri `bundle.resources`, lazy-load, cache `ort::Session` in managed state. Advisory/no-sidecar invariant unchanged.
 
 ## Phasing
 
-1. **Classical scoring backend (no UI):** `analyze.rs` metrics + burst grouping (incl. `srcFolder` key) + chunked `analyze_quality` + `zune-jpeg`; register; Cargo. Testable via `cargo test` + invoking and printing JSON.
-2. **Verdict + advisory UI:** `deriveVerdict.ts`, `useSmartCulling.ts` (gen-guard, chunk/backoff, `quality-progress`), `scores`/`suggestions` in App, ghost badge, burst visuals, ExifRail row, `"suggested"` filter + `5`, settings section. Testable in `pnpm tauri dev`.
+1. **Classical scoring backend (no UI):** `analyze.rs` per-file metrics (cache-routed single read, gen-cancel between files) + `sub_sec_ms` one-tag parse in `metadata_from_prefix` + chunked `analyze_quality` + `zune-jpeg`; register; Cargo. Testable via `cargo test` + invoking and printing JSON. Includes the calibration harness skeleton.
+2. **Verdict + advisory UI:** `groupBursts.ts` + `deriveVerdict.ts`, `useSmartCulling.ts` (gen-guard, chunk/backoff, `quality-progress`), `scores`/`suggestions` in App, ghost badge, burst visuals, ExifRail row, `"suggested"` filter + `5`, settings section. Calibration confusion-matrix run against a real pre-culled folder gates the default thresholds. Testable in `pnpm tauri dev`.
 3. **Tier-2 ML:** `ort` + ONNX, faces/eyes + aesthetic, capped `favorite`, sharpest-face tiebreak. Feature-flagged.
 
 ## Verification
 
 Per user rules: 80%+ coverage + visual checks.
-- **Rust unit tests** (`#[cfg(test)]` in `analyze.rs`; `cargo llvm-cov --fail-under-lines 80`): sharp vs Gaussian-blurred synthetic buffers (`varLaplacian(sharp) > varLaplacian(blur)`, flat≈0); all-white→`blown_pct≈1`, all-black→`crushed_pct≈1`, saturated-yellow (R255 G210 B0)→`blown_pct≈0` (validates the all-3-channel port); exposure monotonicity; AF-crop orientation mapping for each of 1/3/6/8 (the swap trap); **burst grouping** — gap / focal change / `drive_mode==0` / **different `srcFolder`** each split a group; lone frame→None; winner + tiebreak chain; `decode_ok=false` path.
-- **TS unit tests:** `deriveVerdict` table (each cascade rule, reject-below-threshold→null, favorite never in Tier 1, confidence-level changes flip verdicts); the `"suggested"` predicate; badge shown only when `!rating`; **gen-guard** (stale-generation chunk is dropped); settings auto-default merge.
+- **Rust unit tests** (`#[cfg(test)]` in `analyze.rs`; `cargo llvm-cov --fail-under-lines 80`): sharp vs Gaussian-blurred synthetic buffers (`varLaplacian(sharp) > varLaplacian(blur)`, flat≈0); noise-floor normalization (synthetic noise field: raw variance high, normalized `af_sharpness` low); `af_texture` low on flat/gradient buffers, high on textured; all-white→`blown_pct≈1`, all-black→`crushed_pct≈1`, saturated-yellow (R255 G210 B0)→`blown_pct≈0` (validates the all-3-channel port); exposure monotonicity; AF-crop orientation mapping for each of 1/3/6/8 (the swap trap); `sub_sec_ms` parse (present/absent); mid-chunk `is_cancelled` bail; `decode_ok=false` path; `index` is absolute (`chunk_start` offset).
+- **TS unit tests:** `groupBursts` table — gap / focal change / `drive_mode==0` / **different `srcFolder`** each split a group; lone frame→no group; SubSec-vs-mtime cadence source selection; winner + tiebreak chain; **winner self-corrects when a later chunk lands a sharper frame**. `deriveVerdict` table — each cascade rule; **clipping alone never rejects**; **low `af_texture` silences soft-focus**; **near-tie burst loser stays silent (margin-scaled confidence)**; correlated reasons take max, not product; reject-below-threshold→null; favorite never in Tier 1; confidence-level changes flip verdicts. Plus: the `"suggested"` predicate; badge shown only when `!rating`; **gen-guard** (stale-generation chunk is dropped); settings auto-default merge.
+- **Calibration harness (part of Phase 1, not an afterthought):** a dev-only report (behind a flag or dev command) that runs the pass over a folder the user already culled and emits the confusion matrix of suggestion × restored real rating (`analyze_folder` already returns the ground truth) — critically including the **false-reject list** (frames the user kept that the model would reject). Threshold tuning cites this report, not feel. Per-image metric lines behind `dlog!`, matching existing telemetry style.
 - **End-to-end (the gate):** `pnpm tauri dev`, folder with known soft/sharp frames + a Canon burst. Confirm ghost dots appear in the verdict slot (dashed/hollow), supersede on rating, burst shows tint+count+one winner, ExifRail shows reasons+confidence, `5` filters suggested-only, settings toggle hides/shows instantly and confidence level re-derives instantly. **Advisory-only proof:** before any keypress, confirm **no `.xmp` was created/modified** by the pass (`ls -la` + mtime diff); then a keypress writes the sidecar as before. **Folder-switch race:** open folder A, immediately open folder B mid-analysis → confirm A's scores never appear on B. **NAS responsiveness:** on a network profile, confirm culling stays responsive while the pass fills in.
 
 ## Critical files
 
-- **New:** `src-tauri/src/analyze.rs`; `src/smart/deriveVerdict.ts`; `src/smart/useSmartCulling.ts`.
+- **New:** `src-tauri/src/analyze.rs`; `src/smart/groupBursts.ts`; `src/smart/deriveVerdict.ts`; `src/smart/useSmartCulling.ts`.
 - `src-tauri/src/cr3.rs` — `preview_jpeg` (:108), `Cr3Meta` (:863), `metadata_from_prefix` (:887), orientation helpers, `locate_fullres` (:764).
 - `src-tauri/src/scan.rs` — template: `analyze_folder` progress + NAS/local concurrency + mtime order (:130).
 - `src-tauri/src/io_gate.rs` / `src-tauri/src/tier_cache.rs` — acquire IoGate permits per read; probe `Tier::Prvw` cache before source reads (both post-date this plan's first draft).
@@ -156,4 +179,5 @@ Per user rules: 80%+ coverage + visual checks.
 - **Threshold calibration is empirical:** run on a folder the user already culled; tune to minimize false-rejects (the costly error in an advisory tool).
 - **NAS contention:** mitigated by storage-aware cap + start-after-thumbs + chunked backoff + manual-analyze escape hatch; still the main thing to watch in the E2E NAS test.
 - **`zune-jpeg` on real previews:** validate against actual CR3s early (progressive-preview edge case).
+- **Score persistence across reopens — deliberately deferred** (deferred-on-complaint, same discipline as the pipeline's cut list): scores are session-only; a reopen re-computes. With the prvw cache warm the cost is CPU-only seconds. If multi-day culls make it hurt, the extension point is a small `(path, mtime_ms, size)`-validated score sidecar mirroring `tier_cache`'s validator — do not build it speculatively.
 - **Tier-2:** model bundle size + cross-platform ONNX packaging; feature-flag to keep the MVP installer small.
