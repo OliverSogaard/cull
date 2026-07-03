@@ -2541,19 +2541,22 @@ body,
 .cull-thumb__burst-pill,
 .cull-grid__burst-pill {
   position: absolute;
-  top: 3px;
-  right: 3px; /* top-right is the one free corner in both cell layouts */
-  font-size: 8px;
-  letter-spacing: 0.04em;
-  padding: 1px 4px;
+  top: 2px;
+  right: 2px; /* top-right is the one free corner in both cell layouts */
+  font-size: 7px;
+  line-height: 11px;
+  letter-spacing: 0.02em;
+  padding: 0 3px;
   color: var(--accent);
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.65);
   border-radius: 2px;
   z-index: 2;
   pointer-events: none;
 }
 .cull-grid__burst-pill {
   font-size: 10px;
+  line-height: 15px;
+  padding: 0 4px;
 }
 
 /* ExifRail suggestion row — verdict-coloured key, dim reasons. */

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
+import type { BurstCtx } from "../smart/groupBursts";
 import {
   formatAperture,
   formatExposureBiasShort,
@@ -26,6 +27,7 @@ export function ExifRail({
   histogramUrl,
   cullRating,
   suggestion,
+  burst,
 }: {
   metadata: ImageMetadata | undefined;
   histogramUrl: string | undefined;
@@ -33,6 +35,9 @@ export function ExifRail({
   /** Smart-culling suggestion for the current frame — the ONLY place
    *  confidence is shown. Rendered only while the frame is unrated. */
   suggestion?: Suggestion | null;
+  /** Burst membership — shown regardless of rating/verdict, so the analysis
+   *  is visible even when it has nothing to suggest. */
+  burst?: BurstCtx | null;
 }) {
   const meta = metadata ?? null;
   // Frame section
@@ -66,21 +71,32 @@ export function ExifRail({
 
   return (
     <aside className="cull-exif-rail" aria-label="Image info">
-      {ghost && (
+      {(ghost || burst) && (
         <div className="cull-exif-rail__section">
-          <div className="cull-exif-rail__label">Suggestion</div>
+          <div className="cull-exif-rail__label">Analysis</div>
           <div className="cull-exif-rail__rows">
-            <div className="cull-exif-rail__row">
-              <span
-                className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}
-              >
-                {ghost.verdict === "reject" ? "Reject" : "Keep"} ·{" "}
-                {Math.round(ghost.confidence * 100)}%
-              </span>
-              <span className="cull-exif-rail__v cull-exif-rail__v--dim">
-                {ghost.reasons.join(", ")}
-              </span>
-            </div>
+            {ghost && (
+              <div className="cull-exif-rail__row">
+                <span
+                  className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}
+                >
+                  {ghost.verdict === "reject" ? "Reject" : "Keep"} ·{" "}
+                  {Math.round(ghost.confidence * 100)}%
+                </span>
+                <span className="cull-exif-rail__v cull-exif-rail__v--dim">
+                  {ghost.reasons.join(", ")}
+                </span>
+              </div>
+            )}
+            {burst && (
+              <div className="cull-exif-rail__row">
+                <span className="cull-exif-rail__k">Burst</span>
+                <span className="cull-exif-rail__v">
+                  {burst.pos} of {burst.len}
+                  {burst.isWinner ? " · sharpest" : ""}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}

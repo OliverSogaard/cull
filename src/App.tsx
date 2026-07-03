@@ -3111,6 +3111,7 @@ export default function App() {
             histogramUrl={currentHistogram}
             cullRating={currentRating}
             suggestion={suggestions[current.id] ?? null}
+            burst={burstCtx.get(current.id) ?? null}
           />
         )}
         </div>

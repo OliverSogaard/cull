@@ -137,9 +137,11 @@ export const ThumbCell = memo(function ThumbCell({
           )
         )}
       </div>
+      {/* Compact ×N at strip size — the word "Burst" doesn't fit a 76px cell;
+          the grid's larger cells keep the full label. */}
       {burst && burst.pos === 1 && (
         <div className="cull-thumb__burst-pill" aria-hidden>
-          Burst · {burst.len}
+          ×{burst.len}
         </div>
       )}
       {dotIcon ? (
