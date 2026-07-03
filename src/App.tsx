@@ -2988,7 +2988,7 @@ export default function App() {
         {images.length === 0 ? (
           <div className="cull-message">no images</div>
         ) : positionInFilter === -1 ? (
-          <EmptyFilter filter={filter} analyzing={qualityAnalyzing} />
+          <EmptyFilter filter={filter} analyzing={qualityAnalyzing} scoredCount={Object.keys(qualityScores).length} />
         ) : cur.stage === "shimmer" && cur.error ? (
           // Full-screen error only when there's NO thumb to fall back to. If a
           // thumb exists, resolveStage keeps stage "thumb" (with error set) and
@@ -3435,7 +3435,7 @@ export default function App() {
         <>
           <div className="cull-grid-wrap">
             {visibleIndices.length === 0 ? (
-              <EmptyFilter filter={filter} analyzing={qualityAnalyzing} />
+              <EmptyFilter filter={filter} analyzing={qualityAnalyzing} scoredCount={Object.keys(qualityScores).length} />
             ) : (
               <GridView
                 images={images}
@@ -3550,17 +3550,58 @@ export default function App() {
  * uppercase eyebrow, headline with the missing filter highlighted, and a key
  * hint to switch out.
  */
-function EmptyFilter({ filter, analyzing }: { filter: Filter; analyzing?: boolean }) {
-  // The suggested filter mid-analysis is "not done yet", not "no matches" —
-  // suggestions fill in progressively as the background pass lands chunks.
-  if (filter === "suggested" && analyzing) {
+function EmptyFilter({
+  filter,
+  analyzing,
+  scoredCount,
+}: {
+  filter: Filter;
+  analyzing?: boolean;
+  /** How many frames the smart pass has scored — distinguishes "analyzed,
+   *  no obvious calls" (the healthy quiet case) from "never analyzed". */
+  scoredCount?: number;
+}) {
+  // The suggested filter has three empty states, and telling them apart is
+  // the difference between "working as designed" and "looks broken":
+  if (filter === "suggested") {
+    if (analyzing) {
+      // Not done yet — suggestions fill in progressively per chunk.
+      return (
+        <div className="cull-empty-state">
+          <div className="cull-empty-state__icon">…</div>
+          <div className="cull-empty-state__eyebrow">Analyzing</div>
+          <div className="cull-empty-state__title">Looking for obvious calls</div>
+          <div className="cull-empty-state__hint">
+            suggestions appear here as frames are scored · <kbd>1</kbd> for all
+          </div>
+        </div>
+      );
+    }
+    if ((scoredCount ?? 0) > 0) {
+      // The healthy quiet case: everything scored, nothing worth flagging.
+      // An advisory tool only speaks on clear calls — silence is a verdict.
+      return (
+        <div className="cull-empty-state">
+          <div className="cull-empty-state__icon">✓</div>
+          <div className="cull-empty-state__eyebrow">Analyzed</div>
+          <div className="cull-empty-state__title">
+            No obvious calls in this folder ({scoredCount} scored)
+          </div>
+          <div className="cull-empty-state__hint">
+            no clearly soft, blurred, or burst-redundant frames · <kbd>1</kbd> for all
+          </div>
+        </div>
+      );
+    }
+    // Zero scores and not analyzing: the pass hasn't run (auto-analyze off)
+    // or every chunk failed (drive hiccup) — 5 retries in both cases.
     return (
       <div className="cull-empty-state">
-        <div className="cull-empty-state__icon">…</div>
-        <div className="cull-empty-state__eyebrow">Analyzing</div>
-        <div className="cull-empty-state__title">Looking for obvious calls</div>
+        <div className="cull-empty-state__icon">⌀</div>
+        <div className="cull-empty-state__eyebrow">Not analyzed</div>
+        <div className="cull-empty-state__title">No frames have been scored yet</div>
         <div className="cull-empty-state__hint">
-          suggestions appear here as frames are scored · <kbd>1</kbd> for all
+          <kbd>5</kbd> to analyze · <kbd>1</kbd> for all
         </div>
       </div>
     );
@@ -3574,9 +3615,7 @@ function EmptyFilter({ filter, analyzing }: { filter: Filter; analyzing?: boolea
         ? "Keeps"
         : filter === "unrated"
           ? "Unrated"
-          : filter === "suggested"
-            ? "Suggested"
-            : "this";
+          : "this"; // "suggested" fully handled (and narrowed away) above
   return (
     <div className="cull-empty-state">
       <div className="cull-empty-state__icon">⌀</div>

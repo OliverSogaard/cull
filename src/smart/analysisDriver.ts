@@ -15,6 +15,9 @@ export type DriverDeps = {
   /** Gen-checked scores for one chunk, in dispatch order. */
   onScores: (scores: ImageScore[]) => void;
   onProgress: (done: number, total: number) => void;
+  /** A chunk that failed twice and was skipped — surfaced so callers can log
+   *  it (gated diagnostics); silence here made real failures undiagnosable. */
+  onChunkFailed?: (chunkStart: number, message: string) => void;
   chunkLen: number;
   idleWaitMs: number;
 };
@@ -60,8 +63,11 @@ export async function runAnalysis(
         if (attempt === 0) {
           await deps.sleep(deps.idleWaitMs); // one breath, then one retry
           if (stale()) return "stale";
+        } else {
+          // Second failure: skip the chunk (missing scores = silent frames),
+          // but never silently — the caller decides where this surfaces.
+          deps.onChunkFailed?.(start, msg);
         }
-        // Second failure: skip the chunk — missing scores are silent frames.
       }
     }
     // THE gen-guard: results computed for a dead generation never land.

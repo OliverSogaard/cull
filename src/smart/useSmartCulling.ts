@@ -45,6 +45,9 @@ export function useSmartCulling(opts: {
   const runningRef = useRef(false);
   /** Which staged set the auto-start already fired for. */
   const startedForRef = useRef<readonly Img[] | null>(null);
+  /** Did the last pass land ANY scores? A fully-failed pass (drive vanished,
+   *  every chunk skipped) may be retried manually via `5`/the Sugg tab. */
+  const gotScoresRef = useRef(false);
 
   // A new staged set invalidates everything derived from the old one.
   useEffect(() => {
@@ -57,9 +60,13 @@ export function useSmartCulling(opts: {
     // Once per staged set (running OR completed): the `5` key and the Sugg tab
     // call this unconditionally as the manual-start escape hatch when
     // "analyze on open" is off — repeat presses must not re-run the pass.
-    if (runningRef.current || images.length === 0 || startedForRef.current === images) return;
+    // Exception: a pass that produced ZERO scores (every chunk failed) may be
+    // retried — that's a drive hiccup, not a completed analysis.
+    if (runningRef.current || images.length === 0) return;
+    if (startedForRef.current === images && gotScoresRef.current) return;
     runningRef.current = true;
     startedForRef.current = images;
+    gotScoresRef.current = false;
     // Frozen locals: the index→id map must come from the DISPATCHED array
     // even if the component re-renders with a new set mid-pass.
     const dispatched = images;
@@ -75,7 +82,15 @@ export function useSmartCulling(opts: {
         getGeneration: () => imageStore.getGeneration(),
         isBusyLoading: () => imageStore.isBusyLoading(),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-        onScores: (chunk) =>
+        onChunkFailed: (chunkStart, message) => {
+          // Diagnostics ride the same flag as the dev HUD — never console
+          // noise in normal use, one line per skipped chunk when debugging.
+          if (localStorage.getItem("cull:devhud") === "1") {
+            console.debug(`[cull] analyze chunk @${chunkStart} skipped: ${message}`);
+          }
+        },
+        onScores: (chunk) => {
+          gotScoresRef.current = true;
           setScores((prev) => {
             const next = { ...prev };
             for (const s of chunk) {
@@ -83,7 +98,8 @@ export function useSmartCulling(opts: {
               if (im) next[im.id] = s;
             }
             return next;
-          }),
+          });
+        },
         onProgress: (done, total) => setProgress({ done, total }),
         chunkLen: storageMode === "network" ? NET_CHUNK : LOCAL_CHUNK,
         idleWaitMs: storageMode === "network" ? NET_IDLE_MS : LOCAL_IDLE_MS,

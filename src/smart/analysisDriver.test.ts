@@ -85,8 +85,9 @@ describe("runAnalysis", () => {
     expect(d.sleeps).toEqual([100, 100]);
   });
 
-  test("a failing chunk retries once, then is skipped — the pass survives", async () => {
+  test("a failing chunk retries once, then is skipped — the pass survives and REPORTS it", async () => {
     let attempts = 0;
+    const failures: [number, string][] = [];
     const d = deps({
       invokeChunk: async (p, start, g) => {
         d.calls.push({ paths: p, chunkStart: start, gen: g });
@@ -96,12 +97,17 @@ describe("runAnalysis", () => {
         }
         return p.map((_, i) => score({ index: start + i }));
       },
+      onChunkFailed: (start, msg) => failures.push([start, msg]),
     });
     const end = await runAnalysis(paths(6), 7, d);
     expect(end).toBe("done");
     expect(attempts).toBe(2);
     expect(d.scored).toHaveLength(1); // only chunk 1 scored
     expect(d.progress.at(-1)).toEqual([6, 6]); // skipped chunk still counts as done
+    // Silent failures are undiagnosable — the skip must surface to the caller.
+    expect(failures).toHaveLength(1);
+    expect(failures[0][0]).toBe(0);
+    expect(failures[0][1]).toContain("timed out");
   });
 
   test("a cancelled chunk ends the pass as stale immediately", async () => {
