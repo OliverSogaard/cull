@@ -22,7 +22,7 @@ const FILTERS: readonly Filter[] = ["all", "unrated", "keeps", "favorites"];
  * default unless it passes a guard; `exportFolder` (the one nested field) gets a
  * dedicated shape check.
  */
-function coerceSettings(raw: unknown): Settings {
+export function coerceSettings(raw: unknown): Settings {
   const d = DEFAULT_SETTINGS;
   if (typeof raw !== "object" || raw === null) return d;
   const p = raw as Record<string, unknown>;
@@ -60,6 +60,14 @@ function coerceSettings(raw: unknown): Settings {
         : d.rejectedSubfolder,
     exportFolder,
     openLastFolderOnLaunch: bool(p.openLastFolderOnLaunch, d.openLastFolderOnLaunch),
+    smartCulling: bool(p.smartCulling, d.smartCulling),
+    smartCullingConfidence:
+      p.smartCullingConfidence === "low" ||
+      p.smartCullingConfidence === "medium" ||
+      p.smartCullingConfidence === "high"
+        ? p.smartCullingConfidence
+        : d.smartCullingConfidence,
+    smartCullingOnOpen: bool(p.smartCullingOnOpen, d.smartCullingOnOpen),
   };
 }
 

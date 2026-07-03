@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ImageMetadata, Rating } from "../types";
+import type { Suggestion } from "../smart/deriveVerdict";
 import {
   formatAperture,
   formatExposureBiasShort,
@@ -24,10 +25,14 @@ export function ExifRail({
   metadata,
   histogramUrl,
   cullRating,
+  suggestion,
 }: {
   metadata: ImageMetadata | undefined;
   histogramUrl: string | undefined;
   cullRating?: Rating;
+  /** Smart-culling suggestion for the current frame — the ONLY place
+   *  confidence is shown. Rendered only while the frame is unrated. */
+  suggestion?: Suggestion | null;
 }) {
   const meta = metadata ?? null;
   // Frame section
@@ -57,8 +62,28 @@ export function ExifRail({
   const ev = formatExposureBiasShort(meta?.exposureBias ?? null);
   const wb = formatWhiteBalance(meta?.whiteBalance ?? null);
 
+  const ghost = !cullRating && suggestion?.verdict ? suggestion : null;
+
   return (
     <aside className="cull-exif-rail" aria-label="Image info">
+      {ghost && (
+        <div className="cull-exif-rail__section">
+          <div className="cull-exif-rail__label">Suggestion</div>
+          <div className="cull-exif-rail__rows">
+            <div className="cull-exif-rail__row">
+              <span
+                className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}
+              >
+                {ghost.verdict === "reject" ? "Reject" : "Keep"} ·{" "}
+                {Math.round(ghost.confidence * 100)}%
+              </span>
+              <span className="cull-exif-rail__v cull-exif-rail__v--dim">
+                {ghost.reasons.join(", ")}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="cull-exif-rail__section">
         <div className="cull-exif-rail__label">Frame</div>
         <div className="cull-exif-rail__rows">

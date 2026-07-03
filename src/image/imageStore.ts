@@ -332,6 +332,13 @@ export class ImageStore {
     return this.generation;
   }
 
+  /** Smart-culling backpressure probe: is the user actively loading? True while
+   *  zoom fulls (the heavy ~10 MB reads) or nav previews are in flight — the
+   *  quality pass waits these out between chunks instead of reading privates. */
+  isBusyLoading(): boolean {
+    return this.zoomInFlight > 0 || this.fullInFlightPaths.size > 0;
+  }
+
   /**
    * Register the metadata sink. The store calls it with (path, meta) whenever a
    * full-res bundle read yields EXIF metadata. App uses this to keep its

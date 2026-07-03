@@ -1,6 +1,8 @@
 // src/components/ThumbStrip.tsx
 import { useMemo } from "react";
 import type { Img, ImageMetadata, Rating } from "../types";
+import type { Suggestion } from "../smart/deriveVerdict";
+import type { BurstCtx } from "../smart/groupBursts";
 import { ThumbCell } from "./ThumbCell";
 import { FilmStrip } from "./strip/FilmStrip";
 import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
@@ -19,6 +21,8 @@ export function ThumbStrip({
   visibleIndices,
   metadata,
   onPick,
+  suggestions,
+  bursts,
 }: {
   images: Img[];
   currentIndex: number;
@@ -27,6 +31,10 @@ export function ThumbStrip({
   /** Optional metadata map; only `lrcRating` is read here for the corner badge. */
   metadata?: Record<string, ImageMetadata>;
   onPick: (index: number) => void;
+  /** Smart-culling ghost suggestions by image id (unrated frames only). */
+  suggestions?: Record<number, Suggestion>;
+  /** Burst membership by image id. */
+  bursts?: Map<number, BurstCtx>;
 }) {
   const visibleSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
 
@@ -49,6 +57,8 @@ export function ThumbStrip({
           lrcRating={metadata?.[images[i].path]?.lrcRating ?? null}
           dimmed={!visibleSet.has(i)}
           onPick={onPick}
+          suggestion={suggestions?.[images[i].id] ?? null}
+          burst={bursts?.get(images[i].id) ?? null}
         />
       )}
     />

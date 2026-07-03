@@ -29,6 +29,9 @@ import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
+import { useSmartCulling } from "./smart/useSmartCulling";
+import { groupBursts } from "./smart/groupBursts";
+import { deriveVerdict, type Suggestion } from "./smart/deriveVerdict";
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
 import { LoupeStage } from "./components/loupe/LoupeStage";
@@ -154,6 +157,36 @@ export default function App() {
   // User-tunable settings, persisted to localStorage. Opened with Ctrl+,.
   const [settings, setSettings] = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // ── Smart culling (advisory) ──────────────────────────────────────────────
+  // The driver owns the chunked, gen-guarded background pass; scores accumulate
+  // keyed by Img.id. ALL cross-frame derivation is pure TS below — bursts and
+  // verdicts re-derive instantly on settings changes and self-correct as chunks
+  // land. Nothing here writes anything, ever (advisory-only invariant).
+  const {
+    scores: qualityScores,
+    analyzing: qualityAnalyzing,
+    startAnalysis,
+  } = useSmartCulling({
+    enabled: settings.smartCulling,
+    autoStart: settings.smartCullingOnOpen,
+    active: phase === "culling",
+    images,
+    storageMode: settings.storageMode,
+  });
+  const burstCtx = useMemo(() => groupBursts(images, qualityScores), [images, qualityScores]);
+  // Only frames with an emitted verdict land in the map — the badge/filter
+  // predicate is a simple presence check.
+  const suggestions = useMemo(() => {
+    if (!settings.smartCulling) return {};
+    const out: Record<number, Suggestion> = {};
+    for (const [idStr, s] of Object.entries(qualityScores)) {
+      const id = Number(idStr);
+      const sug = deriveVerdict(s, burstCtx.get(id), settings.smartCullingConfidence);
+      if (sug.verdict) out[id] = sug;
+    }
+    return out;
+  }, [qualityScores, burstCtx, settings.smartCulling, settings.smartCullingConfidence]);
 
   // Recent sessions list rendered on the home screen. One entry per folder
   // SET, written once a session ENTERS CULLING (staging alone leaves no trace,
@@ -340,8 +373,15 @@ export default function App() {
   }, [currentIndex, resetZoom]);
 
   const visibleIndices = useMemo(() => {
+    // "suggested" resolves against the live suggestions map: frames with a
+    // suggestion that are STILL unrated (rating a frame removes it live).
+    if (filter === "suggested") {
+      return images
+        .map((_, i) => i)
+        .filter((i) => !ratings[images[i].id] && suggestions[images[i].id]);
+    }
     return images.map((_, i) => i).filter((i) => passesFilter(ratings[images[i].id], filter));
-  }, [images, ratings, filter]);
+  }, [images, ratings, filter, suggestions]);
 
   // Memoized: this O(n) indexOf used to run on EVERY render (incl. every
   // ~30 Hz scrub frame); now only when the filter list or cursor actually moves.
@@ -2538,6 +2578,12 @@ export default function App() {
         case "4":
           setFilter("favorites");
           break;
+        case "5":
+          if (settings.smartCulling) {
+            setFilter("suggested");
+            startAnalysis(); // no-op unless "analyze on open" is off and unrun
+          }
+          break;
         case "i":
         case "I":
           setExifVisible((v) => !v);
@@ -2604,6 +2650,8 @@ export default function App() {
     challengerLoses,
     resetZoom,
     clearMultiSelection,
+    settings.smartCulling,
+    startAnalysis,
   ]);
 
   // Register the window key listeners ONCE; dispatch through cullKeyRef so the
@@ -2940,7 +2988,7 @@ export default function App() {
         {images.length === 0 ? (
           <div className="cull-message">no images</div>
         ) : positionInFilter === -1 ? (
-          <EmptyFilter filter={filter} />
+          <EmptyFilter filter={filter} analyzing={qualityAnalyzing} />
         ) : cur.stage === "shimmer" && cur.error ? (
           // Full-screen error only when there's NO thumb to fall back to. If a
           // thumb exists, resolveStage keeps stage "thumb" (with error set) and
@@ -3062,6 +3110,7 @@ export default function App() {
             metadata={currentMeta}
             histogramUrl={currentHistogram}
             cullRating={currentRating}
+            suggestion={suggestions[current.id] ?? null}
           />
         )}
         </div>
@@ -3256,6 +3305,19 @@ export default function App() {
             >
               ★
             </button>
+            {settings.smartCulling && (
+              <button
+                type="button"
+                className={filter === "suggested" ? "is-active" : ""}
+                onClick={() => {
+                  setFilter("suggested");
+                  startAnalysis(); // manual start when "analyze on open" is off
+                }}
+                title="5 · show unrated frames with a smart-culling suggestion"
+              >
+                {qualityAnalyzing ? "Sugg…" : "Sugg"}
+              </button>
+            )}
           </div>
         )}
         {(stats.keeps > 0 || rejectedPaths.length > 0) && !actionsOpen && (
@@ -3284,6 +3346,8 @@ export default function App() {
       visibleIndices={visibleIndices}
       metadata={metadata}
       onPick={pickFromStrip}
+      suggestions={suggestions}
+      bursts={burstCtx}
     />
   );
   const cmpStrip = (
@@ -3371,7 +3435,7 @@ export default function App() {
         <>
           <div className="cull-grid-wrap">
             {visibleIndices.length === 0 ? (
-              <EmptyFilter filter={filter} />
+              <EmptyFilter filter={filter} analyzing={qualityAnalyzing} />
             ) : (
               <GridView
                 images={images}
@@ -3385,6 +3449,8 @@ export default function App() {
                 onPick={handleGridPick}
                 containerRef={gridContainerRef}
                 onViewportChange={handleGridViewport}
+                suggestions={suggestions}
+                bursts={burstCtx}
               />
             )}
             {feedbackChip}
@@ -3484,7 +3550,21 @@ export default function App() {
  * uppercase eyebrow, headline with the missing filter highlighted, and a key
  * hint to switch out.
  */
-function EmptyFilter({ filter }: { filter: Filter }) {
+function EmptyFilter({ filter, analyzing }: { filter: Filter; analyzing?: boolean }) {
+  // The suggested filter mid-analysis is "not done yet", not "no matches" —
+  // suggestions fill in progressively as the background pass lands chunks.
+  if (filter === "suggested" && analyzing) {
+    return (
+      <div className="cull-empty-state">
+        <div className="cull-empty-state__icon">…</div>
+        <div className="cull-empty-state__eyebrow">Analyzing</div>
+        <div className="cull-empty-state__title">Looking for obvious calls</div>
+        <div className="cull-empty-state__hint">
+          suggestions appear here as frames are scored · <kbd>1</kbd> for all
+        </div>
+      </div>
+    );
+  }
   // Label the user-facing filter name. "All" can never actually be empty (it
   // includes unrated), so falling back to "this" covers the impossible-case.
   const label =
@@ -3494,7 +3574,9 @@ function EmptyFilter({ filter }: { filter: Filter }) {
         ? "Keeps"
         : filter === "unrated"
           ? "Unrated"
-          : "this";
+          : filter === "suggested"
+            ? "Suggested"
+            : "this";
   return (
     <div className="cull-empty-state">
       <div className="cull-empty-state__icon">⌀</div>

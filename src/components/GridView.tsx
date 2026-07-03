@@ -7,8 +7,10 @@ import {
   type RefObject,
 } from "react";
 import { Star } from "lucide-react";
-import { verdictDotClass, verdictGlyph } from "./verdictGlyph";
+import { ghostGlyph, verdictDotClass, verdictGlyph } from "./verdictGlyph";
 import type { Img, ImageMetadata, Rating } from "../types";
+import type { Suggestion } from "../smart/deriveVerdict";
+import type { BurstCtx } from "../smart/groupBursts";
 import { stripExt } from "../utils/path";
 import { hasLrcRating } from "../utils/ratingColor";
 import { useThumb } from "../image/useThumb";
@@ -51,6 +53,8 @@ export const GridView = memo(function GridView({
   onPick,
   containerRef,
   onViewportChange,
+  suggestions,
+  bursts,
 }: {
   images: Img[];
   visibleIndices: number[];
@@ -72,6 +76,10 @@ export const GridView = memo(function GridView({
   containerRef: RefObject<HTMLDivElement | null>;
   /** Reports the visible absolute image-index range to App (→ setGridRange). */
   onViewportChange: (first: number, last: number) => void;
+  /** Smart-culling ghost suggestions by image id (rendered only when unrated). */
+  suggestions?: Record<number, Suggestion>;
+  /** Burst membership by image id — tint, count pill, winner border. */
+  bursts?: Map<number, BurstCtx>;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
@@ -179,6 +187,8 @@ export const GridView = memo(function GridView({
             left={col * cellW}
             width={cellW}
             height={rowH}
+            suggestion={suggestions?.[images[idx].id] ?? null}
+            burst={bursts?.get(images[idx].id) ?? null}
           />
         ))}
       </div>
@@ -198,6 +208,8 @@ const GridCell = memo(function GridCell({
   left,
   width,
   height,
+  suggestion,
+  burst,
 }: {
   img: Img;
   index: number;
@@ -210,6 +222,8 @@ const GridCell = memo(function GridCell({
   left: number;
   width: number;
   height: number;
+  suggestion?: Suggestion | null;
+  burst?: BurstCtx | null;
 }) {
   // Grid cells render thumbnails only; the store self-schedules the thumb on
   // mount (and prioritises by the reported grid viewport) and re-renders this
@@ -221,11 +235,15 @@ const GridCell = memo(function GridCell({
   const dotIcon = verdictGlyph(rating, 12);
   const dotClass = verdictDotClass(rating, "cull-grid__dot");
   const showLrc = hasLrcRating(lrcRating, rating);
+  // Ghost suggestion only while unrated — the committed dot supersedes in place.
+  const ghost = !rating && suggestion?.verdict ? suggestion.verdict : null;
   const cellClass = [
     "cull-grid__cell",
     isCurrent ? "is-current" : "",
     isReject ? "is-reject" : "",
     isMultiSelected ? "is-multi-selected" : "",
+    burst ? "cull-grid__cell--burst" : "",
+    burst?.isWinner ? "cull-grid__cell--burst-winner" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -280,10 +298,26 @@ const GridCell = memo(function GridCell({
       {/* Multi-select tint sits above the photo but below the rating dot, so
           the dot remains legible. Outline (accent) comes from .is-multi-selected. */}
       {isMultiSelected && <div className="cull-grid__multi-tint" aria-hidden />}
-      {dotIcon && (
+      {burst && burst.pos === 1 && (
+        <div className="cull-grid__burst-pill" aria-hidden>
+          Burst · {burst.len}
+        </div>
+      )}
+      {dotIcon ? (
         <div className={`cull-grid__dot ${dotClass}`} aria-hidden>
           {dotIcon}
         </div>
+      ) : (
+        ghost && (
+          <div
+            className={`cull-grid__dot cull-grid__dot--ghost cull-grid__dot--ghost-${
+              ghost === "reject" ? "reject" : "keep"
+            }`}
+            aria-hidden
+          >
+            {ghostGlyph(ghost, 12)}
+          </div>
+        )
       )}
     </div>
   );

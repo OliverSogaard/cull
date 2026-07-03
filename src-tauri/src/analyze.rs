@@ -71,6 +71,9 @@ pub struct ImageScore {
     pub shutter_seconds: Option<f64>,
     pub iso: Option<u32>,
     pub sub_sec_ms: Option<u16>,
+    /// captured_at + SubSec combined to ms (camera local clock; deltas only).
+    /// None ⇒ TS burst grouping falls back to mtime deltas for this frame.
+    pub captured_at_ms: Option<i64>,
     // Tier 2 (ML, later) — present now so the wire contract is stable.
     pub faces: Vec<FaceScore>,
     pub aesthetic: Option<f32>,
@@ -101,6 +104,7 @@ pub(crate) struct DecodedInput {
     pub shutter_seconds: Option<f64>,
     pub iso: Option<u32>,
     pub sub_sec_ms: Option<u16>,
+    pub captured_at: Option<String>,
 }
 
 /// Inclusive-exclusive pixel rect in SENSOR (decoded-buffer) coordinates.
@@ -322,6 +326,16 @@ pub(crate) fn motion_blur_likelihood(
     ((shutter / blur_thresh).clamp(0.0, 1.0) as f32) * (1.0 - global_sharpness.clamp(0.0, 1.0))
 }
 
+/// Combine `captured_at` ("YYYY-MM-DDTHH:MM:SS", camera local clock) with the
+/// SubSec fraction into one epoch-style millisecond value for TS burst deltas.
+/// Only DELTAS are ever taken, so the missing timezone is irrelevant. None when
+/// the datetime is absent/unparseable; a missing SubSec contributes 0 (second
+/// precision — TS falls back to mtime deltas for the fine gap in that case).
+pub(crate) fn captured_at_ms(captured_at: Option<&str>, sub_sec_ms: Option<u16>) -> Option<i64> {
+    let dt = chrono::NaiveDateTime::parse_from_str(captured_at?, "%Y-%m-%dT%H:%M:%S").ok()?;
+    Some(dt.and_utc().timestamp_millis() + sub_sec_ms.unwrap_or(0) as i64)
+}
+
 /// Rec.601 integer luma of a packed RGB8 buffer.
 fn luma_of(rgb: &[u8]) -> Vec<u8> {
     rgb.chunks_exact(3)
@@ -368,6 +382,7 @@ pub(crate) fn score_one(input: &DecodedInput, index: usize) -> ImageScore {
         shutter_seconds: input.shutter_seconds,
         iso: input.iso,
         sub_sec_ms: input.sub_sec_ms,
+        captured_at_ms: captured_at_ms(input.captured_at.as_deref(), input.sub_sec_ms),
         faces: Vec::new(),
         aesthetic: None,
         decode_ok: true,
@@ -514,6 +529,7 @@ mod tests {
             shutter_seconds: Some(1.0 / 500.0),
             iso: Some(400),
             sub_sec_ms: Some(470),
+            captured_at: Some("2026-06-11T18:07:30".to_string()),
         }
     }
 
@@ -735,6 +751,22 @@ mod tests {
             "tenengrad on the wire, normalized, got {}",
             s.tenengrad
         );
+    }
+
+    // ── captured_at_ms combine ─────────────────────────────────────────────
+
+    #[test]
+    fn captured_at_ms_combines_datetime_and_subsec() {
+        // 12 fps burst crossing a second boundary: :30.920 → :31.003 = 83 ms.
+        let a = captured_at_ms(Some("2026-06-11T18:07:30"), Some(920)).expect("a");
+        let b = captured_at_ms(Some("2026-06-11T18:07:31"), Some(3)).expect("b");
+        assert_eq!(b - a, 83, "sub-second delta across the boundary");
+        // Missing SubSec → second precision (fraction 0), still usable coarsely.
+        let c = captured_at_ms(Some("2026-06-11T18:07:31"), None).expect("c");
+        assert_eq!(c - a, 80, ":31.000 − :30.920");
+        // Absent / malformed datetime → None (mtime fallback territory).
+        assert_eq!(captured_at_ms(None, Some(500)), None);
+        assert_eq!(captured_at_ms(Some("not a date"), Some(500)), None);
     }
 
     // ── Chunk driver ───────────────────────────────────────────────────────

@@ -15,6 +15,48 @@ export type FileOpResult = {
   errorCount?: number;
 };
 
+/** Tier-2 face metrics (empty in the classical MVP; wire contract is stable). */
+export type FaceScore = {
+  bbox: [number, number, number, number];
+  eyesOpen: number;
+  faceSharpness: number;
+};
+
+/**
+ * Raw per-file quality metrics from `analyze_quality` (smart culling). The
+ * backend computes per-file ONLY — burst grouping, winner selection, and
+ * verdicts are derived in TS (`src/smart/`). Mirrors Rust `analyze::ImageScore`.
+ */
+export type ImageScore = {
+  /** ABSOLUTE input-order index into the dispatched list (chunk_start + offset). */
+  index: number;
+  /** Noise-normalized 0..1 variance-of-Laplacian over the AF crop. */
+  afSharpness: number;
+  afValid: boolean;
+  /** AF-crop p95−p5 luma spread 0..1 — below TEXTURE_MIN, focus is unjudgeable. */
+  afTexture: number;
+  globalSharpness: number;
+  noiseFloor: number;
+  blownPct: number;
+  crushedPct: number;
+  exposureScore: number;
+  motionBlurLikelihood: number;
+  /** Sobel cross-check, same normalization as afSharpness. */
+  tenengrad: number;
+  mtimeMs: number;
+  driveMode: number | null;
+  focalLengthMm: number | null;
+  shutterSeconds: number | null;
+  iso: number | null;
+  subSecMs: number | null;
+  /** captured_at + SubSec as ms (camera clock; DELTAS only). */
+  capturedAtMs: number | null;
+  faces: FaceScore[];
+  aesthetic: number | null;
+  /** false ⇒ preview missing/corrupt — show no suggestion for this frame. */
+  decodeOk: boolean;
+};
+
 /** Analyze-phase progress event emitted on `analyze-progress`. */
 export type AnalyzeProgress = { done: number; total: number; phase: string };
 

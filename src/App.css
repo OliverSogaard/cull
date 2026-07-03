@@ -2506,6 +2506,64 @@ body,
   line-height: 0;
 }
 
+/* ── smart-culling advisories (ghost dots, burst visuals) ──────────────────
+   The suggestion is itself a verdict, rendered in the SAME bottom-right slot
+   as the committed dot but styled provisional: dashed outline, hollow glyph,
+   ~55% opacity. It only ever renders while the frame is unrated, so the two
+   can never collide. Burst runs get a faint shared tint, a "Burst · N" pill
+   on the first cell, and a solid border on the winner. */
+.cull-thumb__dot--ghost,
+.cull-grid__dot--ghost {
+  background: rgba(10, 10, 12, 0.55);
+  box-shadow: none;
+  opacity: 0.55;
+}
+.cull-thumb__dot--ghost-keep,
+.cull-grid__dot--ghost-keep {
+  border: 1.5px dashed var(--ok);
+  color: var(--ok);
+}
+.cull-thumb__dot--ghost-reject,
+.cull-grid__dot--ghost-reject {
+  border: 1.5px dashed var(--bad);
+  color: var(--bad);
+}
+
+.cull-thumb--burst .cull-thumb__frame,
+.cull-grid__cell--burst .cull-grid__frame {
+  background: rgba(214, 178, 120, 0.08); /* faint champagne wash across the run */
+}
+.cull-thumb--burst-winner .cull-thumb__frame,
+.cull-grid__cell--burst-winner .cull-grid__frame {
+  outline: 1.5px solid var(--ok);
+  outline-offset: -1.5px;
+}
+.cull-thumb__burst-pill,
+.cull-grid__burst-pill {
+  position: absolute;
+  top: 3px;
+  right: 3px; /* top-right is the one free corner in both cell layouts */
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 2px;
+  z-index: 2;
+  pointer-events: none;
+}
+.cull-grid__burst-pill {
+  font-size: 10px;
+}
+
+/* ExifRail suggestion row — verdict-coloured key, dim reasons. */
+.cull-exif-rail__suggest--keep {
+  color: var(--ok);
+}
+.cull-exif-rail__suggest--reject {
+  color: var(--bad);
+}
+
 /* ── contact-sheet grid (G) ───────────────────────────────── */
 /* Positioning context for the grid's rating-feedback chip; the footer is its
    sibling, so the chip stays within the grid area and never overlaps it. The

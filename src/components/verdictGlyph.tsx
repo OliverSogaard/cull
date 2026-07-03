@@ -21,6 +21,20 @@ export function verdictGlyph(rating: Rating | undefined, size: number): ReactNod
   }
 }
 
+/**
+ * The smart-culling GHOST glyph — hollow/outline (✓ / ✕ in the verdict's own
+ * color via CSS `currentColor`, no fill, lighter stroke) so a suggestion reads
+ * as provisional next to the solid committed dot. Tier 1 never suggests ★.
+ */
+export function ghostGlyph(verdict: Rating, size: number): ReactNode {
+  switch (verdict) {
+    case "reject":
+      return <XIcon size={size} strokeWidth={2.4} />;
+    default:
+      return <Check size={size} strokeWidth={2.4} />;
+  }
+}
+
 /** The rating-dot CSS modifier class for a verdict, given the cell's class prefix. */
 export function verdictDotClass(
   rating: Rating | undefined,

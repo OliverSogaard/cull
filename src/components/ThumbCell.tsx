@@ -1,10 +1,12 @@
 import { memo } from "react";
 import { Star } from "lucide-react";
 import type { Img, Rating } from "../types";
+import type { Suggestion } from "../smart/deriveVerdict";
+import type { BurstCtx } from "../smart/groupBursts";
 import { hasLrcRating } from "../utils/ratingColor";
 import { stripExt } from "../utils/path";
 import { useThumb } from "../image/useThumb";
-import { verdictDotClass, verdictGlyph } from "./verdictGlyph";
+import { ghostGlyph, verdictDotClass, verdictGlyph } from "./verdictGlyph";
 
 
 type ThumbCellProps = {
@@ -19,6 +21,13 @@ type ThumbCellProps = {
   onPick: (index: number) => void;
   /** Role variant in compare mode — adds a champagne outline + role badge. */
   roleVariant?: "champion" | "challenger";
+  /** Smart-culling ghost suggestion — renders in the verdict-dot slot ONLY
+   *  while the frame is unrated (compare strips never pass it: suppressed
+   *  by construction there). */
+  suggestion?: Suggestion | null;
+  /** Burst membership — run tint, "Burst · N" pill on the first cell, and a
+   *  solid winner border. */
+  burst?: BurstCtx | null;
 };
 
 /**
@@ -36,6 +45,8 @@ export const ThumbCell = memo(function ThumbCell({
   dimmed,
   onPick,
   roleVariant,
+  suggestion,
+  burst,
 }: ThumbCellProps) {
   // Strip cells only ever need the thumbnail (plumbing shared with GridCell).
   const { url, shimmerDelayMs: shimmerDelay } = useThumb(img.path);
@@ -61,9 +72,20 @@ export const ThumbCell = memo(function ThumbCell({
 
   const showLrc = hasLrcRating(lrcRating, rating);
 
+  // Ghost suggestion renders ONLY while unrated — a keypress paints the solid
+  // dot and this guard stops rendering it (superseded in place, never stored).
+  const ghost = !rating && suggestion?.verdict ? suggestion.verdict : null;
+  const rootClass = [
+    "cull-thumb",
+    burst ? "cull-thumb--burst" : "",
+    burst?.isWinner ? "cull-thumb--burst-winner" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div
-      className="cull-thumb"
+      className={rootClass}
       onClick={() => onPick(index)}
       role="button"
       aria-label={`${stripExt(img.filename)}${rating ? `, ${rating}` : ""}${
@@ -115,10 +137,26 @@ export const ThumbCell = memo(function ThumbCell({
           )
         )}
       </div>
-      {dotIcon && (
+      {burst && burst.pos === 1 && (
+        <div className="cull-thumb__burst-pill" aria-hidden>
+          Burst · {burst.len}
+        </div>
+      )}
+      {dotIcon ? (
         <div className={`cull-thumb__dot ${dotClass}`} aria-hidden>
           {dotIcon}
         </div>
+      ) : (
+        ghost && (
+          <div
+            className={`cull-thumb__dot cull-thumb__dot--ghost cull-thumb__dot--ghost-${
+              ghost === "reject" ? "reject" : "keep"
+            }`}
+            aria-hidden
+          >
+            {ghostGlyph(ghost, 9)}
+          </div>
+        )
       )}
     </div>
   );

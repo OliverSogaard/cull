@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Filter, Settings, StorageMode, ThumbsPosition } from "../types";
+import type { Filter, Settings, SmartLevel, StorageMode, ThumbsPosition } from "../types";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { sanitizeFolderName } from "../utils/path";
@@ -73,6 +73,48 @@ export function SettingsDialog({
                 onChange={(v) => set("storageMode", v)}
               />
             </SettingRow>
+          </Section>
+
+          {/* ───────────── Smart culling ───────────── */}
+          <Section title="Smart culling">
+            <SettingRow
+              label="Suggestions"
+              help="Advisory only: a background pass flags obvious calls (soft focus, motion blur, not-best-of-burst) as ghost dots. You confirm every verdict — nothing is ever rated or written automatically."
+            >
+              <Chip
+                label="Enabled"
+                on={settings.smartCulling}
+                onChange={(v) => set("smartCulling", v)}
+              />
+            </SettingRow>
+            {settings.smartCulling && (
+              <>
+                <SettingRow
+                  label="Confidence"
+                  help="How sure a reject suggestion must be before it shows. Higher = fewer, safer suggestions."
+                >
+                  <SegmentToggle<SmartLevel>
+                    value={settings.smartCullingConfidence}
+                    options={[
+                      { value: "low", label: "Chatty" },
+                      { value: "medium", label: "Balanced" },
+                      { value: "high", label: "Strict" },
+                    ]}
+                    onChange={(v) => set("smartCullingConfidence", v)}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label="Analyze on open"
+                  help="Start scoring automatically when a folder opens. Off = press 5 (or the Sugg tab) to analyze on demand."
+                >
+                  <Chip
+                    label="Auto"
+                    on={settings.smartCullingOnOpen}
+                    onChange={(v) => set("smartCullingOnOpen", v)}
+                  />
+                </SettingRow>
+              </>
+            )}
           </Section>
 
           {/* ───────────── When you start a cull ───────────── */}

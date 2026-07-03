@@ -74,7 +74,20 @@ export type Settings = {
    * last folder or it has been deleted.
    */
   openLastFolderOnLaunch: boolean;
+
+  // — Smart culling (advisory only; nothing is ever written by the AI) —
+  /** Master switch for suggestions (ghost dots, burst visuals, `5` filter). */
+  smartCulling: boolean;
+  /** How confident a REJECT suggestion must be before it shows. */
+  smartCullingConfidence: SmartLevel;
+  /** Analyze automatically when a folder opens (off → manual Analyze button). */
+  smartCullingOnOpen: boolean;
 };
+
+/** Mirror of `src/smart/deriveVerdict.ts`'s SmartLevel (kept here so settings
+ *  stay import-cycle-free; the two unions are asserted equal by tsc where the
+ *  dialog passes one to the other). */
+export type SmartLevel = "low" | "medium" | "high";
 
 export const DEFAULT_SETTINGS: Settings = {
   storageMode: "local",
@@ -91,6 +104,10 @@ export const DEFAULT_SETTINGS: Settings = {
   exportFolder: { mode: "remember" },
 
   openLastFolderOnLaunch: false,
+
+  smartCulling: true,
+  smartCullingConfidence: "medium",
+  smartCullingOnOpen: true,
 };
 
 /** localStorage key. Bump only with a migration (read old key → transform →

@@ -300,6 +300,7 @@ pub(crate) fn fetch_decoded_preview(
         shutter_seconds: m.shutter_seconds,
         iso: m.iso,
         sub_sec_ms: m.sub_sec_ms,
+        captured_at: m.captured_at,
     })
 }
 

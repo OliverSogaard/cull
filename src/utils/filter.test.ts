@@ -30,3 +30,14 @@ describe("passesFilter", () => {
     expect(passesFilter(undefined, "favorites")).toBe(false);
   });
 });
+
+describe("suggested filter fallback", () => {
+  // App.tsx special-cases "suggested" BEFORE passesFilter (it needs the live
+  // suggestions map); the pure fallback mirrors "unrated" so a stray call
+  // can never hide rated frames' state or crash the switch.
+  it("treats suggested as unrated-only at the pure level", () => {
+    expect(passesFilter(undefined, "suggested")).toBe(true);
+    expect(passesFilter("keep", "suggested")).toBe(false);
+    expect(passesFilter("reject", "suggested")).toBe(false);
+  });
+});

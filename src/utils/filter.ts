@@ -16,5 +16,10 @@ export function passesFilter(rating: Rating | undefined, filter: Filter): boolea
       return rating === "keep" || rating === "favorite";
     case "favorites":
       return rating === "favorite";
+    case "suggested":
+      // App.tsx resolves "suggested" against the live suggestions map BEFORE
+      // this runs; the pure fallback mirrors "unrated" (suggestions only ever
+      // exist on unrated frames) so a stray call stays safe.
+      return !rating;
   }
 }
