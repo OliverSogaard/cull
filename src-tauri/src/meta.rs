@@ -12,11 +12,17 @@
 use crate::cr3;
 
 /// EXIF subset for the UI. `camelCase` on the wire to match the TS type.
-#[derive(serde::Serialize, Default)]
-#[serde(rename_all = "camelCase")]
+/// Deserialize: smart culling re-reads cached prvw wire headers (`serde(default)`
+/// keeps old cache entries readable if a field is ever added — same additive
+/// discipline as the tier-cache VERSION contract).
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub(crate) struct ImageMetadata {
     /// Local capture time, ISO-8601-ish (`YYYY-MM-DDTHH:MM:SS`).
     pub captured_at: Option<String>,
+    /// Sub-second fraction of `captured_at` in milliseconds (EXIF
+    /// SubSecTimeOriginal) — the true burst cadence for smart culling.
+    pub sub_sec_ms: Option<u16>,
     pub camera: Option<String>,
     pub lens: Option<String>,
     pub focal_length_mm: Option<f32>,
@@ -63,6 +69,7 @@ impl From<cr3::Cr3Meta> for ImageMetadata {
     fn from(m: cr3::Cr3Meta) -> Self {
         ImageMetadata {
             captured_at: m.captured_at,
+            sub_sec_ms: m.sub_sec_ms,
             camera: m.camera,
             lens: m.lens,
             focal_length_mm: m.focal_length_mm,

@@ -44,6 +44,7 @@ macro_rules! dlog {
     }};
 }
 
+mod analyze;
 mod bundle;
 mod cr3;
 mod file_ops;
@@ -140,6 +141,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            analyze::analyze_quality,
             bundle::read_bundle,
             bundle::read_preview,
             bundle::read_fullres,

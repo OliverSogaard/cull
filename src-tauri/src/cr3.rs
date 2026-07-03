@@ -862,6 +862,7 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
 #[derive(Default)]
 pub struct Cr3Meta {
     pub captured_at: Option<String>, // "YYYY-MM-DDTHH:MM:SS" (camera local clock)
+    pub sub_sec_ms: Option<u16>,     // SubSecTimeOriginal (0x9291) as ms — burst cadence
     pub camera: Option<String>,
     pub lens: Option<String>,
     pub focal_length_mm: Option<f32>,
@@ -902,6 +903,7 @@ fn metadata_from_prefix(d: &[u8]) -> Cr3Meta {
     if let Some(t) = cmt_in_uuid_range(d, ms, me, b"CMT2").and_then(Tiff::new) {
         if let Some(ifd) = t.ifd0() {
             m.captured_at = t.ascii(ifd, 0x9003).map(|s| normalize_datetime(&s));
+            m.sub_sec_ms = t.ascii(ifd, 0x9291).as_deref().and_then(sub_sec_to_ms);
             m.lens = t.ascii(ifd, 0xA434);
             m.focal_length_mm = t.rational(ifd, 0x920A).map(|x| x as f32);
             m.aperture = t.rational(ifd, 0x829D).map(|x| x as f32);
@@ -946,6 +948,22 @@ fn canon_drive_mode(cmt3: &Tiff) -> Option<u32> {
 fn thumbnail_from_prefix(d: &[u8]) -> Option<Vec<u8>> {
     let (ms, me) = moov_range(d)?;
     jpeg_in_box(d, ms, me, b"THMB")
+}
+
+/// EXIF SubSecTimeOriginal ("47" = 0.47 s) → milliseconds (470). Digits only;
+/// more than 3 digits truncate (ms precision is all burst grouping needs).
+fn sub_sec_to_ms(s: &str) -> Option<u16> {
+    let digits = s.trim_end_matches(' ');
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let ms: u16 = digits
+        .bytes()
+        .take(3)
+        .enumerate()
+        .map(|(i, b)| (b - b'0') as u16 * [100, 10, 1][i])
+        .sum();
+    Some(ms)
 }
 
 /// "2025:10:13 18:07:30" → "2025-10-13T18:07:30". Pass-through if unexpected.
@@ -1128,6 +1146,22 @@ mod tests {
         }
         assert_eq!(torient, b.orientation, "thumb/preview orientation agree");
         assert!(thumb.starts_with(&[0xFF, 0xD8]), "thumb missing SOI");
+    }
+
+    /// SubSecTimeOriginal is an ASCII fraction of a second with camera-defined
+    /// digit count; burst grouping needs milliseconds. Trailing spaces are the
+    /// EXIF padding convention.
+    #[test]
+    fn sub_sec_converts_fraction_digits_to_ms() {
+        assert_eq!(sub_sec_to_ms("4"), Some(400), "one digit = tenths");
+        assert_eq!(sub_sec_to_ms("47"), Some(470), "two digits = hundredths");
+        assert_eq!(sub_sec_to_ms("473"), Some(473), "three digits = ms");
+        assert_eq!(sub_sec_to_ms("4738"), Some(473), "extra precision truncates");
+        assert_eq!(sub_sec_to_ms("47 "), Some(470), "EXIF space padding tolerated");
+        assert_eq!(sub_sec_to_ms("000"), Some(0), "zero is a real value, not absent");
+        assert_eq!(sub_sec_to_ms(""), None, "empty = absent");
+        assert_eq!(sub_sec_to_ms("  "), None, "only padding = absent");
+        assert_eq!(sub_sec_to_ms("x7"), None, "non-digit garbage = absent");
     }
 
     /// display_dims swaps width/height for the 90°/270° orientations (6/8) only —

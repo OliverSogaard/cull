@@ -24,6 +24,11 @@ use std::time::Instant;
 use tauri::ipc::Response;
 use tauri::State;
 
+use zune_jpeg::zune_core::bytestream::ZCursor;
+use zune_jpeg::zune_core::colorspace::ColorSpace;
+use zune_jpeg::zune_core::options::DecoderOptions;
+use zune_jpeg::JpegDecoder;
+
 use crate::cr3;
 use crate::io_gate::{IoGate, SessionGate, Tier};
 use crate::meta::ImageMetadata;
@@ -33,7 +38,7 @@ use crate::tier_cache::{stat_of, CacheTier, TierCache};
 /// (mtime ms, file size) for tier-cache validation WITHOUT a hot-path stat:
 /// the session table (fed by analyze's dir listings) when known; ONE memoized
 /// stat for un-analyzed paths. None (stat failed) → skip the cache entirely.
-fn resolve_stat(session: &SessionGate, path: &str) -> Option<(i64, u64)> {
+pub(crate) fn resolve_stat(session: &SessionGate, path: &str) -> Option<(i64, u64)> {
     if let Some(s) = session.file_stat(path) {
         return Some(s);
     }
@@ -67,7 +72,7 @@ fn frame(header_json: Vec<u8>, payload: &[u8]) -> Vec<u8> {
 /// Generic over the result so multi-stage commands (`read_mid`'s probe-then-
 /// generate) can run each stage gated without re-implementing the machinery;
 /// [`gated_read`] is the Response-producing wrapper every one-shot read uses.
-async fn gated<T: Send + 'static>(
+pub(crate) async fn gated<T: Send + 'static>(
     gate: &IoGate,
     tier: Tier,
     label: String,
@@ -169,7 +174,9 @@ pub(crate) async fn read_bundle(
 /// Header for [`read_preview`]: full metadata, the orientation (echoed back to
 /// `read_fullres` so the zoom tier skips the moov re-parse), and the exact
 /// full-res range hint from moov's sample tables.
-#[derive(serde::Serialize)]
+/// Deserialize exists for one consumer: `fetch_decoded_preview` re-reading a
+/// cached entry's stored wire header (the v2 cache stores it verbatim).
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PreviewHeader {
     meta: ImageMetadata,
@@ -200,45 +207,100 @@ pub(crate) async fn read_preview(
     let label = format!("read_preview({path})");
     gated_read(&gate, Tier::Small, label, move || {
         let start = Instant::now();
-        let stat = resolve_stat(&session, &path);
-        if let Some((ms, size)) = stat {
-            if let Some((header, payload)) = cache.get(CacheTier::Prvw, &path, ms, size) {
-                dlog!(
-                    "[cull] read_preview({}): prvw cache hit {}B in {:?}",
-                    path,
-                    payload.len(),
-                    start.elapsed()
-                );
-                return Ok(frame(header, &payload));
-            }
-        }
-        let b = cr3::read_preview_bundle(&path, &|| session.is_cancelled(gen))
-            .map_err(|e| format!("cr3 preview: {e}"))?;
-        let mut meta = ImageMetadata::from(b.meta);
-        meta.file_size = Some(b.file_size);
-        let header = PreviewHeader {
-            meta,
-            orientation: b.orientation,
-            preview_len: b.preview.len() as u32,
-            full_offset: b.full_hint.map(|h| h.0),
-            full_len: b.full_hint.map(|h| h.1),
-        };
-        let header_json =
-            serde_json::to_vec(&header).map_err(|e| format!("preview header: {e}"))?;
-        if let Some((ms, size)) = stat {
-            cache.put(CacheTier::Prvw, &path, ms, size, &header_json, &b.preview);
-        }
+        let (header_json, jpeg, hit) =
+            preview_parts(&path, &session, &cache, &|| session.is_cancelled(gen))?;
         dlog!(
-            "[cull] read_preview({}): orient={} prvw={}B hint={:?} in {:?}",
+            "[cull] read_preview({}): {} {}B in {:?}",
             path,
-            b.orientation,
-            b.preview.len(),
-            b.full_hint,
+            if hit { "prvw cache hit" } else { "cold read" },
+            jpeg.len(),
             start.elapsed()
         );
-        Ok(frame(header_json, &b.preview))
+        Ok(frame(header_json, &jpeg))
     })
     .await
+}
+
+/// The one prvw acquisition path (shared by [`read_preview`] and
+/// [`fetch_decoded_preview`], so cache/read behavior can never drift):
+/// validated cache hit returns the stored wire header + payload VERBATIM;
+/// a miss is ONE head read whose result piggy-backs into the cache.
+/// Returns `(header_json, preview_jpeg, was_cache_hit)`.
+fn preview_parts(
+    path: &str,
+    session: &SessionGate,
+    cache: &TierCache,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<u8>, Vec<u8>, bool), String> {
+    let stat = resolve_stat(session, path);
+    if let Some((ms, size)) = stat {
+        if let Some((header, payload)) = cache.get(CacheTier::Prvw, path, ms, size) {
+            return Ok((header, payload, true));
+        }
+    }
+    let b = cr3::read_preview_bundle(path, cancelled).map_err(|e| format!("cr3 preview: {e}"))?;
+    let mut meta = ImageMetadata::from(b.meta);
+    meta.file_size = Some(b.file_size);
+    let header = PreviewHeader {
+        meta,
+        orientation: b.orientation,
+        preview_len: b.preview.len() as u32,
+        full_offset: b.full_hint.map(|h| h.0),
+        full_len: b.full_hint.map(|h| h.1),
+    };
+    let header_json = serde_json::to_vec(&header).map_err(|e| format!("preview header: {e}"))?;
+    if let Some((ms, size)) = stat {
+        cache.put(CacheTier::Prvw, path, ms, size, &header_json, &b.preview);
+    }
+    Ok((header_json, b.preview, false))
+}
+
+/// Smart culling's per-file fetch (SMART_CULLING_PLAN.md Phase 1): the same
+/// prvw acquisition as [`read_preview`] — validated cache hit, else ONE head
+/// read that piggy-back-fills the cache — then a zune-jpeg RGB decode of the
+/// PRVW for the metric pass. Runs inside `analyze_quality`'s gated chunk; the
+/// session `gen` threads cancellation into the read itself.
+pub(crate) fn fetch_decoded_preview(
+    path: &str,
+    gen: u64,
+    session: &SessionGate,
+    cache: &TierCache,
+) -> Result<crate::analyze::DecodedInput, String> {
+    let (header_json, jpeg, _hit) =
+        preview_parts(path, session, cache, &|| session.is_cancelled(gen))?;
+    let header: PreviewHeader =
+        serde_json::from_slice(&header_json).map_err(|e| format!("prvw header parse: {e}"))?;
+
+    // Decode to RGB8 (Canon PRVWs are YCbCr; zune converts on output). The
+    // decoder ignores the spliced EXIF orientation, so pixels come out in the
+    // UN-ROTATED sensor frame — exactly what the AF-crop inverse mapping expects.
+    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
+    let mut dec = JpegDecoder::new_with_options(ZCursor::new(&jpeg[..]), opts);
+    let rgb = dec.decode().map_err(|e| format!("prvw decode: {e:?}"))?;
+    let info = dec.info().ok_or("prvw decode: no header info")?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    if rgb.len() != w * h * 3 {
+        return Err(format!("prvw decode: unexpected buffer ({} bytes for {w}x{h} RGB)", rgb.len()));
+    }
+
+    let m = header.meta;
+    Ok(crate::analyze::DecodedInput {
+        rgb,
+        w,
+        h,
+        orientation: header.orientation,
+        af_x_pct: m.af_x_pct,
+        af_y_pct: m.af_y_pct,
+        // mtime for TS burst grouping; resolve_stat memoized this above. 0
+        // (stat failed mid-session) is harmless: the TS captured_at guard and
+        // drive_mode gate keep a 0-delta from fabricating groups.
+        mtime_ms: resolve_stat(session, path).map(|(ms, _)| ms).unwrap_or(0),
+        drive_mode: m.drive_mode,
+        focal_length_mm: m.focal_length_mm,
+        shutter_seconds: m.shutter_seconds,
+        iso: m.iso,
+        sub_sec_ms: m.sub_sec_ms,
+    })
 }
 
 /// Header for [`read_fullres`]: just the JPEG length.
