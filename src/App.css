@@ -2557,7 +2557,9 @@ body,
      band behind the text, so anything below the line (the current-cell
      outline especially) is never covered. */
   position: absolute;
-  top: -7px; /* centers 12px text on the 2px border (box top is the border) */
+  /* Text BOTTOM aligns with the outline's bottom edge — the label peeks up
+     above the line instead of dipping down toward the photos. */
+  top: -10px; /* 12px line-height ends at +2 = the 2px border's bottom */
   left: 5px; /* radius is 4px — text starts just past the corner's turn */
   padding: 0 4px;
   font-size: 8px;
@@ -2572,7 +2574,7 @@ body,
   position: absolute;
   left: 0;
   right: 0;
-  top: 5px; /* label-local: exactly the parent border's 2px band (±1px AA) */
+  top: 9px; /* label-local: exactly the parent border's 2px band (±1px AA) */
   height: 4px;
   background: var(--bg);
   /* Negative z paints ABOVE the parent's border (the box's stacking context)
