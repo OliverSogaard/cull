@@ -89,7 +89,7 @@ export function ThumbStrip({
         }}
         aria-hidden
       >
-        <span className="cull-burst-box__count">×{r.len}</span>
+        <span className="cull-burst-box__count">Burst ×{r.len}</span>
       </div>
     ));
   }, [burstRuns, gapPrefix]);

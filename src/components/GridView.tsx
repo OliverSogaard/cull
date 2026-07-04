@@ -210,7 +210,9 @@ export const GridView = memo(function GridView({
             }}
             aria-hidden
           >
-            {s.label != null && <span className="cull-burst-box__count">×{s.label}</span>}
+            {s.label != null && (
+              <span className="cull-burst-box__count">Burst ×{s.label}</span>
+            )}
           </div>
         ))}
         {cells.map(({ idx, row, col }) => (

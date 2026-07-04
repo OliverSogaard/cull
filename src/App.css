@@ -2552,29 +2552,20 @@ body,
   bottom: auto;
 }
 .cull-burst-box__count {
-  /* Above the outline, left-aligned with it — outside the box entirely. Bare
-     mono text: the strip's own background sits behind it, no pill needed. */
+  /* Legend-style: the label sits IN the top line — vertically centered on the
+     2px border, its background matching the app bg so the outline reads as
+     cut, with the text functioning as part of the line. */
   position: absolute;
-  bottom: 100%;
-  left: -2px;
-  margin-bottom: 2px;
-  font-size: 9px;
-  line-height: 11px;
-  letter-spacing: 0.06em;
+  top: -7px; /* centers 12px text on the 2px border (box top is the border) */
+  left: 10px;
+  padding: 0 5px;
+  background: var(--bg);
+  font-size: 8px;
+  line-height: 12px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
   color: var(--accent);
-  opacity: 0.95;
   white-space: nowrap;
-}
-.cull-burst-box--grid .cull-burst-box__count {
-  /* Grid rows leave only a 6px seam between frames — the label straddles the
-     box's top-left corner instead, backed by a pill so it reads over photos. */
-  bottom: auto;
-  top: -7px;
-  left: 6px;
-  margin-bottom: 0;
-  padding: 0 4px;
-  background: rgba(10, 10, 12, 0.92);
-  border-radius: 2px;
 }
 
 /* ExifRail suggestion row — verdict-coloured key, dim reasons. */
