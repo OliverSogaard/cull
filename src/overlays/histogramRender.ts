@@ -24,6 +24,22 @@ export type HistogramBins = {
   max: number;
 };
 
+/**
+ * True when NOTHING was drawn into the sampled canvas: every pixel fully
+ * transparent. A decoded JPEG always rasterizes opaque (alpha 255), so this
+ * never flags a real frame — not even an intentionally black photo — only the
+ * undecoded-`drawImage` no-op (WKWebView drops the draw under decode pressure,
+ * e.g. landing a big scrub jump; the plan's platform notes call this class
+ * out). Binning such a sample produced the false full-height bin-0 spike, and
+ * the overlay cache then kept it forever.
+ */
+export function isBlankSample(data: Uint8ClampedArray): boolean {
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] !== 0) return false;
+  }
+  return true;
+}
+
 export function computeHistogramBins(data: Uint8ClampedArray): HistogramBins {
   const r = new Uint32Array(256);
   const g = new Uint32Array(256);

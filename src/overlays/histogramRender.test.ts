@@ -3,7 +3,7 @@
  * the worker op and the inline main-thread fallback.
  */
 import { describe, expect, it } from "vitest";
-import { computeHistogramBins } from "./histogramRender";
+import { computeHistogramBins, isBlankSample } from "./histogramRender";
 
 /** Build an RGBA buffer from [r,g,b] pixel triples (alpha pinned to 255). */
 function rgba(...pixels: [number, number, number][]): Uint8ClampedArray {
@@ -38,5 +38,26 @@ describe("computeHistogramBins", () => {
   it("max floors at 1 for an empty buffer (no divide-by-zero downstream)", () => {
     const bins = computeHistogramBins(new Uint8ClampedArray(0));
     expect(bins.max).toBe(1);
+  });
+});
+
+describe("isBlankSample", () => {
+  it("flags an all-transparent buffer — the undecoded-drawImage signature", () => {
+    // drawImage of a loaded-but-undecoded image silently draws NOTHING
+    // (WKWebView under big-jump decode pressure): canvas stays transparent.
+    expect(isBlankSample(new Uint8ClampedArray(16))).toBe(true);
+    expect(isBlankSample(new Uint8ClampedArray(0))).toBe(true);
+  });
+
+  it("never flags a real decoded frame — even a pure-black photo", () => {
+    // A decoded JPEG always rasterizes opaque (alpha 255): an intentionally
+    // black frame is a legitimate photo whose histogram SHOULD spike at 0.
+    const black = new Uint8ClampedArray(16);
+    for (let i = 3; i < 16; i += 4) black[i] = 255;
+    expect(isBlankSample(black)).toBe(false);
+    // One decoded pixel among transparent padding still counts as drawn.
+    const partial = new Uint8ClampedArray(16);
+    partial[7] = 255;
+    expect(isBlankSample(partial)).toBe(false);
   });
 });

@@ -23,6 +23,7 @@ import {
   HISTOGRAM_W,
   computeHistogramBins,
   drawHistogram,
+  isBlankSample,
 } from "./histogramRender";
 
 type OverlayRequest =
@@ -85,7 +86,14 @@ function histogramOp(id: number, bitmap: ImageBitmap): void {
     return;
   }
   const { width: w, height: h } = c2d.canvas;
-  const bins = computeHistogramBins(c2d.getImageData(0, 0, w, h).data);
+  const sample = c2d.getImageData(0, 0, w, h).data;
+  if (isBlankSample(sample)) {
+    // Nothing rasterized (undecoded bitmap) — error out so the caller falls
+    // back / retries instead of caching a false bin-0 spike.
+    ctx.postMessage({ id, error: "blank sample (source not decoded)" });
+    return;
+  }
+  const bins = computeHistogramBins(sample);
   const hc = new OffscreenCanvas(HISTOGRAM_W, HISTOGRAM_H);
   const hctx = hc.getContext("2d");
   if (!hctx) {

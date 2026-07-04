@@ -25,6 +25,7 @@ import {
   HISTOGRAM_W,
   computeHistogramBins,
   drawHistogram,
+  isBlankSample,
 } from "./histogramRender";
 import type { OverlayKind } from "./overlayService";
 
@@ -45,6 +46,24 @@ function loadProbe(url: string): Promise<HTMLImageElement> {
     probe.onerror = () => reject(new Error("overlay probe failed to load"));
     probe.src = url;
   });
+}
+
+/**
+ * Per-element decode gating — the codebase's standing correctness rule for
+ * WebKit (see the presenter): `onload` does NOT guarantee decoded pixels, and
+ * `drawImage` of an undecoded image silently draws nothing. Landing a big
+ * scrub jump is peak decode pressure — exactly when the histogram probe used
+ * to sample a blank canvas (the false far-left spike, then cached). A decode
+ * rejection is a real failure: throw so the service frees the marker and a
+ * later ensure() retries, instead of binning garbage.
+ */
+async function decodeProbe(probe: HTMLImageElement): Promise<void> {
+  if (typeof probe.decode !== "function") return; // older engines: best effort
+  try {
+    await probe.decode();
+  } catch {
+    throw new Error("overlay probe decode failed");
+  }
 }
 
 /** Downscale `probe` to `maxEdge` on a fresh canvas; null if no 2d context. */
@@ -82,7 +101,11 @@ function histogramInline(probe: HTMLImageElement): string {
   const c2d = rasterizeInline(probe, HISTOGRAM_SAMPLE);
   if (!c2d) throw new Error("no 2d context");
   const { width: w, height: h } = c2d.canvas;
-  const bins = computeHistogramBins(c2d.getImageData(0, 0, w, h).data);
+  const sample = c2d.getImageData(0, 0, w, h).data;
+  // Same guard as the worker op: never bin (or let the service cache) a
+  // canvas nothing was drawn into.
+  if (isBlankSample(sample)) throw new Error("blank sample (source not decoded)");
+  const bins = computeHistogramBins(sample);
   const hc = document.createElement("canvas");
   hc.width = HISTOGRAM_W;
   hc.height = HISTOGRAM_H;
@@ -98,6 +121,8 @@ export async function computeOverlay(
   cancelled: () => boolean,
 ): Promise<string> {
   const probe = await loadProbe(url);
+  if (cancelled()) throw new Error("cancelled");
+  await decodeProbe(probe);
   // Session changed / toggled off while the probe decoded — skip the scan.
   if (cancelled()) throw new Error("cancelled");
   const workerReady = kind === "histogram" ? histogramWorkerAvailable() : maskWorkerAvailable();
