@@ -201,10 +201,12 @@ export const GridView = memo(function GridView({
             key={`burst-${s.key}`}
             className="cull-burst-box cull-burst-box--grid"
             style={{
-              left: s.c0 * cellW + 1,
-              top: s.row * rowH + 1,
-              width: (s.c1 - s.c0 + 1) * cellW - 2,
-              height: rowH - 2,
+              // 1px outside the cell bounds + the cells' 3px internal padding
+              // = 4px of air between the line and the photos.
+              left: s.c0 * cellW - 1,
+              top: s.row * rowH - 1,
+              width: (s.c1 - s.c0 + 1) * cellW + 2,
+              height: rowH + 2,
             }}
             aria-hidden
           >

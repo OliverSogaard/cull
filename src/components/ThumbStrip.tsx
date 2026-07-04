@@ -60,8 +60,9 @@ export function ThumbStrip({
         key={`burst-${group}`}
         className="cull-burst-box"
         style={{
-          left: r.first * CELL_STRIDE - 3,
-          width: (r.last - r.first) * CELL_STRIDE + CELL_W + 6,
+          // 4px of air outside the first/last cells (matches the vertical inset).
+          left: r.first * CELL_STRIDE - 4,
+          width: (r.last - r.first) * CELL_STRIDE + CELL_W + 8,
         }}
         aria-hidden
       >

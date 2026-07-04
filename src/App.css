@@ -2368,11 +2368,14 @@ body,
 /* ── thumbnail strip ──────────────────────────────────────── */
 .cull-thumbs {
   flex: 0 0 auto;
-  height: 70px;
+  height: 82px;
   /* Cells are absolutely positioned inside the inner track (see FilmStrip); the
-     4px gap lives in CELL_STRIDE, not CSS, and the 8px top/bottom padding
-     vertically centers the 54px track (54 + 16 = 70). */
-  padding: 8px 0;
+     4px gap lives in CELL_STRIDE, not CSS. Top padding is deliberately deeper
+     (20px vs 8px): the burst run box extends 4px above the cells and its ×N
+     count sits OUTSIDE the box's top-left corner in that headroom
+     (20 + 54 + 8 = 82). Overflow clips at the padding box, so overlays drawn
+     into the padding area render fine. */
+  padding: 20px 0 8px;
   overflow-x: auto;
   overflow-y: hidden;
   background: var(--bg);
@@ -2532,13 +2535,15 @@ body,
   color: var(--bad);
 }
 
-/* One box per burst run (strip) / per run-row segment (grid, where runs wrap). */
+/* One box per burst run (strip) / per run-row segment (grid, where runs wrap).
+   The box FLOATS around the run — 4px of air between the line and the photos,
+   never bordering them — and the ×N count sits OUTSIDE the top-left corner. */
 .cull-burst-box {
   position: absolute;
-  top: 1px;
-  bottom: 1px;
-  border: 1px solid rgba(214, 178, 120, 0.45); /* hairline champagne */
-  border-radius: 3px;
+  top: -4px;
+  bottom: -4px; /* 4px beyond the cells on all sides (into the strip padding) */
+  border: 2px solid rgba(214, 178, 120, 0.5);
+  border-radius: 4px;
   z-index: 3;
   pointer-events: none;
 }
@@ -2547,17 +2552,29 @@ body,
   bottom: auto;
 }
 .cull-burst-box__count {
+  /* Above the outline, left-aligned with it — outside the box entirely. Bare
+     mono text: the strip's own background sits behind it, no pill needed. */
   position: absolute;
-  top: -1px; /* sits ON the outline's top-left corner */
-  left: -1px;
-  font-size: 8px;
-  line-height: 12px;
-  letter-spacing: 0.03em;
-  padding: 0 4px;
+  bottom: 100%;
+  left: -2px;
+  margin-bottom: 2px;
+  font-size: 9px;
+  line-height: 11px;
+  letter-spacing: 0.06em;
   color: var(--accent);
-  background: rgba(10, 10, 12, 0.9);
-  border: 1px solid rgba(214, 178, 120, 0.45);
-  border-radius: 3px 0 3px 0;
+  opacity: 0.95;
+  white-space: nowrap;
+}
+.cull-burst-box--grid .cull-burst-box__count {
+  /* Grid rows leave only a 6px seam between frames — the label straddles the
+     box's top-left corner instead, backed by a pill so it reads over photos. */
+  bottom: auto;
+  top: -7px;
+  left: 6px;
+  margin-bottom: 0;
+  padding: 0 4px;
+  background: rgba(10, 10, 12, 0.92);
+  border-radius: 2px;
 }
 
 /* ExifRail suggestion row — verdict-coloured key, dim reasons. */
