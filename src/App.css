@@ -2557,13 +2557,15 @@ body,
      band behind the text, so anything below the line (the current-cell
      outline especially) is never covered. */
   position: absolute;
-  /* Text BOTTOM aligns with the outline's bottom edge — the label peeks up
-     above the line instead of dipping down toward the photos. */
-  top: -10px; /* 12px line-height ends at +2 = the 2px border's bottom */
+  /* Text bottom flush with the outline's bottom edge, peeking upward. The
+     line-height EQUALS the font size so the element's bottom is the glyph
+     bottom (no descender slack) — the earlier 12px line-box put the cut 3px
+     below the glyphs, leaving a floating label over an orphaned gap. */
+  top: -6px; /* 8px glyph box ends at +2 = the 2px border's bottom */
   left: 5px; /* radius is 4px — text starts just past the corner's turn */
   padding: 0 4px;
   font-size: 8px;
-  line-height: 12px;
+  line-height: 8px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--accent);
@@ -2574,7 +2576,7 @@ body,
   position: absolute;
   left: 0;
   right: 0;
-  top: 9px; /* label-local: exactly the parent border's 2px band (±1px AA) */
+  top: 5px; /* label-local: exactly the parent border's 2px band (±1px AA) */
   height: 4px;
   background: var(--bg);
   /* Negative z paints ABOVE the parent's border (the box's stacking context)
