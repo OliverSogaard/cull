@@ -2543,8 +2543,13 @@ body,
      the <legend>, which is exactly the "text cuts the outline" look. All
      UA fieldset chrome reset below. */
   position: absolute;
-  top: -12px; /* legend straddles the top border; extra headroom for its text */
-  bottom: -4px; /* 4px beyond the cells (into the strip padding) */
+  /* border-box is LOAD-BEARING: the app has no global box-sizing reset, and
+     content-box pushed the right/bottom lines out by the border width — the
+     4px air was only true on the top/left. Verified by rendered measurement:
+     4px cell-to-line air on all four sides with these insets. */
+  box-sizing: border-box;
+  top: -10px; /* the legend shifts the painted top border down ~4px */
+  bottom: -6px;
   margin: 0;
   padding: 0;
   min-inline-size: 0;
