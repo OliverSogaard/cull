@@ -10,6 +10,57 @@ describe("clamp", () => {
   });
 });
 
+describe("computeWindow with a gap prefix (burst breathing room)", () => {
+  // 10 cells, stride 80, and a LARGE 100px gap inserted before cell 3 —
+  // values chosen so linear index math gives the WRONG answer and only
+  // prefix-aware lookup passes.
+  const stride = 80;
+  const prefix = [0, 0, 0, 100, 100, 100, 100, 100, 100, 100, 100];
+
+  it("does not cull a cell the gap pushed rightward into view", () => {
+    // Cell 3 sits at 3*80+100 = 340. At scrollLeft 320 it IS visible
+    // (340 < 400); linear floor(320/80) = 4 would wrongly cull it.
+    const r = computeWindow({
+      scrollLeft: 320,
+      clientWidth: 80,
+      stride,
+      count: 10,
+      buffer: 0,
+      prefix,
+    });
+    expect(r.first).toBe(3);
+    expect(r.last).toBe(4); // cell 4 starts at 420 ≥ 400 — not visible
+  });
+
+  it("stays exact deep in the shifted region", () => {
+    // Cell 8 starts at 8*80+100 = 740.
+    const r = computeWindow({
+      scrollLeft: 740,
+      clientWidth: 80,
+      stride,
+      count: 10,
+      buffer: 0,
+      prefix,
+    });
+    expect(r.first).toBe(8);
+    expect(r.last).toBe(9);
+  });
+
+  it("centering accounts for the shifted cell position", () => {
+    // Centering cell 5 (x = 5*80+100 = 500, width 76) in a 400px viewport:
+    // target = 500 − (400−76)/2 = 338.
+    const left = computeCenterScrollLeft({
+      centerOffset: 5,
+      stride,
+      cellWidth: 76,
+      clientWidth: 400,
+      trackWidth: 10 * 80 + 100,
+      prefix,
+    });
+    expect(left).toBe(338);
+  });
+});
+
 describe("computeWindow", () => {
   const stride = 80;
   it("returns an empty range for an empty list", () => {

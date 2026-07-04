@@ -1,5 +1,6 @@
 // src/components/strip/FilmStrip.tsx
 import type { ReactNode } from "react";
+import { cellX } from "./computeWindow";
 import { useStripVirtualizer } from "./useStripVirtualizer";
 
 /**
@@ -20,6 +21,7 @@ export function FilmStrip({
   keyForItem,
   renderItem,
   overlays,
+  prefix,
 }: {
   className: string;
   count: number;
@@ -31,9 +33,11 @@ export function FilmStrip({
   keyForItem: (listIndex: number) => string | number;
   renderItem: (listIndex: number) => ReactNode;
   /** Absolutely-positioned siblings rendered over the track (burst run boxes).
-   *  Positioned in track coordinates (`index * stride`), so they scroll with
-   *  the cells; keep them `pointer-events: none`. */
+   *  Positioned in track coordinates (use `cellX` when a prefix is set), so
+   *  they scroll with the cells; keep them `pointer-events: none`. */
   overlays?: ReactNode;
+  /** Cumulative gap offsets (burst breathing room) — see computeWindow. */
+  prefix?: readonly number[];
 }) {
   const { containerRef, trackWidth, first, last } = useStripVirtualizer({
     count,
@@ -41,6 +45,7 @@ export function FilmStrip({
     cellWidth,
     centerOffset,
     buffer,
+    prefix,
   });
 
   const items: ReactNode[] = [];
@@ -50,7 +55,7 @@ export function FilmStrip({
         key={keyForItem(i)}
         style={{
           position: "absolute",
-          left: i * stride,
+          left: cellX(i, stride, prefix),
           top: 0,
           width: cellWidth,
           height: trackHeight,

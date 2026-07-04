@@ -16,12 +16,14 @@ export function useStripVirtualizer(args: {
   cellWidth: number;
   centerOffset: number;
   buffer: number;
+  /** Cumulative gap offsets (see computeWindow) — burst breathing room. */
+  prefix?: readonly number[];
 }) {
-  const { count, stride, cellWidth, centerOffset, buffer } = args;
+  const { count, stride, cellWidth, centerOffset, buffer, prefix } = args;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [range, setRange] = useState<WindowRange>({ first: 0, last: 0 });
   const rafRef = useRef<number | null>(null);
-  const trackWidth = count * stride;
+  const trackWidth = count * stride + (prefix?.[count] ?? 0);
 
   const recompute = useCallback(() => {
     const el = containerRef.current;
@@ -32,11 +34,12 @@ export function useStripVirtualizer(args: {
       stride,
       count,
       buffer,
+      prefix,
     });
     setRange((prev) =>
       prev.first === next.first && prev.last === next.last ? prev : next,
     );
-  }, [stride, count, buffer]);
+  }, [stride, count, buffer, prefix]);
 
   const center = useCallback(() => {
     const el = containerRef.current;
@@ -46,11 +49,12 @@ export function useStripVirtualizer(args: {
         stride,
         cellWidth,
         clientWidth: el.clientWidth,
-        trackWidth: count * stride,
+        trackWidth: count * stride + (prefix?.[count] ?? 0),
+        prefix,
       });
     }
     recompute();
-  }, [centerOffset, stride, cellWidth, count, recompute]);
+  }, [centerOffset, stride, cellWidth, count, prefix, recompute]);
 
   // Keep a stable ref to the latest `center` so the scroll/resize subscriptions
   // don't tear down + re-subscribe on every scrub step (centerOffset change).

@@ -5,7 +5,12 @@ import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
 import { ThumbCell } from "./ThumbCell";
 import { FilmStrip } from "./strip/FilmStrip";
+import { cellX } from "./strip/computeWindow";
 import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
+
+/** Extra track space inserted before AND after each burst run, so the run box
+ *  floats clear of neighbouring images (and of the next burst's box). */
+const BURST_BREATH = 10;
 
 /**
  * The loupe's filmstrip. Renders every image in the staged set, virtualized via
@@ -38,12 +43,15 @@ export function ThumbStrip({
 }) {
   const visibleSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
 
-  // One hairline box per burst RUN (bursts are contiguous in capture order, so
-  // a run is a [first..last] index span), with the count riding the top-left
-  // of the outline. Drawn as track overlays so the box spans the gaps between
-  // cells — a per-cell border can't read as "one long square".
-  const burstBoxes = useMemo(() => {
-    if (!bursts || bursts.size === 0) return null;
+  // Burst runs as [first..last] index spans (bursts are contiguous in capture
+  // order), plus a cumulative gap prefix: BURST_BREATH px of extra track space
+  // inserted before and after every run, so the box outline gets real
+  // clearance from neighbouring images — and two adjacent bursts can never
+  // touch outlines. The virtualizer is prefix-aware (binary-searched window).
+  const { burstRuns, gapPrefix } = useMemo(() => {
+    if (!bursts || bursts.size === 0) {
+      return { burstRuns: null, gapPrefix: undefined };
+    }
     const runs = new Map<number, { first: number; last: number; len: number }>();
     images.forEach((im, i) => {
       const c = bursts.get(im.id);
@@ -55,21 +63,36 @@ export function ThumbStrip({
         r.last = Math.max(r.last, i);
       }
     });
-    return [...runs.entries()].map(([group, r]) => (
+    const prefix = new Array<number>(images.length + 1);
+    let acc = 0;
+    for (let i = 0; i < images.length; i++) {
+      const c = bursts.get(images[i].id);
+      if (c && c.pos === 1) acc += BURST_BREATH; // extra space BEFORE a run
+      prefix[i] = acc;
+      if (c && c.pos === c.len) acc += BURST_BREATH; // and AFTER it
+    }
+    prefix[images.length] = acc;
+    return { burstRuns: runs, gapPrefix: prefix };
+  }, [bursts, images]);
+
+  const burstBoxes = useMemo(() => {
+    if (!burstRuns) return null;
+    const x = (i: number) => cellX(i, CELL_STRIDE, gapPrefix);
+    return [...burstRuns.entries()].map(([group, r]) => (
       <div
         key={`burst-${group}`}
         className="cull-burst-box"
         style={{
           // 4px of air outside the first/last cells (matches the vertical inset).
-          left: r.first * CELL_STRIDE - 4,
-          width: (r.last - r.first) * CELL_STRIDE + CELL_W + 8,
+          left: x(r.first) - 4,
+          width: x(r.last) - x(r.first) + CELL_W + 8,
         }}
         aria-hidden
       >
         <span className="cull-burst-box__count">×{r.len}</span>
       </div>
     ));
-  }, [bursts, images]);
+  }, [burstRuns, gapPrefix]);
 
   return (
     <FilmStrip
@@ -81,6 +104,7 @@ export function ThumbStrip({
       centerOffset={currentIndex}
       buffer={STRIP_BUFFER}
       overlays={burstBoxes}
+      prefix={gapPrefix}
       keyForItem={(i) => images[i].id}
       renderItem={(i) => (
         <ThumbCell
