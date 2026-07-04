@@ -9,8 +9,13 @@ import { cellX } from "./strip/computeWindow";
 import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
 
 /** Extra track space inserted before AND after each burst run, so the run box
- *  floats clear of neighbouring images (and of the next burst's box). */
+ *  floats clear of neighbouring images. Sized so the visible dark gap from a
+ *  neighbour image to the box line is 8px (4px base gap + 10 − 6px overhang). */
 const BURST_BREATH = 10;
+/** Leading insertion when a run starts DIRECTLY after another run's end: both
+ *  boxes overhang 6px, so 16px total insertion (10 + 6) makes the line-to-line
+ *  gap the same 8px as the image-to-line gap. */
+const BURST_BREATH_AFTER_RUN = 6;
 
 /**
  * The loupe's filmstrip. Renders every image in the staged set, virtualized via
@@ -65,11 +70,17 @@ export function ThumbStrip({
     });
     const prefix = new Array<number>(images.length + 1);
     let acc = 0;
+    let prevWasRunEnd = false;
     for (let i = 0; i < images.length; i++) {
       const c = bursts.get(images[i].id);
-      if (c && c.pos === 1) acc += BURST_BREATH; // extra space BEFORE a run
+      if (c && c.pos === 1) {
+        // Back-to-back runs: the end insertion already happened — top up to
+        // 16px total so line-to-line matches the image-to-line gap.
+        acc += prevWasRunEnd ? BURST_BREATH_AFTER_RUN : BURST_BREATH;
+      }
       prefix[i] = acc;
-      if (c && c.pos === c.len) acc += BURST_BREATH; // and AFTER it
+      prevWasRunEnd = !!c && c.pos === c.len;
+      if (prevWasRunEnd) acc += BURST_BREATH; // extra space AFTER a run
     }
     prefix[images.length] = acc;
     return { burstRuns: runs, gapPrefix: prefix };
