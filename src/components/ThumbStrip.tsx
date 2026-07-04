@@ -79,7 +79,10 @@ export function ThumbStrip({
     if (!burstRuns) return null;
     const x = (i: number) => cellX(i, CELL_STRIDE, gapPrefix);
     return [...burstRuns.entries()].map(([group, r]) => (
-      <div
+      // A real <fieldset>/<legend>: the browser natively leaves a gap in the
+      // border behind the legend — no background masks, no z-index tricks,
+      // nothing that can misalign with font metrics.
+      <fieldset
         key={`burst-${group}`}
         className="cull-burst-box"
         style={{
@@ -89,8 +92,8 @@ export function ThumbStrip({
         }}
         aria-hidden
       >
-        <span className="cull-burst-box__count">Burst ×{r.len}</span>
-      </div>
+        <legend className="cull-burst-box__count">Burst ×{r.len}</legend>
+      </fieldset>
     ));
   }, [burstRuns, gapPrefix]);
 

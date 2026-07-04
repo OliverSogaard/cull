@@ -2539,9 +2539,15 @@ body,
    The box FLOATS around the run — 4px of air between the line and the photos,
    never bordering them — and the ×N count sits OUTSIDE the top-left corner. */
 .cull-burst-box {
+  /* A real <fieldset> — the engine natively skips painting the border behind
+     the <legend>, which is exactly the "text cuts the outline" look. All
+     UA fieldset chrome reset below. */
   position: absolute;
-  top: -4px;
-  bottom: -4px; /* 4px beyond the cells on all sides (into the strip padding) */
+  top: -12px; /* legend straddles the top border; extra headroom for its text */
+  bottom: -4px; /* 4px beyond the cells (into the strip padding) */
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
   border: 2px solid rgba(214, 178, 120, 0.5);
   border-radius: 4px;
   z-index: 3;
@@ -2552,36 +2558,15 @@ body,
   bottom: auto;
 }
 .cull-burst-box__count {
-  /* Legend-style: the label sits IN the top line, tucked right after the
-     corner arc. No full background — a ::before masks ONLY the 2px border
-     band behind the text, so anything below the line (the current-cell
-     outline especially) is never covered. */
-  position: absolute;
-  /* Text bottom flush with the outline's bottom edge, peeking upward. The
-     line-height EQUALS the font size so the element's bottom is the glyph
-     bottom (no descender slack) — the earlier 12px line-box put the cut 3px
-     below the glyphs, leaving a floating label over an orphaned gap. */
-  top: -6px; /* 8px glyph box ends at +2 = the 2px border's bottom */
-  left: 5px; /* radius is 4px — text starts just past the corner's turn */
+  /* Native legend: sits in the top border's gap, tucked just past the corner. */
+  margin-left: 4px;
   padding: 0 4px;
   font-size: 8px;
-  line-height: 8px;
+  line-height: 10px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--accent);
   white-space: nowrap;
-}
-.cull-burst-box__count::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 5px; /* label-local: exactly the parent border's 2px band (±1px AA) */
-  height: 4px;
-  background: var(--bg);
-  /* Negative z paints ABOVE the parent's border (the box's stacking context)
-     but BELOW the label text — a line-band-only cut. */
-  z-index: -1;
 }
 
 /* ExifRail suggestion row — verdict-coloured key, dim reasons. */

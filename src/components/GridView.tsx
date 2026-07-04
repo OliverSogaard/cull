@@ -197,23 +197,25 @@ export const GridView = memo(function GridView({
     <div className="cull-grid" ref={containerRef}>
       <div className="cull-grid__inner" style={{ height: totalH }}>
         {burstSegs.map((s) => (
-          <div
+          <fieldset
             key={`burst-${s.key}`}
             className="cull-burst-box cull-burst-box--grid"
             style={{
               // 1px outside the cell bounds + the cells' 3px internal padding
-              // = 4px of air between the line and the photos.
+              // = 4px of air between the line and the photos. A fieldset's top
+              // BORDER sits at its legend's vertical midpoint, so labeled
+              // segments start ~5px higher to land the line in the same place.
               left: s.c0 * cellW - 1,
-              top: s.row * rowH - 1,
+              top: s.row * rowH - (s.label != null ? 6 : 1),
               width: (s.c1 - s.c0 + 1) * cellW + 2,
-              height: rowH + 2,
+              height: rowH + (s.label != null ? 7 : 2),
             }}
             aria-hidden
           >
             {s.label != null && (
-              <span className="cull-burst-box__count">Burst ×{s.label}</span>
+              <legend className="cull-burst-box__count">Burst ×{s.label}</legend>
             )}
-          </div>
+          </fieldset>
         ))}
         {cells.map(({ idx, row, col }) => (
           <GridCell
