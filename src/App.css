@@ -2564,6 +2564,47 @@ body,
   border-bottom: 1px solid var(--border);
 }
 
+/* Wrapper so the scrub position bar can overlay the strip without joining
+   the horizontal scroll flow. Carries no sizing — the strip inside does. */
+.cull-strip-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrub position bar — a minimap under the cells: the strip shows a
+   screenful, this shows where that screenful sits in the whole set. Fades in
+   fast on scrub start, lingers briefly after release. */
+.cull-scrubbar {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 3px;
+  height: 2px;
+  background: var(--border);
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease 0.35s;
+}
+
+.cull-scrubbar.is-on {
+  opacity: 1;
+  transition: opacity 0.12s ease 0s;
+}
+
+.cull-scrubbar__thumb {
+  position: absolute;
+  top: -1px;
+  width: 26px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  transform: translateX(-50%);
+  transition: left 80ms linear;
+}
+
 .cull-thumbs::-webkit-scrollbar {
   display: none;
 }

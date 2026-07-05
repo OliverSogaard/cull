@@ -3405,6 +3405,7 @@ export default function App() {
       onPick={pickFromStrip}
       suggestions={suggestions}
       bursts={burstCtx}
+      scrubbing={scrubbing}
     />
   );
   const cmpStrip = (
@@ -3417,6 +3418,7 @@ export default function App() {
       onPickChallenger={pickChallengerFromStrip}
       suggestions={suggestions}
       bursts={burstCtx}
+      scrubbing={scrubbing}
     />
   );
 

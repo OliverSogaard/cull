@@ -25,6 +25,7 @@ export function CompareStrip({
   onPickChallenger,
   suggestions,
   bursts,
+  scrubbing,
 }: {
   images: Img[];
   /** Candidates PLUS the champion in its capture slot. */
@@ -39,6 +40,8 @@ export function CompareStrip({
   suggestions?: Record<number, Suggestion>;
   /** Burst membership by image id — same outlined boxes as the loupe strip. */
   bursts?: Map<number, BurstCtx>;
+  /** Fades in the position bar under the cells. */
+  scrubbing?: boolean;
 }) {
   const cpos = useMemo(
     () => stripIndices.indexOf(challengerIndex),
@@ -51,6 +54,7 @@ export function CompareStrip({
       indices={stripIndices}
       centerPos={cpos}
       bursts={bursts}
+      scrubbing={scrubbing}
       renderCell={(idx) => {
         const isGhost = idx === championIndex;
         return (

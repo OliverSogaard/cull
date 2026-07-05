@@ -21,6 +21,7 @@ export function ThumbStrip({
   onPick,
   suggestions,
   bursts,
+  scrubbing,
 }: {
   images: Img[];
   currentIndex: number;
@@ -33,6 +34,8 @@ export function ThumbStrip({
   suggestions?: Record<number, Suggestion>;
   /** Burst membership by image id. */
   bursts?: Map<number, BurstCtx>;
+  /** Fades in the position bar under the cells. */
+  scrubbing?: boolean;
 }) {
   const visibleSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
   const indices = useMemo(() => images.map((_, i) => i), [images]);
@@ -43,6 +46,7 @@ export function ThumbStrip({
       indices={indices}
       centerPos={currentIndex}
       bursts={bursts}
+      scrubbing={scrubbing}
       renderCell={(idx) => (
         <ThumbCell
           img={images[idx]}

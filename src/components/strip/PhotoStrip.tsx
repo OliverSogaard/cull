@@ -19,6 +19,7 @@ export function PhotoStrip({
   indices,
   centerPos,
   bursts,
+  scrubbing = false,
   renderCell,
 }: {
   images: Img[];
@@ -30,6 +31,10 @@ export function PhotoStrip({
   /** Burst membership by image id — runs split by absent frames render one
    *  box per contiguous stretch, only the first labeled. */
   bursts?: Map<number, BurstCtx>;
+  /** While scrubbing, a thin full-width position bar fades in under the
+   *  cells — the strip shows ~a screenful, the bar shows where that screenful
+   *  sits in the whole set. */
+  scrubbing?: boolean;
   /** Cell renderer: (imageIndex, stripPos) → the ThumbCell. */
   renderCell: (imageIndex: number, stripPos: number) => ReactNode;
 }) {
@@ -46,19 +51,30 @@ export function PhotoStrip({
     [segs, prefix],
   );
 
+  // Scrub position bar: fraction of the way through the DISPLAY list.
+  const frac =
+    indices.length > 1 ? Math.max(0, Math.min(1, centerPos / (indices.length - 1))) : 0;
+
   return (
-    <FilmStrip
-      className="cull-thumbs"
-      count={indices.length}
-      stride={CELL_STRIDE}
-      cellWidth={CELL_W}
-      trackHeight={CELL_H}
-      centerOffset={centerPos}
-      buffer={STRIP_BUFFER}
-      overlays={burstBoxes}
-      prefix={prefix}
-      keyForItem={(i) => images[indices[i]].id}
-      renderItem={(i) => renderCell(indices[i], i)}
-    />
+    <div className="cull-strip-wrap">
+      <FilmStrip
+        className="cull-thumbs"
+        count={indices.length}
+        stride={CELL_STRIDE}
+        cellWidth={CELL_W}
+        trackHeight={CELL_H}
+        centerOffset={centerPos}
+        buffer={STRIP_BUFFER}
+        overlays={burstBoxes}
+        prefix={prefix}
+        keyForItem={(i) => images[indices[i]].id}
+        renderItem={(i) => renderCell(indices[i], i)}
+      />
+      {indices.length > 1 && (
+        <div className={`cull-scrubbar${scrubbing ? " is-on" : ""}`} aria-hidden>
+          <div className="cull-scrubbar__thumb" style={{ left: `${frac * 100}%` }} />
+        </div>
+      )}
+    </div>
   );
 }
