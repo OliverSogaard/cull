@@ -452,10 +452,11 @@ export default function App() {
     return () => ro.disconnect();
   }, [gridVisible, compareMode, gridHasCells]);
 
-  // Compare-mode candidate strip: every UNRATED frame except the champion (which
-  // is pinned separately). The challenger is always one of these. Drives both the
-  // bottom strip and its thumbnail eviction window, so only unrated frames show —
-  // independent of the active `filter`, which is left untouched and restored on exit.
+  // Compare-mode candidates: every UNRATED frame except the champion (which the
+  // strip shows separately as its grayed in-track ghost). The challenger is
+  // always one of these. Drives the strip's pickable set and its thumbnail
+  // eviction window — independent of the active `filter`, which is left
+  // untouched and restored on exit.
   const compareCandidates = useMemo(() => {
     if (!compareMode) return [];
     // One pass (no throwaway index array): every unrated frame except the champion.
