@@ -6,6 +6,9 @@
 //! Hamming distance ≤ ~10 ⇒ near-exact duplicate.
 
 /// 64-bit DCT pHash of a tightly-packed luma buffer.
+// Caller lands with the ImageScore wire-up (next plan task); the allow keeps
+// plain builds warning-free until then.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn phash64(luma: &[u8], w: usize, h: usize) -> u64 {
     if w == 0 || h == 0 || luma.len() < w * h {
         return 0;
@@ -31,7 +34,9 @@ pub fn phash64(luma: &[u8], w: usize, h: usize) -> u64 {
     hash
 }
 
-/// Hamming distance between two hashes.
+/// Hamming distance between two hashes. Production comparison happens TS-side
+/// (groupSimilar); Rust uses this in tests + the calibration harness only.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn hamming(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
 }
