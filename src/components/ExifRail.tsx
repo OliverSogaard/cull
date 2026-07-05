@@ -84,7 +84,12 @@ export function ExifRail({
               <span
                 className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}
               >
-                {ghost.verdict === "reject" ? "Reject" : "Keep"} ·{" "}
+                {ghost.verdict === "reject"
+                  ? "Reject"
+                  : ghost.verdict === "favorite"
+                    ? "Favorite"
+                    : "Keep"}{" "}
+                ·{" "}
                 {Math.round(ghost.confidence * 100)}%
               </span>
               <span className="cull-exif-rail__v cull-exif-rail__v--dim">
@@ -164,7 +169,8 @@ export function ExifRail({
       )}
 
       {/* Similar set membership — its own section: similar sets are a fact
-          about the smart analysis (shown with smart culling off too), not a suggestion. */}
+          about the smart analysis, but unlike bursts they only exist while
+          smart culling is ON (groupSimilar returns empty with the feature off). */}
       {similar && (
         <div className="cull-exif-rail__section">
           <div className="cull-exif-rail__label">Similar set</div>

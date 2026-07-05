@@ -147,7 +147,7 @@ export const ThumbCell = memo(function ThumbCell({
         ghost && (
           <div
             className={`cull-thumb__dot cull-thumb__dot--ghost cull-thumb__dot--ghost-${
-              ghost === "reject" ? "reject" : "keep"
+              ghost === "reject" ? "reject" : ghost === "favorite" ? "favorite" : "keep"
             }`}
             aria-hidden
           >

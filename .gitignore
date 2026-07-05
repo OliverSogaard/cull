@@ -20,6 +20,9 @@ src-tauri/target
 # Local test fixtures (real CR3s, not for the repo)
 sample_cr3s
 
+# Python bytecode cache (scripts/ dir)
+scripts/__pycache__/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

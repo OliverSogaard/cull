@@ -2795,6 +2795,11 @@ body,
   border: 1.5px dashed var(--bad);
   color: var(--bad);
 }
+.cull-thumb__dot--ghost-favorite,
+.cull-grid__dot--ghost-favorite {
+  border: 1.5px dashed var(--fav);
+  color: var(--fav);
+}
 
 /* One box per burst run (strip) / per run-row segment (grid, where runs wrap).
    The box FLOATS around the run — 4px of air between the line and the photos,
@@ -2852,6 +2857,9 @@ body,
 }
 .cull-exif-rail__suggest--reject {
   color: var(--bad);
+}
+.cull-exif-rail__suggest--favorite {
+  color: var(--fav);
 }
 
 /* ── contact-sheet grid (G) ───────────────────────────────── */

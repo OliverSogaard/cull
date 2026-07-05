@@ -415,7 +415,7 @@ const GridCell = memo(function GridCell({
         ghost && (
           <div
             className={`cull-grid__dot cull-grid__dot--ghost cull-grid__dot--ghost-${
-              ghost === "reject" ? "reject" : "keep"
+              ghost === "reject" ? "reject" : ghost === "favorite" ? "favorite" : "keep"
             }`}
             aria-hidden
           >

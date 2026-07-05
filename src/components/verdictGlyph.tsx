@@ -22,14 +22,19 @@ export function verdictGlyph(rating: Rating | undefined, size: number): ReactNod
 }
 
 /**
- * The smart-culling GHOST glyph — hollow/outline (✓ / ✕ in the verdict's own
- * color via CSS `currentColor`, no fill, lighter stroke) so a suggestion reads
- * as provisional next to the solid committed dot. Tier 1 never suggests ★.
+ * The smart-culling GHOST glyph — hollow/outline (✓ / ✕ / ★) in the verdict's
+ * own color via CSS `currentColor`, no fill, lighter stroke) so a suggestion
+ * reads as provisional next to the solid committed dot. Favorite (capped
+ * standout-aesthetic keeps, spec 3c) renders the same Lucide Star the solid
+ * committed glyph uses, but unfilled — a hollow ★ ghost, distinct from a
+ * plain keep suggestion.
  */
 export function ghostGlyph(verdict: Rating, size: number): ReactNode {
   switch (verdict) {
     case "reject":
       return <XIcon size={size} strokeWidth={2.4} />;
+    case "favorite":
+      return <Star size={size} strokeWidth={2.4} />;
     default:
       return <Check size={size} strokeWidth={2.4} />;
   }

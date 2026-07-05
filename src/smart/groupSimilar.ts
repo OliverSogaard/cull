@@ -32,8 +32,12 @@ function cosine(a: readonly number[], b: readonly number[]): number {
   return s;
 }
 
-/** Capture-time for chaining: SubSec-precise clock preferred, mtime fallback
- *  (both frames must use the SAME source or the delta is meaningless). */
+/** Capture-time for chaining: `capturedAtMs` (EXIF SubSec-precise clock)
+ *  preferred per-frame, falling back to file mtime only when EXIF is missing.
+ *  A pair can end up comparing one frame's capturedAtMs against the other's
+ *  mtime — the delta is then approximate, not a true capture-time gap — but
+ *  at the 5-minute (SIMILAR_WINDOW_MS) advisory granularity this grouping
+ *  operates at, that slack is acceptable. */
 function timeOf(s: ImageScore): number | null {
   return s.capturedAtMs ?? (s.mtimeMs || null);
 }
