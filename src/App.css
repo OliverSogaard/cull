@@ -3198,7 +3198,9 @@ body,
 /* ── compare-mode strip ───────────────────────────────────── */
 .cull-cmp-strip {
   flex: 0 0 auto;
-  height: 70px;
+  /* Height follows the candidates track (which carries the same 20px-top /
+     8px-bottom headroom as .cull-thumbs for the burst boxes + ×N legend). */
+  height: auto;
   display: flex;
   align-items: center;
   padding: 8px 12px;
@@ -3209,11 +3211,16 @@ body,
 }
 
 .cull-cmp-strip__champion {
+  /* The candidates track sits 6px below the box center (20px top / 8px bottom
+     headroom padding) — matching margin keeps champion + separator aligned
+     with the candidate cells. */
+  margin-top: 12px;
   flex: 0 0 auto;
 }
 
 /* Mid-dot separator between champion and challenger candidates. */
 .cull-cmp-strip__sep {
+  margin-top: 12px;
   flex: 0 0 auto;
   width: 18px;
   height: 54px;
@@ -3251,8 +3258,13 @@ body,
 
 .cull-cmp-strip__candidates {
   flex: 1 1 auto;
-  /* Cells absolutely positioned in the inner track; gap is in CELL_STRIDE. The
-     parent .cull-cmp-strip (align-items:center) vertically centers this box. */
+  /* Cells absolutely positioned in the inner track; gap is in CELL_STRIDE.
+     Same headroom recipe as .cull-thumbs: the burst box overhangs the cells
+     and its ×N legend rides above — overflow clips at the padding box, so
+     overlays drawn into the padding render fine (20 + 54 + 8 = 82). */
+  height: 82px;
+  padding: 20px 0 8px;
+  box-sizing: border-box;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;

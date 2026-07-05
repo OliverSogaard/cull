@@ -173,24 +173,56 @@ export const GridView = memo(function GridView({
   // Burst run boxes, one per (group, row) segment of RENDERED cells — grid
   // rows wrap, so "one long square" becomes one box per row the run crosses.
   // The ×N count rides the segment containing the run's first frame.
-  const burstSegs: { key: string; row: number; c0: number; c1: number; label: number | null }[] =
-    [];
+  type Seg = {
+    row: number;
+    c0: number;
+    c1: number;
+    label: number | null;
+    /** Run continues before/after this segment (row wrap): that edge renders
+     *  OPEN (no border, square corners) so the box reads as continuing. */
+    openLeft: boolean;
+    openRight: boolean;
+  };
+  const burstSegs: ({ key: string } & Seg)[] = [];
   if (bursts) {
-    const segs = new Map<string, { row: number; c0: number; c1: number; label: number | null }>();
+    const segs = new Map<string, Seg & { firstPos: number; lastPos: number; len: number }>();
     for (const { idx, row, col } of cells) {
       const c = bursts.get(images[idx].id);
       if (!c) continue;
       const key = `${c.group}:${row}`;
       const seg = segs.get(key);
       const label = c.pos === 1 ? c.len : null;
-      if (!seg) segs.set(key, { row, c0: col, c1: col, label });
-      else {
+      if (!seg) {
+        segs.set(key, {
+          row,
+          c0: col,
+          c1: col,
+          label,
+          firstPos: c.pos,
+          lastPos: c.pos,
+          len: c.len,
+          openLeft: false,
+          openRight: false,
+        });
+      } else {
         seg.c0 = Math.min(seg.c0, col);
         seg.c1 = Math.max(seg.c1, col);
         if (label != null) seg.label = label;
+        seg.firstPos = Math.min(seg.firstPos, c.pos);
+        seg.lastPos = Math.max(seg.lastPos, c.pos);
       }
     }
-    for (const [key, s] of segs) burstSegs.push({ key, ...s });
+    for (const [key, s] of segs) {
+      burstSegs.push({
+        key,
+        row: s.row,
+        c0: s.c0,
+        c1: s.c1,
+        label: s.label,
+        openLeft: s.firstPos > 1,
+        openRight: s.lastPos < s.len,
+      });
+    }
   }
 
   return (
@@ -208,10 +240,20 @@ export const GridView = memo(function GridView({
               // clears a box ending in the row above. Labeled segments start
               // 4px higher: a fieldset paints its top border at the legend's
               // vertical midpoint.
-              left: s.c0 * cellW + 2,
+              left: s.c0 * cellW + (s.openLeft ? 0 : 2),
               top: s.row * rowH + 2 - (s.label != null ? 4 : 0),
-              width: (s.c1 - s.c0 + 1) * cellW - 4,
+              width: (s.c1 - s.c0 + 1) * cellW - (s.openLeft ? 0 : 2) - (s.openRight ? 0 : 2),
               height: rowH - 5 + (s.label != null ? 4 : 0),
+              ...(s.openLeft && {
+                borderLeft: "none",
+                borderTopLeftRadius: 0,
+                borderBottomLeftRadius: 0,
+              }),
+              ...(s.openRight && {
+                borderRight: "none",
+                borderTopRightRadius: 0,
+                borderBottomRightRadius: 0,
+              }),
             }}
             aria-hidden
           >
