@@ -49,6 +49,7 @@ mod analyze;
 // is present — no callers, by design. Never dead in feature builds.
 #[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
 mod faces;
+mod phash;
 mod bundle;
 mod cr3;
 mod file_ops;
