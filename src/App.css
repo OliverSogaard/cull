@@ -1678,12 +1678,15 @@ body,
 .cull-settings__toggle::after {
   content: "";
   position: absolute;
-  top: 1px;
-  left: 1px;
+  /* Inner box is 34x18 (1px borders): translateY(-50%) self-centers the knob
+     vertically at any DPR; 2px side margins symmetric in both states. */
+  top: 50%;
+  left: 2px;
   width: 14px;
   height: 14px;
   border-radius: 50%;
   background: var(--text-2);
+  transform: translateY(-50%);
   transition: transform 150ms, background 150ms;
 }
 
@@ -1693,7 +1696,7 @@ body,
 }
 
 .cull-settings__toggle.is-on::after {
-  transform: translateX(16px);
+  transform: translateY(-50%) translateX(16px);
   background: var(--accent);
 }
 
