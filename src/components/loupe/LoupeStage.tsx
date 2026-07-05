@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { imageStore } from "../../image/imageStore";
 import { offerTiers } from "../../image/present";
@@ -8,6 +8,10 @@ import type { ImageDims } from "../../utils/bundle";
 import { sizerSrc } from "../../utils/sizer";
 import { HiResLayer } from "./HiResLayer";
 import { PresentLayers } from "./PresentLayers";
+
+/** How long after unzoom starts before the settle-time hi-res layer may
+ *  return — the 200ms zoom transition plus slack. */
+const UNZOOM_RETREAT_MS = 240;
 
 type LoupeStageProps = {
   /** Current frame's path ("" when none). */
@@ -123,7 +127,34 @@ export const LoupeStage = memo(function LoupeStage({
   // so overlays and the sharp raster coexist — the old !clippingVisible gate
   // silently degraded the settled view to the preview and left the zoom
   // spinner waiting forever whenever highlights were on.
-  const hiResWanted = (hiRes || isZooming) && dimsKnown;
+  // Unzoom retreat: the native-size raster must NEVER animate its transform
+  // back to fit — even behind a rectangular clip, transforming a ~32 MP
+  // texture for 200ms stutters. Drop it the moment unzoom starts (the light
+  // preview beneath animates back instead — same recipe as the compare
+  // panes, whose zoom-only hi-res always unmounted at release) and re-reveal
+  // once the transition has settled. `justUnzoomed` covers the flip render
+  // itself (state lands a commit later).
+  const prevZoomingRef = useRef(isZooming);
+  const justUnzoomed = prevZoomingRef.current && !isZooming;
+  useEffect(() => {
+    prevZoomingRef.current = isZooming;
+  });
+  const [unzoomSettling, setUnzoomSettling] = useState(false);
+  const everZoomedRef = useRef(false);
+  useEffect(() => {
+    if (isZooming) {
+      everZoomedRef.current = true;
+      setUnzoomSettling(false);
+      return undefined;
+    }
+    if (!everZoomedRef.current) return undefined;
+    setUnzoomSettling(true);
+    const t = setTimeout(() => setUnzoomSettling(false), UNZOOM_RETREAT_MS);
+    return () => clearTimeout(t);
+  }, [isZooming]);
+
+  const hiResWanted =
+    (hiRes || isZooming) && dimsKnown && !justUnzoomed && !unzoomSettling;
 
   return (
     <>
