@@ -35,6 +35,8 @@ export function buildBurstInputs(
         globalSharpness: s.globalSharpness,
         clipSum: s.blownPct + s.crushedPct,
         faceSharpness: primary ? primary.faceSharpness : null,
+        // −1 is the backend's "unknown" sentinel — surface as null.
+        eyesOpen: primary && primary.eyesOpen >= 0 ? primary.eyesOpen : null,
       };
       continue;
     }

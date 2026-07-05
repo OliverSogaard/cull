@@ -122,6 +122,62 @@ describe("deriveVerdict", () => {
     expect(s.confidence).toBeGreaterThanOrEqual(LEVEL_THRESHOLD.high);
   });
 
+  test("clearly closed eyes reject on medium with the right reason (Phase 3b)", () => {
+    const s = deriveVerdict(
+      score({
+        afSharpness: 0.7,
+        exposureScore: 0.9,
+        faces: [{ bbox: [0.4, 0.3, 0.2, 0.25], eyesOpen: 0.02, faceSharpness: 0.7 }],
+      }),
+      undefined,
+      "medium",
+    );
+    expect(s.verdict).toBe("reject");
+    expect(s.reasons).toContain("closed eyes");
+  });
+
+  test("borderline eye probability stays silent — no reject, keep can fire", () => {
+    const s = deriveVerdict(
+      score({
+        afSharpness: 0.7,
+        exposureScore: 0.9,
+        faces: [{ bbox: [0.4, 0.3, 0.2, 0.25], eyesOpen: 0.45, faceSharpness: 0.7 }],
+      }),
+      undefined,
+      "medium",
+    );
+    expect(s.verdict).toBe("keep");
+  });
+
+  test("unknown eye state (sentinel) never fires the closed-eyes rule", () => {
+    const s = deriveVerdict(
+      score({
+        afSharpness: 0.7,
+        exposureScore: 0.9,
+        faces: [{ bbox: [0.4, 0.3, 0.2, 0.25], eyesOpen: -1, faceSharpness: 0.7 }],
+      }),
+      undefined,
+      "low",
+    );
+    expect(s.verdict).toBe("keep");
+  });
+
+  test("closed eyes stack with soft focus via max-plus-bump, not product", () => {
+    const withEyes = deriveVerdict(
+      {
+        ...soft(),
+        faces: [{ bbox: [0.4, 0.3, 0.2, 0.25], eyesOpen: 0.0, faceSharpness: 0.05 }],
+      },
+      undefined,
+      "medium",
+    );
+    const plain = deriveVerdict(soft(), undefined, "medium");
+    expect(withEyes.verdict).toBe("reject");
+    expect(withEyes.reasons).toContain("closed eyes");
+    expect(withEyes.confidence).toBeGreaterThan(plain.confidence);
+    expect(withEyes.confidence).toBeLessThanOrEqual(1);
+  });
+
   test("a merely-okay frame earns nothing — the tool speaks only on clear calls", () => {
     const s = deriveVerdict(
       score({ afSharpness: 0.3, globalSharpness: 0.3, exposureScore: 0.7 }),

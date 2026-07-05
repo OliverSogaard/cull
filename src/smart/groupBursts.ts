@@ -27,7 +27,12 @@ export type SharpInput = {
   /** Primary (largest) face's sharpness, when Tier-2 detected faces — for
    *  people shots the sharpest FACE outranks the sharpest AF crop. */
   faceSharpness: number | null;
+  /** Primary face's OCEC prob_open (Phase 3b) — null while unknown. */
+  eyesOpen: number | null;
 };
+
+/** prob_open at or above this counts as "eyes open" for the burst tiebreak. */
+export const EYES_OPEN_MIN = 0.5;
 
 /** Burst membership + (when every member is scored) winner context. */
 export type BurstCtx = {
@@ -49,6 +54,15 @@ export const CAPTURED_COARSE_GUARD_MS = 2000;
 
 /** Strict "a beats b" for winner selection (ties fall through → earliest wins). */
 function beats(a: SharpInput, b: SharpInput): boolean {
+  // Phase 3b: eyes first — when BOTH frames know their eye state and they
+  // fall on opposite sides of the open/closed line, the open-eyed frame wins
+  // outright (a portrait burst's keeper is never the blink). Same-side pairs
+  // fall through to sharpness.
+  if (a.eyesOpen != null && b.eyesOpen != null) {
+    const aOpen = a.eyesOpen >= EYES_OPEN_MIN;
+    const bOpen = b.eyesOpen >= EYES_OPEN_MIN;
+    if (aOpen !== bOpen) return aOpen;
+  }
   // Tier-2: when BOTH frames carry a face, the sharper face wins outright —
   // a portrait burst's keeper is the one where the SUBJECT is sharp.
   if (a.faceSharpness != null && b.faceSharpness != null && a.faceSharpness !== b.faceSharpness) {

@@ -18,7 +18,14 @@ function input(i: number, over: Partial<BurstInput> = {}): BurstInput {
 }
 
 function sharpOf(afSharpness: number, over: Partial<SharpInput> = {}): SharpInput {
-  return { afSharpness, globalSharpness: 0.5, clipSum: 0.005, faceSharpness: null, ...over };
+  return {
+    afSharpness,
+    globalSharpness: 0.5,
+    clipSum: 0.005,
+    faceSharpness: null,
+    eyesOpen: null,
+    ...over,
+  };
 }
 
 describe("groupBursts", () => {
@@ -242,6 +249,35 @@ describe("buildBurstInputs", () => {
     expect(capturedAtToMs(null, 500)).toBeNull();
     expect(capturedAtToMs("not a date", 500)).toBeNull();
     expect(capturedAtToMs("2026-05-17T17:18:14", null)! - a).toBe(-920);
+  });
+});
+
+describe("eyes-open burst tiebreak (Phase 3b)", () => {
+  const two = () => [img(0), img(1)];
+  const inputsFor = () => ({ 0: input(0), 1: input(1) });
+
+  test("an open-eyed frame beats a sharper closed-eyed one", () => {
+    const ctx = groupBursts(two(), inputsFor(), {
+      0: sharpOf(0.9, { faceSharpness: 0.9, eyesOpen: 0.1 }), // sharp but blinking
+      1: sharpOf(0.6, { faceSharpness: 0.6, eyesOpen: 0.95 }),
+    });
+    expect(ctx.get(1)!.isWinner).toBe(true);
+  });
+
+  test("both open -> falls through to face sharpness", () => {
+    const ctx = groupBursts(two(), inputsFor(), {
+      0: sharpOf(0.6, { faceSharpness: 0.9, eyesOpen: 0.8 }),
+      1: sharpOf(0.9, { faceSharpness: 0.6, eyesOpen: 0.95 }),
+    });
+    expect(ctx.get(0)!.isWinner).toBe(true);
+  });
+
+  test("eyes unknown on either side -> tiebreak silent, sharpness decides", () => {
+    const ctx = groupBursts(two(), inputsFor(), {
+      0: sharpOf(0.9, { faceSharpness: 0.9, eyesOpen: null }),
+      1: sharpOf(0.6, { faceSharpness: 0.6, eyesOpen: 0.95 }),
+    });
+    expect(ctx.get(0)!.isWinner).toBe(true);
   });
 });
 

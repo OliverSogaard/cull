@@ -81,6 +81,14 @@ pub fn run() {
             ) {
                 faces::init_detector(p);
             }
+            // Phase 3b: the OCEC eye-state model rides the same lazy pattern.
+            #[cfg(feature = "smart-ml")]
+            if let Ok(p) = app.path().resolve(
+                "models/ocec_s.onnx",
+                tauri::path::BaseDirectory::Resource,
+            ) {
+                faces::init_eye_classifier(p);
+            }
             // One-time cleanup of the v1 thumbnail cache (format v2 lives under
             // tiers/): without this, up to 500 MB of dead v1 files sit in
             // app-cache forever. Best-effort and detached — it's a local-disk

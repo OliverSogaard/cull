@@ -25,6 +25,10 @@ export const TEXTURE_MIN = 0.12;
 export const MARGIN_SCALE = 0.25;
 /** Laplacian-vs-Tenengrad gap past which the sharpness signal is distrusted. */
 export const TENENGRAD_DISAGREE = 0.35;
+/** Primary-face prob_open below this fires "closed eyes", margin-scaled —
+ *  deliberately far under the 0.5 open/closed line: our eye crops come from
+ *  landmark heuristics, so only a CLEAR blink may reject (advisory bias). */
+export const EYES_CLOSED_REJECT = 0.2;
 /** Clipping annotation thresholds — clipping NEVER rejects alone (RAW workflow). */
 export const BLOWN_NOTE_PCT = 0.25;
 export const CRUSHED_NOTE_PCT = 0.35;
@@ -92,12 +96,23 @@ export function deriveVerdict(
     if (burstConf > 0) reasons.push(`not best of burst (${burst.pos} of ${burst.len})`);
   }
 
-  // Both signals derive from afSharpness — max plus a small bump, NOT the
-  // product (independence would inflate exactly the near-tie frames).
-  let conf =
-    softConf > 0 && burstConf > 0
-      ? Math.max(softConf, burstConf) + 0.1 * Math.min(softConf, burstConf)
-      : Math.max(softConf, burstConf);
+  // Rule 3b — closed eyes on the primary (largest) face, margin-scaled.
+  // −1 sentinel = unknown → silent; the borderline band stays silent too.
+  let eyesConf = 0;
+  const primaryFace = score.faces.reduce(
+    (best, f) =>
+      f.bbox[2] * f.bbox[3] > (best?.bbox[2] ?? 0) * (best?.bbox[3] ?? 0) ? f : best,
+    null as (typeof score.faces)[number] | null,
+  );
+  if (primaryFace && primaryFace.eyesOpen >= 0 && primaryFace.eyesOpen < EYES_CLOSED_REJECT) {
+    eyesConf = clamp01((EYES_CLOSED_REJECT - primaryFace.eyesOpen) / EYES_CLOSED_REJECT);
+    if (eyesConf > 0) reasons.push("closed eyes");
+  }
+
+  // Conservative stacking: strongest signal plus a small bump per extra —
+  // NEVER the product (independence math would inflate near-tie frames).
+  const [c0, c1, c2] = [softConf, burstConf, eyesConf].sort((a, b) => b - a);
+  let conf = c0 + 0.1 * c1 + 0.05 * c2;
 
   if (conf > 0) {
     // Rule 1 — clipping annotates a live reject; it NEVER rejects alone.

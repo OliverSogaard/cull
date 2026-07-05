@@ -474,7 +474,10 @@ pub(crate) async fn analyze_quality(
 /// sharpness reuses the Tier-1 machinery: variance-of-Laplacian over the face
 /// rect, normalized against the frame's already-computed noise floor — so face
 /// and AF sharpness are directly comparable (the TS burst tiebreak relies on
-/// that). `eyes_open` is the Phase-3b sentinel (-1 = unknown, no eye model yet).
+/// that). `eyes_open` (Phase 3b) = min(left, right) OCEC `prob_open` from
+/// crops around YuNet's eye landmarks; −1 stays whenever either eye is
+/// unclassifiable (no model, degenerate geometry, run failure) — unknown,
+/// never a guess.
 #[cfg(feature = "smart-ml")]
 fn attach_faces(input: &DecodedInput, score: &mut ImageScore) {
     if !score.decode_ok {
@@ -499,6 +502,16 @@ fn attach_faces(input: &DecodedInput, score: &mut ImageScore) {
                 var_laplacian(&luma, w, h, rect),
                 score.noise_floor as f64,
             );
+            // Phase 3b: OCEC on both eye landmarks (kps 0/1 = right/left eye).
+            let inter = ((d.kps[0] - d.kps[2]).powi(2) + (d.kps[1] - d.kps[3]).powi(2)).sqrt();
+            let eye_prob = |ex: f32, ey: f32| -> Option<f32> {
+                let crop = crate::faces::eye_crop_box(ex, ey, inter, w, h)?;
+                crate::faces::eye_open_prob(&input.rgb, w, h, crop)
+            };
+            let eyes_open = match (eye_prob(d.kps[0], d.kps[1]), eye_prob(d.kps[2], d.kps[3])) {
+                (Some(l), Some(r)) => l.min(r),
+                _ => -1.0,
+            };
             FaceScore {
                 bbox: [
                     d.x / w as f32,
@@ -506,7 +519,7 @@ fn attach_faces(input: &DecodedInput, score: &mut ImageScore) {
                     d.w / w as f32,
                     d.h / h as f32,
                 ],
-                eyes_open: -1.0,
+                eyes_open,
                 face_sharpness: sharp,
             }
         })
