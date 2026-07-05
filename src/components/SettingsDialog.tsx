@@ -115,7 +115,7 @@ export function SettingsDialog({
                 </SettingRow>
                 <SettingRow
                   label="Analyze on open"
-                  help="Start the analysis pass automatically when a folder opens (it always yields to your navigation). Off: press 5 or the Sugg tab to analyze on demand."
+                  help="Start the analysis pass automatically when a folder opens (it always yields to your navigation). Off: press 5 or the Smart tab to analyze on demand."
                 >
                   <Chip
                     label="Auto"

@@ -3329,7 +3329,7 @@ export default function App() {
               onClick={() => setFilter("favorites")}
               title="4 · show only favorites"
             >
-              ★
+              Favorites
             </button>
             {settings.smartCulling && (
               <button
@@ -3342,8 +3342,8 @@ export default function App() {
                 title="5 · show unrated frames with a smart-culling suggestion"
               >
                 {qualityAnalyzing && qualityProgress
-                  ? `Sugg ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
-                  : "Sugg"}
+                  ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
+                  : "Smart"}
               </button>
             )}
           </div>
