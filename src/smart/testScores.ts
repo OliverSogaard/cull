@@ -15,6 +15,7 @@ export function score(over: Partial<ImageScore> = {}): ImageScore {
     exposureScore: 0.9,
     motionBlurLikelihood: 0.05,
     tenengrad: 0.55,
+    phash: null,
     mtimeMs: 1_000_000,
     driveMode: 8,
     focalLengthMm: 85,

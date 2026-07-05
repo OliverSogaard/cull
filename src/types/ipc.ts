@@ -43,6 +43,9 @@ export type ImageScore = {
   motionBlurLikelihood: number;
   /** Sobel cross-check, same normalization as afSharpness. */
   tenengrad: number;
+  /** 64-bit DCT pHash, 16 lowercase hex chars (string: JS numbers lose 64-bit
+   *  precision). null ⇒ decode failure. Compare via BigInt. */
+  phash: string | null;
   mtimeMs: number;
   driveMode: number | null;
   focalLengthMm: number | null;

@@ -64,6 +64,9 @@ pub struct ImageScore {
     /// confidence when the two sharpness signals disagree hard (plan formula;
     /// the field was implied but missing from the plan's first struct draft).
     pub tenengrad: f32,
+    /// 64-bit DCT pHash as 16 lowercase hex chars — STRING because JSON
+    /// numbers lose bits past 2^53 in JS. None ⇒ decode failure.
+    pub phash: Option<String>,
     // Per-file inputs for TS-side burst grouping (the frontend holds no timestamps).
     pub mtime_ms: i64,
     pub drive_mode: Option<u32>,
@@ -376,6 +379,7 @@ pub(crate) fn score_one(input: &DecodedInput, index: usize) -> ImageScore {
             global_sharpness,
         ),
         tenengrad: tenengrad_norm,
+        phash: Some(format!("{:016x}", crate::phash::phash64(&luma, w, h))),
         mtime_ms: input.mtime_ms,
         drive_mode: input.drive_mode,
         focal_length_mm: input.focal_length_mm,
@@ -807,10 +811,14 @@ mod tests {
 
     // ── score_one glue ─────────────────────────────────────────────────────
 
+    fn decoded_fixture() -> DecodedInput {
+        let (w, h) = (256, 192);
+        input_from_luma(checkerboard(w, h), w, h)
+    }
+
     #[test]
     fn score_one_echoes_grouping_inputs_and_sets_decode_ok() {
-        let (w, h) = (256, 192);
-        let s = score_one(&input_from_luma(checkerboard(w, h), w, h), 7);
+        let s = score_one(&decoded_fixture(), 7);
         assert_eq!(s.index, 7);
         assert!(s.decode_ok);
         assert_eq!(s.mtime_ms, 1_000);
@@ -828,6 +836,17 @@ mod tests {
             "tenengrad on the wire, normalized, got {}",
             s.tenengrad
         );
+    }
+
+    #[test]
+    fn score_one_computes_a_hex_phash() {
+        let input = decoded_fixture();
+        let s = score_one(&input, 0);
+        let hex = s.phash.expect("phash set on every decoded frame");
+        assert_eq!(hex.len(), 16);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        // Deterministic: same buffer, same hash.
+        assert_eq!(score_one(&input, 0).phash, Some(hex));
     }
 
     // ── captured_at_ms combine ─────────────────────────────────────────────
