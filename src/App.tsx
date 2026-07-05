@@ -2039,10 +2039,20 @@ export default function App() {
 
   // ← / → → move the challenger to the next/previous unrated frame (champion skipped).
   const cycleChallenger = useCallback(
-    (dir: 1 | -1): boolean => {
-      const next = findUnrated(challengerIndex, dir, ratings, championIndex);
-      if (next !== -1) {
-        setChallengerIndex(next);
+    (dir: 1 | -1, step = 1): boolean => {
+      // Walk up to `step` unrated frames in ONE call: accelerated scrub can't
+      // loop the single-step version — it reads this render's challengerIndex,
+      // so repeated calls in one tick recompute the same target.
+      let cur = challengerIndex;
+      let landed = -1;
+      for (let k = 0; k < step; k++) {
+        const next = findUnrated(cur, dir, ratings, championIndex);
+        if (next === -1) break;
+        landed = next;
+        cur = next;
+      }
+      if (landed !== -1) {
+        setChallengerIndex(landed);
         return true;
       }
       return false; // no more unrated in this direction
@@ -2158,7 +2168,8 @@ export default function App() {
   // navStep dispatches to the right action for the current mode; navStepRef keeps
   // the loop calling the LATEST closure (fresh currentIndex / challenger) each tick.
   const navStep = useCallback(
-    (dir: 1 | -1): boolean => (compareMode ? cycleChallenger(dir) : advance(dir)),
+    (dir: 1 | -1, step = 1): boolean =>
+      compareMode ? cycleChallenger(dir, step) : advance(dir, step),
     [compareMode, advance, cycleChallenger],
   );
   const navStepRef = useRef(navStep);
@@ -2219,11 +2230,11 @@ export default function App() {
           scrubSpeedRef.current = speed;
           setScrubSpeed(speed);
         }
-        let moved = false;
-        for (let k = 0; k < speed; k++) {
-          if (!navStepRef.current(heldDirRef.current as 1 | -1)) break;
-          moved = true;
-        }
+        // ONE call with step=speed: advance/cycleChallenger read this render's
+        // position, so calling them repeatedly within a tick would recompute
+        // the same target `speed` times and move a single frame (the "50× that
+        // scrubbed at 1×" bug). Both walk `step` frames internally instead.
+        const moved = navStepRef.current(heldDirRef.current as 1 | -1, speed);
         // Blur only while actually moving. At a boundary (nothing to move to) keep
         // the current frame full-res — no point blurring when we aren't going
         // anywhere. Toggle only on change to avoid per-step re-renders.
