@@ -154,9 +154,6 @@ export function ExifRail({
           <div className="cull-exif-rail__label">Burst</div>
           <div className="cull-exif-rail__rows">
             <RailRow k="Frame" v={`${burst.pos} of ${burst.len}`} />
-            {burst.isWinner && (
-              <RailRow k="Pick" v="sharpest of the burst (AF-area detail)" />
-            )}
           </div>
         </div>
       )}

@@ -33,7 +33,7 @@ import { ThumbStrip } from "./components/ThumbStrip";
 import { useSmartCulling } from "./smart/useSmartCulling";
 import { groupBursts } from "./smart/groupBursts";
 import { buildBurstInputs } from "./smart/burstInputs";
-import { deriveVerdict, type Suggestion } from "./smart/deriveVerdict";
+import { deriveVerdict, keepEligible, type Suggestion } from "./smart/deriveVerdict";
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
 import { LoupeStage } from "./components/loupe/LoupeStage";
@@ -259,10 +259,18 @@ export default function App() {
     () => buildBurstInputs(images, qualityScores, metadata),
     [images, qualityScores, metadata],
   );
-  const burstCtx = useMemo(
-    () => groupBursts(images, burstData.inputs, burstData.sharp),
-    [images, burstData],
-  );
+  // Winner candidacy is SMART CULLING's call: a member must clear the active
+  // keep threshold to be pickable, and with the feature off nothing wins —
+  // burst detection/boxes stay factual, the "best frame" is advisory.
+  const burstCtx = useMemo(() => {
+    const eligible: Record<number, boolean> = {};
+    if (settings.smartCulling) {
+      for (const [idStr, sc] of Object.entries(qualityScores)) {
+        eligible[Number(idStr)] = keepEligible(sc, settings.smartCullingConfidence);
+      }
+    }
+    return groupBursts(images, burstData.inputs, burstData.sharp, eligible);
+  }, [images, burstData, qualityScores, settings.smartCulling, settings.smartCullingConfidence]);
   // Only frames with an emitted verdict land in the map — the badge/filter
   // predicate is a simple presence check.
   const suggestions = useMemo(() => {

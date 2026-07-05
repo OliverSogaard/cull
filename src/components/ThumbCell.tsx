@@ -2,7 +2,6 @@ import { memo } from "react";
 import { Star } from "lucide-react";
 import type { Img, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
-import type { BurstCtx } from "../smart/groupBursts";
 import { hasLrcRating } from "../utils/ratingColor";
 import { stripExt } from "../utils/path";
 import { useThumb } from "../image/useThumb";
@@ -27,7 +26,6 @@ type ThumbCellProps = {
   suggestion?: Suggestion | null;
   /** Burst membership — run tint, "Burst · N" pill on the first cell, and a
    *  solid winner border. */
-  burst?: BurstCtx | null;
 };
 
 /**
@@ -46,7 +44,6 @@ export const ThumbCell = memo(function ThumbCell({
   onPick,
   roleVariant,
   suggestion,
-  burst,
 }: ThumbCellProps) {
   // Strip cells only ever need the thumbnail (plumbing shared with GridCell).
   const { url, shimmerDelayMs: shimmerDelay } = useThumb(img.path);
@@ -74,10 +71,10 @@ export const ThumbCell = memo(function ThumbCell({
 
   // Ghost suggestion renders ONLY while unrated — a keypress paints the solid
   // dot and this guard stops rendering it (superseded in place, never stored).
-  // The burst WINNER wears the same ghost ✓ (its "why" lives in the info
+  // Ghosts are SUGGESTION-driven only (the burst winner's ✓ arrives via its
   // rail's Burst row); the run itself is outlined by the strip-level box.
   const ghost =
-    !rating && (suggestion?.verdict ?? (burst?.isWinner ? ("keep" as const) : null));
+    !rating && (suggestion?.verdict ?? null);
 
   return (
     <div

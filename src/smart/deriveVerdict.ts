@@ -40,6 +40,21 @@ export const LEVEL_THRESHOLD: Record<SmartLevel, number> = {
 const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
 
 /**
+ * Would this frame earn a keep suggestion at `level` on its own? Doubles as
+ * burst-winner candidacy: the winner is a smart-culling suggestion ("keep
+ * THIS one"), so it must clear the same bar — a burst where nobody does
+ * picks no winner at all.
+ */
+export function keepEligible(score: ImageScore, level: SmartLevel): boolean {
+  return (
+    score.decodeOk &&
+    score.afSharpness >= SHARP_STRONG &&
+    score.exposureScore >= 0.6 &&
+    Math.min(score.afSharpness, score.exposureScore) >= LEVEL_THRESHOLD[level]
+  );
+}
+
+/**
  * The advisory cascade. Rejects fire only on judgeable evidence — the costly
  * error is the false reject, so every gate biases toward silence:
  * 1. clipping is annotation-only (RAW recoverability; backlit/high-key intent);
@@ -101,13 +116,17 @@ export function deriveVerdict(
   }
 
   // Rule 4 — nothing negative fired: a clearly sharp, well-exposed frame earns
-  // a keep, gated by the SAME level threshold as rejects. Never a favorite in
-  // Tier 1.
-  if (score.afSharpness >= SHARP_STRONG && score.exposureScore >= 0.6) {
+  // a keep, gated by the SAME level threshold as rejects (keepEligible). The
+  // burst winner rides this rule — its pick is explained here, in the
+  // SUGGESTION surface (the rail's Burst section stays purely factual).
+  // Never a favorite in Tier 1.
+  if (keepEligible(score, level)) {
     const keepConf = Math.min(score.afSharpness, score.exposureScore);
-    if (keepConf >= LEVEL_THRESHOLD[level]) {
-      return { verdict: "keep", confidence: keepConf, reasons: ["sharp, well exposed"] };
-    }
+    const keepReasons =
+      burst?.isWinner === true
+        ? ["best of burst", "sharp, well exposed"]
+        : ["sharp, well exposed"];
+    return { verdict: "keep", confidence: keepConf, reasons: keepReasons };
   }
   return { verdict: null, confidence: 0, reasons: [] };
 }

@@ -232,7 +232,6 @@ export const GridView = memo(function GridView({
             width={cellW}
             height={rowH}
             suggestion={suggestions?.[images[idx].id] ?? null}
-            burst={bursts?.get(images[idx].id) ?? null}
           />
         ))}
       </div>
@@ -253,7 +252,6 @@ const GridCell = memo(function GridCell({
   width,
   height,
   suggestion,
-  burst,
 }: {
   img: Img;
   index: number;
@@ -267,7 +265,6 @@ const GridCell = memo(function GridCell({
   width: number;
   height: number;
   suggestion?: Suggestion | null;
-  burst?: BurstCtx | null;
 }) {
   // Grid cells render thumbnails only; the store self-schedules the thumb on
   // mount (and prioritises by the reported grid viewport) and re-renders this
@@ -280,10 +277,10 @@ const GridCell = memo(function GridCell({
   const dotClass = verdictDotClass(rating, "cull-grid__dot");
   const showLrc = hasLrcRating(lrcRating, rating);
   // Ghost suggestion only while unrated — the committed dot supersedes in
-  // place. The burst winner wears the same ghost ✓; the run outline is drawn
+  // place. Ghosts are suggestion-driven only; the run outline is drawn
   // at the grid level (segment boxes), not per cell.
   const ghost =
-    !rating && (suggestion?.verdict ?? (burst?.isWinner ? ("keep" as const) : null));
+    !rating && (suggestion?.verdict ?? null);
   const cellClass = [
     "cull-grid__cell",
     isCurrent ? "is-current" : "",

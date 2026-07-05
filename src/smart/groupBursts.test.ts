@@ -244,3 +244,39 @@ describe("buildBurstInputs", () => {
     expect(capturedAtToMs("2026-05-17T17:18:14", null)! - a).toBe(-920);
   });
 });
+
+describe("winner eligibility (smart-culling threshold)", () => {
+  const two = () => [img(0), img(1)];
+  const inputsFor = () => ({ 0: input(0), 1: input(1) });
+
+  test("no member eligible -> the burst picks NO winner", () => {
+    const ctx = groupBursts(
+      two(),
+      inputsFor(),
+      { 0: sharpOf(0.4), 1: sharpOf(0.45) },
+      { 0: false, 1: false },
+    );
+    expect(ctx.get(0)!.isWinner).toBe(false);
+    expect(ctx.get(1)!.isWinner).toBe(false);
+    expect(ctx.get(0)!.marginToWinner).toBe(0);
+    expect(ctx.get(1)!.marginToWinner).toBe(0);
+  });
+
+  test("only eligible frames can win, even when an ineligible one is sharper", () => {
+    const ctx = groupBursts(
+      two(),
+      inputsFor(),
+      { 0: sharpOf(0.9), 1: sharpOf(0.6) },
+      { 0: false, 1: true },
+    );
+    expect(ctx.get(0)!.isWinner).toBe(false);
+    expect(ctx.get(1)!.isWinner).toBe(true);
+    // Losers still measure their margin against the ACTUAL winner.
+    expect(ctx.get(0)!.marginToWinner).toBeCloseTo(-0.3, 5);
+  });
+
+  test("eligibility omitted -> every scored member is a candidate (legacy callers)", () => {
+    const ctx = groupBursts(two(), inputsFor(), { 0: sharpOf(0.9), 1: sharpOf(0.6) });
+    expect(ctx.get(0)!.isWinner).toBe(true);
+  });
+});

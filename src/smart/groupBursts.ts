@@ -102,6 +102,10 @@ export function groupBursts(
   images: readonly Img[],
   inputs: Readonly<Record<number, BurstInput>>,
   sharp?: Readonly<Record<number, SharpInput>>,
+  /** Winner candidacy per id (smart culling's threshold gate): only eligible
+   *  members may win; none eligible → the burst has NO winner. Omitted →
+   *  every scored member is a candidate. */
+  eligible?: Readonly<Record<number, boolean>>,
 ): Map<number, BurstCtx> {
   const out = new Map<number, BurstCtx>();
   let run: { id: number }[] = [];
@@ -113,9 +117,9 @@ export function groupBursts(
       const winnerKnown = sharps.every((s) => s != null);
       let w = -1;
       if (winnerKnown) {
-        w = 0;
-        for (let i = 1; i < run.length; i++) {
-          if (beats(sharps[i]!, sharps[w]!)) w = i;
+        for (let i = 0; i < run.length; i++) {
+          if (eligible && !eligible[run[i].id]) continue; // below the bar — can't win
+          if (w === -1 || beats(sharps[i]!, sharps[w]!)) w = i;
         }
       }
       const winnerSharp = w >= 0 ? sharps[w]!.afSharpness : 0;

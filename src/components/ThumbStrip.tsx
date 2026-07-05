@@ -131,7 +131,6 @@ export function ThumbStrip({
           dimmed={!visibleSet.has(i)}
           onPick={onPick}
           suggestion={suggestions?.[images[i].id] ?? null}
-          burst={bursts?.get(images[i].id) ?? null}
         />
       )}
     />
