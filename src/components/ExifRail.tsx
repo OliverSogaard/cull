@@ -360,7 +360,8 @@ function SuggestCell({ s }: { s?: Suggestion | null }) {
   if (!s?.verdict) return <span className="cull-cr-rail__v">—</span>;
   return (
     <span className={`cull-cr-rail__v cull-exif-rail__suggest--${s.verdict}`}>
-      {s.verdict === "reject" ? "Reject" : "Keep"} · {Math.round(s.confidence * 100)}%
+      {s.verdict === "reject" ? "Reject" : s.verdict === "favorite" ? "Favorite" : "Keep"} ·{" "}
+      {Math.round(s.confidence * 100)}%
     </span>
   );
 }
