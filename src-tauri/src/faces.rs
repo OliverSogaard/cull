@@ -227,86 +227,37 @@ pub use ml::{detector_ready, eyes_ready};
 #[cfg(feature = "smart-ml")]
 mod ml {
     use super::*;
+    use crate::ml_models::LazySession;
     use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
 
-    /// Lazy global session: initialized with the resolved model path at setup,
-    /// session created on first detect (so app boot never pays for ONNX init).
-    static MODEL_PATH: OnceLock<PathBuf> = OnceLock::new();
-    static SESSION: OnceLock<Option<Mutex<ort::session::Session>>> = OnceLock::new();
+    static YUNET: LazySession = LazySession::new("yunet");
+    static OCEC: LazySession = LazySession::new("ocec");
 
     pub fn init_detector(model_path: PathBuf) {
-        let _ = MODEL_PATH.set(model_path);
-    }
-
-    fn build_session(path: &std::path::Path) -> Result<ort::session::Session, ort::Error> {
-        #[allow(unused_mut)]
-        let mut b = ort::session::Session::builder()?;
-        // Platform EP with silent CPU fallback (registration failure at
-        // session-run level falls back internally; hard errors surface here).
-        #[cfg(target_os = "macos")]
-        {
-            b = b.with_execution_providers([ort::ep::CoreML::default().build()])?;
-        }
-        #[cfg(target_os = "windows")]
-        {
-            b = b.with_execution_providers([ort::ep::DirectML::default().build()])?;
-        }
-        b.commit_from_file(path)
-    }
-
-    fn session() -> Option<&'static Mutex<ort::session::Session>> {
-        SESSION
-            .get_or_init(|| {
-                let path = MODEL_PATH.get()?;
-                match build_session(path) {
-                    Ok(s) => Some(Mutex::new(s)),
-                    Err(e) => {
-                        dlog!("[cull] yunet session init failed: {e}");
-                        None
-                    }
-                }
-            })
-            .as_ref()
+        YUNET.init(model_path);
     }
 
     /// Did the ONNX session actually come up? (Smoke-test discriminator —
     /// detect_faces returns empty BOTH for "no faces" and "no session".)
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn detector_ready() -> bool {
-        session().is_some()
+        YUNET.ready()
     }
 
     // ── OCEC eye-state session (Phase 3b) ─────────────────────────────
-    static OCEC_MODEL_PATH: OnceLock<PathBuf> = OnceLock::new();
-    static OCEC_SESSION: OnceLock<Option<Mutex<ort::session::Session>>> = OnceLock::new();
     /// (H, W) the loaded graph actually wants — read once from the session's
     /// input shape (falls back to the documented 24×40 on dynamic dims).
     static OCEC_IN_DIMS: OnceLock<(usize, usize)> = OnceLock::new();
 
     pub fn init_eye_classifier(model_path: PathBuf) {
-        let _ = OCEC_MODEL_PATH.set(model_path);
-    }
-
-    fn ocec_session() -> Option<&'static Mutex<ort::session::Session>> {
-        OCEC_SESSION
-            .get_or_init(|| {
-                let path = OCEC_MODEL_PATH.get()?;
-                match build_session(path) {
-                    Ok(s) => Some(Mutex::new(s)),
-                    Err(e) => {
-                        dlog!("[cull] ocec session init failed: {e}");
-                        None
-                    }
-                }
-            })
-            .as_ref()
+        OCEC.init(model_path);
     }
 
     /// Smoke-test discriminator, mirroring `detector_ready`.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn eyes_ready() -> bool {
-        ocec_session().is_some()
+        OCEC.ready()
     }
 
     /// Sigmoid `prob_open` for one eye crop of a decoded RGB8 preview, or
@@ -318,7 +269,7 @@ mod ml {
         h: usize,
         crop: (usize, usize, usize, usize),
     ) -> Option<f32> {
-        let lock = ocec_session()?;
+        let lock = OCEC.get()?;
         let (cx, cy, cw, ch) = crop;
         if cx + cw > w || cy + ch > h {
             return None;
@@ -353,7 +304,7 @@ mod ml {
     /// Detect faces on a decoded RGB8 preview. Failures are empty results —
     /// face data is advisory enrichment, never worth failing a score over.
     pub fn detect_faces(rgb: &[u8], w: usize, h: usize) -> Vec<Detection> {
-        let Some(lock) = session() else { return Vec::new() };
+        let Some(lock) = YUNET.get() else { return Vec::new() };
         let (pw, ph) = (pad32(w), pad32(h));
         let chw = rgb_to_bgr_chw_padded(rgb, w, h, pw, ph);
         let Ok(input) = ort::value::Tensor::from_array(([1usize, 3, ph, pw], chw)) else {

@@ -56,6 +56,7 @@ mod file_ops;
 mod io_gate;
 mod meta;
 mod midtier;
+mod ml_models;
 mod scan;
 mod tier_cache;
 mod xmp;
