@@ -32,7 +32,9 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { useSmartCulling } from "./smart/useSmartCulling";
 import { groupBursts } from "./smart/groupBursts";
+import { groupSimilar, type SimilarCtx } from "./smart/groupSimilar";
 import { buildBurstInputs } from "./smart/burstInputs";
+import { capFavorites } from "./smart/capFavorites";
 import { deriveVerdict, keepEligible, type Suggestion } from "./smart/deriveVerdict";
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
@@ -268,28 +270,48 @@ export default function App() {
   );
   // Winner candidacy is SMART CULLING's call: a member must clear the active
   // keep threshold to be pickable, and with the feature off nothing wins —
-  // burst detection/boxes stay factual, the "best frame" is advisory.
-  const burstCtx = useMemo(() => {
+  // burst detection/boxes stay factual, the "best frame" is advisory. Shared
+  // between burstCtx and similarCtx so it's computed exactly once.
+  const keepEligibleMap = useMemo(() => {
     const eligible: Record<number, boolean> = {};
     if (settings.smartCulling) {
       for (const [idStr, sc] of Object.entries(qualityScores)) {
         eligible[Number(idStr)] = keepEligible(sc, settings.smartCullingConfidence);
       }
     }
-    return groupBursts(images, burstData.inputs, burstData.sharp, eligible);
-  }, [images, burstData, qualityScores, settings.smartCulling, settings.smartCullingConfidence]);
+    return eligible;
+  }, [qualityScores, settings.smartCulling, settings.smartCullingConfidence]);
+  const burstCtx = useMemo(
+    () => groupBursts(images, burstData.inputs, burstData.sharp, keepEligibleMap),
+    [images, burstData, keepEligibleMap],
+  );
+  // Time-local near-duplicate grouping (spec 3c) — unlike bursts this IS a
+  // smart-culling feature (the grouping itself is advisory heuristics, not a
+  // camera-clocked fact), so it stays empty with the feature off.
+  const similarCtx = useMemo(() => {
+    if (!settings.smartCulling) return new Map<number, SimilarCtx>();
+    return groupSimilar(images, qualityScores, burstCtx, burstData.sharp, keepEligibleMap);
+  }, [images, qualityScores, burstCtx, burstData.sharp, settings.smartCulling, keepEligibleMap]);
   // Only frames with an emitted verdict land in the map — the badge/filter
-  // predicate is a simple presence check.
+  // predicate is a simple presence check. Session-capped favorites (spec 3c)
+  // overlay a "favorite" verdict onto the top-N standout-aesthetic keeps.
   const suggestions = useMemo(() => {
     if (!settings.smartCulling) return {};
     const out: Record<number, Suggestion> = {};
     for (const [idStr, s] of Object.entries(qualityScores)) {
       const id = Number(idStr);
-      const sug = deriveVerdict(s, burstCtx.get(id), undefined, settings.smartCullingConfidence);
+      const sug = deriveVerdict(s, burstCtx.get(id), similarCtx.get(id), settings.smartCullingConfidence);
       if (sug.verdict) out[id] = sug;
     }
+    for (const id of capFavorites(qualityScores, out, settings.smartCullingConfidence)) {
+      out[id] = {
+        ...out[id],
+        verdict: "favorite",
+        reasons: ["standout aesthetic", ...out[id].reasons],
+      };
+    }
     return out;
-  }, [qualityScores, burstCtx, settings.smartCulling, settings.smartCullingConfidence]);
+  }, [qualityScores, burstCtx, similarCtx, settings.smartCulling, settings.smartCullingConfidence]);
 
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
