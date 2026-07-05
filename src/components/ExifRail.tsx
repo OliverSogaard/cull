@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
+import type { SimilarCtx } from "../smart/groupSimilar";
 import {
   formatAperture,
   formatExposureBiasShort,
@@ -28,6 +29,7 @@ export function ExifRail({
   cullRating,
   suggestion,
   burst,
+  similar,
 }: {
   metadata: ImageMetadata | undefined;
   histogramUrl: string | undefined;
@@ -38,6 +40,9 @@ export function ExifRail({
   /** Burst membership — shown regardless of rating/verdict, so the analysis
    *  is visible even when it has nothing to suggest. */
   burst?: BurstCtx | null;
+  /** Similar set membership — shown regardless of rating/verdict, so the analysis
+   *  is visible even when it has nothing to suggest. */
+  similar?: SimilarCtx | null;
 }) {
   const meta = metadata ?? null;
   // Frame section
@@ -154,6 +159,17 @@ export function ExifRail({
           <div className="cull-exif-rail__label">Burst</div>
           <div className="cull-exif-rail__rows">
             <RailRow k="Frame" v={`${burst.pos} of ${burst.len}`} />
+          </div>
+        </div>
+      )}
+
+      {/* Similar set membership — its own section: similar sets are a fact
+          about the smart analysis (shown with smart culling off too), not a suggestion. */}
+      {similar && (
+        <div className="cull-exif-rail__section">
+          <div className="cull-exif-rail__label">Similar set</div>
+          <div className="cull-exif-rail__rows">
+            <RailRow k="Frame" v={`${similar.pos} of ${similar.len}`} />
           </div>
         </div>
       )}

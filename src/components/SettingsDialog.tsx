@@ -179,7 +179,7 @@ export function SettingsDialog({
                   </SettingRow>
                   <SettingRow
                     label="Face analysis"
-                    help="On-device face and eye analysis: burst picks favor sharp, open-eyed faces; clear blinks are flagged. Requires an ML-enabled build."
+                    help="Face + eye checks, look-alike grouping, and a few starred picks. Runs fully on this machine."
                   >
                     <Toggle
                       on={settings.smartCullingML}

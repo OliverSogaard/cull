@@ -3229,6 +3229,7 @@ export default function App() {
             cullRating={currentRating}
             suggestion={suggestions[current.id] ?? null}
             burst={burstCtx.get(current.id) ?? null}
+            similar={similarCtx.get(current.id) ?? null}
           />
         )}
         </div>
