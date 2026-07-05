@@ -22,6 +22,20 @@
 
 **`scripts/export-models.py`** (uv-managed, dev-only, never shipped): exports all three from official weights and runs **parity checks** against the PyTorch originals on ≥5 real corpus previews — cosine ≥ 0.999 for embeddings, |Δ| < 0.05 for the aesthetic score — before anything is committed. Pinned sha256s recorded here and asserted by the corpus smoke test (same contract style as YuNet/OCEC).
 
+**Export record (filled at export time):** run against 14 real preview JPEGs extracted from `sample_cr3s/` via `exiftool -b -PreviewImage` (5 sampled per model, per the script's `sample_images(n=5)`), 2026-07-05.
+
+| File | Size | sha256 | Parity |
+|---|---|---|---|
+| `dinov2s.onnx` | 43,372,690 bytes (~41.4 MiB) | `bc2bbab71ee5fceee6220cc6efd56177b96f6b9ba93860f3508a2de2ba49afb2` | worst-cosine = 0.99999 (gate ≥ 0.999) |
+| `clip_vitb32_visual.onnx` | 175,903,114 bytes (~167.7 MiB) | `92ee3ff3cf2333bd927d94a5bf2a79a08e24ae2c5162c8f35be5bd24038d322c` | worst-cosine = 1.00000 (gate ≥ 0.999) |
+| `laion_aesthetic.onnx` | 2,275 bytes | `a6f75f3efc309de7e5ad50761e8fea15415a44c929df0e188b8a8c5c053479d4` | worst-delta = 0.00000 (gate < 0.05); raw scores sampled 3.81/4.01/3.85/3.81/3.92 |
+
+Both DINOv2 and CLIP export as fp16 with fp32 I/O (`keep_io_types=True`); the LAION head is fp32 (tiny `nn.Linear(512,1)`, no benefit to fp16). All three graphs' input/output names, shapes, and dtypes were verified against the fixed contracts above (`pixel_values`/`embedding` f32, `[1,3,224,224]`/`[1,512]` in, `last_hidden_state [1,257,384]`/`embedding [1,512]`/`score [1,1]` out).
+
+**Two export-script adaptations were required beyond the brief's starting point** (both documented inline in `scripts/export-models.py`):
+1. `onnxconverter_common`'s `keep_io_types=True` fp16 conversion left several float32/float16 node-input type mismatches unresolved (e.g. the fp32 graph input wired directly into a Conv whose weights had converted to fp16; a Concat rejoining a fp32-kept Resize subgraph with an fp16 initializer) — onnxruntime rejected these at load. Added a generic post-conversion type-harmonizer pass (`harmonize_fp16_types`) that walks the topologically-ordered graph once, tracks each tensor's known element type, and inserts a `Cast(FLOAT→FLOAT16)` wherever a node mixes the two — plus drops now-stale `value_info` dtype annotations that no longer match post-conversion reality.
+2. DINOv2-small's pretrained position embeddings are for a 518×518 (37×37-patch) grid, so for our fixed 224×224 (16×16-patch) contract, `transformers`'s DINOv2 implementation always traces a dynamic bicubic-interpolation subgraph — which hit a real onnxruntime CPU `Resize` kernel limitation (`ScalesValidation` rejects the dynamically-computed scale factors), independent of fp16. Since that interpolation depends only on the fixed target height/width and the frozen `position_embeddings` parameter (never on image content), it was precomputed once and monkey-patched in as a graph constant (`freeze_dinov2_pos_encoding`) — bit-exact vs. the reference model, which recomputes the same content-independent value on every call.
+
 **Repo mechanics:** GitHub rejects >100 MB plain files. `dinov2s.onnx` and the LAION head commit normally to `src-tauri/models/`; the CLIP tower lives as an asset on a **`models-v1` GitHub release** and is pulled by **`scripts/fetch-models.sh`** (sha256-pinned) into `src-tauri/models/` (gitignored there). Run once per dev machine; `release.yml` runs it on both runners before `tauri build`, so the installer bundles everything (existing `bundle.resources: ["models/*"]` picks it up unchanged). `smart-ml` builds fail with a clear "run scripts/fetch-models.sh" message when the file is missing. Git LFS rejected: bandwidth quota bites every CI run.
 
 ## Backend (Rust)
