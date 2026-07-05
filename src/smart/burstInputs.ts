@@ -26,10 +26,15 @@ export function buildBurstInputs(
         hasSubSec: s.subSecMs != null,
         mtimeMs: s.mtimeMs,
       };
+      const primary = s.faces.reduce(
+        (best, f) => (f.bbox[2] * f.bbox[3] > (best?.bbox[2] ?? 0) * (best?.bbox[3] ?? 0) ? f : best),
+        null as (typeof s.faces)[number] | null,
+      );
       sharp[img.id] = {
         afSharpness: s.afSharpness,
         globalSharpness: s.globalSharpness,
         clipSum: s.blownPct + s.crushedPct,
+        faceSharpness: primary ? primary.faceSharpness : null,
       };
       continue;
     }

@@ -104,6 +104,16 @@ export function SettingsDialog({
                   />
                 </SettingRow>
                 <SettingRow
+                  label="Face analysis"
+                  help="Detects faces locally (YuNet, on-device ONNX) so burst winners favor the sharpest FACE over the sharpest focus area. Requires an ML-enabled build; otherwise the switch is inert. Eye-state and aesthetic scoring come later."
+                >
+                  <Chip
+                    label="Faces"
+                    on={settings.smartCullingML}
+                    onChange={(v) => set("smartCullingML", v)}
+                  />
+                </SettingRow>
+                <SettingRow
                   label="Analyze on open"
                   help="Start the analysis pass automatically when a folder opens (it always yields to your navigation). Off: press 5 or the Sugg tab to analyze on demand."
                 >

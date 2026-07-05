@@ -24,6 +24,9 @@ export type SharpInput = {
   globalSharpness: number;
   /** blownPct + crushedPct (winner tiebreak: lowest clipping). */
   clipSum: number;
+  /** Primary (largest) face's sharpness, when Tier-2 detected faces — for
+   *  people shots the sharpest FACE outranks the sharpest AF crop. */
+  faceSharpness: number | null;
 };
 
 /** Burst membership + (when every member is scored) winner context. */
@@ -46,6 +49,11 @@ export const CAPTURED_COARSE_GUARD_MS = 2000;
 
 /** Strict "a beats b" for winner selection (ties fall through → earliest wins). */
 function beats(a: SharpInput, b: SharpInput): boolean {
+  // Tier-2: when BOTH frames carry a face, the sharper face wins outright —
+  // a portrait burst's keeper is the one where the SUBJECT is sharp.
+  if (a.faceSharpness != null && b.faceSharpness != null && a.faceSharpness !== b.faceSharpness) {
+    return a.faceSharpness > b.faceSharpness;
+  }
   if (a.afSharpness !== b.afSharpness) return a.afSharpness > b.afSharpness;
   if (a.globalSharpness !== b.globalSharpness) return a.globalSharpness > b.globalSharpness;
   return a.clipSum < b.clipSum;

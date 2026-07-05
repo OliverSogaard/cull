@@ -45,6 +45,10 @@ macro_rules! dlog {
 }
 
 mod analyze;
+// Without smart-ml only the (always-compiled, always-tested) pure decode math
+// is present — no callers, by design. Never dead in feature builds.
+#[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
+mod faces;
 mod bundle;
 mod cr3;
 mod file_ops;
@@ -67,6 +71,16 @@ pub fn run() {
             app.manage(std::sync::Arc::new(io_gate::IoGate::new()));
             app.manage(std::sync::Arc::new(io_gate::SessionGate::new()));
             app.manage(std::sync::Arc::new(midtier::MidGen::new()));
+
+            // Phase 3a (smart-ml builds only): hand the YuNet model path to
+            // the lazy detector — session creation itself waits for first use.
+            #[cfg(feature = "smart-ml")]
+            if let Ok(p) = app.path().resolve(
+                "models/face_detection_yunet_2023mar.onnx",
+                tauri::path::BaseDirectory::Resource,
+            ) {
+                faces::init_detector(p);
+            }
             // One-time cleanup of the v1 thumbnail cache (format v2 lives under
             // tiers/): without this, up to 500 MB of dead v1 files sit in
             // app-cache forever. Best-effort and detached — it's a local-disk

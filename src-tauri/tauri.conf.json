@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "resources": ["models/*"],
     "targets": ["nsis", "msi", "app", "dmg"],
     "publisher": "Olive",
     "copyright": "© 2026 Olive",

@@ -68,6 +68,7 @@ export function coerceSettings(raw: unknown): Settings {
         ? p.smartCullingConfidence
         : d.smartCullingConfidence,
     smartCullingOnOpen: bool(p.smartCullingOnOpen, d.smartCullingOnOpen),
+    smartCullingML: bool(p.smartCullingML, d.smartCullingML),
   };
 }
 

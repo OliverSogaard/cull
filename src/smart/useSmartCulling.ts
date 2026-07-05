@@ -28,6 +28,8 @@ export function useSmartCulling(opts: {
   autoStart: boolean;
   /** phase === "culling" */
   active: boolean;
+  /** Tier-2 face analysis flag — forwarded to the backend per chunk. */
+  ml: boolean;
   /** The frozen post-beginCulling array — its identity IS the session key. */
   images: readonly Img[];
   storageMode: StorageMode;
@@ -37,7 +39,7 @@ export function useSmartCulling(opts: {
   progress: { done: number; total: number } | null;
   startAnalysis: () => void;
 } {
-  const { enabled, autoStart, active, images, storageMode } = opts;
+  const { enabled, autoStart, active, ml, images, storageMode } = opts;
   const [scores, setScores] = useState<Record<number, ImageScore>>({});
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -78,7 +80,7 @@ export function useSmartCulling(opts: {
       gen,
       {
         invokeChunk: (paths, chunkStart, g) =>
-          invoke<ImageScore[]>("analyze_quality", { paths, chunkStart, gen: g }),
+          invoke<ImageScore[]>("analyze_quality", { paths, chunkStart, gen: g, ml }),
         getGeneration: () => imageStore.getGeneration(),
         isBusyLoading: () => imageStore.isBusyLoading(),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -108,7 +110,7 @@ export function useSmartCulling(opts: {
       runningRef.current = false;
       setAnalyzing(false);
     });
-  }, [images, storageMode]);
+  }, [images, storageMode, ml]);
 
   // Auto-start, once per staged set, after the first screenful settles.
   useEffect(() => {

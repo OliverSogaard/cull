@@ -17,6 +17,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 # Re-enables dlog! diagnostics in release builds (debug builds always log).
 verbose-logs = []
+# Smart-culling Tier-2 (Phase 3a): YuNet face detection via ONNX Runtime.
+# The ONE native (non-pure-Rust) dependency in the backend — sanctioned by
+# SMART_CULLING_PLAN for Tier-2 only, and only behind this flag: default
+# builds compile without onnxruntime entirely (faces stay empty on the wire).
+smart-ml = ["dep:ort"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -66,3 +71,11 @@ lto = true
 codegen-units = 1
 strip = true
 
+
+# smart-ml: ONNX Runtime bindings, pinned to the rc (production-ready, API not
+# yet stable — pin exactly). EP per platform: CoreML / DirectML, CPU fallback.
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "=2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "copy-dylibs", "coreml"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+ort = { version = "=2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "copy-dylibs", "directml"] }

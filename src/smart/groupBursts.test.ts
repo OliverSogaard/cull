@@ -18,7 +18,7 @@ function input(i: number, over: Partial<BurstInput> = {}): BurstInput {
 }
 
 function sharpOf(afSharpness: number, over: Partial<SharpInput> = {}): SharpInput {
-  return { afSharpness, globalSharpness: 0.5, clipSum: 0.005, ...over };
+  return { afSharpness, globalSharpness: 0.5, clipSum: 0.005, faceSharpness: null, ...over };
 }
 
 describe("groupBursts", () => {
@@ -141,6 +141,26 @@ describe("groupBursts", () => {
     expect(ctx.get(4)!.len).toBe(2);
   });
 
+  test("a sharper FACE beats a sharper AF crop when both frames carry faces (Tier-2)", () => {
+    const images = [img(1), img(2)];
+    const inputs = { 1: input(0), 2: input(1) };
+    const sharp = {
+      1: sharpOf(0.7, { faceSharpness: 0.3 }),
+      2: sharpOf(0.5, { faceSharpness: 0.6 }), // softer AF crop, sharper face -> wins
+    };
+    expect(groupBursts(images, inputs, sharp).get(2)!.isWinner).toBe(true);
+  });
+
+  test("face tiebreak needs faces on BOTH sides - one-sided falls back to AF sharpness", () => {
+    const images = [img(1), img(2)];
+    const inputs = { 1: input(0), 2: input(1) };
+    const sharp = {
+      1: sharpOf(0.7, { faceSharpness: null }),
+      2: sharpOf(0.5, { faceSharpness: 0.9 }),
+    };
+    expect(groupBursts(images, inputs, sharp).get(1)!.isWinner).toBe(true);
+  });
+
   test("winner tiebreak: afSharpness, then globalSharpness, then lowest clipping, then earliest", () => {
     const images = [img(1), img(2), img(3)];
     const inputs = { 1: input(0), 2: input(1), 3: input(2) };
@@ -189,6 +209,21 @@ describe("buildBurstInputs", () => {
     expect(inputs[2].driveMode).toBe(8);
     expect(inputs[2].hasSubSec).toBe(true);
     expect(sharp[2]).toBeUndefined(); // no score → no winner input
+    expect(sharp[1].faceSharpness).toBeNull(); // no faces on this score
+  });
+
+  test("primary face = largest bbox; its sharpness feeds the tiebreak", () => {
+    const images = [img(1)];
+    const scores = {
+      1: score({
+        faces: [
+          { bbox: [0.1, 0.1, 0.1, 0.1], eyesOpen: -1, faceSharpness: 0.9 },
+          { bbox: [0.3, 0.3, 0.4, 0.4], eyesOpen: -1, faceSharpness: 0.4 }, // largest
+        ],
+      }),
+    };
+    const { sharp } = buildBurstInputs(images, scores, {});
+    expect(sharp[1].faceSharpness).toBeCloseTo(0.4, 5);
   });
 
   test("a decode-failed score falls back to metadata rather than lying", () => {

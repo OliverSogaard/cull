@@ -400,6 +400,9 @@ pub(crate) fn score_chunk(
     chunk_start: usize,
     fetch: &dyn Fn(&str) -> Result<DecodedInput, String>,
     cancelled: &dyn Fn() -> bool,
+    // Tier-2 enrichment (faces today): runs on every successfully decoded
+    // frame with the input still in hand — a no-op closure when ML is off.
+    enrich: &dyn Fn(&DecodedInput, &mut ImageScore),
 ) -> Result<Vec<ImageScore>, String> {
     let mut out = Vec::with_capacity(paths.len());
     for (i, path) in paths.iter().enumerate() {
@@ -408,7 +411,11 @@ pub(crate) fn score_chunk(
         }
         let index = chunk_start + i;
         match fetch(path) {
-            Ok(input) => out.push(score_one(&input, index)),
+            Ok(input) => {
+                let mut score = score_one(&input, index);
+                enrich(&input, &mut score);
+                out.push(score);
+            }
             Err(_) => out.push(ImageScore { index, decode_ok: false, ..ImageScore::default() }),
         }
     }
@@ -431,6 +438,7 @@ pub(crate) async fn analyze_quality(
     paths: Vec<String>,
     chunk_start: usize,
     gen: u64,
+    ml: Option<bool>,
     gate: State<'_, Arc<IoGate>>,
     session: State<'_, Arc<SessionGate>>,
     cache: State<'_, Arc<TierCache>>,
@@ -438,15 +446,71 @@ pub(crate) async fn analyze_quality(
     let session = Arc::clone(&session);
     let cache = Arc::clone(&cache);
     let label = format!("analyze_quality({} files @ {chunk_start})", paths.len());
+    // Tier-2 opt-in: face detection runs only when the frontend asks AND the
+    // build carries the smart-ml feature — otherwise `faces` stays empty on
+    // the wire and the flag is silently inert (older/lean builds degrade to
+    // Tier-1 with no error surface).
+    let want_ml = ml.unwrap_or(false);
     bundle::gated(&gate, Tier::Full, label, move || {
         score_chunk(
             &paths,
             chunk_start,
             &|p| bundle::fetch_decoded_preview(p, gen, &session, &cache),
             &|| session.is_cancelled(gen),
+            &|input, score| {
+                #[cfg(feature = "smart-ml")]
+                if want_ml {
+                    attach_faces(input, score);
+                }
+                #[cfg(not(feature = "smart-ml"))]
+                let _ = (input, score, want_ml);
+            },
         )
     })
     .await
+}
+
+/// Run YuNet on the decoded preview and attach per-face metrics. Face
+/// sharpness reuses the Tier-1 machinery: variance-of-Laplacian over the face
+/// rect, normalized against the frame's already-computed noise floor — so face
+/// and AF sharpness are directly comparable (the TS burst tiebreak relies on
+/// that). `eyes_open` is the Phase-3b sentinel (-1 = unknown, no eye model yet).
+#[cfg(feature = "smart-ml")]
+fn attach_faces(input: &DecodedInput, score: &mut ImageScore) {
+    if !score.decode_ok {
+        return;
+    }
+    let dets = crate::faces::detect_faces(&input.rgb, input.w, input.h);
+    if dets.is_empty() {
+        return;
+    }
+    let luma = luma_of(&input.rgb);
+    let (w, h) = (input.w, input.h);
+    score.faces = dets
+        .iter()
+        .map(|d| {
+            let rect = Rect {
+                x0: d.x.max(0.0) as usize,
+                y0: d.y.max(0.0) as usize,
+                x1: ((d.x + d.w) as usize).min(w),
+                y1: ((d.y + d.h) as usize).min(h),
+            };
+            let sharp = normalize_sharpness(
+                var_laplacian(&luma, w, h, rect),
+                score.noise_floor as f64,
+            );
+            FaceScore {
+                bbox: [
+                    d.x / w as f32,
+                    d.y / h as f32,
+                    d.w / w as f32,
+                    d.h / h as f32,
+                ],
+                eyes_open: -1.0,
+                face_sharpness: sharp,
+            }
+        })
+        .collect();
 }
 
 #[cfg(test)]
@@ -801,7 +865,7 @@ mod tests {
         let fetch =
             |p: &str| crate::bundle::fetch_decoded_preview(p, 1, &session, &cache);
 
-        let scores = score_chunk(&paths, 0, &fetch, &|| false).expect("cold chunk");
+        let scores = score_chunk(&paths, 0, &fetch, &|| false, &|_, _| {}).expect("cold chunk");
         for s in &scores {
             assert!(s.decode_ok, "corpus file must decode");
             assert!(s.mtime_ms > 0, "mtime echoed for TS grouping");
@@ -817,7 +881,7 @@ mod tests {
         }
         // Run 2 must serve from the prvw cache — the stored wire header carries
         // the full metadata, so scores must be IDENTICAL, not merely close.
-        let scores2 = score_chunk(&paths, 0, &fetch, &|| false).expect("cached chunk");
+        let scores2 = score_chunk(&paths, 0, &fetch, &|| false, &|_, _| {}).expect("cached chunk");
         for (a, b) in scores.iter().zip(&scores2) {
             assert_eq!(a.iso, b.iso, "meta survives the cache round-trip");
             assert_eq!(a.sub_sec_ms, b.sub_sec_ms);
@@ -861,7 +925,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("cull-calib-{}", std::process::id()));
         let cache = crate::tier_cache::TierCache::new(tmp.clone());
         let fetch = |p: &str| crate::bundle::fetch_decoded_preview(p, 1, &session, &cache);
-        let scores = score_chunk(&paths, 0, &fetch, &|| false).expect("calibration chunk");
+        let scores = score_chunk(&paths, 0, &fetch, &|| false, &|_, _| {}).expect("calibration chunk");
 
         // Confusion counts: [suggested-reject][user-kept] etc.
         let (mut hit, mut false_rej, mut miss, mut quiet, mut unlabeled) = (0, 0, 0, 0, 0);
@@ -914,7 +978,7 @@ mod tests {
     #[test]
     fn score_chunk_assigns_absolute_indices() {
         let paths: Vec<String> = (0..3).map(|i| format!("p{i}.CR3")).collect();
-        let scores = score_chunk(&paths, 40, &ok_fetch(64, 48), &|| false).expect("chunk ok");
+        let scores = score_chunk(&paths, 40, &ok_fetch(64, 48), &|| false, &|_, _| {}).expect("chunk ok");
         let idx: Vec<usize> = scores.iter().map(|s| s.index).collect();
         assert_eq!(idx, vec![40, 41, 42], "index = chunk_start + offset");
     }
@@ -930,7 +994,7 @@ mod tests {
         // Cancel flips true after the first file completes.
         let cancelled = || fetches.get() >= 1;
 
-        let err = score_chunk(&paths, 0, &fetch, &cancelled).expect_err("must cancel");
+        let err = score_chunk(&paths, 0, &fetch, &cancelled, &|_, _| {}).expect_err("must cancel");
         assert!(err.contains("cancelled"), "cancel error, got {err}");
         assert!(
             fetches.get() <= 2,
@@ -950,7 +1014,7 @@ mod tests {
             Ok(input_from_luma(checkerboard(64, 48), 64, 48))
         };
         let cancelled = || fetches.get() >= 3; // flips true mid-final-file
-        let err = score_chunk(&paths, 0, &fetch, &cancelled).expect_err("stale chunk rejected");
+        let err = score_chunk(&paths, 0, &fetch, &cancelled, &|_, _| {}).expect_err("stale chunk rejected");
         assert!(err.contains("cancelled"));
     }
 
@@ -964,7 +1028,7 @@ mod tests {
                 Ok(input_from_luma(checkerboard(64, 48), 64, 48))
             }
         };
-        let scores = score_chunk(&paths, 10, &fetch, &|| false).expect("chunk survives");
+        let scores = score_chunk(&paths, 10, &fetch, &|| false, &|_, _| {}).expect("chunk survives");
         assert_eq!(scores.len(), 3, "failed file still yields a score");
         assert!(scores[0].decode_ok && scores[2].decode_ok);
         assert!(!scores[1].decode_ok, "p1 marked decode_ok=false");

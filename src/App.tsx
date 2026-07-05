@@ -173,6 +173,7 @@ export default function App() {
   } = useSmartCulling({
     enabled: settings.smartCulling,
     autoStart: settings.smartCullingOnOpen,
+    ml: settings.smartCullingML,
     active: phase === "culling",
     images,
     storageMode: settings.storageMode,

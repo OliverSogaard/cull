@@ -82,6 +82,9 @@ export type Settings = {
   smartCullingConfidence: SmartLevel;
   /** Analyze automatically when a folder opens (off → manual Analyze button). */
   smartCullingOnOpen: boolean;
+  /** Tier-2 face analysis (local YuNet ONNX; smart-ml builds only). Default
+   *  off — the flag is inert on builds without the model runtime. */
+  smartCullingML: boolean;
 };
 
 /** Mirror of `src/smart/deriveVerdict.ts`'s SmartLevel (kept here so settings
@@ -108,6 +111,7 @@ export const DEFAULT_SETTINGS: Settings = {
   smartCulling: true,
   smartCullingConfidence: "medium",
   smartCullingOnOpen: true,
+  smartCullingML: false,
 };
 
 /** localStorage key. Bump only with a migration (read old key → transform →
