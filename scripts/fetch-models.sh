@@ -14,6 +14,10 @@ if have_sha; then
   echo "$FILE already present and verified"
   exit 0
 fi
+
+cleanup_tmp() { rm -f "$FILE.tmp"; }
+trap cleanup_tmp EXIT
+
 echo "downloading $FILE ..."
 curl -fL --retry 3 -o "$FILE.tmp" "$URL"
 echo "$CLIP_SHA  $FILE.tmp" | shasum -a 256 -c -

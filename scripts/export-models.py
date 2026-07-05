@@ -48,6 +48,19 @@ _NONFLOAT_NODE_OUTPUTS = {
     "LessOrEqual": 9, "And": 9, "Or": 9, "Not": 9,
 }
 
+# Ops whose outputs are heterogeneous in type -- NOT every output shares the
+# node's float-domain type. Each entry is a list of per-output overrides in
+# ONNX output order; `None` in a slot means "use the node's derived float
+# out_type" (the primary, data-carrying output). A concrete TensorProto code
+# means that output is fixed and must never be blanket-assigned the node's
+# harmonized float type. Any multi-output op NOT listed here raises instead
+# of being silently (and possibly wrongly) mistyped -- see the hard guard
+# below.
+_MULTI_OUTPUT_FIXED_TYPES = {
+    "Dropout": [None, 9],  # [output: same dtype as input], mask: BOOL
+    "TopK": [None, 7],     # [Values: same dtype as input], Indices: INT64
+}
+
 def harmonize_fp16_types(model):
     """Fix mismatched float32/float16 node inputs left by onnxconverter_common.
 
@@ -66,6 +79,20 @@ def harmonize_fp16_types(model):
     known element type and inserts a Cast(FLOAT->FLOAT16) wherever a node
     mixes FLOAT and FLOAT16 inputs is sufficient to resolve every such
     mismatch.
+
+    IMPORTANT -- this deliberately overrides onnxconverter_common's intent.
+    `convert_float_to_float16(..., keep_io_types=True)` leaves certain
+    subgraphs in float32 ON PURPOSE (e.g. the Resize/bicubic path), precisely
+    to preserve numerical precision where it judged fp16 unsafe. This pass
+    downcasts those tensors to float16 anyway at every mixed-type boundary,
+    which is a real loss of the precision onnxconverter_common intentionally
+    preserved. That tradeoff is accepted ONLY because the consuming contract
+    here is coarse: cosine-similarity comparisons at ~0.92 granularity
+    (embedding similarity) and aesthetic score deltas of |delta| < 0.05 --
+    both gated by this same script's parity checks before export succeeds.
+    This is NOT a general-purpose harmonizer; do not reuse it on a graph
+    whose consumer needs float32-grade precision without re-validating that
+    the parity gates it relies on still make sense for that use case.
     """
     from onnx import TensorProto, helper
     FLOAT, FLOAT16 = TensorProto.FLOAT, TensorProto.FLOAT16
@@ -82,6 +109,18 @@ def harmonize_fp16_types(model):
     cast_cache = {}
     for n in g.node:
         in_types = [(inp, type_of.get(inp)) for inp in n.input if inp != ""]
+
+        if len(n.output) > 1 and n.op_type not in _MULTI_OUTPUT_FIXED_TYPES:
+            raise RuntimeError(
+                f"harmonize_fp16_types: unhandled heterogeneous-output op "
+                f"'{n.op_type}' ({n.name or '<unnamed>'}) with "
+                f"{len(n.output)} outputs. Blanket-assigning this node's "
+                f"float out_type to every output would silently mistype "
+                f"non-float outputs (e.g. Dropout's mask, TopK's indices). "
+                f"Add '{n.op_type}' to _MULTI_OUTPUT_FIXED_TYPES with each "
+                f"output's true type before exporting a graph containing it."
+            )
+
         if n.op_type == "Cast":
             out_type = next(a.i for a in n.attribute if a.name == "to")
         elif n.op_type == "Constant":
@@ -112,9 +151,16 @@ def harmonize_fp16_types(model):
                 out_type = FLOAT16
             else:
                 out_type = next((t for _, t in in_types if t is not None), None)
-        for o in n.output:
-            if out_type is not None:
-                type_of[o] = out_type
+
+        if n.op_type in _MULTI_OUTPUT_FIXED_TYPES:
+            fixed = _MULTI_OUTPUT_FIXED_TYPES[n.op_type]
+            for idx, o in enumerate(n.output):
+                fixed_t = fixed[idx] if idx < len(fixed) else None
+                type_of[o] = fixed_t if fixed_t is not None else out_type
+        else:
+            for o in n.output:
+                if out_type is not None:
+                    type_of[o] = out_type
         new_nodes.append(n)
     del g.node[:]
     g.node.extend(new_nodes)
@@ -176,8 +222,37 @@ def freeze_dinov2_pos_encoding(model):
 def export_dinov2(imgs):
     from transformers import AutoModel
     model = AutoModel.from_pretrained("facebook/dinov2-small").eval()
-    freeze_dinov2_pos_encoding(model)
     mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+
+    # Compute references from the TRUE UNPATCHED model first. Doing this
+    # after freeze_dinov2_pos_encoding() would make the parity check
+    # circular -- it would only prove ONNX ~= patched-model, never ONNX ~=
+    # the real pretrained original, since both sides of the comparison
+    # would share the same monkey-patched interpolate_pos_encoding.
+    pre_patch_refs = []
+    for img in imgs:
+        x = to_tensor(img, mean, std)
+        with torch.no_grad():
+            pre_patch_refs.append(model(pixel_values=x).last_hidden_state[0, 0].numpy())
+
+    freeze_dinov2_pos_encoding(model)
+
+    # Sanity-check the patch itself: it must reproduce the unpatched model's
+    # output on every sample before we trust it as the export source. This
+    # is the guard that makes the freeze safe to rely on -- if a future
+    # transformers version changes interpolate_pos_encoding's semantics,
+    # this fails loudly instead of silently shipping a diverged graph.
+    patch_worst = 1.0
+    for img, pre_ref in zip(imgs, pre_patch_refs):
+        x = to_tensor(img, mean, std)
+        with torch.no_grad():
+            post_ref = model(pixel_values=x).last_hidden_state[0, 0].numpy()
+        patch_worst = min(patch_worst, cosine(pre_ref, post_ref))
+    assert patch_worst >= 0.99999, (
+        f"freeze_dinov2_pos_encoding DIVERGED from the unpatched model: "
+        f"worst cosine {patch_worst} (expected >= 0.99999 -- bit-exact)"
+    )
+
     path = OUT / "dinov2s.onnx"
     ex = to_tensor(imgs[0], mean, std)
     torch.onnx.export(
@@ -187,13 +262,14 @@ def export_dinov2(imgs):
     )
     fp16_convert(path)
     sess = ort.InferenceSession(str(path))
+
+    # Parity gate against the PRE-PATCH references (the true original),
+    # never against the patched model's own output.
     worst = 1.0
-    for img in imgs:
+    for img, pre_ref in zip(imgs, pre_patch_refs):
         x = to_tensor(img, mean, std)
-        with torch.no_grad():
-            ref = model(pixel_values=x).last_hidden_state[0, 0].numpy()  # CLS token
         out = sess.run(None, {"pixel_values": x.numpy()})[0][0, 0]
-        worst = min(worst, cosine(ref, out))
+        worst = min(worst, cosine(pre_ref, out))
     assert worst >= 0.999, f"DINOv2 parity FAILED: worst cosine {worst}"
     print(f"dinov2s.onnx  OK  worst-cosine={worst:.5f}  sha256={sha256(path)}")
 
@@ -232,7 +308,9 @@ def export_laion_head(clip_embeds):
            "sa_0_4_vit_b_32_linear.pth")
     w = Path("/tmp/laion_vitb32_head.pth")
     if not w.exists():
-        w.write_bytes(requests.get(url, timeout=60).content)
+        resp = requests.get(url, timeout=60)
+        resp.raise_for_status()
+        w.write_bytes(resp.content)
     head = torch.nn.Linear(512, 1)
     head.load_state_dict(torch.load(w, map_location="cpu", weights_only=True))
     head = head.eval()
