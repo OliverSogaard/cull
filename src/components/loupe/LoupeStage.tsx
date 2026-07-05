@@ -26,7 +26,6 @@ type LoupeStageProps = {
   shimmerDelayMs: number;
   /** Hi-res zoom layer inputs (App's settle flag + measured geometry). */
   hiRes: boolean;
-  clippingVisible: boolean;
   hasImgRect: boolean;
   zoomNative: ImageDims | null | undefined;
   hiResTx: number;
@@ -64,7 +63,6 @@ export const LoupeStage = memo(function LoupeStage({
   frameDims,
   shimmerDelayMs,
   hiRes,
-  clippingVisible,
   hasImgRect,
   zoomNative,
   hiResTx,
@@ -120,8 +118,12 @@ export const LoupeStage = memo(function LoupeStage({
   // NEVER while dims are unknown: the frame is then the neutral-square
   // fallback, the base image letterboxes inside it, and this layer's
   // top-left-anchored transform (which assumes matte AR == image AR) would
-  // paint a misaligned second copy over it.
-  const hiResWanted = (hiRes || isZooming) && !clippingVisible && dimsKnown;
+  // paint a misaligned second copy over it. The clip/peak masks paint ABOVE
+  // this layer (z-index 4/5 vs 3) and stretch over the same displayed area,
+  // so overlays and the sharp raster coexist — the old !clippingVisible gate
+  // silently degraded the settled view to the preview and left the zoom
+  // spinner waiting forever whenever highlights were on.
+  const hiResWanted = (hiRes || isZooming) && dimsKnown;
 
   return (
     <>

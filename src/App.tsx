@@ -3092,7 +3092,6 @@ export default function App() {
                   frameDims={frameDims}
                   shimmerDelayMs={loupeShimmerDelay}
                   hiRes={hiRes}
-                  clippingVisible={clippingVisible}
                   hasImgRect={!!imgRect}
                   zoomNative={zoomNative}
                   hiResTx={hiResTx}
