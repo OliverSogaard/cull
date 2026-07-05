@@ -54,6 +54,10 @@ export const FADE_MS = 140;
  *  (single-step nav onto a frame whose read-ahead hadn't finished) never
  *  happens. Cold starts (nothing fronting) skip it: blur beats shimmer. */
 export const THUMB_HOLDOFF_MS = 160;
+/** Navs arriving closer together than this are key-repeat stepping — the
+ *  user is flying, so the blurred thumb presents immediately (holding the
+ *  old sharp frame 160ms per step would make scrub start feel stuck). */
+export const RAPID_NAV_MS = 260;
 
 export type PresentLayer = "A" | "B";
 
@@ -97,6 +101,10 @@ export class Presenter {
   private scrubbing = false;
   private currentPath: string | null = null;
   private navAt = 0;
+  private lastNavAt: number | null = null;
+  /** True when the latest nav arrived within RAPID_NAV_MS of the previous —
+   *  key-repeat stepping (scrub-like even before the scrub flag engages). */
+  private rapidNav = false;
   /** Tier rank of the decode currently owning the shared back element (and a
    *  sequence to survive ownership clobbering) — a post-hold-off thumb must
    *  never set src over an in-flight higher-tier decode. */
@@ -141,7 +149,10 @@ export class Presenter {
   nav(path: string): void {
     this.navToken++;
     this.currentPath = path;
-    this.navAt = this.deps.now();
+    const now = this.deps.now();
+    this.rapidNav = this.lastNavAt !== null && now - this.lastNavAt < RAPID_NAV_MS;
+    this.lastNavAt = now;
+    this.navAt = now;
     this.notify();
   }
 
@@ -181,7 +192,7 @@ export class Presenter {
     // Thumb hold-off (settled navs, another frame fronting): give higher
     // tiers THUMB_HOLDOFF_MS to present before blur may mount. Scrub mode is
     // exempt — there the blurred thumb IS the designed fallback per step.
-    if (!this.scrubbing && tier === "thumb") {
+    if (!this.scrubbing && !this.rapidNav && tier === "thumb") {
       const front = this.layers[this.frontLayer];
       if (front.url !== null && front.path !== path) {
         await this.deps.sleep(THUMB_HOLDOFF_MS);

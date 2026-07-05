@@ -402,6 +402,7 @@ describe("thumb hold-off (settled nav)", () => {
     await flush();
     h.pending[0].resolve();
     await prv;
+    h.advance(1000); // settle: the next nav is a deliberate step, not key-repeat
     return h;
   }
 
@@ -456,6 +457,27 @@ describe("thumb hold-off (settled nav)", () => {
     h.pending[1].resolve();
     expect(await prv).toBe(true);
     expect(h.p.snapshot().front).toMatchObject({ path: "/b", tier: "preview" });
+  });
+
+  it("rapid successive navs (key-repeat stepping) skip the hold-off — blur presents immediately", async () => {
+    const h = await frontedOnA();
+    h.p.nav("/b");
+    h.advance(80); // second step arrives 80ms later — faster than any deliberate tap
+    h.p.nav("/c");
+    void h.p.offer("/c", "thumb", "blob:tc");
+    await flush();
+    expect(h.sleepCount()).toBe(0); // no hold-off
+    expect(h.pending).toHaveLength(2); // thumb decode started immediately
+  });
+
+  it("a slow second nav keeps the hold-off", async () => {
+    const h = await frontedOnA();
+    h.p.nav("/b");
+    h.advance(1000);
+    h.p.nav("/c");
+    void h.p.offer("/c", "thumb", "blob:tc");
+    await flush();
+    expect(h.sleepCount()).toBe(1); // held off as usual
   });
 
   it("a nav during the hold-off drops the stale thumb", async () => {
