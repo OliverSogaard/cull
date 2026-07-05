@@ -833,6 +833,27 @@ body,
   justify-content: center;
   gap: 20px;
   padding: 80px 60px;
+  /* The backdrop texture's z-index:-1 must resolve against THIS box, not
+     escape behind the app background. */
+  isolation: isolate;
+}
+
+/* Meadow backdrop — every pre-cull phase (home / loading / analyzing /
+   staged) sits on a faint monochrome landscape; the cull views never render
+   .cull-chrome so the working surfaces stay pure. Shipped grayscale + heavily
+   dimmed so it reads as texture under var(--bg), never as a photo, and
+   vignetted so it dissolves into the background at the edges. */
+.cull-chrome::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url("./assets/backdrop.jpg") center / cover no-repeat;
+  filter: grayscale(1) brightness(0.85) contrast(1.05);
+  opacity: 0.11;
+  -webkit-mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
 }
 
 /* While a folder is being dragged over the window, dim the chrome content
