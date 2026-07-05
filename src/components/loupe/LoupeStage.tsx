@@ -9,9 +9,9 @@ import { sizerSrc } from "../../utils/sizer";
 import { HiResLayer } from "./HiResLayer";
 import { PresentLayers } from "./PresentLayers";
 
-/** How long after unzoom starts before the settle-time hi-res layer may
- *  return — the 200ms zoom transition plus slack. */
-const UNZOOM_RETREAT_MS = 240;
+/** How long after a zoom transition starts (either direction) before the
+ *  hi-res layer may (re)appear — the 200ms transform glide plus slack. */
+const ZOOM_TRANSITION_MS = 240;
 
 type LoupeStageProps = {
   /** Current frame's path ("" when none). */
@@ -127,34 +127,28 @@ export const LoupeStage = memo(function LoupeStage({
   // so overlays and the sharp raster coexist — the old !clippingVisible gate
   // silently degraded the settled view to the preview and left the zoom
   // spinner waiting forever whenever highlights were on.
-  // Unzoom retreat: the native-size raster must NEVER animate its transform
-  // back to fit — even behind a rectangular clip, transforming a ~32 MP
-  // texture for 200ms stutters. Drop it the moment unzoom starts (the light
-  // preview beneath animates back instead — same recipe as the compare
-  // panes, whose zoom-only hi-res always unmounted at release) and re-reveal
-  // once the transition has settled. `justUnzoomed` covers the flip render
-  // itself (state lands a commit later).
+  // The native-size raster must NEVER transform-animate — even behind a
+  // rectangular clip, gliding a ~32 MP texture for 200ms drops frames (the
+  // unzoom stutter; zoom-in had the same jank reading as a jump-cut). On ANY
+  // zoom flip the layer drops instantly, the light preview carries the
+  // 200ms glide (visually fine in motion), and the sharp layer (re)appears
+  // at its FINAL transform once the transition settles — the compare panes'
+  // recipe. `zoomFlipped` covers the flip render itself (state lands a
+  // commit later).
   const prevZoomingRef = useRef(isZooming);
-  const justUnzoomed = prevZoomingRef.current && !isZooming;
+  const zoomFlipped = prevZoomingRef.current !== isZooming;
   useEffect(() => {
     prevZoomingRef.current = isZooming;
   });
-  const [unzoomSettling, setUnzoomSettling] = useState(false);
-  const everZoomedRef = useRef(false);
+  const [zoomSettling, setZoomSettling] = useState(false);
   useEffect(() => {
-    if (isZooming) {
-      everZoomedRef.current = true;
-      setUnzoomSettling(false);
-      return undefined;
-    }
-    if (!everZoomedRef.current) return undefined;
-    setUnzoomSettling(true);
-    const t = setTimeout(() => setUnzoomSettling(false), UNZOOM_RETREAT_MS);
+    setZoomSettling(true);
+    const t = setTimeout(() => setZoomSettling(false), ZOOM_TRANSITION_MS);
     return () => clearTimeout(t);
   }, [isZooming]);
 
   const hiResWanted =
-    (hiRes || isZooming) && dimsKnown && !justUnzoomed && !unzoomSettling;
+    (hiRes || isZooming) && dimsKnown && !zoomFlipped && !zoomSettling;
 
   return (
     <>
