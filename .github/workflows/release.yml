@@ -31,6 +31,9 @@ jobs:
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
+      - name: Fetch model assets (too large for git)
+        shell: bash
+        run: ./scripts/fetch-models.sh
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

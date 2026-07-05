@@ -973,7 +973,28 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("cull-calib-{}", std::process::id()));
         let cache = crate::tier_cache::TierCache::new(tmp.clone());
         let fetch = |p: &str| crate::bundle::fetch_decoded_preview(p, 1, &session, &cache);
-        let scores = score_chunk(&paths, 0, &fetch, &|| false, &|_, _| {}).expect("calibration chunk");
+        // Enrich with embeddings/aesthetic only when the build carries
+        // smart-ml — same gate as the real `analyze_quality` command — so
+        // the CALIB3D pass below has real cosine/aesthetic numbers instead
+        // of permanent None/NaN sentinels. LazySession needs an explicit
+        // `init_*` with the on-disk model path before first use (mirrors
+        // embed.rs's own `corpus_smoke_embeddings_and_aesthetic`).
+        #[cfg(feature = "smart-ml")]
+        {
+            let models = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models");
+            crate::embed::init_embedder(models.join("dinov2s.onnx"));
+            crate::embed::init_aesthetic(
+                models.join("clip_vitb32_visual.onnx"),
+                models.join("laion_aesthetic.onnx"),
+            );
+        }
+        #[cfg(feature = "smart-ml")]
+        let enrich = |input: &DecodedInput, score: &mut ImageScore| {
+            attach_embeddings(input, score);
+        };
+        #[cfg(not(feature = "smart-ml"))]
+        let enrich = |_: &DecodedInput, _: &mut ImageScore| {};
+        let scores = score_chunk(&paths, 0, &fetch, &|| false, &enrich).expect("calibration chunk");
 
         // Confusion counts: [suggested-reject][user-kept] etc.
         let (mut hit, mut false_rej, mut miss, mut quiet, mut unlabeled) = (0, 0, 0, 0, 0);
@@ -1019,6 +1040,34 @@ mod tests {
         );
         for p in &false_rejects {
             eprintln!("FALSE-REJECT: {p}");
+        }
+
+        // Phase 3d/3c calibration: adjacent-pair signals + aesthetic spread.
+        // (Grouping itself is TS-side; this prints the raw signals the TS
+        // thresholds gate on, over a REAL shoot, in shoot order.)
+        eprintln!("\nCALIB3D — neighbor-pair signals (needs --features smart-ml for hamming/cosine to be non-sentinel):");
+        for pair in scores.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            let dt = match (a.captured_at_ms, b.captured_at_ms) {
+                (Some(x), Some(y)) => (y - x).abs(),
+                _ => -1,
+            };
+            let ham = match (&a.phash, &b.phash) {
+                (Some(x), Some(y)) => {
+                    let (x, y) =
+                        (u64::from_str_radix(x, 16).unwrap(), u64::from_str_radix(y, 16).unwrap());
+                    crate::phash::hamming(x, y) as i64
+                }
+                _ => -1,
+            };
+            let cos = match (&a.embedding, &b.embedding) {
+                (Some(x), Some(y)) => x.iter().zip(y).map(|(p, q)| p * q).sum::<f32>(),
+                _ => f32::NAN,
+            };
+            eprintln!(
+                "CALIB3D dt_ms={dt} hamming={ham} cosine={cos:.4} aes_a={:?} aes_b={:?}",
+                a.aesthetic, b.aesthetic
+            );
         }
         let _ = std::fs::remove_dir_all(tmp);
     }
