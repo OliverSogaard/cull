@@ -378,8 +378,9 @@ body,
 /* Position counter "N / M" — lives on the right cluster.
    Tabular-numeric, with the slash + total muted, and a fixed width so the row
    doesn't pan when the number changes from one to three digits. */
-/* Staged-scrub speed chip beside the position counter (×3 / ×10). */
+/* Staged-scrub speed chip inside the footer's Scrubbing label (×5 / ×50). */
 .cull-statusbar__scrubspeed {
+  margin-left: 8px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.08em;

@@ -73,11 +73,11 @@ const PAN_LIMIT = 40; // max % offset from the AF point
 // the display paints (no stutter; self-throttles on a slow frame). ~33ms ≈ 30
 // images/s, the fastest that still feels smooth.
 const NAV_REPEAT_MS = 33;
-/** Staged scrub acceleration: after this long holding, steps triple… */
-const SCRUB_STAGE2_AT_MS = 1600;
-/** …and after this long they run at 10× — long albums stay traversable. */
-const SCRUB_STAGE3_AT_MS = 3600;
-const SCRUB_SPEEDS = [1, 3, 10] as const;
+/** Staged scrub acceleration: after this long holding, 5 frames per tick… */
+const SCRUB_STAGE2_AT_MS = 5000;
+/** …and after this long, 50 — long albums stay traversable. */
+const SCRUB_STAGE3_AT_MS = 10_000;
+const SCRUB_SPEEDS = [1, 5, 50] as const;
 type ScrubSpeed = (typeof SCRUB_SPEEDS)[number];
 
 // After the immediate first step on hold-start, wait this long before the
@@ -2214,7 +2214,7 @@ export default function App() {
         // (1× → 3× → 10×). Multi-steps stop at a boundary mid-tick.
         const held = ts - holdStartTsRef.current;
         const speed: ScrubSpeed =
-          held >= SCRUB_STAGE3_AT_MS ? 10 : held >= SCRUB_STAGE2_AT_MS ? 3 : 1;
+          held >= SCRUB_STAGE3_AT_MS ? 50 : held >= SCRUB_STAGE2_AT_MS ? 5 : 1;
         if (speed !== scrubSpeedRef.current) {
           scrubSpeedRef.current = speed;
           setScrubSpeed(speed);
@@ -3260,6 +3260,9 @@ export default function App() {
         {scrubbing && (
           <span className="cull-statusbar__scrub" aria-label="scrubbing">
             Scrubbing
+            {scrubSpeed > 1 && (
+              <span className="cull-statusbar__scrubspeed">{scrubSpeed}×</span>
+            )}
           </span>
         )}
         {/* Overlay cluster — five circular toggle chips. Hidden in grid (those
@@ -3336,11 +3339,6 @@ export default function App() {
       </div>
       <div className="cull-statusbar__spacer" />
       <div className="cull-statusbar__right">
-        {scrubbing && scrubSpeed > 1 && (
-          <span className="cull-statusbar__scrubspeed" aria-hidden>
-            {scrubSpeed}×
-          </span>
-        )}
         <span
           className="cull-statusbar__pos"
           title={compareMode ? "challenger position / total candidates" : "current position / filtered total"}
