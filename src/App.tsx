@@ -167,6 +167,13 @@ export default function App() {
   // keyed by Img.id. ALL cross-frame derivation is pure TS below — bursts and
   // verdicts re-derive instantly on settings changes and self-correct as chunks
   // land. Nothing here writes anything, ever (advisory-only invariant).
+  // Rated frames need no suggestion: the pass dispatches unrated-only, so it
+  // starts from where the user has reached (see useSmartCulling).
+  const ratedIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const [id, r] of Object.entries(ratings)) if (r) ids.add(Number(id));
+    return ids;
+  }, [ratings]);
   const {
     scores: qualityScores,
     analyzing: qualityAnalyzing,
@@ -178,6 +185,7 @@ export default function App() {
     ml: settings.smartCullingML,
     active: phase === "culling",
     images,
+    ratedIds,
     storageMode: settings.storageMode,
   });
 
