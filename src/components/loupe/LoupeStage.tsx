@@ -117,7 +117,11 @@ export const LoupeStage = memo(function LoupeStage({
   const [hiResReady, setHiResReady] = useState(false);
   // The layer mounts on settle (hiRes) OR the moment zoom engages — a zoom
   // before the settle timer fired must not wait out the timer to sharpen.
-  const hiResWanted = (hiRes || isZooming) && !clippingVisible;
+  // NEVER while dims are unknown: the frame is then the neutral-square
+  // fallback, the base image letterboxes inside it, and this layer's
+  // top-left-anchored transform (which assumes matte AR == image AR) would
+  // paint a misaligned second copy over it.
+  const hiResWanted = (hiRes || isZooming) && !clippingVisible && dimsKnown;
 
   return (
     <>

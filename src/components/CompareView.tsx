@@ -343,7 +343,11 @@ const ComparePanel = memo(function ComparePanel({
         {/* Decode-gated zoom layer (Phase 4): the 32 MP zoom-tier blob at
             native size, only while compare zoom is engaged and only once
             decoded — until then the preview upscales beneath. */}
-        {isZooming && rect && zoomNativeDims && img.full?.url && (
+        {/* Same dims-known gate as the loupe: on the neutral-square fallback
+            the base letterboxes and the top-left-anchored transform would
+            paint a misaligned second copy. */}
+        {isZooming && rect && zoomNativeDims && img.full?.url &&
+          !!(img.dims && img.dims.w > 1 && img.dims.h > 1) && (
           <HiResLayer
             key={path}
             url={img.full.url}

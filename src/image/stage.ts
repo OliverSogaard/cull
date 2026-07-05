@@ -42,8 +42,18 @@ export function resolveStage(s: ImageState): Resolved {
   const full =
     s.zoomFull?.status === "ready" ? { url: s.zoomFull.url, dims: s.zoomFull.dims } : undefined;
   const mid = s.mid?.status === "ready" ? { url: s.mid.url } : undefined;
-  if (s.full?.status === "ready")
-    return { stage: "full", url: s.full.url, dims: s.full.dims, error: undefined, full, mid };
+  if (s.full?.status === "ready") {
+    // The full can land BEFORE the thumb (big scrub jump): the store freezes
+    // it with the {1,1} UNKNOWN sentinel, so real dims must stand in from the
+    // thumb / dims cache the moment they exist — otherwise the frame is stuck
+    // on the neutral-square matte and the hi-res layer (top-left-anchored,
+    // assumes matte AR == image AR) paints a misaligned second copy.
+    const dims =
+      s.full.dims.w > 1 && s.full.dims.h > 1
+        ? s.full.dims
+        : (s.thumb?.dims ?? s.knownDims ?? s.full.dims);
+    return { stage: "full", url: s.full.url, dims, error: undefined, full, mid };
+  }
   if (s.thumb) return { stage: "thumb", url: s.thumb.url, dims: s.thumb.dims, error, full, mid };
   return { stage: "shimmer", url: undefined, dims: s.knownDims, error, full, mid };
 }

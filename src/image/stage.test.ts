@@ -27,4 +27,41 @@ describe("resolveStage", () => {
   it("dims from thumb when full not ready", () => {
     expect(resolveStage({ thumb: { url: "t", dims: { w: 3, h: 2 } }, full: { status: "loading" } }).dims).toEqual({ w: 3, h: 2 });
   });
+
+  // The full can land BEFORE the thumb (big scrub jump) — the store freezes it
+  // with the {1,1} UNKNOWN sentinel. Resolution must recover real dims from
+  // the thumb / dims cache the moment they exist, or the frame is stuck on
+  // the neutral-square matte forever (and the settle-time hi-res layer,
+  // whose top-left anchoring assumes matte AR == image AR, paints a
+  // misaligned second copy — the "seam" bug).
+  it("full ready with UNKNOWN dims + thumb -> thumb dims stand in", () => {
+    const s = resolveStage({
+      thumb: { url: "t", dims: { w: 3, h: 2 } },
+      full: { status: "ready", url: "f", dims: { w: 1, h: 1 } },
+    });
+    expect(s.stage).toBe("full");
+    expect(s.dims).toEqual({ w: 3, h: 2 });
+  });
+  it("full ready with UNKNOWN dims + dims cache -> cache stands in", () => {
+    const s = resolveStage({
+      thumb: undefined,
+      full: { status: "ready", url: "f", dims: { w: 1, h: 1 } },
+      knownDims: { w: 3, h: 2 },
+    });
+    expect(s.dims).toEqual({ w: 3, h: 2 });
+  });
+  it("full ready with UNKNOWN dims and no other source -> stays unknown", () => {
+    const s = resolveStage({
+      thumb: undefined,
+      full: { status: "ready", url: "f", dims: { w: 1, h: 1 } },
+    });
+    expect(s.dims).toEqual({ w: 1, h: 1 });
+  });
+  it("real full dims always win over thumb dims", () => {
+    const s = resolveStage({
+      thumb: { url: "t", dims: { w: 3, h: 2 } },
+      full: { status: "ready", url: "f", dims: { w: 6, h: 4 } },
+    });
+    expect(s.dims).toEqual({ w: 6, h: 4 });
+  });
 });
