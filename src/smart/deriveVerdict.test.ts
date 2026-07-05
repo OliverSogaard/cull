@@ -109,6 +109,19 @@ describe("deriveVerdict", () => {
     expect(s.verdict).not.toBe("favorite");
   });
 
+  test("the level gates keeps too — a 56% keep shows on low, silent on medium/high", () => {
+    const fiftySix = score({ afSharpness: 0.56, exposureScore: 0.9 });
+    expect(deriveVerdict(fiftySix, undefined, "low").verdict).toBe("keep");
+    expect(deriveVerdict(fiftySix, undefined, "medium").verdict).toBeNull();
+    expect(deriveVerdict(fiftySix, undefined, "high").verdict).toBeNull();
+  });
+
+  test("a very strong keep clears even the high bar", () => {
+    const s = deriveVerdict(score({ afSharpness: 0.85, exposureScore: 0.9 }), undefined, "high");
+    expect(s.verdict).toBe("keep");
+    expect(s.confidence).toBeGreaterThanOrEqual(LEVEL_THRESHOLD.high);
+  });
+
   test("a merely-okay frame earns nothing — the tool speaks only on clear calls", () => {
     const s = deriveVerdict(
       score({ afSharpness: 0.3, globalSharpness: 0.3, exposureScore: 0.7 }),

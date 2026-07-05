@@ -28,9 +28,9 @@ export const TENENGRAD_DISAGREE = 0.35;
 /** Clipping annotation thresholds — clipping NEVER rejects alone (RAW workflow). */
 export const BLOWN_NOTE_PCT = 0.25;
 export const CRUSHED_NOTE_PCT = 0.35;
-/** Keep suggestions have their own (fixed) bar; the level only gates rejects. */
-export const KEEP_MIN_CONFIDENCE = 0.5;
-/** Minimum REJECT confidence to speak, per smartCullingConfidence level. */
+/** Minimum confidence to SPEAK (reject and keep alike), per
+ *  smartCullingConfidence level — High means fewer, surer suggestions of
+ *  every kind, exactly what the settings copy promises. */
 export const LEVEL_THRESHOLD: Record<SmartLevel, number> = {
   low: 0.5,
   medium: 0.65,
@@ -101,10 +101,11 @@ export function deriveVerdict(
   }
 
   // Rule 4 — nothing negative fired: a clearly sharp, well-exposed frame earns
-  // a low-confidence keep. Never a favorite in Tier 1.
+  // a keep, gated by the SAME level threshold as rejects. Never a favorite in
+  // Tier 1.
   if (score.afSharpness >= SHARP_STRONG && score.exposureScore >= 0.6) {
     const keepConf = Math.min(score.afSharpness, score.exposureScore);
-    if (keepConf >= KEEP_MIN_CONFIDENCE) {
+    if (keepConf >= LEVEL_THRESHOLD[level]) {
       return { verdict: "keep", confidence: keepConf, reasons: ["sharp, well exposed"] };
     }
   }
