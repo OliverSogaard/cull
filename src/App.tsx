@@ -3471,6 +3471,7 @@ export default function App() {
       onPick={pickFromStrip}
       suggestions={suggestions}
       bursts={burstCtx}
+      similar={similarCtx}
       scrubbing={scrubbing}
       scrubSpeed={scrubSpeed}
     />
@@ -3485,6 +3486,7 @@ export default function App() {
       onPickChallenger={pickChallengerFromStrip}
       suggestions={suggestions}
       bursts={burstCtx}
+      similar={similarCtx}
       scrubbing={scrubbing}
       scrubSpeed={scrubSpeed}
     />
@@ -3606,6 +3608,7 @@ export default function App() {
                 onViewportChange={handleGridViewport}
                 suggestions={suggestions}
                 bursts={burstCtx}
+                similar={similarCtx}
               />
             )}
             {feedbackChip}

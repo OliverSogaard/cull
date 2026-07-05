@@ -19,6 +19,9 @@ export type BurstSegment = {
   len: number;
   /** Only the group's first segment (strip order) carries the ×N legend. */
   labeled: boolean;
+  /** "burst" = camera burst (groupBursts); "similar" = lookalike set
+   *  (groupSimilar). Drives the box's modifier class and legend word. */
+  kind: "burst" | "similar";
 };
 
 /**
@@ -32,28 +35,43 @@ export type BurstSegment = {
 export function computeBurstSegments(
   ids: readonly number[],
   bursts: Map<number, BurstCtx> | undefined,
+  similar?: Map<number, BurstCtx>,
 ): { segs: BurstSegment[]; prefix: number[] | undefined } {
-  if (!bursts || bursts.size === 0) return { segs: [], prefix: undefined };
+  if ((!bursts || bursts.size === 0) && (!similar || similar.size === 0)) {
+    return { segs: [], prefix: undefined };
+  }
+
+  const lookup = (id: number): { c: BurstCtx; kind: "burst" | "similar" } | undefined => {
+    const b = bursts?.get(id);
+    if (b) return { c: b, kind: "burst" };
+    const s = similar?.get(id);
+    return s ? { c: s, kind: "similar" } : undefined;
+  };
 
   const segs: BurstSegment[] = [];
-  const labeledGroups = new Set<number>();
+  const labeledGroups = new Set<string>();
   let open: BurstSegment | null = null;
+  let openKey: string | null = null;
   for (let i = 0; i < ids.length; i++) {
-    const c = bursts.get(ids[i]);
-    if (open && (!c || c.group !== open.group)) {
+    const hit = lookup(ids[i]);
+    const key = hit ? `${hit.kind}:${hit.c.group}` : null;
+    if (open && key !== openKey) {
       segs.push(open);
       open = null;
+      openKey = null;
     }
-    if (c && !open) {
+    if (hit && !open) {
       open = {
         start: i,
         end: i,
-        group: c.group,
-        len: c.len,
-        labeled: !labeledGroups.has(c.group),
+        group: hit.c.group,
+        len: hit.c.len,
+        labeled: !labeledGroups.has(key!),
+        kind: hit.kind,
       };
-      labeledGroups.add(c.group);
-    } else if (c && open) {
+      openKey = key;
+      labeledGroups.add(key!);
+    } else if (hit && open) {
       open.end = i;
     }
   }

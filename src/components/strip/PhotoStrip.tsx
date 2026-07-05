@@ -19,6 +19,7 @@ export function PhotoStrip({
   indices,
   centerPos,
   bursts,
+  similar,
   scrubbing = false,
   scrubSpeed = 1,
   renderCell,
@@ -32,6 +33,11 @@ export function PhotoStrip({
   /** Burst membership by image id — runs split by absent frames render one
    *  box per contiguous stretch, only the first labeled. */
   bursts?: Map<number, BurstCtx>;
+  /** Similar-set membership by image id — same box treatment as bursts, with
+   *  a cooler tint and a "Similar ×N" legend. Bursts win where both would
+   *  claim an id (structurally shouldn't overlap — groupSimilar excludes
+   *  burst members). */
+  similar?: Map<number, BurstCtx>;
   /** While scrubbing, a thin full-width position bar fades in under the
    *  cells — the strip shows ~a screenful, the bar shows where that screenful
    *  sits in the whole set. */
@@ -47,8 +53,9 @@ export function PhotoStrip({
       computeBurstSegments(
         indices.map((i) => images[i].id),
         bursts,
+        similar,
       ),
-    [indices, images, bursts],
+    [indices, images, bursts, similar],
   );
   const burstBoxes = useMemo(
     () => (segs.length > 0 ? burstBoxOverlays(segs, prefix) : null),

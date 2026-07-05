@@ -25,6 +25,7 @@ export function CompareStrip({
   onPickChallenger,
   suggestions,
   bursts,
+  similar,
   scrubbing,
   scrubSpeed,
 }: {
@@ -41,6 +42,8 @@ export function CompareStrip({
   suggestions?: Record<number, Suggestion>;
   /** Burst membership by image id — same outlined boxes as the loupe strip. */
   bursts?: Map<number, BurstCtx>;
+  /** Similar-set membership by image id — same outlined boxes, cooler tint. */
+  similar?: Map<number, BurstCtx>;
   /** Fades in the position bar under the cells. */
   scrubbing?: boolean;
   /** Staged scrub acceleration factor — labeled above the bar's marker. */
@@ -57,6 +60,7 @@ export function CompareStrip({
       indices={stripIndices}
       centerPos={cpos}
       bursts={bursts}
+      similar={similar}
       scrubbing={scrubbing}
       scrubSpeed={scrubSpeed}
       renderCell={(idx) => {

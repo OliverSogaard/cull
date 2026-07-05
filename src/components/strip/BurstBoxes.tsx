@@ -14,8 +14,8 @@ export function burstBoxOverlays(
   const x = (i: number) => cellX(i, CELL_STRIDE, prefix);
   return segs.map((s) => (
     <fieldset
-      key={`burst-${s.group}-${s.start}`}
-      className="cull-burst-box"
+      key={`${s.kind}-${s.group}-${s.start}`}
+      className={`cull-burst-box${s.kind === "similar" ? " cull-burst-box--similar" : ""}`}
       style={{
         // 4px air from cell edge to the line's INNER face on both sides
         // (box-sizing: border-box; 2px border ⇒ ±6 outside the cells).
@@ -24,7 +24,11 @@ export function burstBoxOverlays(
       }}
       aria-hidden
     >
-      {s.labeled && <legend className="cull-burst-box__count">Burst ×{s.len}</legend>}
+      {s.labeled && (
+        <legend className="cull-burst-box__count">
+          {s.kind === "similar" ? "Similar" : "Burst"} ×{s.len}
+        </legend>
+      )}
     </fieldset>
   ));
 }

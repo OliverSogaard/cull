@@ -16,6 +16,7 @@
   --ok: #9ec5a4;
   --bad: #c87f7f;
   --fav: #d4af6a;
+  --accent-cool: #7fa8c9;
 }
 
 html,
@@ -2832,6 +2833,17 @@ body,
   text-transform: uppercase;
   color: var(--accent);
   white-space: nowrap;
+}
+
+/* Similar-set boxes: same run-box language as bursts (border, radius, legend
+   gap), but a cooler hue so lookalike groups read as visually distinct from
+   camera bursts at a glance. Same alpha as the burst border (rgba .5) — only
+   the hue changes. */
+.cull-burst-box--similar {
+  border-color: rgba(127, 168, 201, 0.5);
+}
+.cull-burst-box--similar > .cull-burst-box__count {
+  color: var(--accent-cool);
 }
 
 /* ExifRail suggestion row — verdict-coloured key, dim reasons. */

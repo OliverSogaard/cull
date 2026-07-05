@@ -25,7 +25,7 @@ describe("computeBurstSegments", () => {
       [5, ctx(0, 3, 3)],
     ]);
     const r = computeBurstSegments([1, 2, 3, 4, 5, 6], bursts);
-    expect(r.segs).toEqual([{ start: 2, end: 4, group: 0, len: 3, labeled: true }]);
+    expect(r.segs).toEqual([{ start: 2, end: 4, group: 0, len: 3, labeled: true, kind: "burst" }]);
     // prefix: 0,0 for free; BREATH inserted before index 2; constant through
     // the run; +BREATH again after the run for index 5.
     expect(r.prefix).toEqual([0, 0, BURST_BREATH, BURST_BREATH, BURST_BREATH, 2 * BURST_BREATH, 2 * BURST_BREATH]);
@@ -59,8 +59,8 @@ describe("computeBurstSegments", () => {
     ]);
     const r = computeBurstSegments([10, 11, 99, 13, 14], bursts);
     expect(r.segs).toEqual([
-      { start: 0, end: 1, group: 0, len: 5, labeled: true },
-      { start: 3, end: 4, group: 0, len: 5, labeled: false },
+      { start: 0, end: 1, group: 0, len: 5, labeled: true, kind: "burst" },
+      { start: 3, end: 4, group: 0, len: 5, labeled: false, kind: "burst" },
     ]);
   });
 
@@ -70,6 +70,22 @@ describe("computeBurstSegments", () => {
       [12, ctx(0, 3, 4)],
     ]);
     const r = computeBurstSegments([99, 11, 12], bursts);
-    expect(r.segs).toEqual([{ start: 1, end: 2, group: 0, len: 4, labeled: true }]);
+    expect(r.segs).toEqual([{ start: 1, end: 2, group: 0, len: 4, labeled: true, kind: "burst" }]);
+  });
+
+  test("similar groups yield their own segments, kind-tagged, burst wins overlaps", () => {
+    const bursts = new Map([[1, ctx(0, 1, 2)], [2, ctx(0, 2, 2)]]);
+    const similar = new Map([[3, ctx(0, 1, 2)], [4, ctx(0, 2, 2)]]);
+    const { segs } = computeBurstSegments([1, 2, 3, 4], bursts, similar);
+    expect(segs).toHaveLength(2);
+    expect(segs[0]).toMatchObject({ start: 0, end: 1, kind: "burst" });
+    expect(segs[1]).toMatchObject({ start: 2, end: 3, kind: "similar" });
+  });
+
+  test("similar-only strips still get gap prefixes", () => {
+    const similar = new Map([[1, ctx(0, 1, 2)], [2, ctx(0, 2, 2)]]);
+    const { segs, prefix } = computeBurstSegments([1, 2], undefined, similar);
+    expect(segs[0].kind).toBe("similar");
+    expect(prefix).toBeDefined();
   });
 });

@@ -55,6 +55,7 @@ export const GridView = memo(function GridView({
   onViewportChange,
   suggestions,
   bursts,
+  similar,
 }: {
   images: Img[];
   visibleIndices: number[];
@@ -80,6 +81,11 @@ export const GridView = memo(function GridView({
   suggestions?: Record<number, Suggestion>;
   /** Burst membership by image id — tint, count pill, winner border. */
   bursts?: Map<number, BurstCtx>;
+  /** Similar-set membership by image id — same run-box treatment as bursts,
+   *  cooler tint, "Similar ×N" legend. Bursts win where both would claim an
+   *  id (structurally shouldn't overlap — groupSimilar excludes burst
+   *  members). */
+  similar?: Map<number, BurstCtx>;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
@@ -182,14 +188,24 @@ export const GridView = memo(function GridView({
      *  OPEN (no border, square corners) so the box reads as continuing. */
     openLeft: boolean;
     openRight: boolean;
+    /** "burst" = camera burst; "similar" = lookalike set. Drives the box's
+     *  modifier class and legend word. */
+    kind: "burst" | "similar";
   };
   const burstSegs: ({ key: string } & Seg)[] = [];
-  if (bursts) {
+  if (bursts || similar) {
+    const lookup = (id: number): { c: BurstCtx; kind: "burst" | "similar" } | undefined => {
+      const b = bursts?.get(id);
+      if (b) return { c: b, kind: "burst" };
+      const s = similar?.get(id);
+      return s ? { c: s, kind: "similar" } : undefined;
+    };
     const segs = new Map<string, Seg & { firstPos: number; lastPos: number; len: number }>();
     for (const { idx, row, col } of cells) {
-      const c = bursts.get(images[idx].id);
-      if (!c) continue;
-      const key = `${c.group}:${row}`;
+      const hit = lookup(images[idx].id);
+      if (!hit) continue;
+      const { c, kind } = hit;
+      const key = `${kind}:${c.group}:${row}`;
       const seg = segs.get(key);
       const label = c.pos === 1 ? c.len : null;
       if (!seg) {
@@ -203,6 +219,7 @@ export const GridView = memo(function GridView({
           len: c.len,
           openLeft: false,
           openRight: false,
+          kind,
         });
       } else {
         seg.c0 = Math.min(seg.c0, col);
@@ -221,6 +238,7 @@ export const GridView = memo(function GridView({
         label: s.label,
         openLeft: s.firstPos > 1,
         openRight: s.lastPos < s.len,
+        kind: s.kind,
       });
     }
   }
@@ -231,7 +249,9 @@ export const GridView = memo(function GridView({
         {burstSegs.map((s) => (
           <fieldset
             key={`burst-${s.key}`}
-            className="cull-burst-box cull-burst-box--grid"
+            className={`cull-burst-box cull-burst-box--grid${
+              s.kind === "similar" ? " cull-burst-box--similar" : ""
+            }`}
             style={{
               // The box lives INSIDE the inter-image corridor (cells pad 9px,
               // so images sit 18px apart): lines 2px inside the cell bound ⇒
@@ -258,7 +278,9 @@ export const GridView = memo(function GridView({
             aria-hidden
           >
             {s.label != null && (
-              <legend className="cull-burst-box__count">Burst ×{s.label}</legend>
+              <legend className="cull-burst-box__count">
+                {s.kind === "similar" ? "Similar" : "Burst"} ×{s.label}
+              </legend>
             )}
           </fieldset>
         ))}
