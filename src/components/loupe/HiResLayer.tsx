@@ -21,6 +21,7 @@ export function HiResLayer({
   tx,
   ty,
   scale,
+  transition,
   className,
   onDecoded,
 }: {
@@ -30,6 +31,10 @@ export function HiResLayer({
   tx: number;
   ty: number;
   scale: number;
+  /** Transform transition — MUST match the presenter layers' current zoom
+   *  curve (zoomTransition) or the sharp raster tears away from the base
+   *  mid-glide. */
+  transition?: string;
   className: string;
   /** Fired with the layer's live decode state — true once the sharp pixels
    *  are actually in place (drives the zoom loading ring), false while a
@@ -85,7 +90,7 @@ export function HiResLayer({
         maxHeight: "none",
         transformOrigin: "0 0",
         transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-        transition: "transform 200ms ease-out, opacity 100ms ease-out",
+        transition: `${transition ?? "transform 200ms ease-out"}, opacity 100ms ease-out`,
         opacity: decoded ? 1 : 0,
         pointerEvents: "none",
         willChange: "transform",

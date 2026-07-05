@@ -7,11 +7,12 @@ import type { Resolved } from "../../image/stage";
 import type { ImageDims } from "../../utils/bundle";
 import { sizerSrc } from "../../utils/sizer";
 import { HiResLayer } from "./HiResLayer";
+import { zoomTransition } from "./zoomTransition";
 import { PresentLayers } from "./PresentLayers";
 
-/** How long after a zoom transition starts (either direction) before the
- *  hi-res layer may (re)appear — the 200ms transform glide plus slack. */
-const ZOOM_TRANSITION_MS = 240;
+/** How long after unzoom starts before the settle-time hi-res layer may
+ *  return — the release glide plus slack. */
+const UNZOOM_RETREAT_MS = 240;
 
 type LoupeStageProps = {
   /** Current frame's path ("" when none). */
@@ -127,28 +128,35 @@ export const LoupeStage = memo(function LoupeStage({
   // so overlays and the sharp raster coexist — the old !clippingVisible gate
   // silently degraded the settled view to the preview and left the zoom
   // spinner waiting forever whenever highlights were on.
-  // The native-size raster must NEVER transform-animate — even behind a
-  // rectangular clip, gliding a ~32 MP texture for 200ms drops frames (the
-  // unzoom stutter; zoom-in had the same jank reading as a jump-cut). On ANY
-  // zoom flip the layer drops instantly, the light preview carries the
-  // 200ms glide (visually fine in motion), and the sharp layer (re)appears
-  // at its FINAL transform once the transition settles — the compare panes'
-  // recipe. `zoomFlipped` covers the flip render itself (state lands a
-  // commit later).
+  // Unzoom retreat: the native-size raster must not transform-animate BACK
+  // to fit — even behind a rectangular clip, gliding a ~32 MP texture down
+  // stutters. Drop it the moment unzoom starts (the light preview carries
+  // the release glide) and re-reveal once settled. Engaging keeps the layer
+  // mounted and animating with the base on the SHARED engage curve —
+  // dropping it there bought nothing and flashed the zoom ring (hiResReady
+  // went false for the hide window). `justUnzoomed` covers the flip render
+  // itself (state lands a commit later).
   const prevZoomingRef = useRef(isZooming);
-  const zoomFlipped = prevZoomingRef.current !== isZooming;
+  const justUnzoomed = prevZoomingRef.current && !isZooming;
   useEffect(() => {
     prevZoomingRef.current = isZooming;
   });
-  const [zoomSettling, setZoomSettling] = useState(false);
+  const [unzoomSettling, setUnzoomSettling] = useState(false);
+  const everZoomedRef = useRef(false);
   useEffect(() => {
-    setZoomSettling(true);
-    const t = setTimeout(() => setZoomSettling(false), ZOOM_TRANSITION_MS);
+    if (isZooming) {
+      everZoomedRef.current = true;
+      setUnzoomSettling(false);
+      return undefined;
+    }
+    if (!everZoomedRef.current) return undefined;
+    setUnzoomSettling(true);
+    const t = setTimeout(() => setUnzoomSettling(false), UNZOOM_RETREAT_MS);
     return () => clearTimeout(t);
   }, [isZooming]);
 
   const hiResWanted =
-    (hiRes || isZooming) && dimsKnown && !zoomFlipped && !zoomSettling;
+    (hiRes || isZooming) && dimsKnown && !justUnzoomed && !unzoomSettling;
 
   return (
     <>
@@ -225,6 +233,7 @@ export const LoupeStage = memo(function LoupeStage({
             tx={hiResTx}
             ty={hiResTy}
             scale={hiResScale}
+            transition={zoomTransition(isZooming)}
             className="cull-image cull-image--hires"
             onDecoded={setHiResReady}
           />

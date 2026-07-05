@@ -1,5 +1,6 @@
 import type { CSSProperties, MutableRefObject } from "react";
 import { TIER_PRESENTATION } from "../../image/present";
+import { zoomTransition } from "./zoomTransition";
 import type { PresentSnapshot, PresentTier } from "../../image/present";
 
 /**
@@ -43,7 +44,7 @@ export function PresentLayers({
       filter: pres.filter,
       transform: isZooming ? `scale(${zoomZ})` : undefined,
       transformOrigin: `${originX}% ${originY}%`,
-      transition: "transform 200ms ease-out",
+      transition: zoomTransition(isZooming),
       // The back layer stays visible beneath the front ONLY for the same
       // path (the blurred thumb under the preview crossfade). A different
       // path's leftovers must not peek through the front's letterbox.

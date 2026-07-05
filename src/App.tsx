@@ -37,6 +37,7 @@ import { deriveVerdict, keepEligible, type Suggestion } from "./smart/deriveVerd
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
 import { LoupeStage } from "./components/loupe/LoupeStage";
+import { zoomTransition } from "./components/loupe/zoomTransition";
 
 import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
@@ -3158,7 +3159,7 @@ export default function App() {
                   style={{
                     transform: isZooming ? `scale(${zoomZ})` : undefined,
                     transformOrigin: `${originX}% ${originY}%`,
-                    transition: "transform 200ms ease-out",
+                    transition: zoomTransition(isZooming),
                   }}
                 />
               )}
@@ -3170,7 +3171,7 @@ export default function App() {
                   style={{
                     transform: isZooming ? `scale(${zoomZ})` : undefined,
                     transformOrigin: `${originX}% ${originY}%`,
-                    transition: "transform 200ms ease-out",
+                    transition: zoomTransition(isZooming),
                   }}
                 />
               )}

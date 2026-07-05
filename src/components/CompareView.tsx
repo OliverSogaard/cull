@@ -10,6 +10,7 @@ import { offerTiers } from "../image/present";
 import { afZoomOrigin } from "../utils/zoom";
 import { sizerSrc } from "../utils/sizer";
 import { HiResLayer } from "./loupe/HiResLayer";
+import { zoomTransition } from "./loupe/zoomTransition";
 import { PresentLayers } from "./loupe/PresentLayers";
 import { usePresent } from "../image/usePresent";
 
@@ -406,7 +407,7 @@ const ComparePanel = memo(function ComparePanel({
             style={{
               transform: isZooming ? `scale(${zoomZ})` : undefined,
               transformOrigin: `${originX}% ${originY}%`,
-              transition: "transform 200ms ease-out",
+              transition: zoomTransition(isZooming),
             }}
           />
         )}
@@ -419,7 +420,7 @@ const ComparePanel = memo(function ComparePanel({
             style={{
               transform: isZooming ? `scale(${zoomZ})` : undefined,
               transformOrigin: `${originX}% ${originY}%`,
-              transition: "transform 200ms ease-out",
+              transition: zoomTransition(isZooming),
             }}
           />
         )}
