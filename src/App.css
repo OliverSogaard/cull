@@ -1109,6 +1109,98 @@ body,
   max-width: 520px;
 }
 
+/* ── scan-failure card ────────────────────────────────────────
+   Designed replacement for the raw error dump when a recent /
+   dropped folder can't be opened: name + tag per folder, dimmed
+   path, one calm explanation at the bottom. */
+.cull-scanfail {
+  margin: 20px 0 4px;
+  max-width: 560px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid rgba(200, 127, 127, 0.3);
+  border-radius: 6px;
+  padding: 14px 16px 12px;
+  animation: cull-hero-in 0.35s ease both;
+}
+
+.cull-scanfail__title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bad);
+  margin-bottom: 12px;
+}
+
+.cull-scanfail__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cull-scanfail__row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cull-scanfail__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cull-scanfail__name {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cull-scanfail__tag {
+  flex: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bad);
+  border: 1px solid rgba(200, 127, 127, 0.45);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.cull-scanfail__path,
+.cull-scanfail__detail {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cull-scanfail__detail {
+  color: var(--text-2);
+}
+
+.cull-scanfail__note {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
 .cull-chrome__status {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;

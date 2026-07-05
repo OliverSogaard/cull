@@ -27,6 +27,7 @@ import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
+import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { useSmartCulling } from "./smart/useSmartCulling";
@@ -195,7 +196,7 @@ export default function App() {
   const [copyResult, setCopyResult] = useState<FileOpResult | null>(null);
   const [actionBusy, setActionBusy] = useState<"move" | "copy" | null>(null);
 
-  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanFailures, setScanFailures] = useState<readonly ScanFailure[] | null>(null);
   // Surfaced on the staged screen when analyze_folder fails, so a failed sort /
   // rating-restore returns the user to staged with a retry instead of silently
   // dropping them into an unsorted, ratings-not-restored cull.
@@ -737,14 +738,14 @@ export default function App() {
       if (folders.length === 0) return;
       openBusyRef.current = true;
       setPickerBusy(true);
-      setScanError(null);
+      setScanFailures(null);
       setAnalyzeError(null);
       // A recents click re-opens a saved session: seed the session key so the
       // staged set's write-back REPLACES that entry rather than duplicating it.
       if (opts?.fromRecentKey) sessionRecentsKeyRef.current = opts.fromRecentKey;
       let totalAdded = 0;
       const okFolders: string[] = [];
-      const failures: { path: string; msg: string; permanent: boolean }[] = [];
+      const failures: ScanFailure[] = [];
       try {
         setPhase("loading");
         for (const folderPath of folders) {
@@ -835,7 +836,7 @@ export default function App() {
         }
 
         if (failures.length > 0) {
-          setScanError(failures.map((f) => `${f.path}: ${f.msg}`).join("\n"));
+          setScanFailures(failures);
         }
 
         // Go straight to STAGED after the (sub-millisecond) scans — don't block
@@ -1045,7 +1046,7 @@ export default function App() {
     setSelectionAnchor(null);
     setFolder(null);
     setPendingFolder(null);
-    setScanError(null);
+    setScanFailures(null);
     setAnalyzeError(null);
     setLastAdded(0);
     setLastBatchFolders([]);
@@ -2827,9 +2828,7 @@ export default function App() {
                 }
                 pickerBusy={pickerBusy}
               />
-              {scanError && (
-                <pre className="cull-message__body cull-chrome__error">{scanError}</pre>
-              )}
+              {scanFailures && <ScanFailureCard failures={scanFailures} />}
               <div className="cull-hero__how">
                 <span>
                   <span className="cull-hero__how-key">{modGlyph} ,</span>
@@ -2893,9 +2892,7 @@ export default function App() {
                   ? `+${lastAdded} from ${formatFolderSet(lastBatchFolders, 40)}`
                   : `+0 from ${formatFolderSet(lastBatchFolders, 40)} · no new CR3 files`}
               </div>
-              {scanError && (
-                <pre className="cull-message__body cull-chrome__error">{scanError}</pre>
-              )}
+              {scanFailures && <ScanFailureCard failures={scanFailures} />}
               {analyzeError && (
                 <pre className="cull-message__body cull-chrome__error">{analyzeError}</pre>
               )}
