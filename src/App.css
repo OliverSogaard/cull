@@ -1403,7 +1403,7 @@ body,
   border: 1px solid var(--border);
   border-radius: 6px;
   width: 100%;
-  max-width: 540px;
+  max-width: 680px;
   max-height: 100%;
   display: flex;
   flex-direction: column;
@@ -1438,14 +1438,85 @@ body,
   color: var(--muted);
 }
 
-.cull-settings__body {
-  padding: 8px 26px 24px;
-  overflow-y: auto;
+/* Two-column body: fixed nav rail left, one scrolling pane right. A stable
+   height keeps the dialog from resizing as tabs change. */
+.cull-settings__layout {
+  display: flex;
+  height: min(440px, 62vh);
+  min-height: 0;
+}
+
+.cull-settings__nav {
+  flex: 0 0 148px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 2px;
+  padding: 18px 10px 18px 16px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.cull-settings__navitem {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  text-align: left;
+  padding: 8px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.cull-settings__navitem:hover:not(.is-active) {
+  color: var(--text-2);
+}
+
+.cull-settings__navitem.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.cull-settings__navitem:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.cull-settings__pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
   scrollbar-width: thin;
-  max-height: 60vh;
+  padding: 20px 26px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Dependent-settings group (e.g. smart-culling sub-rows): visibly present but
+   inert while the parent toggle is off — no layout jump when enabling. */
+.cull-settings__group {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  transition: opacity 0.15s ease;
+}
+
+.cull-settings__group.is-off {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.cull-settings__panenote {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+  margin-top: auto;
 }
 
 .cull-settings__foot {
@@ -1519,14 +1590,14 @@ body,
 }
 
 .cull-settings__row-help {
-  margin-top: 2px;
+  margin-top: 3px;
   min-height: 0;
   color: var(--muted);
   font-size: 11.5px;
-  line-height: 1.45;
+  line-height: 1.5;
   letter-spacing: 0;
   text-transform: none;
-  max-width: 280px;
+  max-width: 300px;
 }
 
 .cull-settings__row-control {
@@ -1574,6 +1645,10 @@ body,
 }
 
 /* Knob-style toggle. */
+.cull-settings__toggle:disabled {
+  cursor: default;
+}
+
 .cull-settings__toggle {
   width: 36px;
   height: 20px;
@@ -1616,12 +1691,6 @@ body,
 
 /* Pinned-root config row — indented under the Copy keeps segment with a
    champagne left border. */
-.cull-settings__pinned-config {
-  position: relative;
-  padding-left: 14px;
-  border-left: 2px solid var(--accent-soft);
-}
-
 .cull-settings__pinned-control {
   display: flex;
   gap: 8px;
@@ -1690,41 +1759,6 @@ body,
 
 .cull-settings__seg.is-disabled .cull-settings__seg-opt {
   color: var(--muted);
-}
-
-.cull-settings__section {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding-top: 18px;
-}
-
-.cull-settings__section:first-of-type {
-  padding-top: 8px;
-}
-
-.cull-settings__section + .cull-settings__section {
-  margin-top: 0;
-}
-
-.cull-settings__section-title {
-  font-family: 'JetBrains Mono', monospace;
-  color: var(--accent);
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  text-align: left;
-  padding: 0;
-  border-top: 0;
-}
-
-.cull-settings__section:first-of-type .cull-settings__section-title {
-  padding-top: 0;
-}
-
-.cull-settings__section .cull-settings__row {
-  border-top: 0;
-  padding: 0;
 }
 
 /* Text input */

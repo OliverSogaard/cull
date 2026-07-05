@@ -32,6 +32,7 @@ export function SettingsDialog({
     settings.exportFolder.mode === "pinned" ? settings.exportFolder.path : "";
 
   const trapRef = useFocusTrap<HTMLDivElement>();
+  const [tab, setTab] = useState<TabId>("general");
 
   return (
     <div
@@ -54,216 +55,225 @@ export function SettingsDialog({
           <span className="cull-settings__head-meta">CULL 1.0</span>
         </div>
 
-        <div className="cull-settings__body">
-          {/* ───────────── Storage ───────────── */}
-          <Section title="Storage">
-            <SettingRow
-              label="Drive speed"
-              help="Normal suits most drives, including fast network storage. Slow throttles reads for genuinely slow drives (e.g. a sluggish NAS or USB disk)."
-            >
-              {/* Stored values stay "local"/"network" (profile keys + the
-                  backend's set_io_profile wire format) — only the words are
-                  user-facing: speed describes the drive better than location. */}
-              <SegmentToggle<StorageMode>
-                value={settings.storageMode}
-                options={[
-                  { value: "local", label: "Normal" },
-                  { value: "network", label: "Slow" },
-                ]}
-                onChange={(v) => set("storageMode", v)}
-              />
-            </SettingRow>
-          </Section>
+        <div className="cull-settings__layout">
+          <nav className="cull-settings__nav" aria-label="Settings sections">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`cull-settings__navitem${tab === t.id ? " is-active" : ""}`}
+                onClick={() => setTab(t.id)}
+                aria-current={tab === t.id}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
 
-          {/* ───────────── Smart culling ───────────── */}
-          <Section title="Smart culling">
-            <SettingRow
-              label="Suggestions"
-              help="A background pass measures per-frame sharpness (AF-area detail vs. noise), exposure, and burst redundancy, then marks clear technical misses with a dashed dot. Advisory only: every verdict requires your keypress, and nothing is ever written to a file by the analysis. Burst detection stays on regardless of this setting."
-            >
-              <Chip
-                label="Enabled"
-                on={settings.smartCulling}
-                onChange={(v) => set("smartCulling", v)}
-              />
-            </SettingRow>
-            {settings.smartCulling && (
+          <div className="cull-settings__pane">
+            {tab === "general" && (
               <>
                 <SettingRow
-                  label="Suggestion threshold"
-                  help="Minimum confidence a reject suggestion must reach before it is shown — Low ≥ 50%, Medium ≥ 65%, High ≥ 80%. Higher shows fewer, surer suggestions; changing it re-derives instantly without re-analyzing."
+                  label="Reopen last folder"
+                  help="Skip the home screen when CULL starts."
                 >
-                  <SegmentToggle<SmartLevel>
-                    value={settings.smartCullingConfidence}
+                  <Toggle
+                    on={settings.openLastFolderOnLaunch}
+                    onChange={(v) => set("openLastFolderOnLaunch", v)}
+                    label="Reopen last folder"
+                  />
+                </SettingRow>
+                <SettingRow
+                  label="Default filter"
+                  help="The filter active when a cull starts."
+                >
+                  <SegmentToggle<Filter>
+                    value={settings.defaultFilter}
                     options={[
-                      { value: "low", label: "Low" },
-                      { value: "medium", label: "Medium" },
-                      { value: "high", label: "High" },
+                      { value: "all", label: "All" },
+                      { value: "unrated", label: "Unrated" },
+                      { value: "keeps", label: "Keeps" },
+                      { value: "favorites", label: "Favorites" },
                     ]}
-                    onChange={(v) => set("smartCullingConfidence", v)}
+                    onChange={(v) => set("defaultFilter", v)}
                   />
                 </SettingRow>
                 <SettingRow
-                  label="Face analysis"
-                  help="Detects faces locally (YuNet, on-device ONNX) so burst winners favor the sharpest FACE over the sharpest focus area. Requires an ML-enabled build; otherwise the switch is inert. Eye-state and aesthetic scoring come later."
+                  label="Default overlays"
+                  help="Overlays that start on. Toggle anytime with i / h / p / o / t."
                 >
-                  <Chip
-                    label="Faces"
-                    on={settings.smartCullingML}
-                    onChange={(v) => set("smartCullingML", v)}
-                  />
+                  <div className="cull-settings__chips">
+                    <Chip
+                      label="Thumbnails"
+                      on={settings.defaultThumbsVisible}
+                      onChange={(v) => set("defaultThumbsVisible", v)}
+                    />
+                    <Chip
+                      label="Info"
+                      on={settings.defaultExifVisible}
+                      onChange={(v) => set("defaultExifVisible", v)}
+                    />
+                    <Chip
+                      label="Clipping"
+                      on={settings.defaultClippingVisible}
+                      onChange={(v) => set("defaultClippingVisible", v)}
+                    />
+                    <Chip
+                      label="Peaking"
+                      on={settings.defaultPeakingVisible}
+                      onChange={(v) => set("defaultPeakingVisible", v)}
+                    />
+                    <Chip
+                      label="Thirds"
+                      on={settings.defaultCompositionVisible}
+                      onChange={(v) => set("defaultCompositionVisible", v)}
+                    />
+                  </div>
                 </SettingRow>
                 <SettingRow
-                  label="Analyze on open"
-                  help="Start the analysis pass automatically when a folder opens (it always yields to your navigation). Off: press 5 or the Smart tab to analyze on demand."
+                  label="Thumb strip position"
+                  help="Where the thumbnail strip sits in loupe and compare."
                 >
-                  <Chip
-                    label="Auto"
-                    on={settings.smartCullingOnOpen}
-                    onChange={(v) => set("smartCullingOnOpen", v)}
+                  <SegmentToggle<ThumbsPosition>
+                    value={settings.thumbsPosition}
+                    options={[
+                      { value: "bottom", label: "Bottom" },
+                      { value: "top", label: "Top" },
+                    ]}
+                    onChange={(v) => set("thumbsPosition", v)}
                   />
                 </SettingRow>
               </>
             )}
-          </Section>
 
-          {/* ───────────── When you start a cull ───────────── */}
-          <Section title="When you start a cull">
-            <SettingRow
-              label="Default filter"
-              help="Starts in this filter when you open a folder."
-            >
-              <SegmentToggle<Filter>
-                value={settings.defaultFilter}
-                options={[
-                  { value: "all", label: "All" },
-                  { value: "unrated", label: "Unrated" },
-                  { value: "keeps", label: "Keeps" },
-                  { value: "favorites", label: "★" },
-                ]}
-                onChange={(v) => set("defaultFilter", v)}
-              />
-            </SettingRow>
-
-            <SettingRow
-              label="Default overlays"
-              help="Which overlays start on. Toggle anytime with i / h / p / o / t."
-            >
-              <div className="cull-settings__chips">
-                <Chip
-                  label="Thumbnails"
-                  on={settings.defaultThumbsVisible}
-                  onChange={(v) => set("defaultThumbsVisible", v)}
-                />
-                <Chip
-                  label="Info"
-                  on={settings.defaultExifVisible}
-                  onChange={(v) => set("defaultExifVisible", v)}
-                />
-                <Chip
-                  label="Clipping"
-                  on={settings.defaultClippingVisible}
-                  onChange={(v) => set("defaultClippingVisible", v)}
-                />
-                <Chip
-                  label="Peaking"
-                  on={settings.defaultPeakingVisible}
-                  onChange={(v) => set("defaultPeakingVisible", v)}
-                />
-                <Chip
-                  label="Thirds"
-                  on={settings.defaultCompositionVisible}
-                  onChange={(v) => set("defaultCompositionVisible", v)}
-                />
-              </div>
-            </SettingRow>
-
-            <SettingRow
-              label="Thumb strip position"
-              help="Where the loupe / compare thumbnail strip sits."
-            >
-              <SegmentToggle<ThumbsPosition>
-                value={settings.thumbsPosition}
-                options={[
-                  { value: "bottom", label: "Bottom" },
-                  { value: "top", label: "Top" },
-                ]}
-                onChange={(v) => set("thumbsPosition", v)}
-              />
-            </SettingRow>
-          </Section>
-
-          {/* ───────────── File operations ───────────── */}
-          <Section title="File operations">
-            <SettingRow
-              label="Rejected subfolder"
-              help="Rejected files move into this subfolder of the source."
-            >
-              <RejectedSubfolderInput
-                value={settings.rejectedSubfolder}
-                onChange={(v) => set("rejectedSubfolder", v)}
-              />
-            </SettingRow>
-
-            <SettingRow
-              label="Copy keeps to"
-              help='Where keepers go when you run "Copy keeps".'
-            >
-              <SegmentToggle<"remember" | "pinned">
-                value={exportMode}
-                options={[
-                  { value: "remember", label: "Ask each time" },
-                  { value: "pinned", label: "Pinned root" },
-                ]}
-                onChange={(mode) => {
-                  if (mode === "remember") onChange({ ...settings, exportFolder: { mode: "remember" } });
-                  else if (settings.exportFolder.mode !== "pinned") {
-                    // We let the PinnedRoot row pick the folder; meanwhile set
-                    // pinned with an empty path so the row appears.
-                    onChange({ ...settings, exportFolder: { mode: "pinned", path: "" } });
-                  }
-                }}
-              />
-            </SettingRow>
-
-            {exportMode === "pinned" && (
-              <div className="cull-settings__pinned-config">
+            {tab === "smart" && (
+              <>
                 <SettingRow
-                  label="Pinned root"
-                  help="Each session writes to a subfolder under this. Subfolder name is editable in the finish dialog."
+                  label="Suggestions"
+                  help="Analyzes sharpness, exposure and bursts in the background and marks clear technical misses. Advisory only — nothing is rated or written without your keypress."
                 >
-                  <PinnedRootControl
-                    path={pinnedPath}
-                    onPick={(p) => onChange({ ...settings, exportFolder: { mode: "pinned", path: p } })}
+                  <Toggle
+                    on={settings.smartCulling}
+                    onChange={(v) => set("smartCulling", v)}
+                    label="Smart culling suggestions"
                   />
                 </SettingRow>
-              </div>
+                <div
+                  className={`cull-settings__group${settings.smartCulling ? "" : " is-off"}`}
+                  aria-disabled={!settings.smartCulling}
+                >
+                  <SettingRow
+                    label="Suggestion threshold"
+                    help="How confident a reject call must be before it shows — Low ≥ 50%, Medium ≥ 65%, High ≥ 80%. Changes apply instantly."
+                  >
+                    <SegmentToggle<SmartLevel>
+                      value={settings.smartCullingConfidence}
+                      options={[
+                        { value: "low", label: "Low" },
+                        { value: "medium", label: "Medium" },
+                        { value: "high", label: "High" },
+                      ]}
+                      onChange={(v) => set("smartCullingConfidence", v)}
+                      disabled={!settings.smartCulling}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    label="Face analysis"
+                    help="Detects faces on-device so burst picks favor the sharpest face. Requires an ML-enabled build."
+                  >
+                    <Toggle
+                      on={settings.smartCullingML}
+                      onChange={(v) => set("smartCullingML", v)}
+                      label="Face analysis"
+                      disabled={!settings.smartCulling}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    label="Analyze on open"
+                    help="Run the pass automatically when a folder opens. Off: press 5 or the Smart tab."
+                  >
+                    <Toggle
+                      on={settings.smartCullingOnOpen}
+                      onChange={(v) => set("smartCullingOnOpen", v)}
+                      label="Analyze on open"
+                      disabled={!settings.smartCulling}
+                    />
+                  </SettingRow>
+                </div>
+                <div className="cull-settings__panenote">
+                  Burst detection is always on — it doesn't depend on suggestions.
+                </div>
+              </>
             )}
-          </Section>
 
-          {/* ───────────── On launch ───────────── */}
-          <Section title="On launch">
-            <SettingRow
-              label="Reopen last folder"
-              help="Skip the home screen when CULL starts."
-            >
-              <Toggle
-                on={settings.openLastFolderOnLaunch}
-                onChange={(v) => set("openLastFolderOnLaunch", v)}
-                label="Reopen last folder"
-              />
-            </SettingRow>
-          </Section>
+            {tab === "files" && (
+              <>
+                <SettingRow
+                  label="Rejected subfolder"
+                  help="Rejected files move into this subfolder of the source."
+                >
+                  <RejectedSubfolderInput
+                    value={settings.rejectedSubfolder}
+                    onChange={(v) => set("rejectedSubfolder", v)}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label="Copy keeps to"
+                  help={'Where keepers go when you run "Copy keeps".'}
+                >
+                  <SegmentToggle<"remember" | "pinned">
+                    value={exportMode}
+                    options={[
+                      { value: "remember", label: "Ask each time" },
+                      { value: "pinned", label: "Pinned root" },
+                    ]}
+                    onChange={(mode) => {
+                      if (mode === "remember") onChange({ ...settings, exportFolder: { mode: "remember" } });
+                      else if (settings.exportFolder.mode !== "pinned") {
+                        // We let the PinnedRoot row pick the folder; meanwhile set
+                        // pinned with an empty path so the row appears.
+                        onChange({ ...settings, exportFolder: { mode: "pinned", path: "" } });
+                      }
+                    }}
+                  />
+                </SettingRow>
+                {exportMode === "pinned" && (
+                  <SettingRow
+                    label="Pinned root"
+                    help="Each session writes to a subfolder under this. The name is editable in the finish dialog."
+                  >
+                    <PinnedRootControl
+                      path={pinnedPath}
+                      onPick={(p) => onChange({ ...settings, exportFolder: { mode: "pinned", path: p } })}
+                    />
+                  </SettingRow>
+                )}
+              </>
+            )}
 
-          {/* ───────────── Cache ───────────── */}
-          <Section title="Cache">
-            <ThumbCacheRow />
-          </Section>
-
-          {/* ───────────── Reset ───────────── */}
-          <Section title="Reset">
-            <ResetRow onReset={() => onChange(DEFAULT_SETTINGS)} />
-          </Section>
+            {tab === "storage" && (
+              <>
+                <SettingRow
+                  label="Drive speed"
+                  help="Normal suits most drives. Slow throttles reads for a sluggish NAS or USB disk."
+                >
+                  {/* Stored values stay "local"/"network" (profile keys + the
+                      backend's set_io_profile wire format) — only the words are
+                      user-facing: speed describes the drive better than location. */}
+                  <SegmentToggle<StorageMode>
+                    value={settings.storageMode}
+                    options={[
+                      { value: "local", label: "Normal" },
+                      { value: "network", label: "Slow" },
+                    ]}
+                    onChange={(v) => set("storageMode", v)}
+                  />
+                </SettingRow>
+                <ThumbCacheRow />
+                <ResetRow onReset={() => onChange(DEFAULT_SETTINGS)} />
+              </>
+            )}
+          </div>
         </div>
 
         <div className="cull-settings__foot">
@@ -274,15 +284,14 @@ export function SettingsDialog({
   );
 }
 
-/** Section header. */
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="cull-settings__section">
-      <div className="cull-settings__section-title">{title}</div>
-      {children}
-    </div>
-  );
-}
+type TabId = "general" | "smart" | "files" | "storage";
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: "general", label: "General" },
+  { id: "smart", label: "Smart culling" },
+  { id: "files", label: "Files" },
+  { id: "storage", label: "Storage" },
+];
 
 function SettingRow({
   label,
@@ -361,16 +370,19 @@ function Toggle({
   on,
   onChange,
   label,
+  disabled,
 }: {
   on: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       className={`cull-settings__toggle${on ? " is-on" : ""}`}
-      onClick={() => onChange(!on)}
+      onClick={() => !disabled && onChange(!on)}
+      disabled={disabled}
       aria-pressed={on}
       aria-label={label}
     />
@@ -505,7 +517,7 @@ function ThumbCacheRow() {
   return (
     <SettingRow
       label="Image cache"
-      help={`Thumbnails + screen-size previews cached on disk for instant re-opens. Lives in the OS cache folder; safe to clear anytime.${mbLabel}`}
+      help={`Cached thumbnails and previews for instant re-opens. Safe to clear anytime.${mbLabel}`}
     >
       <button
         type="button"
