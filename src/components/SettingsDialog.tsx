@@ -75,7 +75,7 @@ export function SettingsDialog({
               <>
                 <SettingRow
                   label="Reopen last folder"
-                  help="Skip the home screen when CULL starts."
+                  help="Skip the home screen on launch."
                 >
                   <Toggle
                     on={settings.openLastFolderOnLaunch}
@@ -85,7 +85,7 @@ export function SettingsDialog({
                 </SettingRow>
                 <SettingRow
                   label="Default filter"
-                  help="The filter active when a cull starts."
+                  help="Filter selected when a cull starts."
                 >
                   <SegmentToggle<Filter>
                     value={settings.defaultFilter}
@@ -100,7 +100,7 @@ export function SettingsDialog({
                 </SettingRow>
                 <SettingRow
                   label="Default overlays"
-                  help="Overlays that start on. Toggle anytime with i / h / p / o / t."
+                  help="Active at start. Toggle with i / h / p / o / t."
                 >
                   <div className="cull-settings__chips">
                     <Chip
@@ -132,7 +132,7 @@ export function SettingsDialog({
                 </SettingRow>
                 <SettingRow
                   label="Thumb strip position"
-                  help="Where the thumbnail strip sits in loupe and compare."
+                  help="Placement of the thumbnail strip."
                 >
                   <SegmentToggle<ThumbsPosition>
                     value={settings.thumbsPosition}
@@ -150,7 +150,7 @@ export function SettingsDialog({
               <>
                 <SettingRow
                   label="Suggestions"
-                  help="Analyzes sharpness, exposure and bursts in the background and marks clear technical misses. Advisory only — nothing is rated or written without your keypress."
+                  help="Marks likely rejects from sharpness, exposure, and burst analysis. Advisory only — never rates or writes files."
                 >
                   <Toggle
                     on={settings.smartCulling}
@@ -164,7 +164,7 @@ export function SettingsDialog({
                 >
                   <SettingRow
                     label="Suggestion threshold"
-                    help="How confident a reject call must be before it shows — Low ≥ 50%, Medium ≥ 65%, High ≥ 80%. Changes apply instantly."
+                    help="Minimum confidence to show a suggestion — Low 50%, Medium 65%, High 80%."
                   >
                     <SegmentToggle<SmartLevel>
                       value={settings.smartCullingConfidence}
@@ -179,7 +179,7 @@ export function SettingsDialog({
                   </SettingRow>
                   <SettingRow
                     label="Face analysis"
-                    help="Detects faces on-device so burst picks favor the sharpest face. Requires an ML-enabled build."
+                    help="Prefers the sharpest face when picking burst winners. Requires an ML-enabled build."
                   >
                     <Toggle
                       on={settings.smartCullingML}
@@ -190,7 +190,7 @@ export function SettingsDialog({
                   </SettingRow>
                   <SettingRow
                     label="Analyze on open"
-                    help="Run the pass automatically when a folder opens. Off: press 5 or the Smart tab."
+                    help="Analyze automatically when a folder opens. Off: press 5 to start."
                   >
                     <Toggle
                       on={settings.smartCullingOnOpen}
@@ -200,9 +200,6 @@ export function SettingsDialog({
                     />
                   </SettingRow>
                 </div>
-                <div className="cull-settings__panenote">
-                  Burst detection is always on — it doesn't depend on suggestions.
-                </div>
               </>
             )}
 
@@ -210,7 +207,7 @@ export function SettingsDialog({
               <>
                 <SettingRow
                   label="Rejected subfolder"
-                  help="Rejected files move into this subfolder of the source."
+                  help="Destination subfolder for rejected files."
                 >
                   <RejectedSubfolderInput
                     value={settings.rejectedSubfolder}
@@ -219,7 +216,7 @@ export function SettingsDialog({
                 </SettingRow>
                 <SettingRow
                   label="Copy keeps to"
-                  help={'Where keepers go when you run "Copy keeps".'}
+                  help="Destination when copying keeps."
                 >
                   <SegmentToggle<"remember" | "pinned">
                     value={exportMode}
@@ -240,7 +237,7 @@ export function SettingsDialog({
                 {exportMode === "pinned" && (
                   <SettingRow
                     label="Pinned root"
-                    help="Each session writes to a subfolder under this. The name is editable in the finish dialog."
+                    help="Each session writes a subfolder under this root."
                   >
                     <PinnedRootControl
                       path={pinnedPath}
@@ -255,7 +252,7 @@ export function SettingsDialog({
               <>
                 <SettingRow
                   label="Drive speed"
-                  help="Normal suits most drives. Slow throttles reads for a sluggish NAS or USB disk."
+                  help="Slow throttles reads for slow NAS or USB drives."
                 >
                   {/* Stored values stay "local"/"network" (profile keys + the
                       backend's set_io_profile wire format) — only the words are
@@ -517,7 +514,7 @@ function ThumbCacheRow() {
   return (
     <SettingRow
       label="Image cache"
-      help={`Cached thumbnails and previews for instant re-opens. Safe to clear anytime.${mbLabel}`}
+      help={`Cached previews for faster re-opens. Safe to clear.${mbLabel}`}
     >
       <button
         type="button"
@@ -549,7 +546,7 @@ function ResetRow({ onReset }: { onReset: () => void }) {
       <div className="cull-settings__row-text">
         <div className="cull-settings__row-name">Reset to defaults</div>
         <div className="cull-settings__row-help">
-          Restores everything in this dialog. Doesn't touch your CR3s or XMPs.
+          Restores all settings. Your files are never affected.
         </div>
       </div>
       <div className="cull-settings__row-control">

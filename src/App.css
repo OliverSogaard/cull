@@ -1510,14 +1510,6 @@ body,
   pointer-events: none;
 }
 
-.cull-settings__panenote {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--muted);
-  border-top: 1px solid var(--border-soft);
-  padding-top: 12px;
-  margin-top: auto;
-}
 
 .cull-settings__foot {
   padding: 14px 26px;
