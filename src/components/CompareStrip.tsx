@@ -1,6 +1,7 @@
 // src/components/CompareStrip.tsx
 import { useMemo } from "react";
 import type { Img, ImageMetadata } from "../types";
+import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
 import { ThumbCell } from "./ThumbCell";
 import { PhotoStrip } from "./strip/PhotoStrip";
@@ -22,6 +23,7 @@ export function CompareStrip({
   challengerIndex,
   metadata,
   onPickChallenger,
+  suggestions,
   bursts,
 }: {
   images: Img[];
@@ -32,6 +34,9 @@ export function CompareStrip({
   /** Optional metadata map; only `lrcRating` is used here, for the corner ★ badge. */
   metadata?: Record<string, ImageMetadata>;
   onPickChallenger: (index: number) => void;
+  /** Smart-culling ghost suggestions by image id — same dots as the loupe
+   *  strip (candidates are unrated, so ghosts always render when present). */
+  suggestions?: Record<number, Suggestion>;
   /** Burst membership by image id — same outlined boxes as the loupe strip. */
   bursts?: Map<number, BurstCtx>;
 }) {
@@ -60,6 +65,7 @@ export function CompareStrip({
             lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
             dimmed={false}
             onPick={isGhost ? NOOP : onPickChallenger}
+            suggestion={suggestions?.[images[idx].id] ?? null}
           />
         );
       }}

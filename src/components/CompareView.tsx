@@ -2,6 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "rea
 import { shimmerPhaseMs } from "../utils/shimmer";
 import type { Feedback, Img, ImageMetadata, Rating } from "../types";
 import { CompareExifRail } from "./ExifRail";
+import type { Suggestion } from "../smart/deriveVerdict";
 import { RatingDot } from "./RatingDot";
 import { useImage } from "../image/useImage";
 import { imageStore } from "../image/imageStore";
@@ -41,6 +42,8 @@ export function CompareView({
   panOffset,
   feedback,
   scrubbing,
+  championSuggestion,
+  challengerSuggestion,
 }: {
   images: Img[];
   championIndex: number;
@@ -62,6 +65,9 @@ export function CompareView({
   panOffset: { x: number; y: number };
   feedback: Feedback | null;
   scrubbing: boolean;
+  /** Per-side smart suggestions (unrated only) for the rail's top section. */
+  championSuggestion?: Suggestion | null;
+  challengerSuggestion?: Suggestion | null;
 }) {
   const champion = images[championIndex];
   const challenger = images[challengerIndex];
@@ -120,6 +126,8 @@ export function CompareView({
             challengerMeta={metadata[challenger.path]}
             championRating={ratings[champion.id]}
             challengerRating={ratings[challenger.id]}
+            championSuggestion={championSuggestion}
+            challengerSuggestion={challengerSuggestion}
           />
         )}
       </div>

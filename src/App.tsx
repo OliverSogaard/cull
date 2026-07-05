@@ -3415,6 +3415,7 @@ export default function App() {
       challengerIndex={challengerIndex}
       metadata={metadata}
       onPickChallenger={pickChallengerFromStrip}
+      suggestions={suggestions}
       bursts={burstCtx}
     />
   );
@@ -3501,6 +3502,16 @@ export default function App() {
             panOffset={panOffset}
             feedback={feedback}
             scrubbing={scrubbing}
+            championSuggestion={
+              images[championIndex] && !ratings[images[championIndex].id]
+                ? suggestions[images[championIndex].id] ?? null
+                : null
+            }
+            challengerSuggestion={
+              images[challengerIndex] && !ratings[images[challengerIndex].id]
+                ? suggestions[images[challengerIndex].id] ?? null
+                : null
+            }
           />
           {thumbsVisible && settings.thumbsPosition !== "top" && cmpStrip}
           {bottomStatusBar}

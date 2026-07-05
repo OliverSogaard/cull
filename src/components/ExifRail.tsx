@@ -182,6 +182,8 @@ export function CompareExifRail({
   challengerMeta,
   championRating,
   challengerRating,
+  championSuggestion,
+  challengerSuggestion,
 }: {
   championName: string;
   challengerName: string;
@@ -189,6 +191,10 @@ export function CompareExifRail({
   challengerMeta: ImageMetadata | undefined;
   championRating?: Rating;
   challengerRating?: Rating;
+  /** Smart-culling suggestions per side (unrated frames only) — rendered as
+   *  a two-column Suggestion section at the top, mirroring the loupe rail. */
+  championSuggestion?: Suggestion | null;
+  challengerSuggestion?: Suggestion | null;
 }) {
   // Build comparable string values for each row, allowing diff detection.
   // Memoized so the ~14 formatter calls don't re-run on every App re-render
@@ -283,6 +289,28 @@ export function CompareExifRail({
         <span className="cull-cr-rail__col cull-cr-rail__col--challenger">Challenger</span>
       </div>
 
+      {(championSuggestion?.verdict || challengerSuggestion?.verdict) && (
+        <div className="cull-exif-rail__section">
+          <div className="cull-exif-rail__label">Suggestion</div>
+          <div className="cull-exif-rail__rows">
+            <div className="cull-cr-rail__row">
+              <span className="cull-cr-rail__k">Verdict</span>
+              <SuggestCell s={championSuggestion} />
+              <SuggestCell s={challengerSuggestion} />
+            </div>
+            <div className="cull-cr-rail__row">
+              <span className="cull-cr-rail__k">Why</span>
+              <span className="cull-cr-rail__v cull-exif-rail__v--dim">
+                {championSuggestion?.verdict ? championSuggestion.reasons.join(", ") : "—"}
+              </span>
+              <span className="cull-cr-rail__v cull-exif-rail__v--dim">
+                {challengerSuggestion?.verdict ? challengerSuggestion.reasons.join(", ") : "—"}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="cull-exif-rail__section">
         <div className="cull-exif-rail__label">Frame</div>
         <div className="cull-exif-rail__rows">
@@ -302,6 +330,16 @@ export function CompareExifRail({
         </div>
       </div>
     </aside>
+  );
+}
+
+/** One side's verdict cell: colored like the loupe rail's Suggestion line. */
+function SuggestCell({ s }: { s?: Suggestion | null }) {
+  if (!s?.verdict) return <span className="cull-cr-rail__v">—</span>;
+  return (
+    <span className={`cull-cr-rail__v cull-exif-rail__suggest--${s.verdict}`}>
+      {s.verdict === "reject" ? "Reject" : "Keep"} · {Math.round(s.confidence * 100)}%
+    </span>
   );
 }
 
