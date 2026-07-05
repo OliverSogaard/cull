@@ -12,6 +12,7 @@ function harness() {
   const pending: { layer: PresentLayer; url: string; resolve: () => void; reject: () => void }[] = [];
   let nowMs = 0;
   const frames: (() => void)[] = [];
+  const sleeps: (() => void)[] = [];
   const p = new Presenter({
     decode: (layer, url) =>
       new Promise<void>((resolve, reject) => {
@@ -19,6 +20,7 @@ function harness() {
       }),
     now: () => nowMs,
     nextFrame: () => new Promise<void>((r) => frames.push(r)),
+    sleep: () => new Promise<void>((r) => sleeps.push(r)),
   });
   return {
     p,
@@ -29,6 +31,10 @@ function harness() {
     fireFrame: () => {
       for (const f of frames.splice(0)) f();
     },
+    releaseSleeps: () => {
+      for (const r of sleeps.splice(0)) r();
+    },
+    sleepCount: () => sleeps.length,
   };
 }
 
@@ -384,5 +390,82 @@ describe("offerTiers", () => {
     await done;
     expect(h.p.snapshot().front).toMatchObject({ path: "/a", tier: "preview" });
     expect(h.decodes.some((d) => d.url === "blob:m1")).toBe(false);
+  });
+});
+
+describe("thumb hold-off (settled nav)", () => {
+  /** Front /a at preview — the "user is looking at a sharp frame" baseline. */
+  async function frontedOnA() {
+    const h = harness();
+    h.p.nav("/a");
+    const prv = h.p.offer("/a", "preview", "blob:pa");
+    await flush();
+    h.pending[0].resolve();
+    await prv;
+    return h;
+  }
+
+  it("cold start (nothing fronting) skips the hold-off — blur beats shimmer", async () => {
+    const h = harness();
+    h.p.nav("/a");
+    void h.p.offer("/a", "thumb", "blob:ta");
+    await flush();
+    expect(h.sleepCount()).toBe(0);
+    expect(h.pending).toHaveLength(1); // decode started immediately
+  });
+
+  it("preview arriving within the window presents with the blur never mounting", async () => {
+    const h = await frontedOnA();
+    h.p.nav("/b");
+    const thumb = h.p.offer("/b", "thumb", "blob:tb");
+    await flush();
+    expect(h.pending).toHaveLength(1); // thumb sleeping, no decode yet
+    const prv = h.p.offer("/b", "preview", "blob:pb");
+    await flush();
+    h.pending[1].resolve();
+    expect(await prv).toBe(true);
+    h.releaseSleeps();
+    expect(await thumb).toBe(false); // woke to find the preview fronting
+    expect(h.pending).toHaveLength(2); // thumb never started a decode
+    expect(h.p.snapshot().front).toMatchObject({ path: "/b", tier: "preview" });
+  });
+
+  it("thumb presents after the hold-off when nothing better arrived", async () => {
+    const h = await frontedOnA();
+    h.p.nav("/b");
+    const thumb = h.p.offer("/b", "thumb", "blob:tb");
+    await flush();
+    h.releaseSleeps();
+    await flush();
+    expect(h.pending).toHaveLength(2); // now it decodes
+    h.pending[1].resolve();
+    expect(await thumb).toBe(true);
+    expect(h.p.snapshot().front).toMatchObject({ path: "/b", tier: "thumb" });
+  });
+
+  it("post-hold-off thumb never aborts an in-flight higher-tier decode", async () => {
+    const h = await frontedOnA();
+    h.p.nav("/b");
+    const thumb = h.p.offer("/b", "thumb", "blob:tb");
+    await flush();
+    const prv = h.p.offer("/b", "preview", "blob:pb");
+    await flush(); // preview decode in flight (unresolved)
+    h.releaseSleeps();
+    expect(await thumb).toBe(false); // yields to the pending preview
+    expect(h.pending).toHaveLength(2); // no thumb decode clobbered it
+    h.pending[1].resolve();
+    expect(await prv).toBe(true);
+    expect(h.p.snapshot().front).toMatchObject({ path: "/b", tier: "preview" });
+  });
+
+  it("a nav during the hold-off drops the stale thumb", async () => {
+    const h = await frontedOnA();
+    h.p.nav("/b");
+    const thumb = h.p.offer("/b", "thumb", "blob:tb");
+    await flush();
+    h.p.nav("/c");
+    h.releaseSleeps();
+    expect(await thumb).toBe(false);
+    expect(h.pending).toHaveLength(1); // only /a's preview ever decoded
   });
 });

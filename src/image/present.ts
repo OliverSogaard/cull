@@ -48,6 +48,12 @@ export const TIER_PRESENTATION: Record<
 export const SNAP_WINDOW_MS = 48;
 /** Crossfade duration outside the snap window. */
 export const FADE_MS = 140;
+/** Settled-nav thumb hold-off: when the front already shows another frame's
+ *  sharp pixels, the blurred thumb waits this long before it may mount — a
+ *  preview landing within the window presents directly and the blur flash
+ *  (single-step nav onto a frame whose read-ahead hadn't finished) never
+ *  happens. Cold starts (nothing fronting) skip it: blur beats shimmer. */
+export const THUMB_HOLDOFF_MS = 160;
 
 export type PresentLayer = "A" | "B";
 
@@ -76,6 +82,8 @@ export type PresentDeps = {
   now?: () => number;
   /** Resolves at the next animation frame — the scrub-budget race opponent. */
   nextFrame?: () => Promise<void>;
+  /** Timer (test-injectable) — used by the thumb hold-off. */
+  sleep?: (ms: number) => Promise<void>;
 };
 
 const EMPTY: LayerState = { path: null, tier: null, url: null };
@@ -89,6 +97,11 @@ export class Presenter {
   private scrubbing = false;
   private currentPath: string | null = null;
   private navAt = 0;
+  /** Tier rank of the decode currently owning the shared back element (and a
+   *  sequence to survive ownership clobbering) — a post-hold-off thumb must
+   *  never set src over an in-flight higher-tier decode. */
+  private pendingRank: number | null = null;
+  private pendingSeq = 0;
   private listeners = new Set<() => void>();
   private snap: PresentSnapshot | null = null;
 
@@ -99,6 +112,7 @@ export class Presenter {
       nextFrame:
         deps.nextFrame ??
         (() => new Promise<void>((r) => requestAnimationFrame(() => r()))),
+      sleep: deps.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms))),
     };
   }
 
@@ -163,8 +177,34 @@ export class Presenter {
     if (this.scrubbing && TIER_RANK[tier] > TIER_RANK.preview) return false;
 
     const token = this.navToken;
+
+    // Thumb hold-off (settled navs, another frame fronting): give higher
+    // tiers THUMB_HOLDOFF_MS to present before blur may mount. Scrub mode is
+    // exempt — there the blurred thumb IS the designed fallback per step.
+    if (!this.scrubbing && tier === "thumb") {
+      const front = this.layers[this.frontLayer];
+      if (front.url !== null && front.path !== path) {
+        await this.deps.sleep(THUMB_HOLDOFF_MS);
+        if (token !== this.navToken) return false; // navigated away meanwhile
+        if (!this.isUpgrade(path, tier)) return false; // something better fronted
+        // A higher tier owns the back element right now — setting src would
+        // abort its decode and trade sharp pixels for blur. Stand down; the
+        // caller re-offers if that decode ultimately fails.
+        if (this.pendingRank !== null && this.pendingRank > TIER_RANK.thumb) return false;
+      }
+    }
+
     const back = this.backLayer();
+    const seq = ++this.pendingSeq;
+    this.pendingRank = TIER_RANK[tier];
     const decodePromise = this.deps.decode(back, url);
+    // Ownership bookkeeping rides a PARALLEL subscriber — chaining (.finally)
+    // would add a microtask hop to every presentation path.
+    const release = () => {
+      // Release only if no later offer took the element over.
+      if (seq === this.pendingSeq) this.pendingRank = null;
+    };
+    void decodePromise.then(release, release);
 
     if (this.scrubbing) {
       // Frame-budget race: accept only a decode that wins against the next
