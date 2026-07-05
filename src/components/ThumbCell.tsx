@@ -19,7 +19,9 @@ type ThumbCellProps = {
   dimmed: boolean;
   onPick: (index: number) => void;
   /** Role variant in compare mode — adds a champagne outline + role badge. */
-  roleVariant?: "champion" | "challenger";
+  /** "champion-ghost": the champion shown IN the candidate track — heavily
+   *  grayed, unselectable; the pinned reference cell stays on the left. */
+  roleVariant?: "champion" | "challenger" | "champion-ghost";
   /** Smart-culling ghost suggestion — renders in the verdict-dot slot ONLY
    *  while the frame is unrated (compare strips never pass it: suppressed
    *  by construction there). */
@@ -58,14 +60,17 @@ export const ThumbCell = memo(function ThumbCell({
 
   // Outline colour on the active cell. In compare mode the role variant takes
   // over (always champagne); in loupe it's the standard champagne accent.
+  const isGhost = roleVariant === "champion-ghost";
   const frameClass = [
     "cull-thumb__frame",
     roleVariant === "champion" ? "cull-thumb--champion" : "",
     roleVariant === "challenger" ? "cull-thumb--challenger" : "",
+    isGhost ? "cull-thumb--champion-ghost" : "",
   ]
     .filter(Boolean)
     .join(" ");
-  const outlineColor = isCurrent || roleVariant ? "var(--accent)" : "transparent";
+  const outlineColor =
+    (isCurrent || roleVariant) && !isGhost ? "var(--accent)" : "transparent";
 
   const showLrc = hasLrcRating(lrcRating, rating);
 
@@ -78,11 +83,18 @@ export const ThumbCell = memo(function ThumbCell({
 
   return (
     <div
-      className="cull-thumb"
-      onClick={() => onPick(index)}
+      className={`cull-thumb${isGhost ? " cull-thumb--ghost-cell" : ""}`}
+      onClick={() => !isGhost && onPick(index)}
       role="button"
+      aria-disabled={isGhost || undefined}
       aria-label={`${stripExt(img.filename)}${rating ? `, ${rating}` : ""}${
-        roleVariant ? `, ${roleVariant}` : isCurrent ? ", current" : ""
+        isGhost
+          ? ", champion (pinned left)"
+          : roleVariant
+            ? `, ${roleVariant}`
+            : isCurrent
+              ? ", current"
+              : ""
       }`}
       style={{ opacity: cellOpacity }}
     >
@@ -107,7 +119,7 @@ export const ThumbCell = memo(function ThumbCell({
             rendered as a Lucide SVG so it sits on the text baseline cleanly
             instead of riding high (Unicode ★ has weird metrics in
             Segoe UI on Windows). */}
-        {roleVariant ? (
+        {roleVariant && !isGhost ? (
           <div
             className={`cull-thumb__role-badge cull-thumb__role-badge--${roleVariant}`}
             aria-hidden

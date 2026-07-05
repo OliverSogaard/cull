@@ -22,7 +22,7 @@ const NOOP = () => {};
  */
 export function CompareStrip({
   images,
-  candidates,
+  stripIndices,
   championIndex,
   challengerIndex,
   metadata,
@@ -30,27 +30,32 @@ export function CompareStrip({
   bursts,
 }: {
   images: Img[];
-  candidates: number[];
+  /** Candidates PLUS the champion in its capture slot — the champion renders
+   *  as a grayed, unselectable ghost (the pinned reference stays on the left). */
+  stripIndices: number[];
   championIndex: number;
   challengerIndex: number;
   /** Optional metadata map; only `lrcRating` is used here, for the corner ★ badge. */
   metadata?: Record<string, ImageMetadata>;
   onPickChallenger: (index: number) => void;
   /** Burst membership by image id — same outlined boxes as the loupe strip.
-   *  The candidate list is a SUBSET (rated frames filtered out), so a run may
-   *  split into several segments; only the first carries the ×N legend. */
+   *  The list is a SUBSET (rated frames filtered out), so a run may split
+   *  into several segments; only the first carries the ×N legend. */
   bursts?: Map<number, BurstCtx>;
 }) {
-  const cpos = useMemo(() => candidates.indexOf(challengerIndex), [candidates, challengerIndex]);
+  const cpos = useMemo(
+    () => stripIndices.indexOf(challengerIndex),
+    [stripIndices, challengerIndex],
+  );
   const champion = images[championIndex];
 
   const { segs, prefix } = useMemo(
     () =>
       computeBurstSegments(
-        candidates.map((idx) => images[idx].id),
+        stripIndices.map((idx) => images[idx].id),
         bursts,
       ),
-    [candidates, images, bursts],
+    [stripIndices, images, bursts],
   );
   const burstBoxes = useMemo(
     () => (segs.length > 0 ? burstBoxOverlays(segs, prefix) : null),
@@ -76,7 +81,7 @@ export function CompareStrip({
       <div className="cull-cmp-strip__sep" aria-hidden />
       <FilmStrip
         className="cull-cmp-strip__candidates"
-        count={candidates.length}
+        count={stripIndices.length}
         stride={CELL_STRIDE}
         cellWidth={CELL_W}
         trackHeight={CELL_H}
@@ -84,19 +89,22 @@ export function CompareStrip({
         buffer={STRIP_BUFFER}
         overlays={burstBoxes}
         prefix={prefix}
-        keyForItem={(i) => images[candidates[i]].id}
+        keyForItem={(i) => images[stripIndices[i]].id}
         renderItem={(i) => {
-          const idx = candidates[i];
+          const idx = stripIndices[i];
+          const isGhost = idx === championIndex;
           return (
             <ThumbCell
               img={images[idx]}
               index={idx}
               isCurrent={idx === challengerIndex}
-              roleVariant={idx === challengerIndex ? "challenger" : undefined}
+              roleVariant={
+                isGhost ? "champion-ghost" : idx === challengerIndex ? "challenger" : undefined
+              }
               rating={undefined}
               lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
               dimmed={false}
-              onPick={onPickChallenger}
+              onPick={isGhost ? NOOP : onPickChallenger}
             />
           );
         }}

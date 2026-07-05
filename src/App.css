@@ -3274,6 +3274,20 @@ body,
   display: none;
 }
 
+/* The champion's ghost inside the candidate track: heavily grayed and inert
+   — it marks where the reference sits in the timeline; picking it against
+   itself makes no sense, so clicks pass through nothing. */
+.cull-thumb--ghost-cell {
+  pointer-events: none;
+  cursor: default;
+}
+
+.cull-thumb--champion-ghost .cull-thumb__img,
+.cull-thumb--champion-ghost .cull-thumb__placeholder {
+  filter: grayscale(1) brightness(0.6);
+  opacity: 0.45;
+}
+
 /* Champion cell pinned styling in compare strip (champagne outline). */
 /* Champion/challenger get a slightly thicker current-outline (colour via the
    inline `--thumb-outline`, set by ThumbCell for role cells). */

@@ -466,6 +466,19 @@ export default function App() {
     return out;
   }, [compareMode, images, ratings, championIndex]);
 
+  // What the compare strip DISPLAYS: the candidates plus the champion in its
+  // capture-order slot, rendered as a grayed, unselectable ghost — you can see
+  // where the current reference sits in the timeline without being able to
+  // pick it against itself. Navigation stays on compareCandidates.
+  const compareStripIndices = useMemo(() => {
+    if (!compareMode) return [];
+    const out: number[] = [];
+    for (let i = 0; i < images.length; i++) {
+      if (i === championIndex || !ratings[images[i].id]) out.push(i);
+    }
+    return out;
+  }, [compareMode, images, ratings, championIndex]);
+
   // Challenger's position within the candidate list, memoized like positionInFilter
   // so the status bar's "N / M" doesn't run an O(n) indexOf on every App render
   // (incl. every ~30 Hz compare scrub frame).
@@ -3397,7 +3410,7 @@ export default function App() {
   const cmpStrip = (
     <CompareStrip
       images={images}
-      candidates={compareCandidates}
+      stripIndices={compareStripIndices}
       championIndex={championIndex}
       challengerIndex={challengerIndex}
       metadata={metadata}
