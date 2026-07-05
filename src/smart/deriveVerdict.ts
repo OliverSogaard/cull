@@ -1,6 +1,7 @@
 import type { Rating } from "../types/rating";
 import type { ImageScore } from "../types/ipc";
 import type { BurstCtx } from "./groupBursts";
+import type { SimilarCtx } from "./groupSimilar";
 
 /** An advisory suggestion — never persisted, superseded in place by a real rating. */
 export type Suggestion = {
@@ -23,6 +24,11 @@ export const SHARP_STRONG = 0.55;
 export const TEXTURE_MIN = 0.12;
 /** Burst-loser confidence = marginToWinner / MARGIN_SCALE (near-ties → silent). */
 export const MARGIN_SCALE = 0.25;
+/** Similar-set loser: a lookalike group is WEAKER evidence than a camera-
+ *  clocked burst — bigger divisor (lower confidence per margin) and a hard
+ *  near-tie floor below which we say nothing at all. */
+export const SIMILAR_MARGIN_SCALE = 0.35;
+export const SIMILAR_MARGIN_FLOOR = 0.05;
 /** Laplacian-vs-Tenengrad gap past which the sharpness signal is distrusted. */
 export const TENENGRAD_DISAGREE = 0.35;
 /** Primary-face prob_open below this fires "closed eyes", margin-scaled —
@@ -72,6 +78,7 @@ export function keepEligible(score: ImageScore, level: SmartLevel): boolean {
 export function deriveVerdict(
   score: ImageScore,
   burst: BurstCtx | undefined,
+  similar: SimilarCtx | undefined,
   level: SmartLevel,
 ): Suggestion {
   if (!score.decodeOk) return { verdict: null, confidence: 0, reasons: [] };
@@ -96,6 +103,17 @@ export function deriveVerdict(
     if (burstConf > 0) reasons.push(`not best of burst (${burst.pos} of ${burst.len})`);
   }
 
+  // Rule 3s — similar-set loser: like the burst rule but stricter (floor +
+  // bigger scale), because grouping came from lookalike heuristics, not the
+  // camera's burst clock.
+  let similarConf = 0;
+  if (similar && !similar.isWinner && similar.marginToWinner > SIMILAR_MARGIN_FLOOR) {
+    similarConf = clamp01((similar.marginToWinner - SIMILAR_MARGIN_FLOOR) / SIMILAR_MARGIN_SCALE);
+    if (similarConf > 0) {
+      reasons.push(`not best of similar set (${similar.pos} of ${similar.len})`);
+    }
+  }
+
   // Rule 3b — closed eyes on the primary (largest) face, margin-scaled.
   // −1 sentinel = unknown → silent; the borderline band stays silent too.
   let eyesConf = 0;
@@ -111,8 +129,8 @@ export function deriveVerdict(
 
   // Conservative stacking: strongest signal plus a small bump per extra —
   // NEVER the product (independence math would inflate near-tie frames).
-  const [c0, c1, c2] = [softConf, burstConf, eyesConf].sort((a, b) => b - a);
-  let conf = c0 + 0.1 * c1 + 0.05 * c2;
+  const [c0, c1, c2, c3] = [softConf, burstConf, eyesConf, similarConf].sort((a, b) => b - a);
+  let conf = c0 + 0.1 * c1 + 0.05 * c2 + 0.05 * c3;
 
   if (conf > 0) {
     // Rule 1 — clipping annotates a live reject; it NEVER rejects alone.
@@ -137,10 +155,9 @@ export function deriveVerdict(
   // Never a favorite in Tier 1.
   if (keepEligible(score, level)) {
     const keepConf = Math.min(score.afSharpness, score.exposureScore);
-    const keepReasons =
-      burst?.isWinner === true
-        ? ["best of burst", "sharp, well exposed"]
-        : ["sharp, well exposed"];
+    const keepReasons = ["sharp, well exposed"];
+    if (burst?.isWinner) keepReasons.unshift("best of burst");
+    if (similar?.isWinner) keepReasons.unshift("best of similar set");
     return { verdict: "keep", confidence: keepConf, reasons: keepReasons };
   }
   return { verdict: null, confidence: 0, reasons: [] };

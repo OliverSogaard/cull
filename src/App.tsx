@@ -285,7 +285,7 @@ export default function App() {
     const out: Record<number, Suggestion> = {};
     for (const [idStr, s] of Object.entries(qualityScores)) {
       const id = Number(idStr);
-      const sug = deriveVerdict(s, burstCtx.get(id), settings.smartCullingConfidence);
+      const sug = deriveVerdict(s, burstCtx.get(id), undefined, settings.smartCullingConfidence);
       if (sug.verdict) out[id] = sug;
     }
     return out;
