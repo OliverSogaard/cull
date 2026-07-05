@@ -56,6 +56,8 @@ export type ImageScore = {
   capturedAtMs: number | null;
   faces: FaceScore[];
   aesthetic: number | null;
+  /** L2-normalized 384-d DINOv2 embedding (ML builds only). */
+  embedding: number[] | null;
   /** false ⇒ preview missing/corrupt — show no suggestion for this frame. */
   decodeOk: boolean;
 };

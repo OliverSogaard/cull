@@ -48,6 +48,8 @@ mod analyze;
 // Without smart-ml only the (always-compiled, always-tested) pure decode math
 // is present — no callers, by design. Never dead in feature builds.
 #[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
+mod embed;
+#[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
 mod faces;
 mod phash;
 mod bundle;
@@ -90,6 +92,28 @@ pub fn run() {
                 tauri::path::BaseDirectory::Resource,
             ) {
                 faces::init_eye_classifier(p);
+            }
+            // Phase 3d/3c: DINOv2 embeddings (near-dupe grouping) + CLIP/LAION
+            // aesthetic scoring — same lazy-init pattern, each model resolved
+            // independently so a missing file only disables that one feature.
+            #[cfg(feature = "smart-ml")]
+            if let Ok(p) =
+                app.path().resolve("models/dinov2s.onnx", tauri::path::BaseDirectory::Resource)
+            {
+                embed::init_embedder(p);
+            }
+            #[cfg(feature = "smart-ml")]
+            if let (Ok(clip), Ok(head)) = (
+                app.path().resolve(
+                    "models/clip_vitb32_visual.onnx",
+                    tauri::path::BaseDirectory::Resource,
+                ),
+                app.path().resolve(
+                    "models/laion_aesthetic.onnx",
+                    tauri::path::BaseDirectory::Resource,
+                ),
+            ) {
+                embed::init_aesthetic(clip, head);
             }
             // One-time cleanup of the v1 thumbnail cache (format v2 lives under
             // tiers/): without this, up to 500 MB of dead v1 files sit in

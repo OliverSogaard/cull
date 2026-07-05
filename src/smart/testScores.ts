@@ -25,6 +25,7 @@ export function score(over: Partial<ImageScore> = {}): ImageScore {
     capturedAtMs: 1_000_000,
     faces: [],
     aesthetic: null,
+    embedding: null,
     decodeOk: true,
     ...over,
   };

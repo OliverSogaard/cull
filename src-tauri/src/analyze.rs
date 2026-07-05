@@ -80,6 +80,9 @@ pub struct ImageScore {
     // Tier 2 (ML, later) — present now so the wire contract is stable.
     pub faces: Vec<FaceScore>,
     pub aesthetic: Option<f32>,
+    /// L2-normalized 384-d DINOv2 embedding (feature smart-ml + ml flag only;
+    /// ~4 KB JSON per frame — accepted, spec'd). None otherwise.
+    pub embedding: Option<Vec<f32>>,
     pub decode_ok: bool,
 }
 
@@ -389,6 +392,7 @@ pub(crate) fn score_one(input: &DecodedInput, index: usize) -> ImageScore {
         captured_at_ms: captured_at_ms(input.captured_at.as_deref(), input.sub_sec_ms),
         faces: Vec::new(),
         aesthetic: None,
+        embedding: None,
         decode_ok: true,
     }
 }
@@ -465,6 +469,7 @@ pub(crate) async fn analyze_quality(
                 #[cfg(feature = "smart-ml")]
                 if want_ml {
                     attach_faces(input, score);
+                    attach_embeddings(input, score);
                 }
                 #[cfg(not(feature = "smart-ml"))]
                 let _ = (input, score, want_ml);
@@ -528,6 +533,17 @@ fn attach_faces(input: &DecodedInput, score: &mut ImageScore) {
             }
         })
         .collect();
+}
+
+/// DINOv2 embedding (near-dupe grouping) + CLIP/LAION aesthetic, same decoded
+/// buffer. Failures stay None — advisory enrichment, never worth an error.
+#[cfg(feature = "smart-ml")]
+fn attach_embeddings(input: &DecodedInput, score: &mut ImageScore) {
+    if !score.decode_ok {
+        return;
+    }
+    score.embedding = crate::embed::embedding(&input.rgb, input.w, input.h);
+    score.aesthetic = crate::embed::aesthetic(&input.rgb, input.w, input.h);
 }
 
 #[cfg(test)]
