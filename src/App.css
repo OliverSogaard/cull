@@ -2559,8 +2559,7 @@ body,
 
 /* When the strip is positioned at the TOP of the loupe / compare body, swap
    the border so the line still sits between the strip and the photo stage. */
-.cull-app[data-thumbs-pos="top"] .cull-thumbs,
-.cull-app[data-thumbs-pos="top"] .cull-cmp-strip {
+.cull-app[data-thumbs-pos="top"] .cull-thumbs {
   border-top: none;
   border-bottom: 1px solid var(--border);
 }
@@ -3196,84 +3195,7 @@ body,
 }
 
 /* ── compare-mode strip ───────────────────────────────────── */
-.cull-cmp-strip {
-  flex: 0 0 auto;
-  /* Height follows the candidates track (which carries the same 20px-top /
-     8px-bottom headroom as .cull-thumbs for the burst boxes + ×N legend). */
-  height: auto;
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  gap: 4px;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  overflow-y: hidden;
-}
-
-.cull-cmp-strip__champion {
-  /* The candidates track sits 6px below the box center (20px top / 8px bottom
-     headroom padding) — matching margin keeps champion + separator aligned
-     with the candidate cells. */
-  margin-top: 12px;
-  flex: 0 0 auto;
-}
-
 /* Mid-dot separator between champion and challenger candidates. */
-.cull-cmp-strip__sep {
-  margin-top: 12px;
-  flex: 0 0 auto;
-  width: 18px;
-  height: 54px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  background: transparent;
-  margin: 0 4px;
-  user-select: none;
-}
-
-.cull-cmp-strip__sep::before {
-  content: "";
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 50%;
-  width: 1px;
-  background: var(--border);
-  transform: translateX(-50%);
-}
-
-.cull-cmp-strip__sep::after {
-  content: "·";
-  position: relative;
-  background: var(--bg);
-  color: var(--accent);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
-  font-weight: 500;
-  padding: 3px 4px;
-  line-height: 1;
-}
-
-.cull-cmp-strip__candidates {
-  flex: 1 1 auto;
-  /* Cells absolutely positioned in the inner track; gap is in CELL_STRIDE.
-     Same headroom recipe as .cull-thumbs: the burst box overhangs the cells
-     and its ×N legend rides above — overflow clips at the padding box, so
-     overlays drawn into the padding render fine (20 + 54 + 8 = 82). */
-  height: 82px;
-  padding: 20px 0 8px;
-  box-sizing: border-box;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.cull-cmp-strip__candidates::-webkit-scrollbar {
-  display: none;
-}
-
 /* The champion's ghost inside the candidate track: heavily grayed and inert
    — it marks where the reference sits in the timeline; picking it against
    itself makes no sense, so clicks pass through nothing. */
@@ -3288,10 +3210,8 @@ body,
   opacity: 0.45;
 }
 
-/* Champion cell pinned styling in compare strip (champagne outline). */
-/* Champion/challenger get a slightly thicker current-outline (colour via the
+/* The challenger gets a slightly thicker current-outline (colour via the
    inline `--thumb-outline`, set by ThumbCell for role cells). */
-.cull-thumb--champion .cull-thumb__frame,
 .cull-thumb--challenger .cull-thumb__frame {
   --thumb-outline-w: 2px;
 }

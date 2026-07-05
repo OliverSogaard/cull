@@ -3,22 +3,17 @@ import { useMemo } from "react";
 import type { Img, ImageMetadata } from "../types";
 import type { BurstCtx } from "../smart/groupBursts";
 import { ThumbCell } from "./ThumbCell";
-import { FilmStrip } from "./strip/FilmStrip";
-import { burstBoxOverlays } from "./strip/BurstBoxes";
-import { computeBurstSegments } from "./strip/burstSegments";
-import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
+import { PhotoStrip } from "./strip/PhotoStrip";
 
-/** Stable no-op so the pinned champion cell's onPick prop doesn't change every
- *  render (which would defeat ThumbCell's memo for that one cell). */
+/** Stable no-op: the champion ghost is display-only — clicks do nothing. */
 const NOOP = () => {};
 
 /**
- * Compare-mode strip: pinned champion + scrolling unrated candidates.
- *
- * Only UNRATED frames appear in the candidate list (rated ones aren't rendered).
- * The champion is pinned on the left as a fixed reference; then a separator dot;
- * then the candidate filmstrip, virtualized via {@link FilmStrip}, scrolling to
- * keep the (amber-outlined) challenger centered as it changes.
+ * Compare-mode strip: {@link PhotoStrip} (identical to the loupe strip) over
+ * the unrated candidates, with the CHAMPION rendered in its capture-order
+ * slot as a grayed, unselectable ghost wearing the champion tag, and the
+ * challenger wearing its own tag. No pinned reference cell — the strip IS
+ * the timeline.
  */
 export function CompareStrip({
   images,
@@ -30,85 +25,44 @@ export function CompareStrip({
   bursts,
 }: {
   images: Img[];
-  /** Candidates PLUS the champion in its capture slot — the champion renders
-   *  as a grayed, unselectable ghost (the pinned reference stays on the left). */
+  /** Candidates PLUS the champion in its capture slot. */
   stripIndices: number[];
   championIndex: number;
   challengerIndex: number;
   /** Optional metadata map; only `lrcRating` is used here, for the corner ★ badge. */
   metadata?: Record<string, ImageMetadata>;
   onPickChallenger: (index: number) => void;
-  /** Burst membership by image id — same outlined boxes as the loupe strip.
-   *  The list is a SUBSET (rated frames filtered out), so a run may split
-   *  into several segments; only the first carries the ×N legend. */
+  /** Burst membership by image id — same outlined boxes as the loupe strip. */
   bursts?: Map<number, BurstCtx>;
 }) {
   const cpos = useMemo(
     () => stripIndices.indexOf(challengerIndex),
     [stripIndices, challengerIndex],
   );
-  const champion = images[championIndex];
-
-  const { segs, prefix } = useMemo(
-    () =>
-      computeBurstSegments(
-        stripIndices.map((idx) => images[idx].id),
-        bursts,
-      ),
-    [stripIndices, images, bursts],
-  );
-  const burstBoxes = useMemo(
-    () => (segs.length > 0 ? burstBoxOverlays(segs, prefix) : null),
-    [segs, prefix],
-  );
 
   return (
-    <footer className="cull-cmp-strip">
-      <div className="cull-cmp-strip__champion">
-        {champion && (
+    <PhotoStrip
+      images={images}
+      indices={stripIndices}
+      centerPos={cpos}
+      bursts={bursts}
+      renderCell={(idx) => {
+        const isGhost = idx === championIndex;
+        return (
           <ThumbCell
-            img={champion}
-            index={championIndex}
-            isCurrent
-            roleVariant="champion"
+            img={images[idx]}
+            index={idx}
+            isCurrent={idx === challengerIndex}
+            roleVariant={
+              isGhost ? "champion-ghost" : idx === challengerIndex ? "challenger" : undefined
+            }
             rating={undefined}
-            lrcRating={metadata?.[champion.path]?.lrcRating ?? null}
+            lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
             dimmed={false}
-            onPick={NOOP}
+            onPick={isGhost ? NOOP : onPickChallenger}
           />
-        )}
-      </div>
-      <div className="cull-cmp-strip__sep" aria-hidden />
-      <FilmStrip
-        className="cull-cmp-strip__candidates"
-        count={stripIndices.length}
-        stride={CELL_STRIDE}
-        cellWidth={CELL_W}
-        trackHeight={CELL_H}
-        centerOffset={cpos}
-        buffer={STRIP_BUFFER}
-        overlays={burstBoxes}
-        prefix={prefix}
-        keyForItem={(i) => images[stripIndices[i]].id}
-        renderItem={(i) => {
-          const idx = stripIndices[i];
-          const isGhost = idx === championIndex;
-          return (
-            <ThumbCell
-              img={images[idx]}
-              index={idx}
-              isCurrent={idx === challengerIndex}
-              roleVariant={
-                isGhost ? "champion-ghost" : idx === challengerIndex ? "challenger" : undefined
-              }
-              rating={undefined}
-              lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
-              dimmed={false}
-              onPick={isGhost ? NOOP : onPickChallenger}
-            />
-          );
-        }}
-      />
-    </footer>
+        );
+      }}
+    />
   );
 }

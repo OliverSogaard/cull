@@ -19,9 +19,9 @@ type ThumbCellProps = {
   dimmed: boolean;
   onPick: (index: number) => void;
   /** Role variant in compare mode — adds a champagne outline + role badge. */
-  /** "champion-ghost": the champion shown IN the candidate track — heavily
-   *  grayed, unselectable; the pinned reference cell stays on the left. */
-  roleVariant?: "champion" | "challenger" | "champion-ghost";
+  /** "champion-ghost": the champion in its candidate-track slot — heavily
+   *  grayed, unselectable, wearing the champion tag (no pinned cell). */
+  roleVariant?: "challenger" | "champion-ghost";
   /** Smart-culling ghost suggestion — renders in the verdict-dot slot ONLY
    *  while the frame is unrated (compare strips never pass it: suppressed
    *  by construction there). */
@@ -63,7 +63,6 @@ export const ThumbCell = memo(function ThumbCell({
   const isGhost = roleVariant === "champion-ghost";
   const frameClass = [
     "cull-thumb__frame",
-    roleVariant === "champion" ? "cull-thumb--champion" : "",
     roleVariant === "challenger" ? "cull-thumb--challenger" : "",
     isGhost ? "cull-thumb--champion-ghost" : "",
   ]
@@ -88,13 +87,7 @@ export const ThumbCell = memo(function ThumbCell({
       role="button"
       aria-disabled={isGhost || undefined}
       aria-label={`${stripExt(img.filename)}${rating ? `, ${rating}` : ""}${
-        isGhost
-          ? ", champion (pinned left)"
-          : roleVariant
-            ? `, ${roleVariant}`
-            : isCurrent
-              ? ", current"
-              : ""
+        isGhost ? ", champion" : roleVariant ? `, ${roleVariant}` : isCurrent ? ", current" : ""
       }`}
       style={{ opacity: cellOpacity }}
     >
@@ -119,12 +112,16 @@ export const ThumbCell = memo(function ThumbCell({
             rendered as a Lucide SVG so it sits on the text baseline cleanly
             instead of riding high (Unicode ★ has weird metrics in
             Segoe UI on Windows). */}
-        {roleVariant && !isGhost ? (
+        {roleVariant ? (
           <div
-            className={`cull-thumb__role-badge cull-thumb__role-badge--${roleVariant}`}
+            className={`cull-thumb__role-badge cull-thumb__role-badge--${
+              isGhost ? "champion" : roleVariant
+            }`}
             aria-hidden
           >
-            <span className="cull-thumb__role-badge-text">{roleVariant}</span>
+            <span className="cull-thumb__role-badge-text">
+              {isGhost ? "champion" : roleVariant}
+            </span>
             {showLrc && (
               <Star
                 size={8}

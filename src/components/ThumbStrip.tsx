@@ -4,21 +4,13 @@ import type { Img, ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
 import { ThumbCell } from "./ThumbCell";
-import { FilmStrip } from "./strip/FilmStrip";
-import { burstBoxOverlays } from "./strip/BurstBoxes";
-import { computeBurstSegments } from "./strip/burstSegments";
-import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
+import { PhotoStrip } from "./strip/PhotoStrip";
 
 /**
- * The loupe's filmstrip. Renders every image in the staged set, virtualized via
- * {@link FilmStrip}: only ~viewport+buffer cells around the cursor are live.
- * Cells outside the active filter are dimmed (not hidden) so the user can see
- * what's around them in capture order. Centering is an instant scrollLeft write
- * (smooth scrolling can't keep up with hold-to-scrub).
- *
- * Burst runs get outlined boxes with extra track space around them (the
- * shared strip/burstSegments derivation — the compare strip renders the same
- * overlay, so the two match).
+ * The loupe's filmstrip: {@link PhotoStrip} over the FULL staged set, with
+ * rating dots, filter dimming, and smart-culling ghost suggestions on the
+ * cells. Burst boxes and virtualization live in PhotoStrip (shared with the
+ * compare strip, so the two always match).
  */
 export function ThumbStrip({
   images,
@@ -43,42 +35,24 @@ export function ThumbStrip({
   bursts?: Map<number, BurstCtx>;
 }) {
   const visibleSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
-
-  const { segs, prefix } = useMemo(
-    () =>
-      computeBurstSegments(
-        images.map((im) => im.id),
-        bursts,
-      ),
-    [images, bursts],
-  );
-  const burstBoxes = useMemo(
-    () => (segs.length > 0 ? burstBoxOverlays(segs, prefix) : null),
-    [segs, prefix],
-  );
+  const indices = useMemo(() => images.map((_, i) => i), [images]);
 
   return (
-    <FilmStrip
-      className="cull-thumbs"
-      count={images.length}
-      stride={CELL_STRIDE}
-      cellWidth={CELL_W}
-      trackHeight={CELL_H}
-      centerOffset={currentIndex}
-      buffer={STRIP_BUFFER}
-      overlays={burstBoxes}
-      prefix={prefix}
-      keyForItem={(i) => images[i].id}
-      renderItem={(i) => (
+    <PhotoStrip
+      images={images}
+      indices={indices}
+      centerPos={currentIndex}
+      bursts={bursts}
+      renderCell={(idx) => (
         <ThumbCell
-          img={images[i]}
-          index={i}
-          isCurrent={i === currentIndex}
-          rating={ratings[images[i].id]}
-          lrcRating={metadata?.[images[i].path]?.lrcRating ?? null}
-          dimmed={!visibleSet.has(i)}
+          img={images[idx]}
+          index={idx}
+          isCurrent={idx === currentIndex}
+          rating={ratings[images[idx].id]}
+          lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
+          dimmed={!visibleSet.has(idx)}
           onPick={onPick}
-          suggestion={suggestions?.[images[i].id] ?? null}
+          suggestion={suggestions?.[images[idx].id] ?? null}
         />
       )}
     />
