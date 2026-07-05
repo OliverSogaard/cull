@@ -2236,9 +2236,39 @@ body,
   -webkit-app-region: no-drag;
 }
 
-.cull-trouble-chip:hover {
+.cull-trouble-chip:hover:not(:disabled) {
   background: var(--bad);
   color: var(--surface);
+}
+
+/* Probe in flight — informational, not clickable. */
+.cull-trouble-chip[data-state="checking"] {
+  cursor: default;
+  animation: cull-trouble-pulse 1.2s ease-in-out infinite;
+}
+
+/* Probe failed — the click's visible outcome; holds briefly, then re-offers retry. */
+.cull-trouble-chip[data-state="still"] {
+  cursor: default;
+  background: var(--bad);
+  color: var(--surface);
+}
+
+/* Probe succeeded — brief confirmation before the chip disappears. */
+.cull-trouble-chip[data-state="recovered"] {
+  cursor: default;
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+@keyframes cull-trouble-pulse {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 /* Quiet per-frame error chip (Phase 4 choreography "Error" row): the thumb

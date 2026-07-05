@@ -41,6 +41,7 @@ import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
 import { PERFORMANCE_PROFILES, normalizeRejectedSubfolder } from "./types/settings";
+import { runFolderRetry, type TroubleState } from "./image/folderRetry";
 import { imageStore } from "./image/imageStore";
 import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
@@ -349,7 +350,8 @@ export default function App() {
 
   // Latched by the store when several paths reach terminal read-failure (NAS
   // unmounted / sleep-wake): shows the non-blocking "folder unreachable" chip.
-  const [folderTrouble, setFolderTrouble] = useState(false);
+  // Full retry-flow state (checking / still / recovered) lives in folderRetry.ts.
+  const [folderTrouble, setFolderTrouble] = useState<TroubleState>("hidden");
   // Dev HUD flag, read once at mount: localStorage["cull:devhud"]="1" + reload.
   const [devHudOn] = useState(() => {
     try {
@@ -586,11 +588,15 @@ export default function App() {
   // Folder-trouble chip: the store latches once when several paths go
   // terminal; any new path-set (re-open / append → reset) clears it.
   useEffect(() => {
-    imageStore.setTroubleSink(() => setFolderTrouble(true));
+    // Mid-probe ("checking"/"still") the retry flow owns the chip — the sink
+    // re-latches from anywhere else, including over a brief "reconnected".
+    imageStore.setTroubleSink(() =>
+      setFolderTrouble((s) => (s === "checking" || s === "still" ? s : "latched")),
+    );
     return () => imageStore.setTroubleSink(undefined);
   }, []);
   useEffect(() => {
-    setFolderTrouble(false);
+    setFolderTrouble("hidden");
   }, [images]);
 
   // Pin the compare pair's fulls for the whole compare session. The cursor
@@ -626,8 +632,12 @@ export default function App() {
   // source folder, then re-arm the store's queues IN PLACE — same session,
   // same cursor, no phase change — so a NAS reconnect self-heals without
   // restarting the app. Still unreachable → the chip re-latches.
+  const folderRetryRunning = useRef(false);
   const retryUnreachableFolders = useCallback(async () => {
-    setFolderTrouble(false);
+    // The chip disables itself while checking, but a double-click can land
+    // before the "checking" render — hard-guard reentry.
+    if (folderRetryRunning.current) return;
+    folderRetryRunning.current = true;
     const seen = new Set<string>();
     const folders: string[] = [];
     for (const im of imagesRef.current) {
@@ -636,18 +646,20 @@ export default function App() {
         folders.push(im.srcFolder);
       }
     }
-    for (const f of folders) {
-      try {
-        await invoke<string[]>("scan_folder", {
-          path: f,
-          ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
-        });
-      } catch {
-        setFolderTrouble(true);
-        return;
-      }
+    try {
+      await runFolderRetry({
+        folders,
+        probe: (f) =>
+          invoke<string[]>("scan_folder", {
+            path: f,
+            ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
+          }),
+        setState: setFolderTrouble,
+        rearm: () => imageStore.rearm(),
+      });
+    } finally {
+      folderRetryRunning.current = false;
     }
-    imageStore.rearm();
   }, [settings.rejectedSubfolder]);
 
   // Grid viewport range → store background-fill prioritisation (visible cells
@@ -3403,14 +3415,30 @@ export default function App() {
             savingCount={savingCount}
             onRetry={retryFailed}
           />
-          {folderTrouble && (
+          {folderTrouble !== "hidden" && (
             <button
               type="button"
               className="cull-trouble-chip"
+              data-state={folderTrouble}
+              disabled={folderTrouble !== "latched"}
               onClick={() => void retryUnreachableFolders()}
-              title="several reads failed — the folder may be unreachable (NAS asleep / unmounted)"
+              title={
+                folderTrouble === "checking"
+                  ? "probing every source folder…"
+                  : folderTrouble === "still"
+                    ? "the folder is still not responding — check the drive / NAS connection, then retry"
+                    : folderTrouble === "recovered"
+                      ? "folder reachable again — resuming loads"
+                      : "several reads failed — the folder may be unreachable (NAS asleep / unmounted)"
+              }
             >
-              folder unreachable · retry
+              {folderTrouble === "checking"
+                ? "checking folder…"
+                : folderTrouble === "still"
+                  ? "still unreachable"
+                  : folderTrouble === "recovered"
+                    ? "reconnected"
+                    : "folder unreachable · retry"}
             </button>
           )}
         </div>
