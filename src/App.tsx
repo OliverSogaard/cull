@@ -76,7 +76,7 @@ const NAV_REPEAT_MS = 33;
 /** Staged scrub acceleration: after this long holding, 3 frames per tick… */
 const SCRUB_STAGE2_AT_MS = 2000;
 /** …and after this long, 10 — long albums stay traversable. */
-const SCRUB_STAGE3_AT_MS = 4000;
+const SCRUB_STAGE3_AT_MS = 5000;
 const SCRUB_SPEEDS = [1, 3, 10] as const;
 type ScrubSpeed = (typeof SCRUB_SPEEDS)[number];
 
