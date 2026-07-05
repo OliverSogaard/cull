@@ -39,7 +39,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
           ["← →", "prev / next  (hold to scrub)"],
           ["space (hold)", "1:1 zoom · ←↑↓→ pan"],
           ["shift+space", "2:1 zoom"],
-          ["1 – 4", "filter: all / unrated / keeps / ★"],
+          ["1 – 5", "filter: all / unrated / keeps / favorites / smart"],
         ],
       },
       {
@@ -115,7 +115,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
       keys: [
         ["← →", "prev / next  (hold to traverse)"],
         ["↑ ↓", "row up / down"],
-        ["1 – 4", "filter: all / unrated / keeps / ★"],
+        ["1 – 5", "filter: all / unrated / keeps / favorites / smart"],
         ["click", "open in loupe"],
         ["⇧+click", "select range"],
         [`${modGlyph}+click`, "add to selection"],

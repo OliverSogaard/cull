@@ -3670,7 +3670,7 @@ function EmptyFilter({
   // includes unrated), so falling back to "this" covers the impossible-case.
   const label =
     filter === "favorites"
-      ? "★"
+      ? "Favorites"
       : filter === "keeps"
         ? "Keeps"
         : filter === "unrated"
