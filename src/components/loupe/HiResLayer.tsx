@@ -75,8 +75,10 @@ export function HiResLayer({
         // the sharp raster paints UNDERNEATH the zoomed preview and zoom
         // never visibly sharpens (found in the macOS manual matrix).
         zIndex: 3,
-        left: 10,
-        top: 10,
+        // Inside .cull-photo-frame__clip (the content box) — the clip's
+        // inset already accounts for the matte.
+        left: 0,
+        top: 0,
         width: w,
         height: h,
         maxWidth: "none",

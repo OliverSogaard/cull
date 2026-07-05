@@ -337,6 +337,9 @@ const ComparePanel = memo(function ComparePanel({
         {/* Photo-frame stays mounted across transitions — see App.tsx for the
             same pattern. The presenter's double-buffer means the pane never
             goes blank and never swaps to undecoded pixels. */}
+        {/* Content-box clip — the zoomed image never paints over the matte
+            ring (see the loupe's .cull-photo-frame__clip). */}
+        <div className="cull-photo-frame__clip">
         <PresentLayers
           snap={snap}
           elA={elA}
@@ -438,6 +441,7 @@ const ComparePanel = memo(function ComparePanel({
             <line x1="0" y1="66.667" x2="100" y2="66.667" />
           </svg>
         )}
+        </div>
 
         {rating && !suppressRating && (
           <div className="cull-cmp-dot">

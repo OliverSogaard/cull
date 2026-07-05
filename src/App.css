@@ -606,17 +606,29 @@ body,
   pointer-events: none;
 }
 
-.cull-image {
-  /* Absolute overlay of the matte-inset content box: left/top:10 + calc(100%-20)
-     lands exactly on the 10px-padded content box (content-box frame → padding
-     box = content + 20). It no longer sizes the frame (the sizer does), so it
-     can't shrink to the THMB pixels or collapse mid-decode. Frame AR == image AR
-     keeps object-fit a no-op → even matte on all 4 sides. */
+/* Content-box clip window: everything that scales with zoom (presenter
+   layers, hi-res raster, clip/peak masks) lives inside one of these — the
+   zoomed image is clipped at the content box, so the 10px matte ring stays a
+   true window frame at any zoom (no size jump when zoom engages). overflow
+   does NOT create a stacking context, so child z-indexes still resolve
+   against frame siblings (error chip 4, flash 5…). */
+.cull-photo-frame__clip {
   position: absolute;
-  left: 10px;
-  top: 10px;
-  width: calc(100% - 20px);
-  height: calc(100% - 20px);
+  inset: 10px;
+  overflow: hidden;
+  border-radius: 1px;
+}
+
+.cull-image {
+  /* Fills .cull-photo-frame__clip (the matte-inset content box). It doesn't
+     size the frame (the sizer does), so it can't shrink to the THMB pixels or
+     collapse mid-decode. Frame AR == image AR keeps object-fit a no-op →
+     even matte on all 4 sides. */
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
   object-fit: contain; /* NEVER clip — portrait images show side matte */
   display: block;
   border-radius: 1px;
@@ -718,10 +730,10 @@ body,
      the right/bottom insets, which was the overlay-misalignment bug. Explicit
      content-box size + object-fit:fill (the img default) stretches the mask
      exactly onto the displayed image. */
-  left: 10px;
-  top: 10px;
-  width: calc(100% - 20px);
-  height: calc(100% - 20px);
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   image-rendering: pixelated;
   z-index: 4;
@@ -731,10 +743,10 @@ body,
    clipping mask so peaking lines remain visible over a clipping pattern. */
 .cull-peaking-overlay {
   position: absolute !important;
-  left: 10px;
-  top: 10px;
-  width: calc(100% - 20px);
-  height: calc(100% - 20px);
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   image-rendering: pixelated;
   z-index: 5;
@@ -743,10 +755,10 @@ body,
 /* Composition rule-of-thirds grid (O). Fills the clip box. */
 .cull-composition-overlay {
   position: absolute !important;
-  left: 10px;
-  top: 10px;
-  width: calc(100% - 20px);
-  height: calc(100% - 20px);
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   z-index: 6;
 }
@@ -3211,14 +3223,14 @@ body,
 }
 
 .cull-cmp-img {
-  /* Absolute overlay of the matte-inset content box — see .cull-image. The sizer
+  /* Fills the pane's .cull-photo-frame__clip — see .cull-image. The sizer
      drives the frame; this just paints pixels into the content box. Frame AR ==
      image AR → object-fit no-op → even matte in narrow (portrait) + wide panes. */
   position: absolute;
-  left: 10px;
-  top: 10px;
-  width: calc(100% - 20px);
-  height: calc(100% - 20px);
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
   object-fit: contain; /* NEVER clip — portrait shows side matte */
   display: block;
   border-radius: 1px;

@@ -3149,6 +3149,7 @@ export default function App() {
                   photo-frame's intrinsic size (which is what was causing
                   the image to visibly resize when clipping toggled).
                   Inline style is reserved for the zoom transform. */}
+              <div className="cull-photo-frame__clip" aria-hidden>
               {!scrubbing && currentClipMask && (
                 <img
                   className="cull-clip-overlay"
@@ -3189,6 +3190,7 @@ export default function App() {
                   <line x1="0" y1="66.667" x2="100" y2="66.667" />
                 </svg>
               )}
+              </div>
             </div>
             {/* Verdict is now shown in the bottom status bar's pill; the floating
                 corner dot is dropped to avoid duplicate signaling and to keep the

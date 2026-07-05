@@ -136,17 +136,22 @@ export const LoupeStage = memo(function LoupeStage({
         alt=""
         aria-hidden
       />
-      <PresentLayers
-        snap={snap}
-        elA={elA}
-        elB={elB}
-        className="cull-image"
-        dimsKnown={dimsKnown}
-        isZooming={isZooming}
-        zoomZ={zoomZ}
-        originX={originX}
-        originY={originY}
-      />
+      {/* Content-box clip: everything that scales with zoom lives inside, so
+          the zoomed image can never paint over the 10px matte ring — the
+          matte is a true window frame at any zoom. */}
+      <div className="cull-photo-frame__clip">
+        <PresentLayers
+          snap={snap}
+          elA={elA}
+          elB={elB}
+          className="cull-image"
+          dimsKnown={dimsKnown}
+          isZooming={isZooming}
+          zoomZ={zoomZ}
+          originX={originX}
+          originY={originY}
+        />
+      </div>
       {/* Skeleton shimmer only while the presenter has NOTHING — once any
           pixels presented, old content stays during navigation (no blanking). */}
       {!snap.front.url && (
@@ -186,17 +191,19 @@ export const LoupeStage = memo(function LoupeStage({
           transformed to coincide with the base — revealed only POST-DECODE
           (HiResLayer gates on el.decode()), token-guarded by the path key. */}
       {hiResWanted && hasImgRect && zoomNative && cur.stage === "full" && hiResSrc && (
-        <HiResLayer
-          key={path}
-          url={hiResSrc}
-          w={zoomNative.w}
-          h={zoomNative.h}
-          tx={hiResTx}
-          ty={hiResTy}
-          scale={hiResScale}
-          className="cull-image cull-image--hires"
-          onDecoded={setHiResReady}
-        />
+        <div className="cull-photo-frame__clip">
+          <HiResLayer
+            key={path}
+            url={hiResSrc}
+            w={zoomNative.w}
+            h={zoomNative.h}
+            tx={hiResTx}
+            ty={hiResTy}
+            scale={hiResScale}
+            className="cull-image cull-image--hires"
+            onDecoded={setHiResReady}
+          />
+        </div>
       )}
     </>
   );
