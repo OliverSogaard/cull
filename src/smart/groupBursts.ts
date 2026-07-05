@@ -1,4 +1,7 @@
 import type { Img } from "../types/image";
+import { pickWinner, EYES_OPEN_MIN } from "./pickWinner";
+
+export { EYES_OPEN_MIN };
 
 /**
  * Per-frame grouping inputs, SOURCE-AGNOSTIC: built from smart-culling scores
@@ -31,9 +34,6 @@ export type SharpInput = {
   eyesOpen: number | null;
 };
 
-/** prob_open at or above this counts as "eyes open" for the burst tiebreak. */
-export const EYES_OPEN_MIN = 0.5;
-
 /** Burst membership + (when every member is scored) winner context. */
 export type BurstCtx = {
   /** 0-based group id (session-local, stable per derivation pass). */
@@ -51,27 +51,6 @@ export type BurstCtx = {
 export const BURST_GAP_MS = 700;
 /** mtime-fallback guard: capture times this far apart NEVER group. */
 export const CAPTURED_COARSE_GUARD_MS = 2000;
-
-/** Strict "a beats b" for winner selection (ties fall through → earliest wins). */
-function beats(a: SharpInput, b: SharpInput): boolean {
-  // Phase 3b: eyes first — when BOTH frames know their eye state and they
-  // fall on opposite sides of the open/closed line, the open-eyed frame wins
-  // outright (a portrait burst's keeper is never the blink). Same-side pairs
-  // fall through to sharpness.
-  if (a.eyesOpen != null && b.eyesOpen != null) {
-    const aOpen = a.eyesOpen >= EYES_OPEN_MIN;
-    const bOpen = b.eyesOpen >= EYES_OPEN_MIN;
-    if (aOpen !== bOpen) return aOpen;
-  }
-  // Tier-2: when BOTH frames carry a face, the sharper face wins outright —
-  // a portrait burst's keeper is the one where the SUBJECT is sharp.
-  if (a.faceSharpness != null && b.faceSharpness != null && a.faceSharpness !== b.faceSharpness) {
-    return a.faceSharpness > b.faceSharpness;
-  }
-  if (a.afSharpness !== b.afSharpness) return a.afSharpness > b.afSharpness;
-  if (a.globalSharpness !== b.globalSharpness) return a.globalSharpness > b.globalSharpness;
-  return a.clipSum < b.clipSum;
-}
 
 /** Does `cur` extend the burst ending at `prev`? All gates must hold. */
 function extendsRun(
@@ -127,23 +106,15 @@ export function groupBursts(
 
   const flush = () => {
     if (run.length >= 2) {
-      const sharps = run.map((r) => sharp?.[r.id]);
-      const winnerKnown = sharps.every((s) => s != null);
-      let w = -1;
-      if (winnerKnown) {
-        for (let i = 0; i < run.length; i++) {
-          if (eligible && !eligible[run[i].id]) continue; // below the bar — can't win
-          if (w === -1 || beats(sharps[i]!, sharps[w]!)) w = i;
-        }
-      }
-      const winnerSharp = w >= 0 ? sharps[w]!.afSharpness : 0;
+      const ids = run.map((r) => r.id);
+      const { winnerIdx: w, winnerAf } = pickWinner(ids, sharp, eligible);
       run.forEach((r, i) => {
         out.set(r.id, {
           group: groupId,
           pos: i + 1,
           len: run.length,
           isWinner: i === w,
-          marginToWinner: w >= 0 && i !== w ? winnerSharp - sharps[i]!.afSharpness : 0,
+          marginToWinner: w >= 0 && i !== w ? winnerAf - sharp![r.id]!.afSharpness : 0,
         });
       });
       groupId += 1;
