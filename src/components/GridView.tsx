@@ -201,14 +201,17 @@ export const GridView = memo(function GridView({
             key={`burst-${s.key}`}
             className="cull-burst-box cull-burst-box--grid"
             style={{
-              // border-box: 3px outside cell bounds + the cells' 3px internal
-              // padding ⇒ ~4px air from the line's inner face to the photos.
-              // Labeled segments start ~4px higher: a fieldset's painted top
-              // border sits at its legend's vertical midpoint.
-              left: s.c0 * cellW - 3,
-              top: s.row * rowH - (s.label != null ? 7 : 3),
-              width: (s.c1 - s.c0 + 1) * cellW + 6,
-              height: rowH + (s.label != null ? 10 : 6),
+              // The box lives INSIDE the inter-image corridor (cells pad 9px,
+              // so images sit 18px apart): lines 2px inside the cell bound ⇒
+              // ~5px air to the segment's own photos, ~11px to neighbours,
+              // 4px between side-by-side boxes, and a labeled edge's legend
+              // clears a box ending in the row above. Labeled segments start
+              // 4px higher: a fieldset paints its top border at the legend's
+              // vertical midpoint.
+              left: s.c0 * cellW + 2,
+              top: s.row * rowH + 2 - (s.label != null ? 4 : 0),
+              width: (s.c1 - s.c0 + 1) * cellW - 4,
+              height: rowH - 5 + (s.label != null ? 4 : 0),
             }}
             aria-hidden
           >

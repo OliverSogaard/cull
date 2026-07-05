@@ -1,8 +1,11 @@
 // src/components/CompareStrip.tsx
 import { useMemo } from "react";
 import type { Img, ImageMetadata } from "../types";
+import type { BurstCtx } from "../smart/groupBursts";
 import { ThumbCell } from "./ThumbCell";
 import { FilmStrip } from "./strip/FilmStrip";
+import { burstBoxOverlays } from "./strip/BurstBoxes";
+import { computeBurstSegments } from "./strip/burstSegments";
 import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./strip/metrics";
 
 /** Stable no-op so the pinned champion cell's onPick prop doesn't change every
@@ -24,6 +27,7 @@ export function CompareStrip({
   challengerIndex,
   metadata,
   onPickChallenger,
+  bursts,
 }: {
   images: Img[];
   candidates: number[];
@@ -32,9 +36,26 @@ export function CompareStrip({
   /** Optional metadata map; only `lrcRating` is used here, for the corner ★ badge. */
   metadata?: Record<string, ImageMetadata>;
   onPickChallenger: (index: number) => void;
+  /** Burst membership by image id — same outlined boxes as the loupe strip.
+   *  The candidate list is a SUBSET (rated frames filtered out), so a run may
+   *  split into several segments; only the first carries the ×N legend. */
+  bursts?: Map<number, BurstCtx>;
 }) {
   const cpos = useMemo(() => candidates.indexOf(challengerIndex), [candidates, challengerIndex]);
   const champion = images[championIndex];
+
+  const { segs, prefix } = useMemo(
+    () =>
+      computeBurstSegments(
+        candidates.map((idx) => images[idx].id),
+        bursts,
+      ),
+    [candidates, images, bursts],
+  );
+  const burstBoxes = useMemo(
+    () => (segs.length > 0 ? burstBoxOverlays(segs, prefix) : null),
+    [segs, prefix],
+  );
 
   return (
     <footer className="cull-cmp-strip">
@@ -61,6 +82,8 @@ export function CompareStrip({
         trackHeight={CELL_H}
         centerOffset={cpos}
         buffer={STRIP_BUFFER}
+        overlays={burstBoxes}
+        prefix={prefix}
         keyForItem={(i) => images[candidates[i]].id}
         renderItem={(i) => {
           const idx = candidates[i];

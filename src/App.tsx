@@ -3402,6 +3402,7 @@ export default function App() {
       challengerIndex={challengerIndex}
       metadata={metadata}
       onPickChallenger={pickChallengerFromStrip}
+      bursts={burstCtx}
     />
   );
 

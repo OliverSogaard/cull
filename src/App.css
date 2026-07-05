@@ -2785,7 +2785,9 @@ body,
 
 .cull-grid__cell {
   cursor: pointer;
-  padding: 3px;
+  /* 9px ⇒ an 18px inter-image corridor with room for the burst boxes' 2px
+     line + on-line legend (the boxes sit 2px inside the cell bounds). */
+  padding: 9px;
   box-sizing: border-box;
 }
 
