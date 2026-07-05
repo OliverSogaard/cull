@@ -22,6 +22,7 @@ export function ThumbStrip({
   suggestions,
   bursts,
   scrubbing,
+  scrubSpeed,
 }: {
   images: Img[];
   currentIndex: number;
@@ -36,6 +37,8 @@ export function ThumbStrip({
   bursts?: Map<number, BurstCtx>;
   /** Fades in the position bar under the cells. */
   scrubbing?: boolean;
+  /** Staged scrub acceleration factor — labeled above the bar's marker. */
+  scrubSpeed?: number;
 }) {
   const visibleSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
   const indices = useMemo(() => images.map((_, i) => i), [images]);
@@ -47,6 +50,7 @@ export function ThumbStrip({
       centerPos={currentIndex}
       bursts={bursts}
       scrubbing={scrubbing}
+      scrubSpeed={scrubSpeed}
       renderCell={(idx) => (
         <ThumbCell
           img={images[idx]}

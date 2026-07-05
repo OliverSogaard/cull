@@ -26,6 +26,7 @@ export function CompareStrip({
   suggestions,
   bursts,
   scrubbing,
+  scrubSpeed,
 }: {
   images: Img[];
   /** Candidates PLUS the champion in its capture slot. */
@@ -42,6 +43,8 @@ export function CompareStrip({
   bursts?: Map<number, BurstCtx>;
   /** Fades in the position bar under the cells. */
   scrubbing?: boolean;
+  /** Staged scrub acceleration factor — labeled above the bar's marker. */
+  scrubSpeed?: number;
 }) {
   const cpos = useMemo(
     () => stripIndices.indexOf(challengerIndex),
@@ -55,6 +58,7 @@ export function CompareStrip({
       centerPos={cpos}
       bursts={bursts}
       scrubbing={scrubbing}
+      scrubSpeed={scrubSpeed}
       renderCell={(idx) => {
         const isGhost = idx === championIndex;
         return (

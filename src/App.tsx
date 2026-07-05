@@ -73,6 +73,12 @@ const PAN_LIMIT = 40; // max % offset from the AF point
 // the display paints (no stutter; self-throttles on a slow frame). ~33ms ≈ 30
 // images/s, the fastest that still feels smooth.
 const NAV_REPEAT_MS = 33;
+/** Staged scrub acceleration: after this long holding, steps triple… */
+const SCRUB_STAGE2_AT_MS = 1600;
+/** …and after this long they run at 10× — long albums stay traversable. */
+const SCRUB_STAGE3_AT_MS = 3600;
+const SCRUB_SPEEDS = [1, 3, 10] as const;
+type ScrubSpeed = (typeof SCRUB_SPEEDS)[number];
 
 // After the immediate first step on hold-start, wait this long before the
 // auto-repeat kicks in — so a quick tap moves exactly one image, while a
@@ -2165,6 +2171,10 @@ export default function App() {
   const lastStepTsRef = useRef(0);
   const holdStartTsRef = useRef(0);
   const scrubbingRef = useRef(false);
+  // Staged acceleration (1× → 3× → 10× by hold time) — state only for the
+  // indicators (scrub bar + footer chip); the loop reads the ref.
+  const [scrubSpeed, setScrubSpeed] = useState<ScrubSpeed>(1);
+  const scrubSpeedRef = useRef<ScrubSpeed>(1);
 
   const stopHold = useCallback(() => {
     heldDirRef.current = 0;
@@ -2175,6 +2185,10 @@ export default function App() {
     if (scrubbingRef.current) {
       scrubbingRef.current = false;
       setScrubbing(false); // settle → full-res snaps back for the landed frame
+    }
+    if (scrubSpeedRef.current !== 1) {
+      scrubSpeedRef.current = 1;
+      setScrubSpeed(1);
     }
   }, []);
 
@@ -2196,7 +2210,20 @@ export default function App() {
       if (due) {
         repeating = true;
         lastStepTsRef.current = ts;
-        const moved = navStepRef.current(heldDirRef.current as 1 | -1);
+        // Staged acceleration: the longer the hold, the more frames per tick
+        // (1× → 3× → 10×). Multi-steps stop at a boundary mid-tick.
+        const held = ts - holdStartTsRef.current;
+        const speed: ScrubSpeed =
+          held >= SCRUB_STAGE3_AT_MS ? 10 : held >= SCRUB_STAGE2_AT_MS ? 3 : 1;
+        if (speed !== scrubSpeedRef.current) {
+          scrubSpeedRef.current = speed;
+          setScrubSpeed(speed);
+        }
+        let moved = false;
+        for (let k = 0; k < speed; k++) {
+          if (!navStepRef.current(heldDirRef.current as 1 | -1)) break;
+          moved = true;
+        }
         // Blur only while actually moving. At a boundary (nothing to move to) keep
         // the current frame full-res — no point blurring when we aren't going
         // anywhere. Toggle only on change to avoid per-step re-renders.
@@ -3309,6 +3336,11 @@ export default function App() {
       </div>
       <div className="cull-statusbar__spacer" />
       <div className="cull-statusbar__right">
+        {scrubbing && scrubSpeed > 1 && (
+          <span className="cull-statusbar__scrubspeed" aria-hidden>
+            {scrubSpeed}×
+          </span>
+        )}
         <span
           className="cull-statusbar__pos"
           title={compareMode ? "challenger position / total candidates" : "current position / filtered total"}
@@ -3406,6 +3438,7 @@ export default function App() {
       suggestions={suggestions}
       bursts={burstCtx}
       scrubbing={scrubbing}
+      scrubSpeed={scrubSpeed}
     />
   );
   const cmpStrip = (
@@ -3419,6 +3452,7 @@ export default function App() {
       suggestions={suggestions}
       bursts={burstCtx}
       scrubbing={scrubbing}
+      scrubSpeed={scrubSpeed}
     />
   );
 

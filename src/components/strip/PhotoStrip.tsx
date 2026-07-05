@@ -20,6 +20,7 @@ export function PhotoStrip({
   centerPos,
   bursts,
   scrubbing = false,
+  scrubSpeed = 1,
   renderCell,
 }: {
   images: Img[];
@@ -35,6 +36,9 @@ export function PhotoStrip({
    *  cells — the strip shows ~a screenful, the bar shows where that screenful
    *  sits in the whole set. */
   scrubbing?: boolean;
+  /** Staged acceleration factor (1/3/10) — >1 shows a ×N label above the
+   *  bar's marker. */
+  scrubSpeed?: number;
   /** Cell renderer: (imageIndex, stripPos) → the ThumbCell. */
   renderCell: (imageIndex: number, stripPos: number) => ReactNode;
 }) {
@@ -73,6 +77,11 @@ export function PhotoStrip({
       {indices.length > 1 && (
         <div className={`cull-scrubbar${scrubbing ? " is-on" : ""}`} aria-hidden>
           <div className="cull-scrubbar__thumb" style={{ left: `${frac * 100}%` }} />
+          {scrubSpeed > 1 && (
+            <div className="cull-scrubbar__speed" style={{ left: `${frac * 100}%` }}>
+              {scrubSpeed}×
+            </div>
+          )}
         </div>
       )}
     </div>

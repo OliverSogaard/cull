@@ -378,6 +378,17 @@ body,
 /* Position counter "N / M" — lives on the right cluster.
    Tabular-numeric, with the slash + total muted, and a fixed width so the row
    doesn't pan when the number changes from one to three digits. */
+/* Staged-scrub speed chip beside the position counter (×3 / ×10). */
+.cull-statusbar__scrubspeed {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  border: 1px solid rgba(212, 175, 106, 0.4);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
 .cull-statusbar__pos {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
@@ -2592,6 +2603,23 @@ body,
 .cull-scrubbar.is-on {
   opacity: 1;
   transition: opacity 0.12s ease 0s;
+}
+
+.cull-scrubbar__speed {
+  position: absolute;
+  bottom: 7px;
+  transform: translateX(-50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  background: rgba(8, 8, 10, 0.85);
+  border: 1px solid rgba(212, 175, 106, 0.4);
+  border-radius: 3px;
+  padding: 0 5px;
+  line-height: 14px;
+  white-space: nowrap;
+  transition: left 80ms linear;
 }
 
 .cull-scrubbar__thumb {
