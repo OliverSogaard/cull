@@ -11,7 +11,7 @@ import {
 import type { Filter } from "../types/rating";
 import { sanitizeFolderName } from "../utils/path";
 
-const FILTERS: readonly Filter[] = ["all", "unrated", "keeps", "favorites"];
+const FILTERS: readonly Filter[] = ["all", "unrated", "keeps", "keepsFavs"];
 
 /**
  * Validate a parsed-from-storage blob into a known-good Settings, per field. The

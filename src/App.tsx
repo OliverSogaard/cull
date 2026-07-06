@@ -51,6 +51,7 @@ import { imageStore } from "./image/imageStore";
 import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
+import { cycleFilter, topOf } from "./utils/filterModes";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
@@ -147,8 +148,10 @@ export default function App() {
   const [ratings, setRatings] = useState<Record<number, Rating>>({});
   const [filter, setFilter] = useState<Filter>("all");
   /** Burst/Similar run boxes render in the grid only under filters that keep
-   *  runs contiguous — see the GridView call site for why. */
-  const showGridGroupBoxes = filter === "all" || filter === "unrated";
+   *  runs contiguous — see the GridView call site for why. Checked against
+   *  the TOP-LEVEL tab (topOf) so Keeps·★ / Smart sub-modes gate the same
+   *  as their base modes. */
+  const showGridGroupBoxes = topOf(filter) === "all" || topOf(filter) === "unrated";
   // Grid multi-select. Indices are ABSOLUTE (into images), not filter-relative,
   // so a rating action operating on the set lands on the right photos even if
   // the filter changes mid-flow. `selectionAnchor` is the cell shift-range
@@ -449,12 +452,27 @@ export default function App() {
   }, [currentIndex, resetZoom]);
 
   const visibleIndices = useMemo(() => {
-    // "suggested" resolves against the live suggestions map: frames with a
-    // suggestion that are STILL unrated (rating a frame removes it live).
-    if (filter === "suggested") {
+    // The whole "suggested" family resolves against the live suggestions
+    // map: frames with a suggestion that are STILL unrated (rating a frame
+    // removes it live). Sub-modes narrow further by the suggestion's verdict.
+    if (topOf(filter) === "suggested") {
       return images
         .map((_, i) => i)
-        .filter((i) => !ratings[images[i].id] && suggestions[images[i].id]);
+        .filter((i) => {
+          if (ratings[images[i].id]) return false;
+          const sug = suggestions[images[i].id];
+          if (!sug) return false;
+          switch (filter) {
+            case "suggestedRejects":
+              return sug.verdict === "reject";
+            case "suggestedKeeps":
+              return sug.verdict === "keep";
+            case "suggestedFavs":
+              return sug.verdict === "favorite";
+            default:
+              return true; // "suggested" — any live suggestion.
+          }
+        });
     }
     return images.map((_, i) => i).filter((i) => passesFilter(ratings[images[i].id], filter));
   }, [images, ratings, filter, suggestions]);
@@ -1312,6 +1330,16 @@ export default function App() {
     compareMode && images[challengerIndex] ? images[challengerIndex].path : "",
     { wantFull: false },
   );
+
+  // The Smart tab only renders while smart culling is on (SettingsDialog can
+  // toggle it off mid-cull). A Smart filter active at that moment would
+  // otherwise strand the view on a tab that no longer exists in the footer —
+  // reset to "all" the instant the setting drops.
+  useEffect(() => {
+    if (!settings.smartCulling && topOf(filter) === "suggested") {
+      setFilter("all");
+    }
+  }, [settings.smartCulling, filter]);
 
   // Auto-jump: if current falls out of the active filter, hop to the nearest
   // match (before paint, so no flash of an out-of-filter state). Suspended during
@@ -2809,20 +2837,17 @@ export default function App() {
           setCompositionVisible((v) => !v);
           break;
         case "1":
-          setFilter("all");
+          setFilter((f) => cycleFilter(f, "all"));
           break;
         case "2":
-          setFilter("unrated");
+          setFilter((f) => cycleFilter(f, "unrated"));
           break;
         case "3":
-          setFilter("keeps");
+          setFilter((f) => cycleFilter(f, "keeps"));
           break;
         case "4":
-          setFilter("favorites");
-          break;
-        case "5":
           if (settings.smartCulling) {
-            setFilter("suggested");
+            setFilter((f) => cycleFilter(f, "suggested"));
             startAnalysis(); // no-op unless "analyze on open" is off and unrun
           }
           break;
@@ -3527,7 +3552,7 @@ export default function App() {
             <button
               type="button"
               className={filter === "all" ? "is-active" : ""}
-              onClick={() => setFilter("all")}
+              onClick={() => setFilter((f) => cycleFilter(f, "all"))}
               title="1 · show all images"
             >
               All
@@ -3535,41 +3560,93 @@ export default function App() {
             <button
               type="button"
               className={filter === "unrated" ? "is-active" : ""}
-              onClick={() => setFilter("unrated")}
+              onClick={() => setFilter((f) => cycleFilter(f, "unrated"))}
               title="2 · show only unrated"
             >
               Unrated
             </button>
-            <button
-              type="button"
-              className={filter === "keeps" ? "is-active" : ""}
-              onClick={() => setFilter("keeps")}
-              title="3 · show only keeps"
-            >
-              Keeps
-            </button>
-            <button
-              type="button"
-              className={filter === "favorites" ? "is-active" : ""}
-              onClick={() => setFilter("favorites")}
-              title="4 · show only favorites"
-            >
-              Favorites
-            </button>
-            {settings.smartCulling && (
+            <span className="cull-filter-tab-group">
               <button
                 type="button"
-                className={filter === "suggested" ? "is-active" : ""}
-                onClick={() => {
-                  setFilter("suggested");
-                  startAnalysis(); // manual start when "analyze on open" is off
-                }}
-                title="5 · show unrated frames with a smart-culling suggestion"
+                className={topOf(filter) === "keeps" ? "is-active" : ""}
+                onClick={() => setFilter((f) => cycleFilter(f, "keeps"))}
+                title="3 · show keeps (press again for ★ favorites only)"
               >
-                {qualityAnalyzing && qualityProgress
-                  ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
-                  : "Smart"}
+                Keeps
               </button>
+              {topOf(filter) === "keeps" && (
+                <span className="cull-filter-tab-chips">
+                  <button
+                    type="button"
+                    className={filter === "keeps" ? "is-active" : ""}
+                    onClick={() => setFilter("keeps")}
+                    title="keeps and favorites"
+                  >
+                    all
+                  </button>
+                  <button
+                    type="button"
+                    className={filter === "keepsFavs" ? "is-active" : ""}
+                    onClick={() => setFilter("keepsFavs")}
+                    title="favorites only"
+                  >
+                    ★
+                  </button>
+                </span>
+              )}
+            </span>
+            {settings.smartCulling && (
+              <span className="cull-filter-tab-group">
+                <button
+                  type="button"
+                  className={topOf(filter) === "suggested" ? "is-active" : ""}
+                  onClick={() => {
+                    setFilter((f) => cycleFilter(f, "suggested"));
+                    startAnalysis(); // no-op unless "analyze on open" is off and unrun
+                  }}
+                  title="4 · show unrated frames with a smart-culling suggestion (press again to narrow by verdict)"
+                >
+                  {qualityAnalyzing && qualityProgress
+                    ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
+                    : "Smart"}
+                </button>
+                {topOf(filter) === "suggested" && (
+                  <span className="cull-filter-tab-chips">
+                    <button
+                      type="button"
+                      className={filter === "suggested" ? "is-active" : ""}
+                      onClick={() => setFilter("suggested")}
+                      title="any suggestion"
+                    >
+                      all
+                    </button>
+                    <button
+                      type="button"
+                      className={filter === "suggestedRejects" ? "is-active" : ""}
+                      onClick={() => setFilter("suggestedRejects")}
+                      title="suggested rejects"
+                    >
+                      ✕
+                    </button>
+                    <button
+                      type="button"
+                      className={filter === "suggestedKeeps" ? "is-active" : ""}
+                      onClick={() => setFilter("suggestedKeeps")}
+                      title="suggested keeps"
+                    >
+                      ✓
+                    </button>
+                    <button
+                      type="button"
+                      className={filter === "suggestedFavs" ? "is-active" : ""}
+                      onClick={() => setFilter("suggestedFavs")}
+                      title="suggested favorites"
+                    >
+                      ★
+                    </button>
+                  </span>
+                )}
+              </span>
             )}
           </div>
         )}
@@ -3859,9 +3936,10 @@ function EmptyFilter({
    *  a count "analyzing" is indistinguishable from "hung". */
   progress?: { done: number; total: number } | null;
 }) {
-  // The suggested filter has three empty states, and telling them apart is
-  // the difference between "working as designed" and "looks broken":
-  if (filter === "suggested") {
+  // The whole "suggested" family (base + verdict sub-modes) has three empty
+  // states, and telling them apart is the difference between "working as
+  // designed" and "looks broken":
+  if (topOf(filter) === "suggested") {
     if (analyzing) {
       // Not done yet — suggestions fill in progressively per chunk.
       return (
@@ -3902,7 +3980,7 @@ function EmptyFilter({
         <div className="cull-empty-state__eyebrow">Not analyzed</div>
         <div className="cull-empty-state__title">No frames have been scored yet</div>
         <div className="cull-empty-state__hint">
-          <kbd>5</kbd> to analyze · <kbd>1</kbd> for all
+          <kbd>4</kbd> to analyze · <kbd>1</kbd> for all
         </div>
       </div>
     );
@@ -3910,13 +3988,13 @@ function EmptyFilter({
   // Label the user-facing filter name. "All" can never actually be empty (it
   // includes unrated), so falling back to "this" covers the impossible-case.
   const label =
-    filter === "favorites"
+    filter === "keepsFavs"
       ? "Favorites"
       : filter === "keeps"
         ? "Keeps"
         : filter === "unrated"
           ? "Unrated"
-          : "this"; // "suggested" fully handled (and narrowed away) above
+          : "this"; // "suggested*" fully handled (and narrowed away) above
   return (
     <div className="cull-empty-state">
       <div className="cull-empty-state__icon">⌀</div>

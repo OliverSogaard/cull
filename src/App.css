@@ -453,6 +453,48 @@ body,
   color: var(--text);
 }
 
+/* Keeps / Smart wrap their tab button so the sub-mode chips (below) can
+ * anchor to it. The group itself takes no extra width in flow — chips are
+ * absolutely positioned so their appearance/disappearance never shifts the
+ * OTHER tabs in the bar (Keeps and Smart's own label stay put too). */
+.cull-filter-tab-group {
+  position: relative;
+  display: inline-flex;
+}
+
+.cull-filter-tab-chips {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  padding-left: 6px;
+  white-space: nowrap;
+}
+
+.cull-filter-tab-chips button {
+  padding: 3px 7px;
+  font-size: 9px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 3px;
+  margin-left: 3px;
+  background: var(--surface-2);
+}
+
+.cull-filter-tab-chips button:hover:not(.is-active) {
+  color: var(--text-2);
+}
+
+.cull-filter-tab-chips button.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
 /* ── status-bar chips ─────────────────────────────────────────
    Overlay indicator chips in the status bar. */
 .cull-statusbar__chip {

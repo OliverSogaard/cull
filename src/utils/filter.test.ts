@@ -23,21 +23,30 @@ describe("passesFilter", () => {
     expect(passesFilter(undefined, "keeps")).toBe(false);
   });
 
-  it("favorites only admits favorite (strict subset of keeps)", () => {
-    expect(passesFilter("favorite", "favorites")).toBe(true);
-    expect(passesFilter("keep", "favorites")).toBe(false);
-    expect(passesFilter("reject", "favorites")).toBe(false);
-    expect(passesFilter(undefined, "favorites")).toBe(false);
+  it("keepsFavs only admits favorite (strict subset of keeps)", () => {
+    expect(passesFilter("favorite", "keepsFavs")).toBe(true);
+    expect(passesFilter("keep", "keepsFavs")).toBe(false);
+    expect(passesFilter("reject", "keepsFavs")).toBe(false);
+    expect(passesFilter(undefined, "keepsFavs")).toBe(false);
   });
 });
 
-describe("suggested filter fallback", () => {
-  // App.tsx special-cases "suggested" BEFORE passesFilter (it needs the live
-  // suggestions map); the pure fallback mirrors "unrated" so a stray call
-  // can never hide rated frames' state or crash the switch.
+describe("suggested filter family fallback", () => {
+  // App.tsx special-cases every "suggested*" value BEFORE passesFilter (it
+  // needs the live suggestions map); the pure fallback mirrors "unrated" so a
+  // stray call can never hide rated frames' state or crash the switch.
   it("treats suggested as unrated-only at the pure level", () => {
     expect(passesFilter(undefined, "suggested")).toBe(true);
     expect(passesFilter("keep", "suggested")).toBe(false);
     expect(passesFilter("reject", "suggested")).toBe(false);
+  });
+
+  it("treats every smart sub-mode as unrated-only at the pure level", () => {
+    for (const f of ["suggestedRejects", "suggestedKeeps", "suggestedFavs"] as const) {
+      expect(passesFilter(undefined, f)).toBe(true);
+      expect(passesFilter("keep", f)).toBe(false);
+      expect(passesFilter("reject", f)).toBe(false);
+      expect(passesFilter("favorite", f)).toBe(false);
+    }
   });
 });

@@ -8,13 +8,26 @@ import type { NavEntry } from "./nav";
 export type Rating = "keep" | "reject" | "favorite";
 
 /**
- * Filter visible in the status bar: keyboard 1–5 select these.
+ * Filter visible in the status bar: keyboard 1–4 select the four top-level
+ * tabs (All / Unrated / Keeps / Smart); repressing an active tab's key
+ * cycles through its sub-modes (see `src/utils/filterModes.ts`).
  *
- * - `keeps` includes favorites by design (a ★ frame is also a keep).
+ * - `keeps` includes favorites by design (a ★ frame is also a keep);
+ *   `keepsFavs` narrows to favorite-rated only.
  * - `suggested` = frames with a live smart-culling suggestion that are still
- *   unrated (App.tsx resolves it against the suggestions map).
+ *   unrated (App.tsx resolves it against the suggestions map);
+ *   `suggestedRejects` / `suggestedKeeps` / `suggestedFavs` narrow by the
+ *   suggestion's verdict.
  */
-export type Filter = "all" | "unrated" | "keeps" | "favorites" | "suggested";
+export type Filter =
+  | "all"
+  | "unrated"
+  | "keeps"
+  | "keepsFavs"
+  | "suggested"
+  | "suggestedRejects"
+  | "suggestedKeeps"
+  | "suggestedFavs";
 
 /** One per-image rating change. Compound actions (e.g. challengerWins) bundle several into an {@link UndoAction}. */
 type Change = {
