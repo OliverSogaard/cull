@@ -30,6 +30,12 @@ const SCROLL_INDICATOR_IDLE_MS = 500;
  * window size.
  */
 export const GRID_CELL_TARGET = 168;
+/** .cull-grid's vertical padding total (20px top + 20px bottom) — the scroll
+ *  range includes it, so indicator geometry must too. */
+const GRID_V_PADDING = 40;
+/** Track bottom inset: the grid's 20px bottom padding plus a small breath, so
+ *  the indicator visibly ends above the bottom status bar. */
+const GRID_INDICATOR_BOTTOM_INSET = 24;
 
 /**
  * Contact-sheet view of the staged set. Filter and ratings apply. Click a cell
@@ -167,11 +173,20 @@ export const GridView = memo(function GridView({
   const totalRows = Math.ceil(visibleIndices.length / cols);
   const totalH = totalRows * rowH;
 
-  // Right-edge position indicator geometry — pure fractions of a track that's
-  // exactly `viewportH` tall (see computeScrollIndicator). Only worth
-  // rendering when the grid actually scrolls.
+  // Right-edge position indicator geometry. The TRACK is inset from the
+  // scrollport bottom by the grid's own bottom padding (+ a breath) so the
+  // thumb never touches the status bar's border — it must read as inside the
+  // grid, not sliding under the footer. The geometry maps against the REAL
+  // scrollable extent (scrollHeight includes the container's vertical
+  // padding, `totalH` alone is 40px short), so the thumb hits the track's
+  // bottom exactly when the scroll hits its true max.
+  const trackH = Math.max(0, viewportH - GRID_INDICATOR_BOTTOM_INSET);
   const showScrollIndicator = totalH > viewportH;
-  const { topFrac, heightFrac } = computeScrollIndicator(scrollTop, viewportH, totalH);
+  const { topFrac, heightFrac } = computeScrollIndicator(
+    scrollTop,
+    viewportH,
+    totalH + GRID_V_PADDING,
+  );
 
   const firstRow = Math.max(0, Math.floor(scrollTop / rowH) - GRID_BUFFER_ROWS);
   const lastRow = Math.min(
@@ -297,13 +312,13 @@ export const GridView = memo(function GridView({
         <div className="cull-grid__scrollbar" aria-hidden>
           <div
             className={`cull-grid__scrollbar-track${scrollActive ? " is-on" : ""}`}
-            style={{ height: viewportH }}
+            style={{ height: trackH }}
           >
             <div
               className="cull-grid__scrollbar-thumb"
               style={{
                 height: `${heightFrac * 100}%`,
-                transform: `translateY(${topFrac * viewportH}px)`,
+                transform: `translateY(${topFrac * trackH}px)`,
               }}
             />
             {scrubSpeed > 1 && (
