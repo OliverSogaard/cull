@@ -57,6 +57,7 @@ import { modGlyph } from "./utils/platform";
 import { snapToFilter as snapToFilterPure } from "./utils/snap";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
+import { scrubSpeedForHeldMs, type ScrubSpeed } from "./utils/scrubAccel";
 
 // Read concurrency, previewKeep, hi-res zoom warm-up, background-fill rate, and
 // concurrent XMP restore all live in PERFORMANCE_PROFILES, switched by the
@@ -77,12 +78,9 @@ const PAN_LIMIT = 40; // max % offset from the AF point
 // the display paints (no stutter; self-throttles on a slow frame). ~33ms ≈ 30
 // images/s, the fastest that still feels smooth.
 const NAV_REPEAT_MS = 33;
-/** Staged scrub acceleration: after this long holding, 3 frames per tick… */
-const SCRUB_STAGE2_AT_MS = 2000;
-/** …and after this long, 10 — long albums stay traversable. */
-const SCRUB_STAGE3_AT_MS = 5000;
-const SCRUB_SPEEDS = [1, 3, 10] as const;
-type ScrubSpeed = (typeof SCRUB_SPEEDS)[number];
+// Staged scrub acceleration (1x → 3x @2s → 10x @5s) now lives in
+// utils/scrubAccel.ts, shared by this loupe/compare horizontal hold AND the
+// grid's vertical hold below — see scrubSpeedForHeldMs.
 
 // After the immediate first step on hold-start, wait this long before the
 // auto-repeat kicks in — so a quick tap moves exactly one image, while a
@@ -2253,8 +2251,7 @@ export default function App() {
         // Staged acceleration: the longer the hold, the more frames per tick
         // (1× → 3× → 10×). Multi-steps stop at a boundary mid-tick.
         const held = ts - holdStartTsRef.current;
-        const speed: ScrubSpeed =
-          held >= SCRUB_STAGE3_AT_MS ? 10 : held >= SCRUB_STAGE2_AT_MS ? 3 : 1;
+        const speed = scrubSpeedForHeldMs(held);
         if (speed !== scrubSpeedRef.current) {
           scrubSpeedRef.current = speed;
           setScrubSpeed(speed);
@@ -2277,27 +2274,99 @@ export default function App() {
     navRafRef.current = requestAnimationFrame(loop);
   }, []);
 
+  // Held ArrowUp/ArrowDown in the grid: the SAME staged acceleration as the
+  // loupe/compare horizontal hold above (via scrubSpeedForHeldMs), but
+  // stepping `gridCols * speed` rows per repeat tick instead of frames.
+  // Separate ref/loop from heldDirRef/startHold — the two hold systems are
+  // mutually exclusive by mode (grid vs. loupe/compare) but keeping them
+  // distinct avoids any risk of one loop's cleanup stomping the other's.
+  // advanceRef/gridColsRef mirror navStepRef: the loop must read the LATEST
+  // advance + gridCols each tick, not the ones closed over at hold-start,
+  // since `advance`'s identity (and possibly gridCols, on a mid-hold resize)
+  // changes every step.
+  const advanceRef = useRef(advance);
+  useEffect(() => {
+    advanceRef.current = advance;
+  }, [advance]);
+  const gridColsRef = useRef(gridCols);
+  useEffect(() => {
+    gridColsRef.current = gridCols;
+  }, [gridCols]);
+
+  const heldGridVertDirRef = useRef<0 | 1 | -1>(0);
+  const gridVertRafRef = useRef<number | null>(null);
+  const gridVertLastStepTsRef = useRef(0);
+  const gridVertHoldStartTsRef = useRef(0);
+
+  const stopGridVertHold = useCallback(() => {
+    heldGridVertDirRef.current = 0;
+    if (gridVertRafRef.current != null) {
+      cancelAnimationFrame(gridVertRafRef.current);
+      gridVertRafRef.current = null;
+    }
+  }, []);
+
+  const startGridVertHold = useCallback((dir: 1 | -1) => {
+    if (heldGridVertDirRef.current === dir) return; // already scrubbing this way
+    if (gridVertRafRef.current != null) cancelAnimationFrame(gridVertRafRef.current);
+    heldGridVertDirRef.current = dir;
+    advanceRef.current(dir, gridColsRef.current); // immediate first row-jump
+    gridVertHoldStartTsRef.current = performance.now();
+    gridVertLastStepTsRef.current = gridVertHoldStartTsRef.current;
+    let repeating = false;
+    const loop = (ts: number) => {
+      if (heldGridVertDirRef.current === 0) return;
+      const due = repeating
+        ? ts - gridVertLastStepTsRef.current >= NAV_REPEAT_MS
+        : ts - gridVertHoldStartTsRef.current >= NAV_HOLD_DELAY_MS;
+      if (due) {
+        repeating = true;
+        gridVertLastStepTsRef.current = ts;
+        const held = ts - gridVertHoldStartTsRef.current;
+        const speed = scrubSpeedForHeldMs(held);
+        // ONE call with step = gridCols * speed — same one-call rule as the
+        // horizontal hold above (see its comment): N single-row calls would
+        // all read the same render-frozen position and go nowhere.
+        advanceRef.current(heldGridVertDirRef.current as 1 | -1, gridColsRef.current * speed);
+      }
+      gridVertRafRef.current = requestAnimationFrame(loop);
+    };
+    gridVertRafRef.current = requestAnimationFrame(loop);
+  }, []);
+
+  // A grid-exit that doesn't go through a keydown (e.g. a footer/mouse
+  // navigation) must still stop the loop — mirrors the clearMultiSelection
+  // effect below, which resets grid-only state the same way.
+  useEffect(() => {
+    if (!gridVisible) stopGridVertHold();
+  }, [gridVisible, stopGridVertHold]);
+
   // Stop a held scrub if the key-release is missed (window blur) and on unmount.
   // Also clear the Space-held flag so a lost Space keyup can't wedge zoom off.
   useEffect(() => {
     const onBlur = () => {
       stopHold();
+      stopGridVertHold();
       resetZoom(); // focus lost mid-hold (e.g. Alt+Tab) → exit zoom
     };
     window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("blur", onBlur);
       stopHold();
+      stopGridVertHold();
     };
-  }, [stopHold, resetZoom]);
+  }, [stopHold, stopGridVertHold, resetZoom]);
 
   // Safety net: if Settings opens while a hold-scrub is active — by keyboard
   // (Ctrl+,, which returns before the keydown handler's stopHold guard) OR by
   // clicking the home-screen gear mid-hold — stop the rAF loop so it can't keep
   // advancing the cursor behind the modal.
   useEffect(() => {
-    if (settingsOpen) stopHold();
-  }, [settingsOpen, stopHold]);
+    if (settingsOpen) {
+      stopHold();
+      stopGridVertHold();
+    }
+  }, [settingsOpen, stopHold, stopGridVertHold]);
 
   // Click-pick handlers for the thumb / candidate strips. A click must
   // immediately interrupt any held-arrow scrub so the new image lands and
@@ -2333,6 +2402,11 @@ export default function App() {
   // shift-extend, ctrl-toggle, plain click → open in loupe.
   const handleGridPick = useCallback(
     (i: number, modifiers: { shift: boolean; ctrl: boolean }) => {
+      // A click (shift/ctrl-range or plain) jumps the cursor itself — a held
+      // vertical scrub still running would fight it on the next repeat tick,
+      // continuing from wherever the click landed. Mirrors pickFromStrip's
+      // same guard for the loupe/compare horizontal hold.
+      if (heldGridVertDirRef.current !== 0) stopGridVertHold();
       if (modifiers.shift) {
         const anchor = selectionAnchor ?? i;
         const a = visibleIndices.indexOf(anchor);
@@ -2375,7 +2449,7 @@ export default function App() {
       setCurrentIndex(i);
       goToSite("loupe");
     },
-    [visibleIndices, selectionAnchor, selectedIndices, clearMultiSelection, goToSite],
+    [visibleIndices, selectionAnchor, selectedIndices, clearMultiSelection, goToSite, stopGridVertHold],
   );
 
   // Chrome-screen keyboard, phase-agnostic (settings can be opened before a
@@ -2467,6 +2541,10 @@ export default function App() {
       // below — it's ignored entirely (can't redirect or stop the flow).
       const isNavArrow = e.key === "ArrowLeft" || e.key === "ArrowRight";
       if (heldDirRef.current !== 0 && !isNavArrow) stopHold();
+      // Same rule for the grid's vertical hold — sustained only by its own
+      // arrow, interrupted by anything else (rating, esc, mode switch…).
+      const isVertNavArrow = e.key === "ArrowUp" || e.key === "ArrowDown";
+      if (heldGridVertDirRef.current !== 0 && !isVertNavArrow) stopGridVertHold();
 
       // Leave-to-home confirm owns the keyboard while it's up: Enter leaves, Esc
       // stays. Swallow everything else so no rating slips through behind it.
@@ -2671,16 +2749,23 @@ export default function App() {
           e.preventDefault();
           if (isZooming) pan(0, -PAN_STEP);
           else if (gridVisible) {
-            clearMultiSelection();
-            advance(-1, gridCols); // jump up a row in the grid
+            // Held-arrow row-jump, staged-accelerated like the horizontal
+            // scrub (see startGridVertHold). Ignore OS auto-repeat — our own
+            // rAF loop drives the cadence, same reasoning as startHold above.
+            if (!e.repeat && heldGridVertDirRef.current === 0) {
+              clearMultiSelection();
+              startGridVertHold(-1);
+            }
           }
           break;
         case "ArrowDown":
           e.preventDefault();
           if (isZooming) pan(0, PAN_STEP);
           else if (gridVisible) {
-            clearMultiSelection();
-            advance(1, gridCols); // jump down a row in the grid
+            if (!e.repeat && heldGridVertDirRef.current === 0) {
+              clearMultiSelection();
+              startGridVertHold(1);
+            }
           }
           break;
         case "g":
@@ -2743,6 +2828,11 @@ export default function App() {
       const isLeftUp = e.key === "ArrowLeft" || e.code === "ArrowLeft";
       if (isRightUp && heldDirRef.current === 1) stopHold();
       else if (isLeftUp && heldDirRef.current === -1) stopHold();
+      // Same held-arrow-release rule for the grid's vertical hold.
+      const isUpUp = e.key === "ArrowUp" || e.code === "ArrowUp";
+      const isDownUp = e.key === "ArrowDown" || e.code === "ArrowDown";
+      if (isUpUp && heldGridVertDirRef.current === -1) stopGridVertHold();
+      else if (isDownUp && heldGridVertDirRef.current === 1) stopGridVertHold();
       if (e.code === "Space") {
         resetZoom(); // release → exit zoom
       }
@@ -2752,6 +2842,8 @@ export default function App() {
     phase,
     startHold,
     stopHold,
+    startGridVertHold,
+    stopGridVertHold,
     advance,
     gridVisible,
     gridCols,

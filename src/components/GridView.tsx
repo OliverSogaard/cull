@@ -14,9 +14,15 @@ import type { BurstCtx } from "../smart/groupBursts";
 import { stripExt } from "../utils/path";
 import { hasLrcRating } from "../utils/ratingColor";
 import { useThumb } from "../image/useThumb";
+import { computeScrollIndicator } from "../utils/scrollIndicator";
 
 /** Visible rows above and below the viewport that we still render. */
 const GRID_BUFFER_ROWS = 2;
+
+/** How long after the last scroll-position change the right-edge position
+ *  indicator waits before starting its fade-out — mirrors the loupe strip's
+ *  scrub bar, which lingers briefly after a hold releases before fading. */
+const SCROLL_INDICATOR_IDLE_MS = 500;
 
 /**
  * Target cell width — App's outer ResizeObserver picks `cols = floor(width /
@@ -89,6 +95,13 @@ export const GridView = memo(function GridView({
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
+  // Right-edge position indicator's fade state — true while scroll/scrub is
+  // active, false once SCROLL_INDICATOR_IDLE_MS has passed with no movement
+  // (the CSS transition then carries the actual fade-out, same as the strip's
+  // scrub bar).
+  const [scrollActive, setScrollActive] = useState(false);
+  const scrollActiveRef = useRef(false);
+  const scrollIdleTimerRef = useRef<number | null>(null);
 
   // Height-only observer: WIDTH (and the padding math) is owned by App's RO,
   // which derives `cols` AND passes `contentWidth` down — so cellW and cols come
@@ -108,6 +121,12 @@ export const GridView = memo(function GridView({
   // virtualizer), so a fling doesn't re-run this component's body many times per
   // frame. Native passive listener; the prev===next guard skips a no-op render
   // when a settled scroll lands on the same offset.
+  //
+  // The position indicator's activity flag rides the SAME rAF-gated callback
+  // (no separate scroll listener, no per-raw-event work) — at most one extra
+  // setState per animation frame, matching the cadence scrollTop already
+  // updates at. The idle timer that flips it back off is reset here too, so
+  // it never fires mid-scroll.
   const scrollRafRef = useRef<number | null>(null);
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -117,12 +136,23 @@ export const GridView = memo(function GridView({
       scrollRafRef.current = requestAnimationFrame(() => {
         scrollRafRef.current = null;
         setScrollTop((prev) => (prev === el.scrollTop ? prev : el.scrollTop));
+        if (!scrollActiveRef.current) {
+          scrollActiveRef.current = true;
+          setScrollActive(true);
+        }
+        if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
+        scrollIdleTimerRef.current = window.setTimeout(() => {
+          scrollIdleTimerRef.current = null;
+          scrollActiveRef.current = false;
+          setScrollActive(false);
+        }, SCROLL_INDICATOR_IDLE_MS);
       });
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       el.removeEventListener("scroll", onScroll);
       if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current);
+      if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
     };
   }, [containerRef]);
 
@@ -130,6 +160,12 @@ export const GridView = memo(function GridView({
   const rowH = cellW; // square cells — accommodate landscape AND portrait
   const totalRows = Math.ceil(visibleIndices.length / cols);
   const totalH = totalRows * rowH;
+
+  // Right-edge position indicator geometry — pure fractions of a track that's
+  // exactly `viewportH` tall (see computeScrollIndicator). Only worth
+  // rendering when the grid actually scrolls.
+  const showScrollIndicator = totalH > viewportH;
+  const { topFrac, heightFrac } = computeScrollIndicator(scrollTop, viewportH, totalH);
 
   const firstRow = Math.max(0, Math.floor(scrollTop / rowH) - GRID_BUFFER_ROWS);
   const lastRow = Math.min(
@@ -245,6 +281,28 @@ export const GridView = memo(function GridView({
 
   return (
     <div className="cull-grid" ref={containerRef}>
+      {showScrollIndicator && (
+        // Sticky (not fixed/absolute against the scroller) so it tracks the
+        // viewport without a scroll-driven position write of its own — the
+        // browser pins it, we only move the thumb inside it. Zero own height:
+        // it must sit as the FIRST in-flow child of the scrolling element for
+        // sticky's "stuck from scroll offset 0" behavior to hold for the
+        // entire range, but must not push the grid content down.
+        <div className="cull-grid__scrollbar" aria-hidden>
+          <div
+            className={`cull-grid__scrollbar-track${scrollActive ? " is-on" : ""}`}
+            style={{ height: viewportH }}
+          >
+            <div
+              className="cull-grid__scrollbar-thumb"
+              style={{
+                height: `${heightFrac * 100}%`,
+                transform: `translateY(${topFrac * viewportH}px)`,
+              }}
+            />
+          </div>
+        </div>
+      )}
       <div className="cull-grid__inner" style={{ height: totalH }}>
         {burstSegs.map((s) => (
           <fieldset

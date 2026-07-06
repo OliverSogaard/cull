@@ -2889,6 +2889,46 @@ body,
   overflow-x: hidden;
 }
 
+/* Right-edge scroll-position indicator — the grid's answer to the loupe
+   strip's scrub position bar (.cull-scrubbar): a thin minimap showing where
+   the current viewport sits within the full grid. Sticky + zero-height so it
+   never joins the vertical scroll flow (see GridView's render comment); the
+   track's own top/height stay fixed once mounted — only the thumb inside it
+   moves, via `transform: translateY()`, and only opacity is transitioned, so
+   this never touches a layout-bound property mid-scroll. */
+.cull-grid__scrollbar {
+  position: sticky;
+  top: 0;
+  height: 0;
+  z-index: 5;
+}
+
+.cull-grid__scrollbar-track {
+  position: absolute;
+  top: 0;
+  right: -16px; /* sits in .cull-grid's own right padding gutter, clear of cells */
+  width: 3px;
+  border-radius: 999px;
+  background: var(--border);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease 0.35s;
+}
+
+.cull-grid__scrollbar-track.is-on {
+  opacity: 1;
+  transition: opacity 0.12s ease 0s;
+}
+
+.cull-grid__scrollbar-thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
 .cull-grid__cell {
   cursor: pointer;
   /* 9px ⇒ an 18px inter-image corridor with room for the burst boxes' 2px
