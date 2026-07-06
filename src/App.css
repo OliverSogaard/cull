@@ -2624,8 +2624,20 @@ body,
   transition: opacity 0.12s ease 0s;
 }
 
+/* Positioner — full-width overlay the thumb + speed badge ride. Moved by
+   `transform: translateX(%)` (of its own = the bar's width) so per-step motion
+   is compositor-only; the transition that used to sit on `left` for the thumb
+   and badge lives here now, once. */
+.cull-scrubbar__pos {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: transform 80ms linear;
+}
+
 .cull-scrubbar__speed {
   position: absolute;
+  left: 0;
   bottom: 7px;
   transform: translateX(-50%);
   font-family: 'JetBrains Mono', monospace;
@@ -2638,18 +2650,17 @@ body,
   padding: 0 5px;
   line-height: 14px;
   white-space: nowrap;
-  transition: left 80ms linear;
 }
 
 .cull-scrubbar__thumb {
   position: absolute;
+  left: 0;
   top: -1px;
   width: 26px;
   height: 4px;
   border-radius: 999px;
   background: var(--accent);
   transform: translateX(-50%);
-  transition: left 80ms linear;
 }
 
 .cull-thumbs::-webkit-scrollbar {
@@ -2935,6 +2946,7 @@ body,
    track's own height) instead of `left`, and translateY replaces translateX
    so the badge centers on that position instead of hugging a fixed offset. */
 .cull-grid__scrollbar-speed {
+  left: auto; /* base .cull-scrubbar__speed anchors left:0 for the strip's positioner */
   bottom: auto;
   right: 6px;
   transform: translateY(-50%);

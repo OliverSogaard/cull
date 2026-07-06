@@ -83,12 +83,21 @@ export function PhotoStrip({
       />
       {indices.length > 1 && (
         <div className={`cull-scrubbar${scrubbing ? " is-on" : ""}`} aria-hidden>
-          <div className="cull-scrubbar__thumb" style={{ left: `${frac * 100}%` }} />
-          {scrubSpeed > 1 && (
-            <div className="cull-scrubbar__speed" style={{ left: `${frac * 100}%` }}>
-              {scrubSpeed}×
-            </div>
-          )}
+          {/* Positioner: a full-width overlay translated by frac — translateX's
+              % is of the element's OWN width, so a bar-width element maps the
+              fraction 1:1 where a bare thumb couldn't. Compositor-only motion
+              (the old per-step inline `left` + `transition: left` re-ran
+              layout in the strip wrap on every nav step — the grid's
+              indicator already moves by transform for the same reason). */}
+          <div
+            className="cull-scrubbar__pos"
+            style={{ transform: `translateX(${frac * 100}%)` }}
+          >
+            <div className="cull-scrubbar__thumb" />
+            {scrubSpeed > 1 && (
+              <div className="cull-scrubbar__speed">{scrubSpeed}×</div>
+            )}
+          </div>
         </div>
       )}
     </div>
