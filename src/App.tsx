@@ -3889,7 +3889,7 @@ function EmptyFilter({
             No obvious calls in this folder ({scoredCount} scored)
           </div>
           <div className="cull-empty-state__hint">
-            no clearly soft, blurred, or burst-redundant frames · <kbd>1</kbd> for all
+            <kbd>1</kbd> for all
           </div>
         </div>
       );
