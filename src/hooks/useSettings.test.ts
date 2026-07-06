@@ -26,6 +26,21 @@ describe("coerceSettings — smart culling fields auto-default (no key bump)", (
   });
 });
 
+describe("coerceSettings — deepAnalysis (renamed from smartCullingML, default ON)", () => {
+  it("defaults to true on a blob that predates the field", () => {
+    expect(coerceSettings({}).deepAnalysis).toBe(true);
+  });
+
+  it("deliberately ignores the legacy smartCullingML key (rename forces the new ON default)", () => {
+    expect(coerceSettings({ smartCullingML: false }).deepAnalysis).toBe(true);
+  });
+
+  it("keeps an explicit stored deepAnalysis value", () => {
+    expect(coerceSettings({ deepAnalysis: false }).deepAnalysis).toBe(false);
+    expect(coerceSettings({ deepAnalysis: true }).deepAnalysis).toBe(true);
+  });
+});
+
 describe("coerceSettings — defaultFilter migration", () => {
   it("migrates the pre-sub-mode-rework 'favorites' value to 'keepsFavs'", () => {
     const s = coerceSettings({ defaultFilter: "favorites" });

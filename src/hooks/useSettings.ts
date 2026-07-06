@@ -74,7 +74,9 @@ export function coerceSettings(raw: unknown): Settings {
         ? p.smartCullingConfidence
         : d.smartCullingConfidence,
     smartCullingOnOpen: bool(p.smartCullingOnOpen, d.smartCullingOnOpen),
-    smartCullingML: bool(p.smartCullingML, d.smartCullingML),
+    // Renamed from `smartCullingML` (default OFF) — the legacy key is ignored on
+    // purpose so the rename lands everyone on the new ON default once.
+    deepAnalysis: bool(p.deepAnalysis, d.deepAnalysis),
   };
 }
 

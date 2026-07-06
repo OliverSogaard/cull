@@ -183,17 +183,17 @@ export function SettingsDialog({
                     />
                   </SettingRow>
                   <SettingRow
-                    label="Face analysis"
+                    label="Deep analysis"
                     help={
-                      settings.smartCullingML
+                      settings.deepAnalysis
                         ? "Face and eye checks, look-alike grouping, starred picks. Runs locally."
-                        : "Uses sharpness, exposure, and burst analysis only."
+                        : "Sharpness, exposure, and burst analysis only."
                     }
                   >
                     <Toggle
-                      on={settings.smartCullingML}
-                      onChange={(v) => set("smartCullingML", v)}
-                      label="Face analysis"
+                      on={settings.deepAnalysis}
+                      onChange={(v) => set("deepAnalysis", v)}
+                      label="Deep analysis"
                       disabled={!settings.smartCulling}
                     />
                   </SettingRow>
