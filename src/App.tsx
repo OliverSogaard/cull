@@ -1133,6 +1133,23 @@ export default function App() {
     setSelectionAnchor(null);
   }, []);
 
+  // Click-away deselect (Finder-style): with a grid selection active, any
+  // click that ISN'T on a grid cell — empty grid space, the header, the
+  // footer — drops the selection. Cell clicks manage selection themselves
+  // (plain/shift/ctrl in handleGridPick), so they're exempt. Listener only
+  // exists while a selection is up: zero cost the rest of the time.
+  const hasGridSelection = gridVisible && selectedIndices.size > 0;
+  useEffect(() => {
+    if (!hasGridSelection) return;
+    const onClickAway = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (t?.closest(".cull-grid__cell")) return;
+      clearMultiSelection();
+    };
+    window.addEventListener("click", onClickAway);
+    return () => window.removeEventListener("click", onClickAway);
+  }, [hasGridSelection, clearMultiSelection]);
+
   // Multi-selection is only meaningful while the grid is open. The moment the
   // user leaves the grid (G → L / C, ESC pops out, any path that mounts the
   // loupe or compare), drop the selection — bringing it back into a different
