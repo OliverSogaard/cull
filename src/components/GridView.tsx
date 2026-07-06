@@ -7,7 +7,7 @@ import {
   type RefObject,
 } from "react";
 import { Star } from "lucide-react";
-import { ghostGlyph, verdictDotClass, verdictGlyph } from "./verdictGlyph";
+import { ghostGlyph, ghostTitle, verdictDotClass, verdictGlyph } from "./verdictGlyph";
 import type { Img, ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
@@ -525,6 +525,7 @@ const GridCell = memo(function GridCell({
             className={`cull-grid__dot cull-grid__dot--ghost cull-grid__dot--ghost-${
               ghost === "reject" ? "reject" : ghost === "favorite" ? "favorite" : "keep"
             }`}
+            title={suggestion ? ghostTitle(suggestion) : undefined}
             aria-hidden
           >
             {ghostGlyph(ghost, 12)}

@@ -175,6 +175,25 @@ export default function App() {
   // second observer / second padding-math that could disagree for a frame).
   const [gridContentW, setGridContentW] = useState(0);
   const [helpVisible, setHelpVisible] = useState(false);
+  // True only for the one-time auto-shown first-cull overlay (no Tab held):
+  // it changes the overlay's title and arms any-key/click dismissal.
+  const [helpIntro, setHelpIntro] = useState(false);
+
+  // The very first cull ever shows the key overlay unprompted — the app is
+  // keyboard-driven and nothing else on screen says how to rate. Once, ever:
+  // the flag is written immediately so a re-entry never re-triggers it.
+  useEffect(() => {
+    if (phase !== "culling") return;
+    try {
+      if (localStorage.getItem("cull:helpSeen")) return;
+      localStorage.setItem("cull:helpSeen", "1");
+    } catch {
+      return; // private mode: skip the intro rather than show it every time
+    }
+    setHelpVisible(true);
+    setHelpIntro(true);
+  }, [phase]);
+
   const [confirmHome, setConfirmHome] = useState(false); // Esc → confirm leaving to home
   // Held-arrow fast-scrub. While true we render the cheap thumbnail instead of the
   // full-res preview, so scrub speed isn't bottlenecked by decoding ~6 MP JPEGs
@@ -2656,10 +2675,20 @@ export default function App() {
       // Tab (hold) → keyboard help. Available in both single and compare.
       if (e.key === "Tab") {
         e.preventDefault();
-        if (!e.repeat) setHelpVisible(true);
+        if (!e.repeat) {
+          setHelpVisible(true);
+          setHelpIntro(false);
+        }
         return;
       }
-      if (helpVisible) return; // swallow everything else while the help is up
+      if (helpVisible) {
+        // Any other key dismisses AND is swallowed — one press closes the
+        // auto-shown intro without also rating a frame. (During a held-Tab
+        // showing this just closes early; Tab-release would have anyway.)
+        setHelpVisible(false);
+        setHelpIntro(false);
+        return;
+      }
 
       // Drop any other Ctrl/Meta/Alt combination — the explicit Ctrl combos
       // we support (Z / Y / E) returned above. This stops muscle-memory OS
@@ -2883,6 +2912,7 @@ export default function App() {
       if (e.key === "Tab") {
         e.preventDefault();
         setHelpVisible(false);
+        setHelpIntro(false);
       }
       // Only the HELD arrow's release stops the scrub; releasing the opposite
       // arrow (which was ignored on keydown) must not interrupt the flow.
@@ -3554,6 +3584,9 @@ export default function App() {
       </div>
       <div className="cull-statusbar__spacer" />
       <div className="cull-statusbar__right">
+        <span className="cull-statusbar__keyhint" aria-hidden>
+          tab · keys
+        </span>
         <span
           className="cull-statusbar__pos"
           title={compareMode ? "challenger position / total candidates" : "current position / filtered total"}
@@ -3955,7 +3988,14 @@ export default function App() {
       )}
 
       {helpVisible && (
-        <HelpOverlay mode={compareMode ? "compare" : gridVisible ? "grid" : "loupe"} />
+        <HelpOverlay
+          mode={compareMode ? "compare" : gridVisible ? "grid" : "loupe"}
+          intro={helpIntro}
+          onDismiss={() => {
+            setHelpVisible(false);
+            setHelpIntro(false);
+          }}
+        />
       )}
 
       {settingsOpen && (

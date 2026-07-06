@@ -5,7 +5,7 @@ import type { Suggestion } from "../smart/deriveVerdict";
 import { hasLrcRating } from "../utils/ratingColor";
 import { stripExt } from "../utils/path";
 import { useThumb } from "../image/useThumb";
-import { ghostGlyph, verdictDotClass, verdictGlyph } from "./verdictGlyph";
+import { ghostGlyph, ghostTitle, verdictDotClass, verdictGlyph } from "./verdictGlyph";
 
 
 type ThumbCellProps = {
@@ -159,6 +159,7 @@ export const ThumbCell = memo(function ThumbCell({
             className={`cull-thumb__dot cull-thumb__dot--ghost cull-thumb__dot--ghost-${
               ghost === "reject" ? "reject" : ghost === "favorite" ? "favorite" : "keep"
             }`}
+            title={suggestion ? ghostTitle(suggestion) : undefined}
             aria-hidden
           >
             {ghostGlyph(ghost, 9)}

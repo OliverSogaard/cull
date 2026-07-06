@@ -854,6 +854,18 @@ body,
 }
 
 
+/* Standing hint at the one gesture that unlocks every other key. Dimmest
+   voice in the footer — present, never competing. */
+.cull-statusbar__keyhint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
 .cull-statusbar__finish {
   appearance: none;
   background: transparent;

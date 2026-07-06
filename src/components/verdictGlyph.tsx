@@ -1,6 +1,7 @@
 import { Check, Star, X as XIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Rating } from "../types";
+import type { Suggestion } from "../smart/deriveVerdict";
 
 /**
  * The verdict glyph (✓ / ✕ / ★) as a Lucide SVG icon — intrinsically centered,
@@ -55,4 +56,15 @@ export function verdictDotClass(
     default:
       return "";
   }
+}
+
+/**
+ * Hover explanation for a ghost dot: verdict word, rounded confidence, and the
+ * engine's reasons. The rail is still the primary "why" surface; this is the
+ * in-place answer for a user wondering what a dashed dot means.
+ */
+export function ghostTitle(s: Suggestion): string {
+  const word = s.verdict === "reject" ? "reject" : s.verdict === "favorite" ? "favorite" : "keep";
+  const pct = Math.round(s.confidence * 100);
+  return `suggested ${word} · ${pct}%${s.reasons.length > 0 ? ` · ${s.reasons.join(", ")}` : ""}`;
 }

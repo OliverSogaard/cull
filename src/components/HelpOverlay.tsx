@@ -132,14 +132,35 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
   ];
 }
 
-export function HelpOverlay({ mode }: { mode: HelpMode }) {
+/**
+ * `intro` = the one-time first-cull showing (auto-shown, no Tab held): the
+ * title teaches the recall gesture instead of instructing a release, and any
+ * key or click dismisses (App owns that). `onDismiss` enables click-to-close.
+ */
+export function HelpOverlay({
+  mode,
+  intro,
+  onDismiss,
+}: {
+  mode: HelpMode;
+  intro?: boolean;
+  onDismiss?: () => void;
+}) {
   const groups = helpGroupsFor(mode);
   return (
-    <div className="cull-help">
+    <div className="cull-help" onClick={onDismiss}>
       <div className="cull-help__inner">
         <div className="cull-help__eyebrow">CULL · {mode.toUpperCase()} KEYS</div>
         <h2 className="cull-help__title">
-          Release <em>tab</em> to dismiss
+          {intro ? (
+            <>
+              Hold <em>tab</em> anytime for this. Any key to begin
+            </>
+          ) : (
+            <>
+              Release <em>tab</em> to dismiss
+            </>
+          )}
         </h2>
         <div className="cull-help__grid">
           {groups.map((g) => (
