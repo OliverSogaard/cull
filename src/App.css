@@ -2056,7 +2056,10 @@ body,
 
 /* ── finish (act-on-cull) dialog ──────────────────────────── */
 .cull-actions {
-  max-width: 520px;
+  /* Wider than the stock quit-guard box: this dialog holds a path + an
+     editable name + a button on one row (verified in a measured harness —
+     520px forces a wrap or an overflow for ordinary root paths). */
+  max-width: 560px;
   padding: 0;
 }
 
@@ -2228,6 +2231,9 @@ body,
   align-items: stretch;
   gap: 8px;
   margin-top: 4px;
+  /* Backstop: if root + input minimum + button ever exceed the row, the
+     button wraps below instead of overflowing the dialog. */
+  flex-wrap: wrap;
 }
 
 .cull-finish__dest-edit > :first-child,
@@ -2255,7 +2261,7 @@ body,
      (truncatePathDisplay keeps the path's tail + trailing separator), so no
      CSS clamp: text-overflow can't ellipsize a flex container's own text and
      was hard-clipping the trailing slash. max-width stays as a backstop only. */
-  max-width: 50%;
+  max-width: 45%;
   overflow: hidden;
   flex-shrink: 0;
   transition: border-color 0.12s ease;
@@ -2268,7 +2274,10 @@ body,
   border-radius: 0 3px 3px 0;
   padding: 7px 10px 7px 0;
   color: var(--text);
-  flex: 1 1 auto;
+  /* Basis 0, NOT auto: WebKit won't shrink an input below its content-based
+     basis, which let this row punch through the dialog edge. From 0 it grows
+     into the free space and the min-width floor does the rest. */
+  flex: 1 1 0;
   /* Wide enough that a long pinned root can never squeeze the name being
      typed into a peephole. */
   min-width: 150px;

@@ -312,7 +312,7 @@ export function FinishDialog({
                     {pinnedRoot
                     ? truncatePathDisplay(
                         `${pinnedRoot.replace(/[\\/]+$/, "")}${pinnedRoot.includes("\\") ? "\\" : "/"}`,
-                        34,
+                        24,
                       )
                     : "(no pinned root) "}
                   </span>
