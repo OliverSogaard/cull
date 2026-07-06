@@ -7,7 +7,6 @@ import type { Resolved } from "../../image/stage";
 import type { ImageDims } from "../../utils/bundle";
 import { sizerSrc } from "../../utils/sizer";
 import { HiResLayer } from "./HiResLayer";
-import { zoomTransition } from "./zoomTransition";
 import { PresentLayers } from "./PresentLayers";
 
 /** How long after unzoom starts before the settle-time hi-res layer may
@@ -21,6 +20,9 @@ type LoupeStageProps = {
   cur: Resolved;
   scrubbing: boolean;
   isZooming: boolean;
+  /** Shared transform transition for every zoom-scaling layer — "none"
+   *  during a carried-zoom frame swap (see App's zoomGlide). */
+  zoomGlide: string;
   /** Zoom transform (same values the overlays use, so layers stay aligned). */
   zoomZ: number;
   originX: number;
@@ -62,6 +64,7 @@ export const LoupeStage = memo(function LoupeStage({
   cur,
   scrubbing,
   isZooming,
+  zoomGlide,
   zoomZ,
   originX,
   originY,
@@ -180,6 +183,7 @@ export const LoupeStage = memo(function LoupeStage({
           className="cull-image"
           dimsKnown={dimsKnown}
           isZooming={isZooming}
+          zoomGlide={zoomGlide}
           zoomZ={zoomZ}
           originX={originX}
           originY={originY}
@@ -233,7 +237,7 @@ export const LoupeStage = memo(function LoupeStage({
             tx={hiResTx}
             ty={hiResTy}
             scale={hiResScale}
-            transition={zoomTransition(isZooming)}
+            transition={zoomGlide}
             className="cull-image cull-image--hires"
             onDecoded={setHiResReady}
           />

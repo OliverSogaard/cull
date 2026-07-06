@@ -397,6 +397,29 @@ export default function App() {
   const [isZooming, setIsZooming] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<1 | 2>(1); // 1 = 1:1, 2 = 2:1 (Shift+Space)
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  // Rate-while-zoomed: a rating advance with Space still held CARRIES the zoom
+  // to the next frame (anchored at ITS OWN AF point — pan resets). One-shot
+  // flag set by applyRating right before the cursor moves, consumed by the
+  // index-change reset effect below; every other cursor move still drops zoom.
+  const keepZoomOnAdvanceRef = useRef(false);
+  // True for exactly the carried-zoom swap render(s): the next frame lands AT
+  // scale with transitions off (animating between two frames' origins is
+  // meaningless motion), then glides come back so pan/release keep their feel.
+  const [zoomSwapInstant, setZoomSwapInstant] = useState(false);
+  useEffect(() => {
+    if (!zoomSwapInstant) return;
+    // Two rAFs: the swap commits with transition none, glides return the
+    // frame after. A rapid Enter-burst keeps re-arming it, which is correct —
+    // the whole burst lands instantly.
+    let inner: number | null = null;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setZoomSwapInstant(false));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      if (inner !== null) cancelAnimationFrame(inner);
+    };
+  }, [zoomSwapInstant]);
   // Live mirror of isZooming so the navigation-reset effect can fire on a cursor
   // move WITHOUT depending on isZooming (which would make it cancel the very zoom
   // a Space-press just started).
@@ -480,16 +503,20 @@ export default function App() {
     setPanOffset({ x: 0, y: 0 });
   }, []);
 
-  // Leaving a zoomed frame via a cursor move (strip click, rating-advance) must
-  // drop the zoom — otherwise the new image lands scaled to the old pan. Keyboard
-  // arrows pan instead of navigating while zoomed, so currentIndex changes here
-  // only when we genuinely left the frame. Reads isZoomingRef so it fires on the
-  // index change, never on the Space-press that started the zoom.
+  // Leaving a zoomed frame via a cursor move drops the zoom (the new image
+  // would land scaled to the old pan) — with ONE exception: a rating advance
+  // that set keepZoomOnAdvanceRef carries the zoom to the next frame (pan was
+  // already reset at the rate site, so the new frame anchors at its own AF
+  // point). The flag is one-shot: undo, compare exits, and any other cursor
+  // move still exit zoom. Reads isZoomingRef so it fires on the index change,
+  // never on the Space-press that started the zoom.
   useEffect(() => {
-    // Leaving a zoomed frame via a cursor move drops the zoom. Reads isZoomingRef
-    // (not isZooming) so it fires on the index change, never on the Space-press that
-    // started the zoom.
-    if (isZoomingRef.current) resetZoom();
+    if (!isZoomingRef.current) return;
+    if (keepZoomOnAdvanceRef.current) {
+      keepZoomOnAdvanceRef.current = false;
+      return;
+    }
+    resetZoom();
   }, [currentIndex, resetZoom]);
 
   const visibleIndices = useMemo(() => {
@@ -1908,13 +1935,27 @@ export default function App() {
       // the outgoing cur.id meant the wash was wiped the instant we advanced.
       const flashId = (nextImg ?? cur).id;
 
+      // Rate-while-zoomed: the advance CARRIES the zoom (Space is still held).
+      // Pan resets here so the next frame anchors at its own AF point, and the
+      // swap lands at scale with no glide (zoomSwapInstant). The reset effect
+      // consumes the one-shot flag instead of dropping the zoom.
+      const advanceTo = (target: number | null) => {
+        if (target === null) return;
+        if (isZoomingRef.current) {
+          keepZoomOnAdvanceRef.current = true;
+          setZoomSwapInstant(true);
+          setPanOffset({ x: 0, y: 0 });
+        }
+        setCurrentIndex(target);
+      };
+
       // Re-pressing the same verdict on an already-rated frame changes nothing on
       // disk or in state: skip the redundant sidecar write (an fsync round-trip on
       // the NAS) and the dead before===after undo entry (which would also wipe a
       // pending redo). Still flash + advance so the keyboard-fast flow is unchanged.
       if (ratings[cur.id] === rating) {
         flashFeedback(rating, flashId);
-        if (nextTarget !== null) setCurrentIndex(nextTarget);
+        advanceTo(nextTarget);
         return;
       }
 
@@ -1925,7 +1966,7 @@ export default function App() {
       flashFeedback(rating, flashId);
       persistRating(cur.path, rating); // durable write with retry + failure tracking
 
-      if (nextTarget !== null) setCurrentIndex(nextTarget);
+      advanceTo(nextTarget);
     },
     [
       gridVisible,
@@ -2844,10 +2885,12 @@ export default function App() {
       // Works in single + compare. No-op in grid (there's no loupe image to zoom).
       if (e.code === "Space") {
         e.preventDefault();
-        // Arm zoom on a fresh press only (ignore OS auto-repeat so panning a held
-        // zoom works). Rating + strip-clicks are blocked while zoomed, so zoom can
-        // never carry to another frame — no held-key gymnastics needed.
-        if (!e.repeat && !gridVisible) {
+        // Arm zoom on a fresh press only — and only when NOT already zoomed.
+        // The already-zoomed guard is what makes rate-while-zoomed safe: after
+        // a rating keypress, macOS resumes the still-held Space's auto-repeat
+        // as a NON-repeat keydown (the quirk that sank the old attempts, see
+        // 7bf33e8) — with zoom carried, that phantom press must change nothing.
+        if (!e.repeat && !gridVisible && !isZoomingRef.current) {
           setIsZooming(true);
           setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
           setPanOffset({ x: 0, y: 0 });
@@ -2939,23 +2982,26 @@ export default function App() {
       }
 
       switch (e.key) {
-        // Rating is disabled WHILE ZOOMED (rating advanced the frame, which left the
-        // next one stuck zoomed). Release Space first, then rate.
+        // Rating works WHILE ZOOMED: the advance carries the zoom to the next
+        // frame at its own AF anchor (see applyRating's advanceTo). The old
+        // block existed to fight the held Space key re-arming zoom — the carry
+        // design goes WITH the held key instead, and the arm guard on Space
+        // makes the OS's resumed-repeat keydown a no-op.
         case "Enter":
           e.preventDefault();
-          if (!isZoomingRef.current) applyRating("keep");
+          applyRating("keep");
           break;
         case "Backspace":
           e.preventDefault();
-          if (!isZoomingRef.current) applyRating("reject");
+          applyRating("reject");
           break;
         case "f":
         case "F":
-          if (!isZoomingRef.current) applyRating("favorite");
+          applyRating("favorite");
           break;
         case "u":
         case "U":
-          if (!isZoomingRef.current) unrateCurrent(); // clear rating, stay on frame
+          unrateCurrent(); // clear rating, stay on frame (zoom unaffected)
           break;
         case "l":
         case "L":
@@ -3433,6 +3479,10 @@ export default function App() {
   // un-does the fit). Falls back to 5× if dimensions aren't known yet.
   const oneToOneScale = zoomNative && imgRect ? zoomNative.w / imgRect.width : 5;
   const zoomZ = isZooming ? zoomLevel * oneToOneScale : 1;
+  // One transition string for EVERY layer that scales with zoom (presenter,
+  // hi-res, clip/peak masks) — "none" for the carried-zoom frame swap, the
+  // directional glide otherwise. Single source so layers can't tear apart.
+  const zoomGlide = zoomSwapInstant ? "none" : zoomTransition(isZooming);
   const hiResScale = imgRect && zoomNative ? (imgRect.width / zoomNative.w) * zoomZ : 1;
   // The hi-res layer lives INSIDE the content-clip box (at 0,0 — the clip IS
   // exactly the displayed image area), so we only need the origin offset INSIDE
@@ -3538,6 +3588,7 @@ export default function App() {
                   scrubbing={scrubbing}
                   isZooming={isZooming}
                   zoomZ={zoomZ}
+                  zoomGlide={zoomGlide}
                   originX={originX}
                   originY={originY}
                   frameDims={frameDims}
@@ -3571,7 +3622,7 @@ export default function App() {
                   style={{
                     transform: isZooming ? `scale(${zoomZ})` : undefined,
                     transformOrigin: `${originX}% ${originY}%`,
-                    transition: zoomTransition(isZooming),
+                    transition: zoomGlide,
                   }}
                 />
               )}
@@ -3583,7 +3634,7 @@ export default function App() {
                   style={{
                     transform: isZooming ? `scale(${zoomZ})` : undefined,
                     transformOrigin: `${originX}% ${originY}%`,
-                    transition: zoomTransition(isZooming),
+                    transition: zoomGlide,
                   }}
                 />
               )}

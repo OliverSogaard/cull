@@ -1,6 +1,5 @@
 import type { CSSProperties, MutableRefObject } from "react";
 import { TIER_PRESENTATION } from "../../image/present";
-import { zoomTransition } from "./zoomTransition";
 import type { PresentSnapshot, PresentTier } from "../../image/present";
 
 /**
@@ -17,6 +16,7 @@ export function PresentLayers({
   className,
   dimsKnown,
   isZooming,
+  zoomGlide,
   zoomZ,
   originX,
   originY,
@@ -29,6 +29,8 @@ export function PresentLayers({
    *  carve-out while the matte is still the neutral square). */
   dimsKnown: boolean;
   isZooming: boolean;
+  /** Shared zoom transform transition (App's zoomGlide). */
+  zoomGlide: string;
   zoomZ: number;
   originX: number;
   originY: number;
@@ -44,7 +46,7 @@ export function PresentLayers({
       filter: pres.filter,
       transform: isZooming ? `scale(${zoomZ})` : undefined,
       transformOrigin: `${originX}% ${originY}%`,
-      transition: zoomTransition(isZooming),
+      transition: zoomGlide,
       // The back layer stays visible beneath the front ONLY for the same
       // path (the blurred thumb under the preview crossfade). A different
       // path's leftovers must not peek through the front's letterbox.

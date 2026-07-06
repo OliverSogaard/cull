@@ -348,6 +348,7 @@ const ComparePanel = memo(function ComparePanel({
           className="cull-cmp-img"
           dimsKnown={!!(img.dims && img.dims.w > 1 && img.dims.h > 1)}
           isZooming={isZooming}
+          zoomGlide={zoomTransition(isZooming)}
           zoomZ={zoomZ}
           originX={originX}
           originY={originY}

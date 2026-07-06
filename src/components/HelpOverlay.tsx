@@ -37,7 +37,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         title: "navigate",
         keys: [
           ["← →", "prev / next  (hold to scrub)"],
-          ["space (hold)", "1:1 zoom · ←↑↓→ pan"],
+          ["space (hold)", "1:1 zoom · ←↑↓→ pan · rating carries zoom to the next frame"],
           ["shift+space", "2:1 zoom"],
           ["1 – 4", "filter: all / unrated / keeps / smart  (repeat to cycle sub-modes)"],
         ],
