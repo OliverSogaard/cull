@@ -35,6 +35,13 @@ export type Resolved = {
   /** Ready mid tier (Phase 8) for the settled fit view on high-DPI stages —
    *  offered to the presenter ABOVE the preview; undefined while absent. */
   mid: { url: string } | undefined;
+  /** The thumb tier, exposed INDEPENDENTLY of the nav stage. Thumb cells
+   *  (useThumb → ThumbCell/GridCell) must keep rendering this blob when a
+   *  prefetched nav preview lands for the same path — `url` flips to the
+   *  preview then, and binding it to a strip/grid <img src> swaps blobs and
+   *  blanks the cell while WebKit decodes the 1620×1080 preview (the
+   *  "8-away flash", thumb-flash-report). Undefined until the thumb exists. */
+  thumbUrl: string | undefined;
 };
 
 export function resolveStage(s: ImageState): Resolved {
@@ -42,6 +49,7 @@ export function resolveStage(s: ImageState): Resolved {
   const full =
     s.zoomFull?.status === "ready" ? { url: s.zoomFull.url, dims: s.zoomFull.dims } : undefined;
   const mid = s.mid?.status === "ready" ? { url: s.mid.url } : undefined;
+  const thumbUrl = s.thumb?.url;
   if (s.full?.status === "ready") {
     // The full can land BEFORE the thumb (big scrub jump): the store freezes
     // it with the {1,1} UNKNOWN sentinel, so real dims must stand in from the
@@ -52,8 +60,8 @@ export function resolveStage(s: ImageState): Resolved {
       s.full.dims.w > 1 && s.full.dims.h > 1
         ? s.full.dims
         : (s.thumb?.dims ?? s.knownDims ?? s.full.dims);
-    return { stage: "full", url: s.full.url, dims, error: undefined, full, mid };
+    return { stage: "full", url: s.full.url, dims, error: undefined, full, mid, thumbUrl };
   }
-  if (s.thumb) return { stage: "thumb", url: s.thumb.url, dims: s.thumb.dims, error, full, mid };
-  return { stage: "shimmer", url: undefined, dims: s.knownDims, error, full, mid };
+  if (s.thumb) return { stage: "thumb", url: s.thumb.url, dims: s.thumb.dims, error, full, mid, thumbUrl };
+  return { stage: "shimmer", url: undefined, dims: s.knownDims, error, full, mid, thumbUrl };
 }

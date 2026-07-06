@@ -1,7 +1,30 @@
 import { useEffect, useMemo } from "react";
 import { useImage } from "./useImage";
+import type { Resolved } from "./stage";
 import { shimmerPhaseMs } from "../utils/shimmer";
 import { dlog, dlogEnabled } from "../utils/dlog";
+
+/**
+ * The url a thumb cell binds to its <img src> — the THUMB tier whenever it
+ * exists, NEVER the nav preview for a path that has a thumb. Pure + exported
+ * for the 8-away-flash regression test (imageStore.test.ts).
+ *
+ * Why not `resolved.url`: the direction-biased preview prefetch
+ * (prefetchFullsAround, previewPrefetchAhead = 8 on the local profile) lands a
+ * nav preview for the frame exactly 8 ahead of the cursor; `resolved.url`
+ * flips from the thumb blob to the preview blob at that moment, and swapping a
+ * live <img src> blanks the cell (~0.1 s) while WKWebView fetches + decodes
+ * the 1620×1080 blob — the visible flash always 8-away in the travel
+ * direction. Pinning to `thumbUrl` keeps the rendered value IDENTICAL across
+ * foreign-tier landings (and later preview evictions), so React's diff never
+ * touches the element.
+ *
+ * The nav url remains as FALLBACK for the thumbless case only (big scrub
+ * jump: preview lands before the thumb) — better the preview than a shimmer.
+ */
+export function thumbDisplayUrl(img: Resolved): string | undefined {
+  return img.thumbUrl ?? (img.stage === "shimmer" ? undefined : img.url);
+}
 
 /**
  * Thumbnail-cell loading primitive shared by the filmstrip cell (ThumbCell) and
@@ -26,7 +49,7 @@ export function useThumb(path: string): {
   probeOnLoad: (() => void) | undefined;
 } {
   const img = useImage(path, { wantFull: false });
-  const url = img.stage === "shimmer" ? undefined : img.url;
+  const url = thumbDisplayUrl(img);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const shimmerDelayMs = useMemo(() => shimmerPhaseMs(), []);
 

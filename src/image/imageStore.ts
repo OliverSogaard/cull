@@ -858,6 +858,7 @@ export class ImageStore {
       !old ||
       old.stage !== newResolved.stage ||
       old.url !== newResolved.url ||
+      old.thumbUrl !== newResolved.thumbUrl ||
       old.error !== newResolved.error ||
       old.full?.url !== newResolved.full?.url ||
       old.mid?.url !== newResolved.mid?.url ||

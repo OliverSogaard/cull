@@ -1279,3 +1279,72 @@ describe("mid tier (Phase 8)", () => {
     expect(genCalls(calls)).toHaveLength(0);
   });
 });
+
+// ── The 8-away flash (thumb-flash-report §"The 8-away flash: root cause") ───
+//
+// prefetchFullsAround enqueues the nav preview for the frame exactly
+// previewPrefetchAhead (8, local profile) ahead of the cursor. When it LANDS,
+// resolveStage used to flip the path's `url` from the thumb blob to the
+// preview blob; useThumb rendered that url, so the thumb <img src> swapped
+// blobs and WKWebView blanked the cell (~0.1 s) while decoding the 1620×1080
+// preview. The thumb tier must stay independently addressable so a foreign-tier
+// landing never changes what a thumb cell renders.
+describe("thumb-tier stability across nav-preview landings (8-away flash)", () => {
+  it("a nav preview landing does NOT change the thumb cell's display url", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(makeThumbnailBuf(800, 600)) // thumb
+      .mockResolvedValueOnce(makeBundleBuf()); // nav preview (legacy shape)
+    const { thumbDisplayUrl } = await import("./useThumb");
+
+    const store = await getStore();
+    store.hardReset();
+    const path = "/foo/eight-away.cr3";
+
+    store.requestThumbFor(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "thumb", { timeout: 2000 });
+    const before = store.snapshot(path);
+    // The thumb tier must be exposed on the snapshot itself…
+    expect(before.thumbUrl).toBeDefined();
+    expect(thumbDisplayUrl(before)).toBe(before.thumbUrl);
+
+    // …and survive the preview landing (what the direction-biased prefetch does).
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "full", { timeout: 2000 });
+    const after = store.snapshot(path);
+    expect(after.url).not.toBe(before.thumbUrl); // nav url really did flip…
+    expect(after.thumbUrl).toBe(before.thumbUrl); // …but the thumb tier didn't
+    // The value a ThumbCell/GridCell <img src> binds must be IDENTICAL, so
+    // React's diff leaves the element untouched — no blob swap, no flash.
+    expect(thumbDisplayUrl(after)).toBe(thumbDisplayUrl(before));
+  });
+
+  it("preview-first fallback survives: no thumb yet -> cells show the preview, then upgrade once", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(makeBundleBuf()) // nav preview lands FIRST (big jump)
+      .mockResolvedValueOnce(makeThumbnailBuf(800, 600)); // thumb trails
+    const { thumbDisplayUrl } = await import("./useThumb");
+
+    const store = await getStore();
+    store.hardReset();
+    const path = "/foo/preview-first.cr3";
+
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.snapshot(path).stage === "full", { timeout: 2000 });
+    const previewOnly = store.snapshot(path);
+    // No thumb yet — the preview is the only pixels available; cells must use it.
+    expect(previewOnly.thumbUrl).toBeUndefined();
+    expect(thumbDisplayUrl(previewOnly)).toBe(previewOnly.url);
+
+    // Thumb lands late: subscribers are notified (thumbUrl participates in the
+    // snapshot change detection) and cells switch to the thumb tier.
+    const cb = vi.fn();
+    const unsub = store.subscribe(path, cb);
+    store.requestThumbFor(path);
+    await vi.waitUntil(() => store.snapshot(path).thumbUrl !== undefined, { timeout: 2000 });
+    expect(cb).toHaveBeenCalled();
+    expect(thumbDisplayUrl(store.snapshot(path))).toBe(store.snapshot(path).thumbUrl);
+    unsub();
+  });
+});

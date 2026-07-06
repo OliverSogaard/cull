@@ -64,4 +64,30 @@ describe("resolveStage", () => {
     });
     expect(s.dims).toEqual({ w: 6, h: 4 });
   });
+
+  // The 8-away flash (thumb-flash-report §"The 8-away flash"): thumb cells must
+  // be able to keep rendering the THUMB blob when the nav preview lands for the
+  // same path — `url` flips to the preview, so Resolved must carry the thumb
+  // tier separately or the strip/grid <img src> swaps blobs and flashes blank
+  // while WebKit decodes the 1620×1080 preview.
+  it("thumbUrl exposes the thumb tier in the thumb stage", () => {
+    const s = resolveStage({ ...base, thumb: { url: "t", dims: { w: 6, h: 4 } } });
+    expect(s.thumbUrl).toBe("t");
+  });
+  it("thumbUrl STILL exposes the thumb tier when the full is ready (url flips, thumbUrl must not)", () => {
+    const s = resolveStage({
+      thumb: { url: "t", dims: { w: 6, h: 4 } },
+      full: { status: "ready", url: "f", dims: { w: 6, h: 4 } },
+    });
+    expect(s.url).toBe("f");
+    expect(s.thumbUrl).toBe("t");
+  });
+  it("thumbUrl is undefined when no thumb exists (preview-first fallback stays possible)", () => {
+    const s = resolveStage({
+      thumb: undefined,
+      full: { status: "ready", url: "f", dims: { w: 6, h: 4 } },
+    });
+    expect(s.thumbUrl).toBeUndefined();
+    expect(s.url).toBe("f");
+  });
 });
