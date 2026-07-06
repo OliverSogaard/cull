@@ -20,6 +20,7 @@ import type {
 } from "./types";
 import "./App.css";
 
+import { mergeMeta } from "./utils/mergeMeta";
 import { shimmerPhaseMs } from "./utils/shimmer";
 import { CompareStrip } from "./components/CompareStrip";
 import { CompareView } from "./components/CompareView";
@@ -629,22 +630,17 @@ export default function App() {
     return () => mql?.removeEventListener("change", onChange);
   }, []);
 
-  // EXIF metadata sink: the store's full-res bundle reads return the full
-  // camera / lens / AF / pixel-dims metadata. The bundle meta replaces the
-  // per-path entry (a pre-seeded lrc-only entry must still gain its EXIF),
-  // EXCEPT lrcRating: the bundle no longer reads the sidecar per navigation
-  // (that cost one NAS round-trip per image — pipeline Phase 0), so the LrC
-  // stars exist only in the analyze-pass seed and must be carried forward.
+  // EXIF metadata sink: ImageMetadata rides three wire paths (thumb decode,
+  // preview read, full-res bundle read). Each delivery replaces the per-path
+  // entry (a pre-seeded lrc-only entry must still gain its EXIF), EXCEPT two
+  // fields that must be carried forward from the previous entry whenever the
+  // incoming delivery lacks them — see mergeMeta for why (lrcRating: the
+  // bundle no longer reads the sidecar per navigation; phash: only the thumb
+  // path ever computes it, so a later preview/full read with phash: null
+  // must not wipe the standing near-duplicate signal Similar groups chain on).
   useEffect(() => {
     imageStore.setMetaSink((path, meta) => {
-      setMetadata((m) => {
-        const prevLrc = m[path]?.lrcRating ?? null;
-        const merged =
-          meta.lrcRating == null && prevLrc != null
-            ? { ...meta, lrcRating: prevLrc }
-            : meta;
-        return { ...m, [path]: merged };
-      });
+      setMetadata((m) => ({ ...m, [path]: mergeMeta(m[path], meta) }));
     });
     return () => imageStore.setMetaSink(undefined);
   }, []);
