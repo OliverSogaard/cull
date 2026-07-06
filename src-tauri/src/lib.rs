@@ -205,6 +205,7 @@ pub fn run() {
             xmp::write_xmp_rating,
             xmp::clear_xmp_rating,
             file_ops::move_rejects_to_subfolder,
+            file_ops::move_rejects_to_trash,
             file_ops::copy_keeps_to_export,
             file_ops::path_exists,
         ])

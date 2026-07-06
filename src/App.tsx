@@ -1214,11 +1214,23 @@ export default function App() {
   // folder B's `_rejected`. One backend call per source folder, results merged
   // into a single FileOpResult for the dialog. The subfolder name comes from
   // settings (default `_rejected`).
-  const doMoveRejects = useCallback(async () => {
+  const doMoveRejects = useCallback(async (dest: "subfolder" | "trash" = "subfolder") => {
     if (rejectedPaths.length === 0 || actionBusy !== null) return;
     setActionBusy("move");
     setMoveResult(null);
     try {
+      if (dest === "trash") {
+        // OS Trash: no destination folder, so no per-source-folder split — one
+        // call for the whole set. Recoverable by design (never a hard delete).
+        try {
+          setMoveResult(
+            await invoke<FileOpResult>("move_rejects_to_trash", { paths: rejectedPaths }),
+          );
+        } catch (e) {
+          setMoveResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1 });
+        }
+        return;
+      }
       const subfolder = normalizeRejectedSubfolder(settings.rejectedSubfolder);
       const byFolder = new Map<string, string[]>();
       for (const im of images) {

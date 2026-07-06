@@ -165,6 +165,49 @@ pub(crate) async fn move_rejects_to_subfolder(
     .map_err(|e| format!("move task failed: {e}"))?
 }
 
+/// Batch-send paths to a trash-like op, the `.xmp` sidecar riding along with
+/// its CR3 (best effort). Mirrors [`batch_files`]' accounting: a missing
+/// source is a skip (idempotent re-runs), errors are counted in full with the
+/// stored list capped. No destination — the op itself owns where files go.
+fn trash_batch(paths: &[String], trash_op: impl Fn(&Path) -> Result<(), String>) -> FileOpResult {
+    let mut result = FileOpResult::default();
+    for path in paths {
+        let src = Path::new(path);
+        if !src.exists() {
+            result.skipped += 1;
+            continue;
+        }
+        match trash_op(src) {
+            Ok(()) => {
+                // Sidecar follows the CR3 (best effort — never fail the CR3 on it).
+                let src_xmp = src.with_extension("xmp");
+                if src_xmp.exists() {
+                    let _ = trash_op(&src_xmp);
+                }
+                result.completed += 1;
+            }
+            Err(e) => {
+                result.error_count += 1;
+                if result.errors.len() < FILE_OP_ERROR_CAP {
+                    result.errors.push(format!("{}: {e}", src.display()));
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Move rejected CR3s (+ sidecars) to the OS Trash / Recycle Bin. Recoverable
+/// by design: CULL never permanent-deletes — the Trash is the floor.
+#[tauri::command]
+pub(crate) async fn move_rejects_to_trash(paths: Vec<String>) -> Result<FileOpResult, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<FileOpResult, String> {
+        Ok(trash_batch(&paths, |p| trash::delete(p).map_err(|e| e.to_string())))
+    })
+    .await
+    .map_err(|e| format!("trash task failed: {e}"))?
+}
+
 #[tauri::command]
 pub(crate) async fn copy_keeps_to_export(
     paths: Vec<String>,
@@ -309,4 +352,51 @@ mod tests {
 
         let _ = fs::remove_dir_all(&work);
     }
+
+    /// trash_batch: missing sources skip (idempotent re-runs), present ones
+    /// complete, and the sidecar rides along with its CR3.
+    #[test]
+    fn trash_batch_completes_skips_and_takes_sidecar() {
+        let work = tmp_dir("trash-batch");
+        let a = work.join("a.cr3");
+        let a_xmp = work.join("a.xmp");
+        fs::write(&a, b"cr3").unwrap();
+        fs::write(&a_xmp, b"<xmp/>").unwrap();
+        let gone = work.join("already-gone.cr3");
+
+        let trashed = std::sync::Mutex::new(Vec::<std::path::PathBuf>::new());
+        let r = trash_batch(
+            &[a.to_string_lossy().to_string(), gone.to_string_lossy().to_string()],
+            |p| {
+                trashed.lock().unwrap().push(p.to_path_buf());
+                fs::remove_file(p).map_err(|e| e.to_string())
+            },
+        );
+        assert_eq!(r.completed, 1);
+        assert_eq!(r.skipped, 1);
+        assert!(r.errors.is_empty());
+        let got = trashed.lock().unwrap();
+        assert!(got.contains(&a), "CR3 went to the trash op");
+        assert!(got.contains(&a_xmp), "sidecar followed its CR3");
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// trash_batch: errors are counted in full but the stored list caps.
+    #[test]
+    fn trash_batch_error_cap() {
+        let work = tmp_dir("trash-errors");
+        let paths: Vec<String> = (0..(FILE_OP_ERROR_CAP + 5))
+            .map(|i| {
+                let f = work.join(format!("f{i}.cr3"));
+                fs::write(&f, b"x").unwrap();
+                f.to_string_lossy().to_string()
+            })
+            .collect();
+        let r = trash_batch(&paths, |_| Err("nope".to_string()));
+        assert_eq!(r.completed, 0);
+        assert_eq!(r.error_count as usize, FILE_OP_ERROR_CAP + 5);
+        assert!(r.errors.len() <= FILE_OP_ERROR_CAP);
+        let _ = fs::remove_dir_all(&work);
+    }
 }
+

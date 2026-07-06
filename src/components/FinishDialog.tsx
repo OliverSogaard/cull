@@ -61,7 +61,7 @@ export function FinishDialog({
   moveResult: FileOpResult | null;
   copyResult: FileOpResult | null;
   settings: Settings;
-  onMoveRejects: () => void;
+  onMoveRejects: (dest: "subfolder" | "trash") => void;
   onCopyKeeps: (dest: string) => void;
   onClose: () => void;
 }) {
@@ -426,9 +426,12 @@ function MoveRejectsRow({
   failedCount: number;
   moveResult: FileOpResult | null;
   settings: Settings;
-  onMoveRejects: () => void;
+  onMoveRejects: (dest: "subfolder" | "trash") => void;
 }) {
   const [armed, setArmed] = useState(false);
+  // Where rejects go: the in-source subfolder (default, reversible in place)
+  // or the OS Trash (recoverable from the Bin; CULL never hard-deletes).
+  const [dest, setDest] = useState<"subfolder" | "trash">("subfolder");
 
   // Auto-disarm so a confirmed-then-walked-away dialog doesn't sit primed.
   useEffect(() => {
@@ -448,8 +451,36 @@ function MoveRejectsRow({
     <div className="cull-actions__row">
       <div className="cull-actions__row-label">Move rejects</div>
       <div className="cull-actions__row-help">
-        Moves the {rejectedCount} rejected CR3s + their XMP sidecars into a{" "}
-        <b>{normalizeRejectedSubfolder(settings.rejectedSubfolder)}/</b> subfolder in the source.
+        {dest === "subfolder" ? (
+          <>
+            Moves the {rejectedCount} rejected CR3s + their XMP sidecars into a{" "}
+            <b>{normalizeRejectedSubfolder(settings.rejectedSubfolder)}/</b> subfolder in the
+            source.
+          </>
+        ) : (
+          <>
+            Moves the {rejectedCount} rejected CR3s + their XMP sidecars to the{" "}
+            <b>system Trash</b>. Recoverable from the Trash.
+          </>
+        )}
+      </div>
+      <div className="cull-settings__seg cull-finish__dest-seg" role="group" aria-label="rejects destination">
+        <button
+          type="button"
+          className={`cull-settings__seg-opt${dest === "subfolder" ? " is-active" : ""}`}
+          onClick={() => setDest("subfolder")}
+          aria-pressed={dest === "subfolder"}
+        >
+          {normalizeRejectedSubfolder(settings.rejectedSubfolder)}/
+        </button>
+        <button
+          type="button"
+          className={`cull-settings__seg-opt${dest === "trash" ? " is-active" : ""}`}
+          onClick={() => setDest("trash")}
+          aria-pressed={dest === "trash"}
+        >
+          Trash
+        </button>
       </div>
 
       {actionBusy === "move" ? (
@@ -466,13 +497,15 @@ function MoveRejectsRow({
       ) : armed ? (
         <div className="cull-finish__confirm">
           <span className="cull-finish__confirm-msg">
-            Sure? This moves {rejectedCount} files.
+            {dest === "trash"
+              ? `Sure? This moves ${rejectedCount} files to the Trash.`
+              : `Sure? This moves ${rejectedCount} files.`}
           </span>
           <button
             className="cull-pick-button cull-pick-button--primary cull-finish__confirm-yes"
             onClick={() => {
               setArmed(false);
-              onMoveRejects();
+              onMoveRejects(dest);
             }}
           >
             Yes, move

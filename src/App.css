@@ -854,6 +854,13 @@ body,
 }
 
 
+/* Rejects-destination segment in the finish dialog: reuses the settings
+   segment look, just needs breathing room above the action button. */
+.cull-finish__dest-seg {
+  margin: 2px 0 10px;
+  align-self: flex-start;
+}
+
 /* Standing hint at the one gesture that unlocks every other key. Dimmest
    voice in the footer — present, never competing. */
 .cull-statusbar__keyhint {
