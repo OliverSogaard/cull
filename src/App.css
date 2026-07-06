@@ -1630,7 +1630,12 @@ body,
   display: flex;
   flex-direction: column;
   gap: 20px;
-  transition: opacity 0.15s ease;
+  /* NO opacity transition here: animating it promotes the group to a
+     compositing layer, and WKWebView leaves a stale ghost of the last row
+     painted at its old position when the adaptive help text above shifts
+     layout in the same frame (live-reproduced, survives cold starts).
+     Dimming instantly keeps the paint atomic. Per-row color transitions are
+     fine; a group-level opacity animation is not. */
 }
 
 .cull-settings__group.is-off {
