@@ -70,3 +70,20 @@ export function isReservedFolderName(name: string): boolean {
   const base = name.split(".")[0].trim().toUpperCase();
   return /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(base);
 }
+
+/**
+ * Truncate a path for DISPLAY from the LEFT, keeping the tail — the end of a
+ * path is the part that identifies it ("…/Downloads/exports/"), and a leading
+ * cut can never eat the trailing separator the way a CSS clip does. Prefers
+ * starting at a separator inside the kept tail so the result reads as whole
+ * segments; falls back to a raw tail when none is in range. Callers keep the
+ * full path in a tooltip.
+ */
+export function truncatePathDisplay(path: string, max: number): string {
+  if (path.length <= max) return path;
+  const tail = path.slice(-(max - 1));
+  const sep = tail.search(/[\\/]/);
+  // A separator strictly inside the tail (not its last char) gives a clean
+  // segment boundary; otherwise show the raw tail.
+  return "…" + (sep >= 0 && sep < tail.length - 1 ? tail.slice(sep) : tail);
+}

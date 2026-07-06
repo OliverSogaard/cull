@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { FileOpResult, Settings } from "../types";
 import { normalizeRejectedSubfolder } from "../types/settings";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import { isReservedFolderName, joinPath, sanitizeFolderName } from "../utils/path";
+import { isReservedFolderName, joinPath, sanitizeFolderName, truncatePathDisplay } from "../utils/path";
 
 /** How long after the last keystroke (or dialog open) before we probe disk. */
 const FOLDER_EXISTS_DEBOUNCE_MS = 250;
@@ -309,7 +309,12 @@ export function FinishDialog({
                     className="cull-finish__dest-root"
                     title={pinnedRoot || "(pinned root not set)"}
                   >
-                    {pinnedRoot ? `${pinnedRoot.replace(/[\\/]+$/, "")}${pinnedRoot.includes("\\") ? "\\" : "/"}` : "(no pinned root) "}
+                    {pinnedRoot
+                    ? truncatePathDisplay(
+                        `${pinnedRoot.replace(/[\\/]+$/, "")}${pinnedRoot.includes("\\") ? "\\" : "/"}`,
+                        34,
+                      )
+                    : "(no pinned root) "}
                   </span>
                   <input
                     className={`cull-finish__dest-sub${subInvalid ? " is-invalid" : ""}${flashing ? " is-flash" : ""}`}

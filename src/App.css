@@ -2251,9 +2251,12 @@ body,
   padding: 7px 0 7px 10px;
   color: var(--muted);
   white-space: nowrap;
-  max-width: 45%;
+  /* The displayed text is already leading-truncated in JS
+     (truncatePathDisplay keeps the path's tail + trailing separator), so no
+     CSS clamp: text-overflow can't ellipsize a flex container's own text and
+     was hard-clipping the trailing slash. max-width stays as a backstop only. */
+  max-width: 50%;
   overflow: hidden;
-  text-overflow: ellipsis;
   flex-shrink: 0;
   transition: border-color 0.12s ease;
 }
@@ -2266,7 +2269,9 @@ body,
   padding: 7px 10px 7px 0;
   color: var(--text);
   flex: 1 1 auto;
-  min-width: 80px;
+  /* Wide enough that a long pinned root can never squeeze the name being
+     typed into a peephole. */
+  min-width: 150px;
   transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
 }
 

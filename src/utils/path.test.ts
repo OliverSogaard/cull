@@ -3,6 +3,7 @@ import {
   basename,
   isReservedFolderName,
   joinPath,
+  truncatePathDisplay,
   sanitizeFolderName,
   stripExt,
 } from "./path";
@@ -98,5 +99,30 @@ describe("isReservedFolderName", () => {
     for (const n of ["CONcert-keeps", "rejects", "_rejected", "COM10", "console", "Reception"]) {
       expect(isReservedFolderName(n)).toBe(false);
     }
+  });
+});
+
+describe("truncatePathDisplay — leading truncation, path end preserved", () => {
+  it("returns short paths untouched", () => {
+    expect(truncatePathDisplay("/Users/o/Pics/", 34)).toBe("/Users/o/Pics/");
+  });
+
+  it("keeps the tail and starts at a separator when one is in range", () => {
+    const long = "/Users/oliversogaard/Downloads/exports/weddings/";
+    const out = truncatePathDisplay(long, 30);
+    expect(out.length).toBeLessThanOrEqual(30);
+    expect(out.startsWith("…/")).toBe(true);
+    expect(out.endsWith("/weddings/")).toBe(true);
+  });
+
+  it("falls back to a raw tail when no separator is in range", () => {
+    const out = truncatePathDisplay("x".repeat(80), 10);
+    expect(out).toBe("…" + "x".repeat(9));
+  });
+
+  it("handles Windows separators", () => {
+    const out = truncatePathDisplay("C:\\Users\\oliver\\Pictures\\exports\\", 20);
+    expect(out.startsWith("…\\")).toBe(true);
+    expect(out.endsWith("\\exports\\")).toBe(true);
   });
 });
