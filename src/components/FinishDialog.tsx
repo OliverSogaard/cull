@@ -205,7 +205,16 @@ export function FinishDialog({
   const trapRef = useFocusTrap<HTMLDivElement>();
 
   return (
-    <div className="cull-quitguard">
+    <div
+      className="cull-quitguard"
+      onClick={(e) => {
+        // Backdrop click closes, like the settings dialog: only a click on the
+        // backdrop itself (not one bubbled from inside the box). Safe even
+        // mid-operation: closing never cancels a running move/copy, and the
+        // two-step confirms disarm on their own.
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div
         className="cull-quitguard__box cull-actions"
         ref={trapRef}
