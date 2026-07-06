@@ -433,6 +433,13 @@ export default function App() {
   // sticky state); rating while held carries the zoom like the keyboard flow.
   const [mouseZooming, setMouseZooming] = useState(false);
   const lastMouseRef = useRef({ x: 0, y: 0 });
+  // Mirror for the stable-identity pan() below: while the mouse owns the
+  // zoom, arrow-key pan must stand down — its ±40% clamp would snap a drag
+  // that legitimately sits outside it (mouse pan clamps by origin bounds).
+  const mouseZoomingRef = useRef(false);
+  useEffect(() => {
+    mouseZoomingRef.current = mouseZooming;
+  }, [mouseZooming]);
   // Live mirror of the render-derived zoomZ (declared after the chrome early
   // return, so the drag handler below can't close over it) — assigned where
   // zoomZ is computed each culling render.
@@ -499,6 +506,9 @@ export default function App() {
   const bumpMeasureNonce = useCallback(() => setMeasureNonce((n) => n + 1), []);
 
   const pan = useCallback((dx: number, dy: number) => {
+    // Mouse-drag zoom owns panning while the button is held: this keyboard
+    // clamp (±40%) would visibly snap a drag anchored near an edge.
+    if (mouseZoomingRef.current) return;
     setPanOffset((o) => ({
       x: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, o.x + dx)),
       y: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, o.y + dy)),
@@ -510,6 +520,7 @@ export default function App() {
   // consistent.
   const resetZoom = useCallback(() => {
     setIsZooming(false);
+    setMouseZooming(false); // a mouse-held zoom ends with the zoom, always
     setPanOffset({ x: 0, y: 0 });
   }, []);
 
