@@ -1524,6 +1524,20 @@ export default function App() {
     // tear down + rebuild the observer when the displayed frame is unchanged.
   }, [phase, images.length, currentIndex, measureNonce, scrubbing, isZooming, cur.stage, cur.dims]);
 
+  // While zoomed with the current frame's full landed, warm the NEXT frame's
+  // zoom full so a carried rating advance lands sharp (or nearly) instead of
+  // sitting on the upscaled preview for a full fetch+decode. Ordered AFTER the
+  // active frame on purpose (cur.stage gate): it can never compete with the
+  // zoom fetch the user is actually looking at. requestZoomFull is idempotent
+  // (ready/loading/queued/cooldown guards), so re-fires are free.
+  useEffect(() => {
+    if (phase !== "culling" || compareMode || !isZooming) return;
+    if (cur.stage !== "full") return;
+    const nextIdx = positionInFilter >= 0 ? visibleIndices[positionInFilter + 1] : undefined;
+    const nextPath = nextIdx !== undefined ? images[nextIdx]?.path : undefined;
+    if (nextPath) imageStore.requestZoomFull(nextPath);
+  }, [phase, compareMode, isZooming, cur.stage, positionInFilter, visibleIndices, images]);
+
   // Ensure clip masks exist for the on-screen image(s) while clipping is on;
   // toggling off drops the kind's cache + request-set in the service (clipping
   // does not persist). Skipped mid-scrub: the overlays are hidden then, and
