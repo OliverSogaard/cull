@@ -32,6 +32,7 @@ import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard"
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { useSmartCulling } from "./smart/useSmartCulling";
+import { useChipsTooltipVisibility } from "./hooks/useChipsTooltipVisibility";
 import { groupBursts } from "./smart/groupBursts";
 import { groupSimilar } from "./smart/groupSimilar";
 import { buildBurstInputs, buildSimilarInputs } from "./smart/burstInputs";
@@ -147,6 +148,11 @@ export default function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [ratings, setRatings] = useState<Record<number, Rating>>({});
   const [filter, setFilter] = useState<Filter>("all");
+  // Floating tooltip above the active Keeps/Smart tab that hosts the
+  // sub-mode chips (all/★, or all/✕/✓/★) — see useChipsTooltipVisibility for
+  // the activity-fade rules. `pulse()` is called on every filter change;
+  // `hoverProps` is spread onto the active tab button and the tooltip itself.
+  const chipsTooltip = useChipsTooltipVisibility();
   /** Burst/Similar run boxes render in the grid only under filters that keep
    *  runs contiguous — see the GridView call site for why. Checked against
    *  the TOP-LEVEL tab (topOf) so Keeps·★ / Smart sub-modes gate the same
@@ -2844,10 +2850,12 @@ export default function App() {
           break;
         case "3":
           setFilter((f) => cycleFilter(f, "keeps"));
+          chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
           break;
         case "4":
           if (settings.smartCulling) {
             setFilter((f) => cycleFilter(f, "suggested"));
+            chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
             startAnalysis(); // no-op unless "analyze on open" is off and unrun
           }
           break;
@@ -3569,17 +3577,27 @@ export default function App() {
               <button
                 type="button"
                 className={topOf(filter) === "keeps" ? "is-active" : ""}
-                onClick={() => setFilter((f) => cycleFilter(f, "keeps"))}
+                onClick={() => {
+                  setFilter((f) => cycleFilter(f, "keeps"));
+                  chipsTooltip.pulse();
+                }}
                 title="3 · show keeps (press again for ★ favorites only)"
+                {...(topOf(filter) === "keeps" ? chipsTooltip.hoverProps : undefined)}
               >
                 Keeps
               </button>
               {topOf(filter) === "keeps" && (
-                <span className="cull-filter-tab-chips">
+                <span
+                  className={`cull-filter-tab-tooltip${chipsTooltip.visible ? " is-on" : ""}`}
+                  {...chipsTooltip.hoverProps}
+                >
                   <button
                     type="button"
                     className={filter === "keeps" ? "is-active" : ""}
-                    onClick={() => setFilter("keeps")}
+                    onClick={() => {
+                      setFilter("keeps");
+                      chipsTooltip.pulse();
+                    }}
                     title="keeps and favorites"
                   >
                     all
@@ -3587,7 +3605,10 @@ export default function App() {
                   <button
                     type="button"
                     className={filter === "keepsFavs" ? "is-active" : ""}
-                    onClick={() => setFilter("keepsFavs")}
+                    onClick={() => {
+                      setFilter("keepsFavs");
+                      chipsTooltip.pulse();
+                    }}
                     title="favorites only"
                   >
                     ★
@@ -3602,20 +3623,28 @@ export default function App() {
                   className={topOf(filter) === "suggested" ? "is-active" : ""}
                   onClick={() => {
                     setFilter((f) => cycleFilter(f, "suggested"));
+                    chipsTooltip.pulse();
                     startAnalysis(); // no-op unless "analyze on open" is off and unrun
                   }}
                   title="4 · show unrated frames with a smart-culling suggestion (press again to narrow by verdict)"
+                  {...(topOf(filter) === "suggested" ? chipsTooltip.hoverProps : undefined)}
                 >
                   {qualityAnalyzing && qualityProgress
                     ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
                     : "Smart"}
                 </button>
                 {topOf(filter) === "suggested" && (
-                  <span className="cull-filter-tab-chips">
+                  <span
+                    className={`cull-filter-tab-tooltip${chipsTooltip.visible ? " is-on" : ""}`}
+                    {...chipsTooltip.hoverProps}
+                  >
                     <button
                       type="button"
                       className={filter === "suggested" ? "is-active" : ""}
-                      onClick={() => setFilter("suggested")}
+                      onClick={() => {
+                        setFilter("suggested");
+                        chipsTooltip.pulse();
+                      }}
                       title="any suggestion"
                     >
                       all
@@ -3623,7 +3652,10 @@ export default function App() {
                     <button
                       type="button"
                       className={filter === "suggestedRejects" ? "is-active" : ""}
-                      onClick={() => setFilter("suggestedRejects")}
+                      onClick={() => {
+                        setFilter("suggestedRejects");
+                        chipsTooltip.pulse();
+                      }}
                       title="suggested rejects"
                     >
                       ✕
@@ -3631,7 +3663,10 @@ export default function App() {
                     <button
                       type="button"
                       className={filter === "suggestedKeeps" ? "is-active" : ""}
-                      onClick={() => setFilter("suggestedKeeps")}
+                      onClick={() => {
+                        setFilter("suggestedKeeps");
+                        chipsTooltip.pulse();
+                      }}
                       title="suggested keeps"
                     >
                       ✓
@@ -3639,7 +3674,10 @@ export default function App() {
                     <button
                       type="button"
                       className={filter === "suggestedFavs" ? "is-active" : ""}
-                      onClick={() => setFilter("suggestedFavs")}
+                      onClick={() => {
+                        setFilter("suggestedFavs");
+                        chipsTooltip.pulse();
+                      }}
                       title="suggested favorites"
                     >
                       ★

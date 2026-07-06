@@ -453,42 +453,78 @@ body,
   color: var(--text);
 }
 
-/* Keeps / Smart wrap their tab button so the sub-mode chips (below) can sit
- * right next to it. The chips render in-flow, right after the active tab's
- * button — their appearance reflows the filter bar (and the footer has gap
- * room for that), rather than floating over neighboring tabs/buttons. */
+/* Keeps / Smart wrap their tab button so the sub-mode tooltip (below) can
+ * anchor to it via `position: relative`. The tooltip is OUT OF FLOW
+ * (position: absolute, floating above the tab) — cycling sub-modes never
+ * changes this group's own footprint, so the footer never reflows. */
 .cull-filter-tab-group {
+  position: relative;
   display: inline-flex;
   align-items: center;
 }
 
-.cull-filter-tab-chips {
+/* Filter sub-mode tooltip — floats above the active Keeps/Smart tab instead
+ * of rendering in-flow, so the footer's width never shifts as sub-modes
+ * cycle. Visibility is activity-driven (useChipsTooltipVisibility): a filter
+ * cycle or a hover over the tab/tooltip pulses it visible; ~800ms of no
+ * activity and no hover lets it fade. The fade timing mirrors the grid's
+ * scroll-position indicator and the loupe strip's scrub bar — fast fade-in,
+ * slightly delayed fade-out (`.cull-grid__scrollbar-track` / `.cull-scrubbar`
+ * use the same 0.12s-in / 0.4s-ease-0.35s-out pair). */
+.cull-filter-tab-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 0;
-  padding-left: 6px;
+  gap: 3px;
+  padding: 4px 5px;
   white-space: nowrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease 0.35s;
 }
 
-.cull-filter-tab-chips button {
+.cull-filter-tab-tooltip.is-on {
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 0.12s ease 0s;
+}
+
+.cull-filter-tab-tooltip button {
+  appearance: none;
   padding: 3px 7px;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
   color: var(--muted);
   border: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
   border-radius: 3px;
-  margin-left: 3px;
   background: var(--surface-2);
+  transition: color 0.12s ease, border-color 0.12s ease;
 }
 
-.cull-filter-tab-chips button:hover:not(.is-active) {
+.cull-filter-tab-tooltip button:hover:not(.is-active) {
   color: var(--text-2);
 }
 
-.cull-filter-tab-chips button.is-active {
+.cull-filter-tab-tooltip button.is-active {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--surface-2);
+}
+
+.cull-filter-tab-tooltip button:focus-visible {
+  outline: none;
+  color: var(--text);
 }
 
 /* ── status-bar chips ─────────────────────────────────────────
