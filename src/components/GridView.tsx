@@ -15,6 +15,7 @@ import { stripExt } from "../utils/path";
 import { hasLrcRating } from "../utils/ratingColor";
 import { useThumb } from "../image/useThumb";
 import { computeScrollIndicator } from "../utils/scrollIndicator";
+import { computeGridAutoScrollTop, computeGridWindow } from "./gridWindow";
 
 /** Visible rows above and below the viewport that we still render. */
 const GRID_BUFFER_ROWS = 2;
@@ -188,30 +189,42 @@ export const GridView = memo(function GridView({
     totalH + GRID_V_PADDING,
   );
 
-  const firstRow = Math.max(0, Math.floor(scrollTop / rowH) - GRID_BUFFER_ROWS);
-  const lastRow = Math.min(
+  const { firstRow, lastRow } = computeGridWindow({
+    scrollTop,
+    viewportH,
+    rowH,
     totalRows,
-    Math.ceil((scrollTop + viewportH) / rowH) + GRID_BUFFER_ROWS,
-  );
+    buffer: GRID_BUFFER_ROWS,
+  });
 
   // Auto-scroll: keep the current cell in view as the selection moves. If the
   // current frame isn't in the active filter (a possible state right after
   // compare exits onto a re-rated frame), scroll to the top instead of leaving
   // the grid wedged at scrollTop 0 looking broken.
+  //
+  // CRITICAL — same-frame window sync (the grid-scrub flash): after writing
+  // el.scrollTop, the row window must be recomputed from the NEW offset in
+  // this same commit. The scroll listener's rAF-throttled setScrollTop lands a
+  // frame LATER — and a held-arrow scrub at 10× jumps 10 rows per tick against
+  // a 2-row buffer, so waiting that frame paints a viewport of unmounted
+  // nothing (thumbs "go away and come back" every tick). A setState inside a
+  // layout effect re-renders synchronously BEFORE paint (exactly how the
+  // strip's useStripVirtualizer recomputes its range inside center()), so the
+  // rows for the new offset are always mounted by the time the frame paints.
+  // The prev===next guard keeps the plain single-step case (cell already in
+  // view, no scroll write) render-free.
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el || rowH <= 0) return;
-    const pos = visibleIndices.indexOf(currentIndex);
-    if (pos === -1) {
-      el.scrollTop = 0;
-      return;
-    }
-    const row = Math.floor(pos / cols);
-    const cellTop = row * rowH;
-    const cellBottom = cellTop + rowH;
-    if (cellTop < el.scrollTop) el.scrollTop = cellTop;
-    else if (cellBottom > el.scrollTop + el.clientHeight)
-      el.scrollTop = cellBottom - el.clientHeight;
+    const next = computeGridAutoScrollTop({
+      pos: visibleIndices.indexOf(currentIndex),
+      cols,
+      rowH,
+      scrollTop: el.scrollTop,
+      viewportH: el.clientHeight,
+    });
+    if (next !== null) el.scrollTop = next;
+    setScrollTop((prev) => (prev === el.scrollTop ? prev : el.scrollTop));
   }, [currentIndex, visibleIndices, cols, rowH, containerRef]);
 
   const cells: { idx: number; row: number; col: number }[] = [];
@@ -424,7 +437,7 @@ const GridCell = memo(function GridCell({
   // mount (and prioritises by the reported grid viewport) and re-renders this
   // cell when it lands. `shimmer` → placeholder; otherwise show the thumb.
   // Thumbnail + pinned shimmer phase, shared with the strip's ThumbCell.
-  const { url, shimmerDelayMs } = useThumb(img.path);
+  const { url, shimmerDelayMs, probeOnLoad } = useThumb(img.path);
   const isReject = rating === "reject";
   // Verdict glyph + colour modifier for the dot (shared with the strip's ThumbCell).
   const dotIcon = verdictGlyph(rating, 12);
@@ -458,9 +471,17 @@ const GridCell = memo(function GridCell({
           aren't invisible just because their thumb hasn't arrived. */}
       <div className="cull-grid__frame">
         {url ? (
-          // decoding="sync": tiny JPEG — paint with layout, no remount blank
-          // (see ThumbCell; same 1–2-frame re-shimmer fix).
-          <img className="cull-grid__img" src={url} alt="" decoding="sync" />
+          // decoding="sync": tiny JPEG — decode with layout/paint once loaded.
+          // It does NOT make a fresh mount paint same-frame (the blob fetch is
+          // still async) — see ThumbCell's fuller note; visibility is covered
+          // by mounting rows in the overscan buffer + same-frame windowing.
+          <img
+            className="cull-grid__img"
+            src={url}
+            alt=""
+            decoding="sync"
+            onLoad={probeOnLoad}
+          />
         ) : (
           <div
             className="cull-grid__placeholder"
