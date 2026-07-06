@@ -2391,22 +2391,22 @@ body,
    illustration rather than a full-bleed photo: partial width, bottom-
    anchored, blurred so its vector edges melt into texture instead of
    reading as pasted clipart. */
-.cull-empty-state__backdrop {
-  /* IN FLOW below the text (the box is content-sized in some layouts —
-     absolute+overflow:hidden clipped the art to a gray band). */
-  display: block;
-  margin-top: 26px;
-  width: min(460px, 44vw);
-  height: auto;
+/* Desert backdrop — the EXACT meadow recipe (.cull-chrome::before), different
+   scene: full-bleed dune landscape under the no-match text. position:fixed
+   fills the whole window regardless of how the empty-state box is sized;
+   opaque chrome (status bars, strip) paints over it, so it reads as the
+   stage's own atmosphere with the text centered on top. */
+.cull-empty-state--desert::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
   pointer-events: none;
-  /* Screenshot-tuned (scratchpad shot_v4): dark cactus greens go near-black
-     in grayscale on this bg, so the brightness LIFT is what makes the
-     illustration read as light-stroke line art instead of a smudge; the wide
-     tall mask keeps the saguaro tops instead of decapitating them. */
-  filter: grayscale(1) brightness(2.1) contrast(0.9) blur(1px);
-  opacity: 0.2;
-  -webkit-mask-image: radial-gradient(95% 115% at 50% 100%, #000 55%, transparent 96%);
-  mask-image: radial-gradient(95% 115% at 50% 100%, #000 55%, transparent 96%);
+  background: url("./assets/desert.jpg") center / cover no-repeat;
+  filter: grayscale(1) brightness(0.85) contrast(1.05);
+  opacity: 0.11;
+  -webkit-mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
 }
 
 .cull-empty-state__eyebrow {

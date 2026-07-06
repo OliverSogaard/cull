@@ -19,7 +19,6 @@ import type {
   UndoAction,
 } from "./types";
 import "./App.css";
-import desertBackdrop from "./assets/desert.png";
 
 import { mergeMeta } from "./utils/mergeMeta";
 import { shimmerPhaseMs } from "./utils/shimmer";
@@ -3980,8 +3979,6 @@ function NoMatchEmptyState({
       <div className="cull-empty-state__eyebrow">{eyebrow}</div>
       <div className="cull-empty-state__title">{title}</div>
       <div className="cull-empty-state__hint">{hint}</div>
-      {/* In-flow below the text — the box grows to fit it, nothing can clip. */}
-      <img className="cull-empty-state__backdrop" src={desertBackdrop} alt="" aria-hidden="true" />
     </div>
   );
 }
