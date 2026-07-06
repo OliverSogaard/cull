@@ -3477,7 +3477,7 @@ export default function App() {
               type="button"
               className={`cull-statusbar__ov${exifVisible ? " is-on" : ""}`}
               onClick={() => setExifVisible((v) => !v)}
-              title="i — info"
+              title="i · info"
               aria-pressed={exifVisible}
             >
               i
@@ -3486,7 +3486,7 @@ export default function App() {
               type="button"
               className={`cull-statusbar__ov${clippingVisible ? " is-on" : ""}`}
               onClick={() => setClippingVisible((v) => !v)}
-              title="h — clipping"
+              title="h · clipping"
               aria-pressed={clippingVisible}
             >
               h
@@ -3495,7 +3495,7 @@ export default function App() {
               type="button"
               className={`cull-statusbar__ov${peakingVisible ? " is-on" : ""}`}
               onClick={() => setPeakingVisible((v) => !v)}
-              title="p — focus peaking"
+              title="p · focus peaking"
               aria-pressed={peakingVisible}
             >
               p
@@ -3504,7 +3504,7 @@ export default function App() {
               type="button"
               className={`cull-statusbar__ov${compositionVisible ? " is-on" : ""}`}
               onClick={() => setCompositionVisible((v) => !v)}
-              title="o — thirds"
+              title="o · thirds"
               aria-pressed={compositionVisible}
             >
               o
@@ -3513,7 +3513,7 @@ export default function App() {
               type="button"
               className={`cull-statusbar__ov${thumbsVisible ? " is-on" : ""}`}
               onClick={() => setThumbsVisible((v) => !v)}
-              title="t — thumb strip"
+              title="t · thumb strip"
               aria-pressed={thumbsVisible}
             >
               t
@@ -3523,7 +3523,7 @@ export default function App() {
         {gridVisible && selectedIndices.size >= 1 && (
           <span
             className="cull-statusbar__multi"
-            title="selection — rating keys apply to all selected"
+            title="selection · rating keys apply to all selected"
           >
             {selectedIndices.size} selected
           </span>
@@ -3532,7 +3532,7 @@ export default function App() {
           <span
             className="cull-statusbar__unsaved"
             onClick={retryFailed}
-            title="some ratings failed to save — click to retry"
+            title="ratings failed to save · click to retry"
           >
             ⚠ {failedCount} unsaved · retry
           </span>
@@ -3700,7 +3700,7 @@ export default function App() {
             type="button"
             className="cull-statusbar__finish"
             onClick={() => setActionsOpen(true)}
-            title="finish the cull — move rejects / copy keeps"
+            title="finish the cull · move rejects / copy keeps"
           >
             {modGlyph}E · {totalKeeps} keeps
           </button>
@@ -3778,10 +3778,10 @@ export default function App() {
                 folderTrouble === "checking"
                   ? "probing every source folder…"
                   : folderTrouble === "still"
-                    ? "the folder is still not responding — check the drive / NAS connection, then retry"
+                    ? "still not responding. Check the drive or NAS, then retry"
                     : folderTrouble === "recovered"
-                      ? "folder reachable again — resuming loads"
-                      : "several reads failed — the folder may be unreachable (NAS asleep / unmounted)"
+                      ? "folder reachable again. Resuming loads"
+                      : "several reads failed. The folder may be unreachable (NAS asleep or unmounted)"
               }
             >
               {folderTrouble === "checking"
@@ -3900,8 +3900,8 @@ export default function App() {
             </div>
             <div className="cull-quitguard__body">
               {failedCount > 0
-                ? `${failedCount} rating${failedCount > 1 ? "s have" : " has"} not saved to disk yet (the sidecar write keeps failing). Leaving won't lose ${failedCount > 1 ? "them" : "it"} — the unsaved flag stays on the home screen so you can retry saving from there, but it's safer to stay and retry first.`
-                : "This clears the current session and returns to the start screen. Your ratings are saved in .xmp sidecars, so reopening the folder restores them."}
+                ? `${failedCount} rating${failedCount > 1 ? "s have" : " has"} not saved to disk yet. Leaving won't lose ${failedCount > 1 ? "them" : "it"}: the unsaved flag stays on the home screen for retrying. Staying to retry first is safer.`
+                : "Ratings are saved in .xmp sidecars. Reopening the folder restores them."}
             </div>
             <div className="cull-quitguard__actions">
               <button className="cull-pick-button cull-pick-button--primary" onClick={leaveToHome}>
@@ -4054,13 +4054,13 @@ function EmptyFilter({
               <>
                 Looking for obvious calls
                 {progress
-                  ? ` — ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} scored`
+                  ? ` · ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} scored`
                   : ""}
               </>
             }
             hint={
               <>
-                fills in as frames are scored — culling always takes priority ·{" "}
+                fills in as frames are scored · culling comes first ·{" "}
                 <kbd>1</kbd> for all
               </>
             }
@@ -4075,7 +4075,7 @@ function EmptyFilter({
           <NoMatchEmptyState
             eyebrow="Analyzed"
             title={
-              <>Analysis done — no suggestions left here ({scoredCount} scored)</>
+              <>Analysis done · no suggestions left here ({scoredCount} scored)</>
             }
             hint={
               <>
@@ -4262,7 +4262,7 @@ function SaveStatusPill({
       }
       title={
         state === "failed"
-          ? "some ratings failed to save — click to retry"
+          ? "ratings failed to save · click to retry"
           : state === "saving"
             ? `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
             : "all ratings saved to disk"

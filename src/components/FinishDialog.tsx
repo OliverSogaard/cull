@@ -258,8 +258,8 @@ export function FinishDialog({
             className={`cull-actions__pending${failedCount > 0 ? " cull-actions__pending--err" : ""}`}
           >
             {failedCount > 0
-              ? `⚠ ${failedCount} rating${failedCount > 1 ? "s" : ""} haven't saved — actions disabled until resolved (status bar · retry)`
-              : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land first`}
+              ? `⚠ ${failedCount} rating${failedCount > 1 ? "s" : ""} haven't saved · actions disabled until resolved (status bar · retry)`
+              : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`}
           </div>
         )}
 
