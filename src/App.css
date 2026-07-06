@@ -892,6 +892,16 @@ body,
 }
 
 
+/* Cursor-anchored mouse zoom affordance: the photo area invites a press,
+   and a held drag reads as grabbing. Keyboard zoom (Space) shows neither. */
+.cull-image-area--zoomable {
+  cursor: zoom-in;
+}
+
+.cull-image-area--grabbing {
+  cursor: grabbing;
+}
+
 /* Rejects-destination segment in the finish dialog: reuses the settings
    segment look, just needs breathing room above the action button. */
 .cull-finish__dest-seg {

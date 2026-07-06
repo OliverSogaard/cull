@@ -428,6 +428,16 @@ export default function App() {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
 
+  // Cursor-anchored mouse zoom: press on the photo = zoom at that point,
+  // drag = grab-pan, release = exit. Mirrors Space exactly (hold-based, no
+  // sticky state); rating while held carries the zoom like the keyboard flow.
+  const [mouseZooming, setMouseZooming] = useState(false);
+  const lastMouseRef = useRef({ x: 0, y: 0 });
+  // Live mirror of the render-derived zoomZ (declared after the chrome early
+  // return, so the drag handler below can't close over it) — assigned where
+  // zoomZ is computed each culling render.
+  const zoomZRef = useRef(1);
+
   // Measured rect of the displayed image (relative to the stage). Consumed ONLY
   // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
   // with the base image) — the analysis overlays align via CSS, not this rect.
@@ -655,6 +665,75 @@ export default function App() {
       return fwd !== -1 ? fwd : findUnrated(from, -1, ratingsMap, skip);
     },
     [findUnrated],
+  );
+
+  // Mouse-zoom drag loop + release. Listeners exist only while the button is
+  // held. Deps close over the LIVE imgRect/meta on purpose: a carried rating
+  // advance mid-drag swaps them, the effect re-attaches, and the drag
+  // continues seamlessly on the new frame. zoomZ arrives via its ref mirror
+  // (it is render-derived after the chrome early return).
+  useEffect(() => {
+    if (!mouseZooming) return;
+    const curImg = images[currentIndex];
+    const meta = curImg ? metadata[curImg.path] : undefined;
+    const afX = meta?.afXPct ?? 50;
+    const afY = meta?.afYPct ?? 50;
+    const onMove = (e: MouseEvent) => {
+      const dx = e.clientX - lastMouseRef.current.x;
+      const dy = e.clientY - lastMouseRef.current.y;
+      lastMouseRef.current = { x: e.clientX, y: e.clientY };
+      const rect = imgRect;
+      const z = zoomZRef.current;
+      if (!rect || z <= 1) return;
+      // Grab semantics: content follows the pointer. Moving the origin by d%
+      // shifts the content by d(Z−1)% of the width the other way, so the 1:1
+      // tracking factor is 100 / (Z−1). Pan clamps to origin bounds [0,100]
+      // (NOT the keyboard's ±40%: a corner anchor legitimately exceeds it).
+      setPanOffset((o) => ({
+        x: Math.max(-afX, Math.min(100 - afX, o.x - ((dx / rect.width) * 100) / (z - 1))),
+        y: Math.max(-afY, Math.min(100 - afY, o.y - ((dy / rect.height) * 100) / (z - 1))),
+      }));
+    };
+    const end = () => {
+      setMouseZooming(false);
+      resetZoom();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", end);
+    window.addEventListener("blur", end);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", end);
+      window.removeEventListener("blur", end);
+    };
+  }, [mouseZooming, imgRect, images, currentIndex, metadata, resetZoom]);
+
+  // Press on the loupe photo: zoom anchored at the cursor (Shift = 2:1).
+  // Only from an un-zoomed state (Space zoom owns the frame otherwise), only
+  // on the photo itself (matte/background clicks stay inert), never on a
+  // button (the preview-failed retry lives inside the stage).
+  const handleStageMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0 || isZoomingRef.current) return;
+      if (positionInFilter === -1 || !imgRect) return;
+      if ((e.target as Element).closest("button")) return;
+      const stage = stageRef.current;
+      if (!stage) return;
+      const sr = stage.getBoundingClientRect();
+      const px = ((e.clientX - sr.left - imgRect.left) / imgRect.width) * 100;
+      const py = ((e.clientY - sr.top - imgRect.top) / imgRect.height) * 100;
+      if (px < 0 || px > 100 || py < 0 || py > 100) return;
+      const curImg = images[currentIndex];
+      const meta = curImg ? metadata[curImg.path] : undefined;
+      e.preventDefault();
+      lastMouseRef.current = { x: e.clientX, y: e.clientY };
+      // origin = AF + pan, so this pan puts the origin exactly under the cursor.
+      setPanOffset({ x: px - (meta?.afXPct ?? 50), y: py - (meta?.afYPct ?? 50) });
+      setZoomLevel(e.shiftKey ? 2 : 1);
+      setIsZooming(true);
+      setMouseZooming(true);
+    },
+    [positionInFilter, imgRect, images, currentIndex, metadata],
   );
 
   // ── Image loading via imageStore ──────────────────────────────────────────
@@ -3173,7 +3252,9 @@ export default function App() {
       if (isUpUp && heldGridVertDirRef.current === -1) stopGridVertHold();
       else if (isDownUp && heldGridVertDirRef.current === 1) stopGridVertHold();
       if (e.code === "Space") {
-        resetZoom(); // release → exit zoom
+        // Release → exit zoom, unless the MOUSE owns it (tapping Space while
+        // click-zoom is held must not drop the drag).
+        if (!mouseZooming) resetZoom();
       }
     };
     cullKeyRef.current = { onKey, onKeyUp };
@@ -3197,6 +3278,7 @@ export default function App() {
     confirmHome,
     quitGuard,
     isZooming,
+    mouseZooming,
     pan,
     leaveToHome,
     compareMode,
@@ -3509,6 +3591,9 @@ export default function App() {
   // un-does the fit). Falls back to 5× if dimensions aren't known yet.
   const oneToOneScale = zoomNative && imgRect ? zoomNative.w / imgRect.width : 5;
   const zoomZ = isZooming ? zoomLevel * oneToOneScale : 1;
+  // Render-phase ref mirror for the mouse-drag pan loop (see its effect):
+  // pure function of state, same value every render, no tearing concern.
+  zoomZRef.current = zoomZ;
   // One transition string for EVERY layer that scales with zoom (presenter,
   // hi-res, clip/peak masks) — "none" for the carried-zoom frame swap, the
   // directional glide otherwise. Single source so layers can't tear apart.
@@ -3563,7 +3648,17 @@ export default function App() {
   const singleModeBody = (
       <div className="cull-stage">
         <div className="cull-loupe-body">
-        <div className="cull-image-area" ref={stageRef}>
+        <div
+          className={`cull-image-area${
+            positionInFilter !== -1 && !isZooming
+              ? " cull-image-area--zoomable"
+              : mouseZooming
+                ? " cull-image-area--grabbing"
+                : ""
+          }`}
+          ref={stageRef}
+          onMouseDown={handleStageMouseDown}
+        >
         {images.length === 0 ? (
           <div className="cull-message">no images</div>
         ) : positionInFilter === -1 ? (

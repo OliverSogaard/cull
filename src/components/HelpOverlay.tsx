@@ -38,7 +38,8 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         keys: [
           ["← →", "prev / next  (hold to scrub)"],
           ["space (hold)", "1:1 zoom · ←↑↓→ pan · rating carries zoom to the next frame"],
-          ["shift+space", "2:1 zoom"],
+          ["click (hold)", "zoom at cursor · drag to pan"],
+          ["shift+space", "2:1 zoom  (shift+click too)"],
           ["1 – 4", "filter: all / unrated / keeps / smart  (repeat to cycle sub-modes)"],
         ],
       },
