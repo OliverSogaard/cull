@@ -48,7 +48,7 @@ export const ThumbCell = memo(function ThumbCell({
   suggestion,
 }: ThumbCellProps) {
   // Strip cells only ever need the thumbnail (plumbing shared with GridCell).
-  const { url, shimmerDelayMs: shimmerDelay } = useThumb(img.path);
+  const { url, shimmerDelayMs: shimmerDelay, probeOnLoad } = useThumb(img.path);
 
   // Reject cells get an opacity drop unless they're the current cell.
   const isReject = rating === "reject";
@@ -96,10 +96,20 @@ export const ThumbCell = memo(function ThumbCell({
         style={{ ["--thumb-outline" as string]: outlineColor }}
       >
         {url ? (
-          // decoding="sync": these are ~15 KB JPEGs — decode with layout so a
-          // remounted cell paints its cached thumb immediately instead of
-          // flashing blank for 1–2 frames while an async decode round-trips.
-          <img className="cull-thumb__img" src={url} alt="" decoding="sync" />
+          // decoding="sync": these are ~15 KB JPEGs — once the bytes are in,
+          // decode with layout/paint instead of letting an async decode
+          // round-trip add a blank frame. NOTE what it does NOT do: a freshly
+          // mounted <img> still fetches its blob URL asynchronously (even
+          // cache-warm), so a cell mounted INSIDE the viewport paints ~a frame
+          // late regardless — cells must enter via the offscreen overscan
+          // buffer (STRIP_BUFFER / GRID_BUFFER_ROWS + same-frame windowing).
+          <img
+            className="cull-thumb__img"
+            src={url}
+            alt=""
+            decoding="sync"
+            onLoad={probeOnLoad}
+          />
         ) : (
           <div
             className="cull-thumb__placeholder"
