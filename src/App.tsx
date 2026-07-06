@@ -146,6 +146,9 @@ export default function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [ratings, setRatings] = useState<Record<number, Rating>>({});
   const [filter, setFilter] = useState<Filter>("all");
+  /** Burst/Similar run boxes render in the grid only under filters that keep
+   *  runs contiguous — see the GridView call site for why. */
+  const showGridGroupBoxes = filter === "all" || filter === "unrated";
   // Grid multi-select. Indices are ABSOLUTE (into images), not filter-relative,
   // so a rating action operating on the set lands on the right photos even if
   // the filter changes mid-flow. `selectionAnchor` is the cell shift-range
@@ -3734,8 +3737,12 @@ export default function App() {
                 containerRef={gridContainerRef}
                 onViewportChange={handleGridViewport}
                 suggestions={suggestions}
-                bursts={burstCtx}
-                similar={similarCtx}
+                // Group boxes only where runs survive contiguously (All /
+                // Unrated). Cherry-picking filters (Keeps/Favorites/Smart)
+                // leave 1-2 members per group — the boxes degrade into
+                // cut-off fragments that read as broken chrome, not info.
+                bursts={showGridGroupBoxes ? burstCtx : undefined}
+                similar={showGridGroupBoxes ? similarCtx : undefined}
                 scrubSpeed={scrubSpeed}
               />
             )}
