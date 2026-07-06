@@ -3815,7 +3815,14 @@ export default function App() {
                   setFilter((f) => cycleFilter(f, "keeps"));
                   chipsTooltip.pulse();
                 }}
-                title="3 · show keeps (press again for ★ favorites only)"
+                // Native title only while INACTIVE: the active tab floats the
+                // sub-chip tooltip in the same spot, and the OS tooltip was
+                // covering it.
+                title={
+                  topOf(filter) === "keeps"
+                    ? undefined
+                    : "3 · show keeps (press again for ★ favorites only)"
+                }
                 {...(topOf(filter) === "keeps" ? chipsTooltip.hoverProps : undefined)}
               >
                 Keeps
@@ -3864,7 +3871,12 @@ export default function App() {
                     startAnalysis(); // no-op unless "analyze on open" is off and unrun
                   }
                 }}
-                title="4 · show unrated frames with a smart-culling suggestion (press again to narrow by verdict)"
+                // Same inactive-only rule as the Keeps tab title above.
+                title={
+                  topOf(filter) === "suggested"
+                    ? undefined
+                    : "4 · show unrated frames with a smart-culling suggestion (press again to narrow by verdict)"
+                }
                 {...(topOf(filter) === "suggested" ? chipsTooltip.hoverProps : undefined)}
               >
                 {qualityAnalyzing && qualityProgress
