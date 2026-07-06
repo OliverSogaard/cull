@@ -1420,6 +1420,16 @@ body,
   margin-bottom: 8px;
 }
 
+/* Non-CR3 skip count under the folder line — same quiet mono voice, dimmer:
+   it explains an absence, it never competes with the staged count. */
+.cull-staged__ignored {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.8;
+  margin-bottom: 8px;
+}
+
 .cull-staged__actions {
   display: flex;
   gap: 16px;

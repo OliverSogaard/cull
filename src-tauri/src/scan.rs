@@ -18,7 +18,60 @@ use walkdir::WalkDir;
 
 use crate::xmp::read_ratings;
 
-/// Scan a folder recursively for `.CR3` files, sorted lexicographically.
+/// What a folder scan found: the staged CR3 paths plus a count of everything
+/// the walk saw and skipped. The count keeps a folder of JPEGs (or a second
+/// body's other-brand RAWs) from reading as "broken" when it stages 0 — the
+/// staged screen says "N non-CR3 files ignored" instead of staying silent.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScanResult {
+    paths: Vec<String>,
+    /// Non-CR3 files skipped. Excludes `.xmp` sidecars (CULL's own data, not a
+    /// surprise to the user) and dotfiles (`.DS_Store`, `Thumbs.db`-style noise
+    /// stays out of a count meant to explain missing *photos*).
+    ignored: u32,
+}
+
+/// Pure walk shared by the command and its tests: recursively list `.CR3`
+/// files (sorted lexicographically) and count the ignored rest.
+fn walk_folder(root: &Path, ignore: Option<&str>) -> ScanResult {
+    let mut paths: Vec<String> = Vec::new();
+    let mut ignored: u32 = 0;
+    let entries = WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            // Keep the root itself; prune only descendant dirs whose name matches
+            // the ignored subfolder (case-insensitively — Windows paths).
+            e.depth() == 0
+                || !(e.file_type().is_dir()
+                    && ignore.is_some_and(|name| {
+                        e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(name))
+                    }))
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file());
+    for e in entries {
+        let p = e.path();
+        let ext = p.extension().and_then(|x| x.to_str());
+        if ext.is_some_and(|x| x.eq_ignore_ascii_case("cr3")) {
+            if let Some(s) = p.to_str() {
+                paths.push(s.to_string());
+            }
+            continue;
+        }
+        let is_sidecar = ext.is_some_and(|x| x.eq_ignore_ascii_case("xmp"));
+        let is_dotfile = e.file_name().to_str().is_some_and(|n| n.starts_with('.'));
+        if !is_sidecar && !is_dotfile {
+            ignored += 1;
+        }
+    }
+    paths.sort();
+    ScanResult { paths, ignored }
+}
+
+/// Scan a folder recursively for `.CR3` files, sorted lexicographically, plus
+/// a count of ignored non-CR3 files (see [`ScanResult`]).
 ///
 /// `ignore_subdir` (the configured rejected-subfolder name) is pruned from the
 /// walk so re-scanning a shoot after "move rejects" doesn't re-import the frames
@@ -27,7 +80,7 @@ use crate::xmp::read_ratings;
 pub(crate) async fn scan_folder(
     path: String,
     ignore_subdir: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<ScanResult, String> {
     let start = Instant::now();
     let root = Path::new(&path);
 
@@ -45,41 +98,16 @@ pub(crate) async fn scan_folder(
     }
 
     let ignore = ignore_subdir.filter(|s| !s.is_empty());
-
-    let mut paths: Vec<String> = WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|e| {
-            // Keep the root itself; prune only descendant dirs whose name matches
-            // the ignored subfolder (case-insensitively — Windows paths).
-            e.depth() == 0
-                || !(e.file_type().is_dir()
-                    && ignore.as_deref().is_some_and(|name| {
-                        e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(name))
-                    }))
-        })
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter_map(|e| {
-            let p = e.path();
-            let ext = p.extension()?.to_str()?;
-            if ext.eq_ignore_ascii_case("cr3") {
-                p.to_str().map(|s| s.to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    paths.sort();
+    let result = walk_folder(root, ignore.as_deref());
 
     dlog!(
-        "[cull] scan_folder({}): {} CR3 files in {:?}",
+        "[cull] scan_folder({}): {} CR3 files ({} ignored) in {:?}",
         path,
-        paths.len(),
+        result.paths.len(),
+        result.ignored,
         start.elapsed()
     );
-    Ok(paths)
+    Ok(result)
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -322,4 +350,55 @@ pub(crate) async fn analyze_folder(
         start.elapsed()
     );
     Ok(AnalyzeResult { order, ratings, lrc_ratings })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn tmp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("cull-scan-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// walk_folder: CR3s stage (case-insensitive), other files count as ignored,
+    /// sidecars and dotfiles stay out of the count.
+    #[test]
+    fn walk_stages_cr3_and_counts_ignored() {
+        let work = tmp_dir("ignored-count");
+        for name in ["a.cr3", "b.CR3"] {
+            fs::write(work.join(name), b"cr3").unwrap();
+        }
+        for name in ["c.jpg", "d.mp4", "e.nef"] {
+            fs::write(work.join(name), b"x").unwrap();
+        }
+        // Not "surprising" files: CULL's own sidecar + OS noise.
+        fs::write(work.join("a.xmp"), b"<xmp/>").unwrap();
+        fs::write(work.join(".DS_Store"), b"").unwrap();
+
+        let r = walk_folder(&work, None);
+        assert_eq!(r.paths.len(), 2);
+        assert_eq!(r.ignored, 3);
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// walk_folder: files inside the pruned rejected subfolder count for
+    /// neither list — a moved-away reject is not "ignored", it's filed.
+    #[test]
+    fn walk_prunes_rejected_subfolder_from_both_counts() {
+        let work = tmp_dir("prune-subdir");
+        fs::write(work.join("keep.cr3"), b"cr3").unwrap();
+        let rej = work.join("_rejected");
+        fs::create_dir_all(&rej).unwrap();
+        fs::write(rej.join("gone.cr3"), b"cr3").unwrap();
+        fs::write(rej.join("gone.jpg"), b"x").unwrap();
+
+        let r = walk_folder(&work, Some("_rejected"));
+        assert_eq!(r.paths.len(), 1);
+        assert_eq!(r.ignored, 0);
+        let _ = fs::remove_dir_all(&work);
+    }
 }

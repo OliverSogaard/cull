@@ -15,6 +15,16 @@ export type FileOpResult = {
   errorCount?: number;
 };
 
+/**
+ * Result of the `scan_folder` command: staged CR3 paths plus the count of
+ * non-CR3 files the walk skipped (sidecars and dotfiles excluded). The count
+ * feeds the staged screen's "N non-CR3 files ignored" line.
+ */
+export type ScanResult = {
+  paths: string[];
+  ignored: number;
+};
+
 /** Tier-2 face metrics (empty in the classical MVP; wire contract is stable). */
 export type FaceScore = {
   bbox: [number, number, number, number];

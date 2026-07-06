@@ -9,6 +9,7 @@ import type {
   AnalyzeResult,
   Feedback,
   FileOpResult,
+  ScanResult,
   Filter,
   Img,
   ImageMetadata,
@@ -236,6 +237,9 @@ export default function App() {
   // queuing a second picker behind the first.
   const [pickerBusy, setPickerBusy] = useState(false);
   const [lastAdded, setLastAdded] = useState(0);
+  // Non-CR3 files the most recent open batch saw and skipped. Shown on the
+  // staged screen so a JPEG-heavy folder reads as by-design, not broken.
+  const [lastIgnored, setLastIgnored] = useState(0);
   // Folders that scanned successfully in the most recent open batch — drives
   // the staged screen's "+N from a + b" summary line.
   const [lastBatchFolders, setLastBatchFolders] = useState<string[]>([]);
@@ -742,7 +746,7 @@ export default function App() {
       await runFolderRetry({
         folders,
         probe: (f) =>
-          invoke<string[]>("scan_folder", {
+          invoke<ScanResult>("scan_folder", {
             path: f,
             ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
           }),
@@ -835,6 +839,7 @@ export default function App() {
       // staged set's write-back REPLACES that entry rather than duplicating it.
       if (opts?.fromRecentKey) sessionRecentsKeyRef.current = opts.fromRecentKey;
       let totalAdded = 0;
+      let totalIgnored = 0;
       const okFolders: string[] = [];
       const failures: ScanFailure[] = [];
       try {
@@ -843,12 +848,12 @@ export default function App() {
           // Per-folder label so the loading screen tracks the batch as it scans.
           setPendingFolder(folderPath);
           try {
-            const paths = (
-              await invoke<string[]>("scan_folder", {
-                path: folderPath,
-                ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
-              })
-            ).map((p) => p.normalize("NFC"));
+            const scan = await invoke<ScanResult>("scan_folder", {
+              path: folderPath,
+              ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
+            });
+            const paths = scan.paths.map((p) => p.normalize("NFC"));
+            totalIgnored += scan.ignored;
 
             // Persist the last-used dir only AFTER a successful scan, so a folder
             // that fails to open never becomes the picker default / auto-open target.
@@ -888,6 +893,7 @@ export default function App() {
 
         if (okFolders.length > 0) {
           setLastAdded(totalAdded);
+          setLastIgnored(totalIgnored);
           setLastBatchFolders(okFolders);
           // `folder` keeps its "most recently opened" meaning — it labels the
           // loading fallback and seeds the finish dialog's default subfolder.
@@ -1140,6 +1146,7 @@ export default function App() {
     setScanFailures(null);
     setAnalyzeError(null);
     setLastAdded(0);
+    setLastIgnored(0);
     setLastBatchFolders([]);
     // The next session is a fresh folder set — it must write a NEW recents
     // entry, not replace this one's.
@@ -3139,6 +3146,11 @@ export default function App() {
                   ? `+${lastAdded} from ${formatFolderSet(lastBatchFolders, 40)}`
                   : `+0 from ${formatFolderSet(lastBatchFolders, 40)} · no new CR3 files`}
               </div>
+              {lastIgnored > 0 && (
+                <div className="cull-staged__ignored">
+                  {lastIgnored.toLocaleString()} non-CR3 file{lastIgnored === 1 ? "" : "s"} ignored
+                </div>
+              )}
               {scanFailures && <ScanFailureCard failures={scanFailures} />}
               {analyzeError && (
                 <pre className="cull-message__body cull-chrome__error">{analyzeError}</pre>
