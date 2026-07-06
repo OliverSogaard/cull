@@ -153,7 +153,20 @@ export function deriveVerdict(
   // burst winner rides this rule — its pick is explained here, in the
   // SUGGESTION surface (the rail's Burst section stays purely factual).
   // Never a favorite in Tier 1.
-  if (keepEligible(score, level)) {
+  //
+  // Group membership gates the keep itself, not just its wording: a frame
+  // that belongs to a burst or similar-set group but is NOT that group's
+  // winner must stay silent here, even when individually keep-eligible.
+  // Eleven near-identical frames are each individually "sharp, well
+  // exposed" — but eleven individually-true keeps are collectively noise
+  // inside a lookalike group. The group's keep IS the winner crown; there
+  // is exactly one per group. `!burst.isWinner` / `!similar.isWinner` also
+  // covers the winner-unknown state (isWinner is false for every member
+  // while the group is half-scored or has no eligible member yet), so a
+  // premature keep never leaks out before the real winner is known — it
+  // self-corrects the moment the winner lands.
+  const isNonWinningGroupMember = (burst && !burst.isWinner) || (similar && !similar.isWinner);
+  if (keepEligible(score, level) && !isNonWinningGroupMember) {
     const keepConf = Math.min(score.afSharpness, score.exposureScore);
     const keepReasons = ["sharp, well exposed"];
     if (burst?.isWinner) keepReasons.unshift("best of burst");

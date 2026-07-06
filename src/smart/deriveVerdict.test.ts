@@ -129,6 +129,22 @@ describe("deriveVerdict", () => {
     expect(s.confidence).toBeGreaterThanOrEqual(LEVEL_THRESHOLD.high);
   });
 
+  test("a burst non-winner never earns a keep, even when keep-eligible — only the winner is crowned", () => {
+    // marginToWinner: 0 + isWinner: false is BOTH the genuine-tie case and the
+    // half-scored/no-eligible-winner case (pickWinner's winnerIdx === -1) —
+    // either way this frame is not the crowned winner and must stay silent.
+    const s = deriveVerdict(keepableScore(), loser(0), undefined, "low");
+    expect(s.verdict).toBeNull();
+    expect(s.confidence).toBe(0);
+  });
+
+  test("a burst winner keeps exactly as before: keep verdict, 'best of burst' reason", () => {
+    const winner: BurstCtx = { group: 0, pos: 1, len: 4, isWinner: true, marginToWinner: 0 };
+    const s = deriveVerdict(keepableScore(), winner, undefined, "low");
+    expect(s.verdict).toBe("keep");
+    expect(s.reasons).toContain("best of burst");
+  });
+
   test("clearly closed eyes reject on medium with the right reason (Phase 3b)", () => {
     const s = deriveVerdict(
       score({
@@ -233,5 +249,30 @@ describe("similar-set verdicts", () => {
     const s = deriveVerdict(keepableScore(), undefined, winner, "low");
     expect(s.verdict).toBe("keep");
     expect(s.reasons).toContain("best of similar set");
+  });
+
+  test("a similar-set non-winner never earns a keep, even when keep-eligible — only the winner is crowned", () => {
+    // Same tie/half-scored logic as bursts: isWinner false + marginToWinner 0
+    // means this frame is not (yet, or ever) the group's crowned winner.
+    const s = deriveVerdict(keepableScore(), undefined, similarLoser(0), "low");
+    expect(s.verdict).toBeNull();
+    expect(s.confidence).toBe(0);
+  });
+
+  test("all-equal similar set (e.g. an 11-up lookalike run): only the winner keeps, everyone else stays silent", () => {
+    // Regression for the live-test finding: eleven near-identical frames each
+    // individually keep-eligible must NOT each earn a keep ghost — exactly
+    // one (the winner) is crowned, the rest are silent.
+    const results = Array.from({ length: 11 }, (_, i) =>
+      deriveVerdict(
+        keepableScore(),
+        undefined,
+        { group: 0, pos: i + 1, len: 11, isWinner: i === 0, marginToWinner: 0 },
+        "low",
+      ),
+    );
+    const keeps = results.filter((r) => r.verdict === "keep");
+    expect(keeps).toHaveLength(1);
+    expect(results.filter((r) => r.verdict === null)).toHaveLength(10);
   });
 });
