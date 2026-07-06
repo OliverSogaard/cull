@@ -2363,6 +2363,10 @@ export default function App() {
     flashFeedback("reject", challImg.id);
     persistRating(challImg.path, "reject");
     setRatings(next);
+    // Zoomed decide: the challenger pane's content swaps under the live
+    // transform — land it at scale, no drift. Champion pane is untouched
+    // (shared pan kept), so its view can't jump.
+    if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
     if (exiting) {
       // No more candidates — pop back to whichever site we came from, landing on
       // the (unchanged) champion. ESC after this lands further up the stack.
@@ -2413,6 +2417,8 @@ export default function App() {
       flashFeedback(verdict, challImg.id);
       persistRating(challImg.path, verdict);
       setRatings(next);
+      // Same zoomed-decide handling as challengerLoses: champion untouched.
+      if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
       if (exiting) {
         // No more candidates — pop back to whichever site we came from, landing
         // on the (unchanged) champion, exactly like challengerLoses' exit.
@@ -2469,6 +2475,12 @@ export default function App() {
     persistRating(champImg.path, "reject"); // dethroned
     persistRating(challImg.path, "keep"); // crowned
     setRatings(next);
+    // Zoomed decide with a NEW champion: both panes re-anchor at the new
+    // champion's AF point (shared pan resets), landing at scale instantly.
+    if (isZoomingRef.current && !exiting) {
+      setZoomSwapInstant(true);
+      setPanOffset({ x: 0, y: 0 });
+    }
     setChampionIndex(newChamp);
     if (exiting) {
       // Crowned the last unrated frame — pop back to where the user came from,
@@ -3018,23 +3030,27 @@ export default function App() {
 
       if (compareMode) {
         switch (e.key) {
+          // Deciding works WHILE ZOOMED: compare zoom persists across the
+          // swap (nothing watches challenger/champion indices to reset it),
+          // and each action sets zoomSwapInstant so the pane lands at scale
+          // with no drift. Wins also resets pan (new champion, new AF anchor).
           case "Enter":
             e.preventDefault();
-            if (!e.repeat && !isZoomingRef.current) challengerWins(); // disabled while zoomed
+            if (!e.repeat) challengerWins();
             break;
           case "Backspace":
             e.preventDefault();
-            if (!e.repeat && !isZoomingRef.current) challengerLoses(); // disabled while zoomed
+            if (!e.repeat) challengerLoses();
             break;
           case "k":
           case "K":
             // Keep both: challenger keeps, champion stays champion.
-            if (!e.repeat && !isZoomingRef.current) challengerKeptBoth(false);
+            if (!e.repeat) challengerKeptBoth(false);
             break;
           case "f":
           case "F":
             // Keep both + star the challenger.
-            if (!e.repeat && !isZoomingRef.current) challengerKeptBoth(true);
+            if (!e.repeat) challengerKeptBoth(true);
             break;
           case "ArrowRight":
             e.preventDefault();
@@ -4218,6 +4234,7 @@ export default function App() {
         <>
           {thumbsVisible && settings.thumbsPosition === "top" && cmpStrip}
           <CompareView
+            zoomGlide={zoomGlide}
             images={images}
             championIndex={championIndex}
             challengerIndex={challengerIndex}

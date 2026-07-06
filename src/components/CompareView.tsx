@@ -10,7 +10,6 @@ import { offerTiers } from "../image/present";
 import { afZoomOrigin } from "../utils/zoom";
 import { sizerSrc } from "../utils/sizer";
 import { HiResLayer } from "./loupe/HiResLayer";
-import { zoomTransition } from "./loupe/zoomTransition";
 import { PresentLayers } from "./loupe/PresentLayers";
 import { usePresent } from "../image/usePresent";
 
@@ -39,6 +38,7 @@ export function CompareView({
   peakingVisible,
   compositionVisible,
   isZooming,
+  zoomGlide,
   zoomLevel,
   panOffset,
   feedback,
@@ -62,6 +62,9 @@ export function CompareView({
   peakingVisible: boolean;
   compositionVisible: boolean;
   isZooming: boolean;
+  /** Shared zoom transform transition from App (zoomGlide) — "none" during
+   *  a carried-zoom decide swap. */
+  zoomGlide: string;
   zoomLevel: 1 | 2;
   panOffset: { x: number; y: number };
   feedback: Feedback | null;
@@ -85,6 +88,7 @@ export function CompareView({
             path={champion.path}
             rating={ratings[champion.id]}
             isZooming={isZooming}
+            zoomGlide={zoomGlide}
             zoomLevel={zoomLevel}
             originX={originX}
             originY={originY}
@@ -104,6 +108,7 @@ export function CompareView({
             path={challenger.path}
             rating={ratings[challenger.id]}
             isZooming={isZooming}
+            zoomGlide={zoomGlide}
             zoomLevel={zoomLevel}
             originX={originX}
             originY={originY}
@@ -141,6 +146,7 @@ const ComparePanel = memo(function ComparePanel({
   path,
   rating,
   isZooming,
+  zoomGlide,
   zoomLevel,
   originX,
   originY,
@@ -157,6 +163,9 @@ const ComparePanel = memo(function ComparePanel({
   path: string;
   rating: Rating | undefined;
   isZooming: boolean;
+  /** Shared zoom transform transition from App (zoomGlide) — "none" during
+   *  a carried-zoom decide swap. */
+  zoomGlide: string;
   zoomLevel: 1 | 2;
   /** Shared with the other pane (the champion's AF + the global pan offset). */
   originX: number;
@@ -241,6 +250,24 @@ const ComparePanel = memo(function ComparePanel({
     if (scrubbing) return;
     if (isZooming) {
       wasZoomingRef.current = true;
+      // A zoomed decide swaps this pane's frame (new challenger / promoted
+      // champion) — the fit box can differ (mixed orientations), so measure
+      // transform-safe via the img's parent: the __clip window never scales
+      // and the base layer fills it exactly (same fix as the loupe's carry).
+      const clip = imgRef.current?.parentElement;
+      const panel = panelRef.current;
+      if (clip && panel) {
+        const cr = clip.getBoundingClientRect();
+        const pr = panel.getBoundingClientRect();
+        if (cr.width >= 1) {
+          setRect({
+            left: cr.left - pr.left,
+            top: cr.top - pr.top,
+            width: cr.width,
+            height: cr.height,
+          });
+        }
+      }
       return;
     }
     const justUnzoomed = wasZoomingRef.current;
@@ -348,7 +375,7 @@ const ComparePanel = memo(function ComparePanel({
           className="cull-cmp-img"
           dimsKnown={!!(img.dims && img.dims.w > 1 && img.dims.h > 1)}
           isZooming={isZooming}
-          zoomGlide={zoomTransition(isZooming)}
+          zoomGlide={zoomGlide}
           zoomZ={zoomZ}
           originX={originX}
           originY={originY}
@@ -408,7 +435,7 @@ const ComparePanel = memo(function ComparePanel({
             style={{
               transform: isZooming ? `scale(${zoomZ})` : undefined,
               transformOrigin: `${originX}% ${originY}%`,
-              transition: zoomTransition(isZooming),
+              transition: zoomGlide,
             }}
           />
         )}
@@ -421,7 +448,7 @@ const ComparePanel = memo(function ComparePanel({
             style={{
               transform: isZooming ? `scale(${zoomZ})` : undefined,
               transformOrigin: `${originX}% ${originY}%`,
-              transition: zoomTransition(isZooming),
+              transition: zoomGlide,
             }}
           />
         )}

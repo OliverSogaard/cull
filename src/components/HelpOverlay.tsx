@@ -78,7 +78,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         title: "navigate",
         keys: [
           ["← →", "pick challenger  (hold to scrub)"],
-          ["space (hold)", "1:1 zoom · ←↑↓→ pan"],
+          ["space (hold)", "1:1 zoom · ←↑↓→ pan · deciding carries zoom"],
           ["shift+space", "2:1 zoom"],
         ],
       },
