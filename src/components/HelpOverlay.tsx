@@ -67,7 +67,9 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
       {
         title: "decide",
         keys: [
-          ["enter", "challenger wins"],
+          ["enter", "challenger wins  (champion rejected)"],
+          ["k", "keep both"],
+          ["f", "keep both · challenger ★"],
           ["backspace", "reject challenger"],
         ],
       },

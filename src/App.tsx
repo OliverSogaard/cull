@@ -2198,6 +2198,58 @@ export default function App() {
     recordAction,
   ]);
 
+  // K → keep both: challenger becomes Keep (F → Favorite); champion is
+  // untouched and stays champion; advance to the next unrated. The verb the
+  // tournament lacked — comparing two good frames no longer forces a loser.
+  const challengerKeptBoth = useCallback(
+    (asFavorite: boolean) => {
+      const challImg = images[challengerIndex];
+      if (!challImg) return;
+      const verdict: Rating = asFavorite ? "favorite" : "keep";
+      const next: Record<number, Rating> = { ...ratings, [challImg.id]: verdict };
+      const nextChallenger = nearestUnrated(challengerIndex, next, championIndex);
+      const exiting = nextChallenger === -1;
+      recordAction({
+        changes: [
+          { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: verdict },
+        ],
+        cursorBefore: {
+          compareMode: true,
+          championIndex,
+          challengerIndex,
+          currentIndex,
+          navStack: [...navStackRef.current],
+        },
+        // Champion is unchanged; redo lands on the next challenger (or leaves
+        // compare on the last-frame auto-exit, landing on the champion).
+        cursorAfter: exiting
+          ? { compareMode: false, championIndex, challengerIndex, currentIndex: championIndex }
+          : { compareMode: true, championIndex, challengerIndex: nextChallenger, currentIndex },
+      });
+      flashFeedback(verdict, challImg.id);
+      persistRating(challImg.path, verdict);
+      setRatings(next);
+      if (exiting) {
+        // No more candidates — pop back to whichever site we came from, landing
+        // on the (unchanged) champion, exactly like challengerLoses' exit.
+        goBack(championIndex);
+      } else {
+        setChallengerIndex(nextChallenger);
+      }
+    },
+    [
+      challengerIndex,
+      championIndex,
+      images,
+      ratings,
+      flashFeedback,
+      persistRating,
+      nearestUnrated,
+      goBack,
+      recordAction,
+    ],
+  );
+
   // Enter → challenger wins: promoted to Champion (Keep); old champion → Reject.
   const challengerWins = useCallback(() => {
     const champImg = images[championIndex];
@@ -2785,6 +2837,16 @@ export default function App() {
             e.preventDefault();
             if (!e.repeat && !isZoomingRef.current) challengerLoses(); // disabled while zoomed
             break;
+          case "k":
+          case "K":
+            // Keep both: challenger keeps, champion stays champion.
+            if (!e.repeat && !isZoomingRef.current) challengerKeptBoth(false);
+            break;
+          case "f":
+          case "F":
+            // Keep both + star the challenger.
+            if (!e.repeat && !isZoomingRef.current) challengerKeptBoth(true);
+            break;
           case "ArrowRight":
             e.preventDefault();
             if (isZooming) pan(PAN_STEP, 0);
@@ -2835,7 +2897,6 @@ export default function App() {
             goToSite("grid");
             break;
           // 'c' in compare is a no-op now — leave via L, G, or ESC.
-          // F (favorite) is intentionally disabled in compare.
         }
         return;
       }
@@ -3026,6 +3087,7 @@ export default function App() {
     goBack,
     challengerWins,
     challengerLoses,
+    challengerKeptBoth,
     resetZoom,
     clearMultiSelection,
     growGridSelection,
