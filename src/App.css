@@ -2396,9 +2396,11 @@ body,
   left: 50%;
   bottom: 0;
   transform: translateX(-50%);
-  width: min(620px, 64%);
+  /* Viewport-relative: the empty-state box is content-sized in some layouts,
+     so %-of-container rendered the art postage-stamp small. */
+  width: min(720px, 58vw);
   height: auto;
-  max-height: 78%;
+  max-height: none;
   object-fit: contain;
   object-position: bottom center;
   pointer-events: none;
