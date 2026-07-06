@@ -2802,6 +2802,9 @@ export default function App() {
         // Any other key dismisses AND is swallowed — one press closes the
         // auto-shown intro without also rating a frame. (During a held-Tab
         // showing this just closes early; Tab-release would have anyway.)
+        // preventDefault too: the dismissing key must not fall through to a
+        // platform default (ESC exiting macOS fullscreen was the live bug).
+        e.preventDefault();
         setHelpVisible(false);
         setHelpIntro(false);
         return;
@@ -3112,6 +3115,20 @@ export default function App() {
     settings.smartCulling,
     startAnalysis,
   ]);
+
+  // ESC must never reach the OS: on macOS an unhandled ESC exits native
+  // fullscreen (and other platforms have their own cancel defaults). One
+  // capture-phase listener, registered once, preventDefaults it in EVERY
+  // phase — home included, where no app handler claims it. Capture does not
+  // stop propagation, so the bubble-phase handlers below still run all the
+  // app's own ESC logic (leave-confirm, dialog closes, staged reset).
+  useEffect(() => {
+    const swallowEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") e.preventDefault();
+    };
+    window.addEventListener("keydown", swallowEsc, { capture: true });
+    return () => window.removeEventListener("keydown", swallowEsc, { capture: true });
+  }, []);
 
   // Register the window key listeners ONCE; dispatch through cullKeyRef so the
   // frequently-rebuilt handler closures above don't re-bind the DOM listeners on
