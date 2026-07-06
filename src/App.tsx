@@ -3780,11 +3780,10 @@ export default function App() {
               {compareMode ? "COMPARE" : gridVisible ? "GRID" : "LOUPE"}
             </span>
           </span>
-          <SaveStatusPill
-            failedCount={failedCount}
-            savingCount={savingCount}
-            onRetry={retryFailed}
-          />
+          {/* No save pill while culling — the footer owns saving/unsaved there
+              (it's where the eye lives and its chip is clickable-to-retry).
+              The pill still renders on the chrome screens, which have no
+              footer, so saves that outlive a session stay visible on home. */}
           {folderTrouble !== "hidden" && (
             <button
               type="button"
