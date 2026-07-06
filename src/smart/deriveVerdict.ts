@@ -30,8 +30,12 @@ export const TEXTURE_MIN = 0.12;
  * calibrate against.
  */
 export const HEAVY_BLUR_SHARP = 0.05;
-/** Heavy-blur cross-check: Tenengrad must agree the frame is at the noise
- *  floor too, same conservative-seed caveat as HEAVY_BLUR_SHARP. */
+/** Heavy-blur cross-check on `tenengrad` — which is AF-CROP-scoped on the
+ *  wire, not full-frame, so in the motivating path (AF on flat content) this
+ *  gate is nearly redundant with the low-afTexture entry condition rather
+ *  than an independent whole-frame corroboration. Kept as a cheap extra
+ *  conservatism; if calibration wants a real second opinion, add a
+ *  full-frame Tenengrad field. Same seed caveat as HEAVY_BLUR_SHARP. */
 export const HEAVY_BLUR_TENENGRAD = 0.1;
 /** Burst-loser confidence = marginToWinner / MARGIN_SCALE (near-ties → silent). */
 export const MARGIN_SCALE = 0.25;
