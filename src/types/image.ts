@@ -57,4 +57,17 @@ export type ImageMetadata = {
    * rendering the badge.
    */
   lrcRating: number | null;
+  /**
+   * 64-bit DCT pHash of the DECODED THUMBNAIL, 16 lowercase hex chars (string:
+   * JS numbers lose 64-bit precision). This is the STANDING near-duplicate
+   * signal — always available once a frame's thumbnail has decoded,
+   * independent of smart culling — that `groupSimilar` chains on. `null` on a
+   * thumb decode failure.
+   *
+   * NEVER the same source as `ImageScore.phash` (computed from the PRVW
+   * decode, a different resolution): the two must never be Hamming-compared
+   * against each other. `ImageScore.phash` stays on the wire only for the
+   * calibration harness.
+   */
+  phash: string | null;
 };

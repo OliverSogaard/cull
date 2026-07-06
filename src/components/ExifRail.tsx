@@ -168,9 +168,9 @@ export function ExifRail({
         </div>
       )}
 
-      {/* Similar set membership — its own section: similar sets are a fact
-          about the smart analysis, but unlike bursts they only exist while
-          smart culling is ON (groupSimilar returns empty with the feature off). */}
+      {/* Similar set membership — its own section: similar sets are ALSO a
+          standing fact about the shoot, like bursts (the pHash tier rides
+          every frame's thumbnail), so this renders with smart culling off too. */}
       {similar && (
         <div className="cull-exif-rail__section">
           <div className="cull-exif-rail__label">Similar set</div>

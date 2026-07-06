@@ -6,6 +6,33 @@ import { pickWinner } from "./pickWinner";
 /** Same ctx shape as bursts — the UI treats both group kinds identically. */
 export type SimilarCtx = BurstCtx;
 
+/**
+ * Per-frame grouping inputs for the Similar tier, SOURCE-AGNOSTIC like
+ * `BurstInput` (`groupBursts.ts`): similar groups are a STANDING FACT like
+ * bursts, so these come from the STANDING thumb-tier pHash the frame's
+ * thumbnail already delivered — never from `ImageScore.phash` (see
+ * `buildSimilarInputs`, burstInputs.ts).
+ *
+ * `phash` is ALWAYS the thumb-tier hash. `ImageScore.phash` is computed from
+ * a DIFFERENT decode (the PRVW, a different resolution) and stays on the wire
+ * only for the calibration harness — mixing the two sources into one Hamming
+ * comparison would be cross-source noise, so `groupSimilar` never touches
+ * `ImageScore.phash`. The embedding tier (ML builds) is the one signal that
+ * DOES still come from `scores`, passed to `groupSimilar` separately, since
+ * embeddings have no standing/non-ML source at all.
+ */
+export type SimilarInput = {
+  /** capture-time source: scores' precise capturedAtMs (SubSec-aware) when
+   *  the smart pass has scored this frame, else metadata's capturedAt —
+   *  same preference order as `BurstInput`. */
+  capturedAtMs: number | null;
+  /** Write time — only known via the scores path (mirrors `BurstInput`). */
+  mtimeMs: number | null;
+  /** Standing thumb-tier pHash, 16 lowercase hex chars; `null` on a thumb
+   *  decode failure or before the thumbnail has landed. */
+  phash: string | null;
+};
+
 /** Frames whose neighbors are further apart than this never chain (time-local
  *  only, per the spec: a worked scene, not whole-folder lookalikes). */
 export const SIMILAR_WINDOW_MS = 300_000;
@@ -38,20 +65,28 @@ function cosine(a: readonly number[], b: readonly number[]): number {
  *  mtime — the delta is then approximate, not a true capture-time gap — but
  *  at the 5-minute (SIMILAR_WINDOW_MS) advisory granularity this grouping
  *  operates at, that slack is acceptable. */
-function timeOf(s: ImageScore): number | null {
+function timeOf(s: SimilarInput): number | null {
   return s.capturedAtMs ?? (s.mtimeMs || null);
 }
 
-/** Does frame `b` extend a chain ending at frame `a`? (Adjacent-only test.) */
-function linked(a: ImageScore, b: ImageScore): boolean {
+/** Does frame `b` extend a chain ending at frame `a`? (Adjacent-only test.)
+ *  `embA`/`embB` are the ML-tier embeddings (from `scores`, when the smart
+ *  pass has run with ML) — the ONE signal here that isn't part of the
+ *  standing `SimilarInput`. */
+function linked(
+  a: SimilarInput,
+  b: SimilarInput,
+  embA: readonly number[] | null,
+  embB: readonly number[] | null,
+): boolean {
   const ta = timeOf(a);
   const tb = timeOf(b);
   if (ta == null || tb == null || Math.abs(tb - ta) > SIMILAR_WINDOW_MS) return false;
   if (a.phash != null && b.phash != null && phashDistance(a.phash, b.phash) <= PHASH_NEAR) {
     return true;
   }
-  if (a.embedding != null && b.embedding != null) {
-    return cosine(a.embedding, b.embedding) >= SIMILAR_COSINE;
+  if (embA != null && embB != null) {
+    return cosine(embA, embB) >= SIMILAR_COSINE;
   }
   return false;
 }
@@ -59,12 +94,18 @@ function linked(a: ImageScore, b: ImageScore): boolean {
 /**
  * Time-local near-duplicate grouping (spec: SMART_CULLING_PHASE3_DESIGN.md).
  * Pure derivation, mirrors groupBursts: adjacent frames chain when EITHER the
- * pHash tier (always available) or the embedding tier (ML builds) links them;
- * unscored frames and burst members are transparent walls; winner comes from
- * the SAME ladder as bursts (pickWinner) so the two cannot drift.
+ * pHash tier (standing, always available once thumbnails have decoded) or the
+ * embedding tier (ML builds, from `scores`) links them; frames without a
+ * standing input yet and burst members are transparent walls; winner comes
+ * from the SAME ladder as bursts (pickWinner) so the two cannot drift.
+ *
+ * Boxes render whether or not smart culling is enabled — `scores` here
+ * contributes ONLY the embedding-tier upgrade (empty/absent when the pass
+ * hasn't run), never the pHash tier.
  */
 export function groupSimilar(
   images: readonly Img[],
+  inputs: Readonly<Record<number, SimilarInput>>,
   scores: Readonly<Record<number, ImageScore>>,
   bursts: ReadonlyMap<number, BurstCtx>,
   sharp: Readonly<Record<number, SharpInput>>,
@@ -91,22 +132,27 @@ export function groupSimilar(
     run = [];
   };
 
-  let prev: { img: Img; score: ImageScore } | null = null;
+  let prev: { img: Img; input: SimilarInput } | null = null;
   for (const img of images) {
-    const score = scores[img.id];
-    // Transparent walls: unscored, decode-failed, and burst members all split.
-    if (!score || !score.decodeOk || bursts.has(img.id)) {
+    const input = inputs[img.id];
+    // Transparent walls: no standing input yet, and burst members, both split.
+    if (!input || bursts.has(img.id)) {
       flush();
       prev = null;
       continue;
     }
-    if (prev && prev.img.srcFolder === img.srcFolder && linked(prev.score, score)) {
+    const embCur = scores[img.id]?.embedding ?? null;
+    if (
+      prev &&
+      prev.img.srcFolder === img.srcFolder &&
+      linked(prev.input, input, scores[prev.img.id]?.embedding ?? null, embCur)
+    ) {
       if (run.length === 0) run = [prev.img.id];
       run.push(img.id);
     } else {
       flush();
     }
-    prev = { img, score };
+    prev = { img, input };
   }
   flush();
   return out;

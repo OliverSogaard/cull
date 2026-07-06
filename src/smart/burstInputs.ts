@@ -1,6 +1,7 @@
 import type { Img, ImageMetadata } from "../types";
 import type { ImageScore } from "../types/ipc";
 import type { BurstInput, SharpInput } from "./groupBursts";
+import type { SimilarInput } from "./groupSimilar";
 
 /**
  * Build the grouping inputs for every frame, preferring the smart pass's score
@@ -53,6 +54,40 @@ export function buildBurstInputs(
     }
   }
   return { inputs, sharp };
+}
+
+/**
+ * Build the Similar tier's grouping inputs, mirroring `buildBurstInputs`'
+ * source-agnostic pattern: the pHash comes ONLY from the standing thumb-tier
+ * metadata (`metadata[img.path].phash`) — NEVER `scores[id].phash`, which is
+ * a different-resolution decode reserved for the calibration harness (see
+ * `SimilarInput`'s doc in groupSimilar.ts). Capture-time follows the same
+ * scores-then-metadata preference as `buildBurstInputs` so a frame's
+ * grouping clock upgrades in place once the smart pass scores it.
+ */
+export function buildSimilarInputs(
+  images: readonly Img[],
+  scores: Readonly<Record<number, ImageScore>>,
+  metadata: Readonly<Record<string, ImageMetadata>>,
+): Record<number, SimilarInput> {
+  const inputs: Record<number, SimilarInput> = {};
+  for (const img of images) {
+    const m = metadata[img.path];
+    const phash = m?.phash ?? null;
+    const s = scores[img.id];
+    if (s && s.decodeOk) {
+      inputs[img.id] = { capturedAtMs: s.capturedAtMs, mtimeMs: s.mtimeMs, phash };
+      continue;
+    }
+    if (m) {
+      inputs[img.id] = {
+        capturedAtMs: capturedAtToMs(m.capturedAt, m.subSecMs),
+        mtimeMs: null, // metadata carries no write time
+        phash,
+      };
+    }
+  }
+  return inputs;
 }
 
 /**

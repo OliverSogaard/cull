@@ -32,8 +32,8 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { useSmartCulling } from "./smart/useSmartCulling";
 import { groupBursts } from "./smart/groupBursts";
-import { groupSimilar, type SimilarCtx } from "./smart/groupSimilar";
-import { buildBurstInputs } from "./smart/burstInputs";
+import { groupSimilar } from "./smart/groupSimilar";
+import { buildBurstInputs, buildSimilarInputs } from "./smart/burstInputs";
 import { capFavorites } from "./smart/capFavorites";
 import { deriveVerdict, keepEligible, type Suggestion } from "./smart/deriveVerdict";
 import { WindowControls } from "./components/WindowControls";
@@ -120,6 +120,7 @@ const EMPTY_METADATA: ImageMetadata = Object.freeze({
   pixelHeight: null,
   fileSize: null,
   lrcRating: null,
+  phash: null,
 });
 
 export default function App() {
@@ -285,13 +286,22 @@ export default function App() {
     () => groupBursts(images, burstData.inputs, burstData.sharp, keepEligibleMap),
     [images, burstData, keepEligibleMap],
   );
-  // Time-local near-duplicate grouping (spec 3c) — unlike bursts this IS a
-  // smart-culling feature (the grouping itself is advisory heuristics, not a
-  // camera-clocked fact), so it stays empty with the feature off.
-  const similarCtx = useMemo(() => {
-    if (!settings.smartCulling) return new Map<number, SimilarCtx>();
-    return groupSimilar(images, qualityScores, burstCtx, burstData.sharp, keepEligibleMap);
-  }, [images, qualityScores, burstCtx, burstData.sharp, settings.smartCulling, keepEligibleMap]);
+  // Similar sets are ALSO a standing fact about the shoot, like bursts: the
+  // pHash tier rides every frame's thumbnail (buildSimilarInputs), so groups
+  // render with smart culling off too. `qualityScores` here contributes ONLY
+  // the embedding-tier upgrade (adjacent frames the pHash tier missed, ML
+  // builds only) — never the pHash tier itself (groupSimilar ignores
+  // `ImageScore.phash`; see groupSimilar.ts). Winner selection is still smart
+  // culling's call: with the pass off there's no `sharp`/`eligible` data, so
+  // pickWinner structurally finds no winner — no special-casing needed here.
+  const similarData = useMemo(
+    () => buildSimilarInputs(images, qualityScores, metadata),
+    [images, qualityScores, metadata],
+  );
+  const similarCtx = useMemo(
+    () => groupSimilar(images, similarData, qualityScores, burstCtx, burstData.sharp, keepEligibleMap),
+    [images, similarData, qualityScores, burstCtx, burstData.sharp, keepEligibleMap],
+  );
   // Only frames with an emitted verdict land in the map — the badge/filter
   // predicate is a simple presence check. Session-capped favorites (spec 3c)
   // overlay a "favorite" verdict onto the top-N standout-aesthetic keeps.
