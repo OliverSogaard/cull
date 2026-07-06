@@ -169,6 +169,26 @@ export const GridView = memo(function GridView({
     };
   }, [containerRef]);
 
+  // Input modality: while the user drives by keyboard, the OS hides the
+  // pointer but the cell under it still matches :hover — leaving one stray
+  // filename badge lit with no visible cause. Track the last input kind and
+  // suppress hover chrome during keyboard nav; the first real mouse move
+  // brings it back. State only flips on transitions (React bails on
+  // same-value sets), so the mousemove listener is effectively free.
+  const [kbdNav, setKbdNav] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.startsWith("Arrow")) setKbdNav(true);
+    };
+    const onMouse = () => setKbdNav(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousemove", onMouse);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousemove", onMouse);
+    };
+  }, []);
+
   const cellW = contentWidth > 0 ? Math.floor(contentWidth / cols) : GRID_CELL_TARGET;
   const rowH = cellW; // square cells — accommodate landscape AND portrait
   const totalRows = Math.ceil(visibleIndices.length / cols);
@@ -314,7 +334,7 @@ export const GridView = memo(function GridView({
   }
 
   return (
-    <div className="cull-grid" ref={containerRef}>
+    <div className={`cull-grid${kbdNav ? " is-kbd-nav" : ""}`} ref={containerRef}>
       {showScrollIndicator && (
         // Sticky (not fixed/absolute against the scroller) so it tracks the
         // viewport without a scroll-driven position write of its own — the

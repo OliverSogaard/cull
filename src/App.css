@@ -3313,6 +3313,14 @@ body,
   display: block;
 }
 
+/* Keyboard nav hides the OS pointer, but the cell under it still matches
+   :hover — which left one stray filename badge lit with no visible cause.
+   While the last input was an arrow key, hover chrome stays dark; the first
+   mouse move flips the class off (GridView's kbdNav state). */
+.cull-grid.is-kbd-nav .cull-grid__cell:hover .cull-grid__fn {
+  display: none;
+}
+
 /* ── help overlay ─────────────────────────────────────────── */
 .cull-help {
   position: fixed;
