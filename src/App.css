@@ -2392,19 +2392,13 @@ body,
    anchored, blurred so its vector edges melt into texture instead of
    reading as pasted clipart. */
 .cull-empty-state__backdrop {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  /* Viewport-relative: the empty-state box is content-sized in some layouts,
-     so %-of-container rendered the art postage-stamp small. */
-  width: min(720px, 58vw);
+  /* IN FLOW below the text (the box is content-sized in some layouts —
+     absolute+overflow:hidden clipped the art to a gray band). */
+  display: block;
+  margin-top: 26px;
+  width: min(460px, 44vw);
   height: auto;
-  max-height: none;
-  object-fit: contain;
-  object-position: bottom center;
   pointer-events: none;
-  z-index: -1;
   /* Screenshot-tuned (scratchpad shot_v4): dark cactus greens go near-black
      in grayscale on this bg, so the brightness LIFT is what makes the
      illustration read as light-stroke line art instead of a smudge; the wide
