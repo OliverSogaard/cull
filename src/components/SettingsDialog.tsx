@@ -8,15 +8,6 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { sanitizeFolderName } from "../utils/path";
 import { modGlyph } from "../utils/platform";
 
-/** Friendlier names for the confidence levels, used only in the adaptive help
- *  line below the SegmentToggle — the toggle's own options stay Low/Medium/High.
- *  Mirrors {@link LEVEL_THRESHOLD}'s low/medium/high keys. */
-const LEVEL_NAME: Record<SmartLevel, string> = {
-  low: "Chatty",
-  medium: "Balanced",
-  high: "Strict",
-};
-
 /**
  * Settings modal. Opens with `Ctrl + ,` or the settings cog in the top-right
  * window chrome.
@@ -162,8 +153,8 @@ export function SettingsDialog({
                   label="Suggestions"
                   help={
                     settings.smartCulling
-                      ? "Marks likely rejects from sharpness, exposure, and burst analysis. Advisory only — never rates or writes files."
-                      : "Off — the Smart tab stays visible and tells you it's off."
+                      ? "Suggests rejects from sharpness, exposure, and burst analysis. Never rates or writes files."
+                      : "No analysis runs."
                   }
                 >
                   <Toggle
@@ -178,7 +169,7 @@ export function SettingsDialog({
                 >
                   <SettingRow
                     label="Suggestion threshold"
-                    help={`${LEVEL_NAME[settings.smartCullingConfidence]} — speaks at ≥${Math.round(LEVEL_THRESHOLD[settings.smartCullingConfidence] * 100)}% confidence.`}
+                    help={`Suggests at ${Math.round(LEVEL_THRESHOLD[settings.smartCullingConfidence] * 100)}%+ confidence.`}
                   >
                     <SegmentToggle<SmartLevel>
                       value={settings.smartCullingConfidence}
@@ -195,8 +186,8 @@ export function SettingsDialog({
                     label="Face analysis"
                     help={
                       settings.smartCullingML
-                        ? "Face + eye checks, look-alike grouping, and a few starred picks. Runs fully on this machine."
-                        : "Off — suggestions rely on sharpness, exposure, and burst analysis alone."
+                        ? "Face and eye checks, look-alike grouping, starred picks. Runs locally."
+                        : "Uses sharpness, exposure, and burst analysis only."
                     }
                   >
                     <Toggle
@@ -210,8 +201,8 @@ export function SettingsDialog({
                     label="Analyze on open"
                     help={
                       settings.smartCullingOnOpen
-                        ? "Analyzes automatically when a folder opens."
-                        : "Off: press 4 in the Smart filter to analyze."
+                        ? "Analyzes when a folder opens."
+                        : "Press 4 in the Smart filter to analyze."
                     }
                   >
                     <Toggle
@@ -240,7 +231,7 @@ export function SettingsDialog({
                   label="Copy keeps to"
                   help={
                     exportMode === "pinned"
-                      ? "Copies straight to the pinned root below — no prompt."
+                      ? "Copies to the pinned root below without asking."
                       : "Opens a folder picker each time you copy keeps."
                   }
                 >
@@ -281,7 +272,7 @@ export function SettingsDialog({
                   help={
                     settings.storageMode === "network"
                       ? "Throttles reads for slow NAS or USB drives."
-                      : "Assumes a fast local drive — aggressive prefetch."
+                      : "Reads at full speed for a fast local drive."
                   }
                 >
                   {/* Stored values stay "local"/"network" (profile keys + the
