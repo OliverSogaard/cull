@@ -36,6 +36,11 @@ export type ImageScore = {
   /** AF-crop p95−p5 luma spread 0..1 — below TEXTURE_MIN, focus is unjudgeable. */
   afTexture: number;
   globalSharpness: number;
+  /** Full-frame p95−p5 luma spread 0..1, same normalization as afTexture —
+   *  the whole-frame judgeability gate for the heavy-blur rule (deriveVerdict
+   *  Rule 2b): high global texture + noise-floor global sharpness means the
+   *  WHOLE FRAME is smeared content, not a flat-but-fine scene. */
+  globalTexture: number;
   noiseFloor: number;
   blownPct: number;
   crushedPct: number;

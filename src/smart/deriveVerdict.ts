@@ -22,6 +22,17 @@ export const SHARP_REJECT = 0.12;
 export const SHARP_STRONG = 0.55;
 /** Below this AF-crop texture spread, focus is unjudgeable — stay silent. */
 export const TEXTURE_MIN = 0.12;
+/**
+ * Heavy-blur (Rule 2b) noise-floor gate: full-frame sharpness at/near the
+ * sensor noise floor. Conservative seed — the calibration harness
+ * (analyze.rs `calibration_report`) re-tunes this against real PRVWs; we
+ * don't yet have the live-test bird file that motivated this rule to
+ * calibrate against.
+ */
+export const HEAVY_BLUR_SHARP = 0.05;
+/** Heavy-blur cross-check: Tenengrad must agree the frame is at the noise
+ *  floor too, same conservative-seed caveat as HEAVY_BLUR_SHARP. */
+export const HEAVY_BLUR_TENENGRAD = 0.1;
 /** Burst-loser confidence = marginToWinner / MARGIN_SCALE (near-ties → silent). */
 export const MARGIN_SCALE = 0.25;
 /** Similar-set loser: a lookalike group is WEAKER evidence than a camera-
@@ -69,7 +80,9 @@ export function keepEligible(score: ImageScore, level: SmartLevel): boolean {
  * error is the false reject, so every gate biases toward silence:
  * 1. clipping is annotation-only (RAW recoverability; backlit/high-key intent);
  * 2. soft focus needs texture to judge, is weighted by AF validity, and is
- *    distrusted when the two sharpness operators disagree;
+ *    distrusted when the two sharpness operators disagree; when the AF crop
+ *    can't judge at all, rule 2b falls back to a full-frame noise-floor
+ *    check ("heavy blur") so a giant smeared subject isn't silently missed;
  * 3. burst-loser confidence scales with the margin to the winner (near-ties
  *    are noise, not verdicts);
  * 4. correlated reasons combine as max-plus-bump, never the product.
@@ -94,6 +107,32 @@ export function deriveVerdict(
     if (softConf > 0) {
       reasons.push(score.motionBlurLikelihood > 0.5 ? "motion blur" : "soft focus");
     }
+  }
+
+  // Rule 2b — heavy blur: a WHOLE-FRAME smear the AF crop couldn't judge
+  // (giant blurred subject filling the frame, or an AF point that landed on
+  // smooth/empty content — either way Rule 2's afTexture gate fails and
+  // softConf stays 0). Evaluated ONLY when Rule 2 stayed silent: the two
+  // rules read the SAME underlying blur via different crops, so they are
+  // correlated signals — firing both would double-count one defect. The
+  // distinguisher for "smeared content" vs. a flat-but-fine scene (sky,
+  // bokeh wall) is full-frame luma spread: real content contrast
+  // (globalTexture) coexisting with sharpness at the noise floor means the
+  // content itself is smeared, not merely smooth. All three gates are
+  // AND-ed — false-reject bias means a lone dissenting signal (e.g. Tenengrad
+  // disagreeing) keeps this silent. Feeds the SAME combiner slot as softConf
+  // (it IS the soft-focus signal, just judged globally instead of at the AF
+  // point); reason stays "heavy blur" even when motionBlurLikelihood is high
+  // — we don't have enough signal here to tell soft-focus-style heavy blur
+  // apart from motion-blur-style heavy blur, so we don't try.
+  if (
+    softConf === 0 &&
+    score.globalTexture >= TEXTURE_MIN &&
+    score.globalSharpness < HEAVY_BLUR_SHARP &&
+    score.tenengrad < HEAVY_BLUR_TENENGRAD
+  ) {
+    softConf = clamp01((HEAVY_BLUR_SHARP - score.globalSharpness) / HEAVY_BLUR_SHARP);
+    if (softConf > 0) reasons.push("heavy blur");
   }
 
   // Rule 3 — burst loser, margin-scaled.

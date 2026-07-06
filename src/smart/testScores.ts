@@ -9,6 +9,15 @@ export function score(over: Partial<ImageScore> = {}): ImageScore {
     afValid: true,
     afTexture: 0.6,
     globalSharpness: 0.55,
+    // Below TEXTURE_MIN (0.12) on purpose: this fixture's default
+    // globalSharpness (0.55) already sits comfortably above HEAVY_BLUR_SHARP
+    // (0.05), so Rule 2b (heavy blur) can't fire by accident from that gate
+    // alone — but tests that override globalSharpness low (e.g. the `soft()`
+    // fixture in deriveVerdict.test.ts) do so WITHOUT touching globalTexture,
+    // so a low default globalTexture is the second, belt-and-suspenders gate
+    // that keeps every pre-existing test silent on the new rule. Tests that
+    // want to exercise Rule 2b override globalTexture explicitly.
+    globalTexture: 0.05,
     noiseFloor: 10,
     blownPct: 0.002,
     crushedPct: 0.002,

@@ -55,6 +55,12 @@ pub struct ImageScore {
     pub af_valid: bool,
     pub af_texture: f32,
     pub global_sharpness: f32,
+    /// p95−p5 luma spread over the FULL FRAME (0..1), same normalization as
+    /// `af_texture` — the whole-frame judgeability gate. Distinguishes a
+    /// giant smeared subject (high global texture, sharpness at the noise
+    /// floor ⇒ heavy blur) from a genuinely flat-but-fine scene (sky, bokeh
+    /// wall: low global texture ⇒ nothing to judge, stay silent).
+    pub global_texture: f32,
     pub noise_floor: f32,
     pub blown_pct: f32,
     pub crushed_pct: f32,
@@ -372,6 +378,7 @@ pub(crate) fn score_one(input: &DecodedInput, index: usize) -> ImageScore {
         af_valid,
         af_texture: texture_spread(&luma, w, h, af_rect),
         global_sharpness,
+        global_texture: texture_spread(&luma, w, h, full),
         noise_floor: floor as f32,
         blown_pct,
         crushed_pct,
@@ -851,6 +858,28 @@ mod tests {
             (0.0..=1.0).contains(&s.tenengrad) && s.tenengrad > 0.0,
             "tenengrad on the wire, normalized, got {}",
             s.tenengrad
+        );
+    }
+
+    #[test]
+    fn score_one_computes_global_texture_over_the_full_frame() {
+        // Mirrors `texture_spread_low_on_flat_and_smooth_gradient_high_on_detail`,
+        // but exercised through `score_one`'s `global_texture` field — the
+        // whole-frame counterpart to `af_texture`, same normalization, full
+        // rect instead of the AF crop.
+        let (w, h) = (128, 96);
+        let flat_score = score_one(&input_from_luma(flat(w, h, 128), w, h), 0);
+        assert!(
+            flat_score.global_texture < 0.05,
+            "flat frame has ~no global texture, got {}",
+            flat_score.global_texture
+        );
+
+        let textured_score = score_one(&input_from_luma(checkerboard(w, h), w, h), 0);
+        assert!(
+            textured_score.global_texture > 0.5,
+            "checkerboard spans the full-frame range, got {}",
+            textured_score.global_texture
         );
     }
 

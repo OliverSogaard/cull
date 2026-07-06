@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { deriveVerdict, LEVEL_THRESHOLD } from "./deriveVerdict";
+import { deriveVerdict, HEAVY_BLUR_SHARP, HEAVY_BLUR_TENENGRAD, LEVEL_THRESHOLD } from "./deriveVerdict";
 import type { BurstCtx } from "./groupBursts";
 import type { SimilarCtx } from "./groupSimilar";
 import { score } from "./testScores";
@@ -274,5 +274,125 @@ describe("similar-set verdicts", () => {
     const keeps = results.filter((r) => r.verdict === "keep");
     expect(keeps).toHaveLength(1);
     expect(results.filter((r) => r.verdict === null)).toHaveLength(10);
+  });
+});
+
+describe("heavy blur (Rule 2b — whole-frame smear the AF crop couldn't judge)", () => {
+  // Live-test motivator: a massively blurred bird fills the frame — the AF
+  // crop lands on smooth/empty content (low afTexture), so Rule 2 can't
+  // judge and stays silent. The FULL FRAME still has content contrast
+  // (high globalTexture) while sharpness sits at the noise floor.
+  const smearedFrame = () =>
+    score({
+      afSharpness: 0.6,
+      afTexture: 0.03, // AF crop unjudgeable — Rule 2 must stay silent (softConf 0)
+      globalTexture: 0.6,
+      globalSharpness: 0.01,
+      tenengrad: 0.02,
+    });
+
+  test("smeared whole-frame content rejects with 'heavy blur'", () => {
+    const s = deriveVerdict(smearedFrame(), undefined, undefined, "medium");
+    expect(s.verdict).toBe("reject");
+    expect(s.reasons).toContain("heavy blur");
+  });
+
+  test("motion-blur-likely smear still reads 'heavy blur', not 'motion blur'", () => {
+    const s = deriveVerdict(
+      { ...smearedFrame(), motionBlurLikelihood: 0.9 },
+      undefined,
+      undefined,
+      "medium",
+    );
+    expect(s.verdict).toBe("reject");
+    expect(s.reasons).toContain("heavy blur");
+    expect(s.reasons).not.toContain("motion blur");
+  });
+
+  test("clean sky (low global texture, low sharpness) stays silent — nothing to judge", () => {
+    const s = deriveVerdict(
+      score({
+        afSharpness: 0.3, // below SHARP_STRONG — isolates the heavy-blur rule from a keep verdict
+        afTexture: 0.03,
+        globalTexture: 0.05,
+        globalSharpness: 0.01,
+        tenengrad: 0.02,
+      }),
+      undefined,
+      undefined,
+      "low",
+    );
+    expect(s.verdict).toBeNull();
+    expect(s.reasons).not.toContain("heavy blur");
+  });
+
+  test("sharp, textured landscape never earns the 'heavy blur' reason", () => {
+    const s = deriveVerdict(
+      score({ afTexture: 0.03, globalTexture: 0.6, globalSharpness: 0.6, tenengrad: 0.6 }),
+      undefined,
+      undefined,
+      "low",
+    );
+    expect(s.reasons).not.toContain("heavy blur");
+  });
+
+  test("AF-judgeable soft frame fires soft-focus, NOT heavy blur — correlated signals don't double-fire", () => {
+    const soft = score({ afSharpness: 0.02, tenengrad: 0.02, afTexture: 0.5, globalSharpness: 0.05 });
+    const s = deriveVerdict(
+      { ...soft, globalTexture: 0.6, globalSharpness: 0.01 },
+      undefined,
+      undefined,
+      "medium",
+    );
+    expect(s.verdict).toBe("reject");
+    expect(s.reasons).toContain("soft focus");
+    expect(s.reasons).not.toContain("heavy blur");
+  });
+
+  test("borderline global sharpness just under threshold with disagreeing Tenengrad stays silent", () => {
+    // globalSharpness sits just under HEAVY_BLUR_SHARP, but Tenengrad
+    // disagrees (>= HEAVY_BLUR_TENENGRAD) — the cross-check gate is AND-ed,
+    // so a lone dissenting signal must not be enough to reject.
+    const s = deriveVerdict(
+      score({
+        afSharpness: 0.3, // below SHARP_STRONG — isolates the heavy-blur rule from a keep verdict
+        afTexture: 0.03,
+        globalTexture: 0.6,
+        globalSharpness: HEAVY_BLUR_SHARP - 0.001,
+        tenengrad: HEAVY_BLUR_TENENGRAD,
+      }),
+      undefined,
+      undefined,
+      "low",
+    );
+    expect(s.verdict).toBeNull();
+    expect(s.reasons).not.toContain("heavy blur");
+  });
+
+  test("false-reject bias: each gate alone (texture, sharpness, tenengrad) is insufficient — the gates are AND-ed", () => {
+    // Only globalTexture qualifies; sharpness and tenengrad are healthy.
+    const textureOnly = deriveVerdict(
+      score({ afTexture: 0.03, globalTexture: 0.6, globalSharpness: 0.6, tenengrad: 0.6 }),
+      undefined,
+      undefined,
+      "low",
+    );
+    // Only globalSharpness/tenengrad qualify; globalTexture stays low (flat scene).
+    const sharpnessOnly = deriveVerdict(
+      score({ afTexture: 0.03, globalTexture: 0.05, globalSharpness: 0.01, tenengrad: 0.02 }),
+      undefined,
+      undefined,
+      "low",
+    );
+    // Texture + low sharpness, but Tenengrad disagrees.
+    const tenengradDisagrees = deriveVerdict(
+      score({ afTexture: 0.03, globalTexture: 0.6, globalSharpness: 0.01, tenengrad: 0.5 }),
+      undefined,
+      undefined,
+      "low",
+    );
+    for (const s of [textureOnly, sharpnessOnly, tenengradDisagrees]) {
+      expect(s.reasons).not.toContain("heavy blur");
+    }
   });
 });
