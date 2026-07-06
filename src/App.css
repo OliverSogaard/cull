@@ -2929,6 +2929,17 @@ body,
   background: var(--accent);
 }
 
+/* Grid vertical-scrub speed badge — reuses .cull-scrubbar__speed's type/box
+   treatment (same visual language as the strip's badge); only the axis flips
+   for the vertical track: `top` follows the thumb (set inline, as % of the
+   track's own height) instead of `left`, and translateY replaces translateX
+   so the badge centers on that position instead of hugging a fixed offset. */
+.cull-grid__scrollbar-speed {
+  bottom: auto;
+  right: 6px;
+  transform: translateY(-50%);
+}
+
 .cull-grid__cell {
   cursor: pointer;
   /* 9px ⇒ an 18px inter-image corridor with room for the burst boxes' 2px

@@ -62,6 +62,7 @@ export const GridView = memo(function GridView({
   suggestions,
   bursts,
   similar,
+  scrubSpeed = 1,
 }: {
   images: Img[];
   visibleIndices: number[];
@@ -92,6 +93,11 @@ export const GridView = memo(function GridView({
    *  id (structurally shouldn't overlap — groupSimilar excludes burst
    *  members). */
   similar?: Map<number, BurstCtx>;
+  /** Staged acceleration factor (1/3/10) from the held ArrowUp/Down scrub —
+   *  same shared state (and the same footer chip) as the loupe/compare
+   *  hold's scrubSpeed. >1 shows a ×N badge on the right-edge indicator,
+   *  same visual language as the strip's .cull-scrubbar__speed. */
+  scrubSpeed?: number;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
@@ -300,6 +306,14 @@ export const GridView = memo(function GridView({
                 transform: `translateY(${topFrac * viewportH}px)`,
               }}
             />
+            {scrubSpeed > 1 && (
+              <div
+                className="cull-scrubbar__speed cull-grid__scrollbar-speed"
+                style={{ top: `${(topFrac + heightFrac / 2) * 100}%` }}
+              >
+                {scrubSpeed}×
+              </div>
+            )}
           </div>
         </div>
       )}

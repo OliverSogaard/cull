@@ -2304,6 +2304,18 @@ export default function App() {
       cancelAnimationFrame(gridVertRafRef.current);
       gridVertRafRef.current = null;
     }
+    // Same settle as stopHold: drop the shared scrubbing/scrubSpeed state so
+    // the footer chip + strip scrub bar's grid counterparts (footer chip and
+    // the grid's right-edge speed badge) clear together. One shared pair of
+    // indicators for both hold systems — see the state's declaration comment.
+    if (scrubbingRef.current) {
+      scrubbingRef.current = false;
+      setScrubbing(false);
+    }
+    if (scrubSpeedRef.current !== 1) {
+      scrubSpeedRef.current = 1;
+      setScrubSpeed(1);
+    }
   }, []);
 
   const startGridVertHold = useCallback((dir: 1 | -1) => {
@@ -2324,10 +2336,26 @@ export default function App() {
         gridVertLastStepTsRef.current = ts;
         const held = ts - gridVertHoldStartTsRef.current;
         const speed = scrubSpeedForHeldMs(held);
+        // Same shared scrubSpeed state the loupe/compare hold drives — this is
+        // what the footer chip AND the grid's own right-edge speed badge read.
+        if (speed !== scrubSpeedRef.current) {
+          scrubSpeedRef.current = speed;
+          setScrubSpeed(speed);
+        }
         // ONE call with step = gridCols * speed — same one-call rule as the
         // horizontal hold above (see its comment): N single-row calls would
         // all read the same render-frozen position and go nowhere.
-        advanceRef.current(heldGridVertDirRef.current as 1 | -1, gridColsRef.current * speed);
+        const moved = advanceRef.current(
+          heldGridVertDirRef.current as 1 | -1,
+          gridColsRef.current * speed,
+        );
+        // Same shared "scrubbing" flag the loupe hold flips (see startHold) —
+        // only true once actually moving, so parking at the top/bottom edge
+        // doesn't flash the footer's "Scrubbing" chip for nothing.
+        if (moved !== scrubbingRef.current) {
+          scrubbingRef.current = moved;
+          setScrubbing(moved);
+        }
       }
       gridVertRafRef.current = requestAnimationFrame(loop);
     };
@@ -3708,6 +3736,7 @@ export default function App() {
                 suggestions={suggestions}
                 bursts={burstCtx}
                 similar={similarCtx}
+                scrubSpeed={scrubSpeed}
               />
             )}
             {feedbackChip}
