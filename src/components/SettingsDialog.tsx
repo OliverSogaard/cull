@@ -3,9 +3,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Filter, Settings, SmartLevel, StorageMode, ThumbsPosition } from "../types";
 import { DEFAULT_SETTINGS } from "../types/settings";
+import { LEVEL_THRESHOLD } from "../smart/deriveVerdict";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { sanitizeFolderName } from "../utils/path";
 import { modGlyph } from "../utils/platform";
+
+/** Friendlier names for the confidence levels, used only in the adaptive help
+ *  line below the SegmentToggle — the toggle's own options stay Low/Medium/High.
+ *  Mirrors {@link LEVEL_THRESHOLD}'s low/medium/high keys. */
+const LEVEL_NAME: Record<SmartLevel, string> = {
+  low: "Chatty",
+  medium: "Balanced",
+  high: "Strict",
+};
 
 /**
  * Settings modal. Opens with `Ctrl + ,` or the settings cog in the top-right
@@ -150,7 +160,11 @@ export function SettingsDialog({
               <>
                 <SettingRow
                   label="Suggestions"
-                  help="Marks likely rejects from sharpness, exposure, and burst analysis. Advisory only — never rates or writes files."
+                  help={
+                    settings.smartCulling
+                      ? "Marks likely rejects from sharpness, exposure, and burst analysis. Advisory only — never rates or writes files."
+                      : "Off — the Smart tab stays visible and tells you it's off."
+                  }
                 >
                   <Toggle
                     on={settings.smartCulling}
@@ -164,7 +178,7 @@ export function SettingsDialog({
                 >
                   <SettingRow
                     label="Suggestion threshold"
-                    help="Minimum confidence to show a suggestion — Low 50%, Medium 65%, High 80%."
+                    help={`${LEVEL_NAME[settings.smartCullingConfidence]} — speaks at ≥${Math.round(LEVEL_THRESHOLD[settings.smartCullingConfidence] * 100)}% confidence.`}
                   >
                     <SegmentToggle<SmartLevel>
                       value={settings.smartCullingConfidence}
@@ -179,7 +193,11 @@ export function SettingsDialog({
                   </SettingRow>
                   <SettingRow
                     label="Face analysis"
-                    help="Face + eye checks, look-alike grouping, and a few starred picks. Runs fully on this machine."
+                    help={
+                      settings.smartCullingML
+                        ? "Face + eye checks, look-alike grouping, and a few starred picks. Runs fully on this machine."
+                        : "Off — suggestions rely on sharpness, exposure, and burst analysis alone."
+                    }
                   >
                     <Toggle
                       on={settings.smartCullingML}
@@ -190,7 +208,11 @@ export function SettingsDialog({
                   </SettingRow>
                   <SettingRow
                     label="Analyze on open"
-                    help="Analyze automatically when a folder opens. Off: press 5 to start."
+                    help={
+                      settings.smartCullingOnOpen
+                        ? "Analyzes automatically when a folder opens."
+                        : "Off: press 4 in the Smart filter to analyze."
+                    }
                   >
                     <Toggle
                       on={settings.smartCullingOnOpen}
@@ -216,7 +238,11 @@ export function SettingsDialog({
                 </SettingRow>
                 <SettingRow
                   label="Copy keeps to"
-                  help="Destination when copying keeps."
+                  help={
+                    exportMode === "pinned"
+                      ? "Copies straight to the pinned root below — no prompt."
+                      : "Opens a folder picker each time you copy keeps."
+                  }
                 >
                   <SegmentToggle<"remember" | "pinned">
                     value={exportMode}
@@ -252,7 +278,11 @@ export function SettingsDialog({
               <>
                 <SettingRow
                   label="Drive speed"
-                  help="Slow throttles reads for slow NAS or USB drives."
+                  help={
+                    settings.storageMode === "network"
+                      ? "Throttles reads for slow NAS or USB drives."
+                      : "Assumes a fast local drive — aggressive prefetch."
+                  }
                 >
                   {/* Stored values stay "local"/"network" (profile keys + the
                       backend's set_io_profile wire format) — only the words are
