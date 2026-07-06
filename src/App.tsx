@@ -3708,13 +3708,19 @@ export default function App() {
           </div>
         )}
         {(stats.keeps > 0 || rejectedPaths.length > 0) && !actionsOpen && (
+          // The finish moment: once every frame is rated the button announces it
+          // and brightens — the one nudge from "culling" to "act on the cull".
           <button
             type="button"
-            className="cull-statusbar__finish"
+            className={`cull-statusbar__finish${
+              stats.unrated === 0 && stats.total > 0 ? " is-done" : ""
+            }`}
             onClick={() => setActionsOpen(true)}
             title="finish the cull · move rejects / copy keeps"
           >
-            {modGlyph}E · {totalKeeps} keeps
+            {stats.unrated === 0 && stats.total > 0
+              ? `All ${stats.total} rated · ${modGlyph}E finish`
+              : `${modGlyph}E · ${totalKeeps} keeps`}
           </button>
         )}
       </div>

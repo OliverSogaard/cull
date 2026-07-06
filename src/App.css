@@ -874,6 +874,24 @@ body,
   color: #1a1408;
 }
 
+/* Every frame rated: the button fills solid and breathes once so the eye
+   lands on it exactly when the cull is complete. Compositor-only (opacity). */
+.cull-statusbar__finish.is-done {
+  background: var(--accent);
+  color: #1a1408;
+  animation: cull-finish-done 700ms ease-out 1;
+}
+
+.cull-statusbar__finish.is-done:hover {
+  background: transparent;
+  color: var(--accent);
+}
+
+@keyframes cull-finish-done {
+  0% { opacity: 0.2; }
+  100% { opacity: 1; }
+}
+
 .cull-statusbar__finish:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent-soft);
