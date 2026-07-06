@@ -118,7 +118,9 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         ["1 – 4", "filter: all / unrated / keeps / smart  (repeat to cycle sub-modes)"],
         ["click", "open in loupe"],
         ["⇧+click", "select range"],
+        ["⇧+← → ↑ ↓", "grow selection"],
         [`${modGlyph}+click`, "add to selection"],
+        [`${modName}+a`, "select all in filter"],
       ],
     },
     {

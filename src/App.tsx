@@ -54,6 +54,7 @@ import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { cycleFilter, topOf } from "./utils/filterModes";
+import { extendSelection } from "./utils/gridSelection";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
@@ -357,6 +358,16 @@ export default function App() {
     }
     return out;
   }, [qualityScores, burstCtx, similarCtx, settings.smartCulling, settings.smartCullingConfidence]);
+
+  // Live suggestion count for the Smart tab label: suggestions on still-
+  // unrated frames only (rating one drops it, matching the filter's predicate).
+  const liveSuggestionCount = useMemo(() => {
+    let n = 0;
+    for (const idStr of Object.keys(suggestions)) {
+      if (!ratings[Number(idStr)]) n++;
+    }
+    return n;
+  }, [suggestions, ratings]);
 
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
@@ -2491,19 +2502,15 @@ export default function App() {
       if (heldGridVertDirRef.current !== 0) stopGridVertHold();
       if (modifiers.shift) {
         const anchor = selectionAnchor ?? i;
-        const a = visibleIndices.indexOf(anchor);
-        const b = visibleIndices.indexOf(i);
-        let next: Set<number>;
-        if (a === -1 || b === -1) {
+        // Range math shared with shift+arrow (extendSelection) so mouse and
+        // keyboard grow the exact same selection.
+        let next = extendSelection(visibleIndices, anchor, i);
+        if (next === null) {
           // Anchor fell out of the filter — reseat it on the clicked cell so the
           // NEXT shift-click extends from a valid in-filter anchor instead of
           // collapsing to a single cell again.
           next = new Set([i]);
           setSelectionAnchor(i);
-        } else {
-          const [lo, hi] = a < b ? [a, b] : [b, a];
-          next = new Set();
-          for (let k = lo; k <= hi; k++) next.add(visibleIndices[k]);
         }
         setSelectedIndices(next);
         if (selectionAnchor === null) setSelectionAnchor(i);
@@ -2533,6 +2540,44 @@ export default function App() {
     },
     [visibleIndices, selectionAnchor, selectedIndices, clearMultiSelection, goToSite, stopGridVertHold],
   );
+
+  // Shift+arrow selection growth — the keyboard twin of shift-click. The
+  // range recomputes anchor→target, so arrowing back toward the anchor shrinks
+  // the selection exactly like shift-clicking closer does.
+  const growGridSelection = useCallback(
+    (deltaCells: number) => {
+      const pos = visibleIndices.indexOf(currentIndex);
+      if (pos === -1) return;
+      const targetPos = Math.max(0, Math.min(visibleIndices.length - 1, pos + deltaCells));
+      const target = visibleIndices[targetPos];
+      const anchor = selectionAnchor ?? currentIndex;
+      const next = extendSelection(visibleIndices, anchor, target);
+      if (next === null) {
+        // Anchor fell out of the filter — reseat on the cursor (shift-click's
+        // own fallback) and extend from there.
+        setSelectionAnchor(currentIndex);
+        const reseated = extendSelection(visibleIndices, currentIndex, target);
+        if (reseated) {
+          setSelectedIndices(reseated);
+          setCurrentIndex(target);
+        }
+        return;
+      }
+      if (selectionAnchor === null) setSelectionAnchor(anchor);
+      setSelectedIndices(next);
+      setCurrentIndex(target);
+    },
+    [visibleIndices, currentIndex, selectionAnchor],
+  );
+
+  // Ctrl/Cmd+A — select everything the current filter shows. Rating keys then
+  // act on the whole set (one undo entry): the sanctioned bulk-apply path, e.g.
+  // Smart ✕ filter → grid → ⌘A → Backspace clears every suggested reject.
+  const selectAllInGrid = useCallback(() => {
+    if (visibleIndices.length === 0) return;
+    setSelectedIndices(new Set(visibleIndices));
+    setSelectionAnchor(visibleIndices.includes(currentIndex) ? currentIndex : visibleIndices[0]);
+  }, [visibleIndices, currentIndex]);
 
   // Chrome-screen keyboard, phase-agnostic (settings can be opened before a
   // folder is picked, to set the storage mode). Kept separate from the big cull
@@ -2669,6 +2714,14 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
         openActions();
+        return;
+      }
+
+      // Ctrl/Cmd+A → select all visible cells (grid only). Swallowed in every
+      // site so the webview's own select-all never fires.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        if (gridVisible) selectAllInGrid();
         return;
       }
 
@@ -2825,26 +2878,36 @@ export default function App() {
           // multi-selection, so the cursor and the rated frame stay in sync.
           if (isZooming) pan(PAN_STEP, 0);
           else if (gridVisible) {
-            clearMultiSelection();
-            advance(1);
+            if (e.shiftKey) growGridSelection(1);
+            else {
+              clearMultiSelection();
+              advance(1);
+            }
           } else if (!e.repeat && heldDirRef.current === 0) startHold(1);
           break;
         case "ArrowLeft":
           e.preventDefault();
           if (isZooming) pan(-PAN_STEP, 0);
           else if (gridVisible) {
-            clearMultiSelection();
-            advance(-1);
+            if (e.shiftKey) growGridSelection(-1);
+            else {
+              clearMultiSelection();
+              advance(-1);
+            }
           } else if (!e.repeat && heldDirRef.current === 0) startHold(-1);
           break;
         case "ArrowUp":
           e.preventDefault();
           if (isZooming) pan(0, -PAN_STEP);
           else if (gridVisible) {
-            // Held-arrow row-jump, staged-accelerated like the horizontal
-            // scrub (see startGridVertHold). Ignore OS auto-repeat — our own
-            // rAF loop drives the cadence, same reasoning as startHold above.
-            if (!e.repeat && heldGridVertDirRef.current === 0) {
+            if (e.shiftKey) {
+              // One row per key event (OS repeat drives a held shift+arrow) —
+              // selection growth wants precision, not the staged scrub.
+              growGridSelection(-gridCols);
+            } else if (!e.repeat && heldGridVertDirRef.current === 0) {
+              // Held-arrow row-jump, staged-accelerated like the horizontal
+              // scrub (see startGridVertHold). Ignore OS auto-repeat — our own
+              // rAF loop drives the cadence, same reasoning as startHold above.
               clearMultiSelection();
               startGridVertHold(-1);
             }
@@ -2854,7 +2917,9 @@ export default function App() {
           e.preventDefault();
           if (isZooming) pan(0, PAN_STEP);
           else if (gridVisible) {
-            if (!e.repeat && heldGridVertDirRef.current === 0) {
+            if (e.shiftKey) {
+              growGridSelection(gridCols);
+            } else if (!e.repeat && heldGridVertDirRef.current === 0) {
               clearMultiSelection();
               startGridVertHold(1);
             }
@@ -2963,6 +3028,8 @@ export default function App() {
     challengerLoses,
     resetZoom,
     clearMultiSelection,
+    growGridSelection,
+    selectAllInGrid,
     settings.smartCulling,
     startAnalysis,
   ]);
@@ -3684,7 +3751,9 @@ export default function App() {
               >
                 {qualityAnalyzing && qualityProgress
                   ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
-                  : "Smart"}
+                  : liveSuggestionCount > 0
+                    ? `Smart · ${liveSuggestionCount}`
+                    : "Smart"}
               </button>
               {topOf(filter) === "suggested" && (
                 <span
