@@ -3795,7 +3795,7 @@ export default function App() {
               type="button"
               className={filter === "all" ? "is-active" : ""}
               onClick={() => setFilter((f) => cycleFilter(f, "all"))}
-              title="1 · show all images"
+              data-tip={filter === "all" ? undefined : "1 · show all"}
             >
               All
             </button>
@@ -3803,7 +3803,7 @@ export default function App() {
               type="button"
               className={filter === "unrated" ? "is-active" : ""}
               onClick={() => setFilter((f) => cycleFilter(f, "unrated"))}
-              title="2 · show only unrated"
+              data-tip={filter === "unrated" ? undefined : "2 · show unrated"}
             >
               Unrated
             </button>
@@ -3815,14 +3815,11 @@ export default function App() {
                   setFilter((f) => cycleFilter(f, "keeps"));
                   chipsTooltip.pulse();
                 }}
-                // Native title only while INACTIVE: the active tab floats the
-                // sub-chip tooltip in the same spot, and the OS tooltip was
-                // covering it.
-                title={
-                  topOf(filter) === "keeps"
-                    ? undefined
-                    : "3 · show keeps (press again for ★ favorites only)"
-                }
+                // Tip only while INACTIVE (the active tab floats the sub-chip
+                // tooltip in the same spot). data-tip renders instantly via
+                // CSS — the OS title delay made it lose the race against the
+                // neighbouring chip tooltip's fade-out.
+                data-tip={topOf(filter) === "keeps" ? undefined : "3 · show keeps"}
                 {...(topOf(filter) === "keeps" ? chipsTooltip.hoverProps : undefined)}
               >
                 Keeps
@@ -3871,12 +3868,8 @@ export default function App() {
                     startAnalysis(); // no-op unless "analyze on open" is off and unrun
                   }
                 }}
-                // Same inactive-only rule as the Keeps tab title above.
-                title={
-                  topOf(filter) === "suggested"
-                    ? undefined
-                    : "4 · show unrated frames with a smart-culling suggestion (press again to narrow by verdict)"
-                }
+                // Same inactive-only instant tip as the Keeps tab above.
+                data-tip={topOf(filter) === "suggested" ? undefined : "4 · show suggestions"}
                 {...(topOf(filter) === "suggested" ? chipsTooltip.hoverProps : undefined)}
               >
                 {qualityAnalyzing && qualityProgress

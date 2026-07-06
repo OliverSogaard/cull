@@ -445,6 +445,41 @@ body,
   transition: color 0.12s ease, border-color 0.12s ease;
 }
 
+/* Instant hover tip for inactive filter tabs. CSS-only (::after + attr) so
+   it appears with zero delay — the native title tooltip's OS delay made it
+   lose the race against the active tab's chip-tooltip fade. Same visual
+   voice as .cull-filter-tab-tooltip. */
+.cull-filter-tabs button[data-tip] {
+  position: relative;
+}
+
+.cull-filter-tabs button[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 9px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-2);
+  text-transform: none;
+  pointer-events: none;
+  z-index: 30;
+}
+
+/* The last group's tab (Smart) sits near the window edge — right-align its
+   tip so it can't clip offscreen. */
+.cull-filter-tabs .cull-filter-tab-group:last-child button[data-tip]:hover::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
 .cull-filter-tabs button:hover:not(.is-active) {
   color: var(--text-2);
 }
