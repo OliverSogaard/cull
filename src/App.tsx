@@ -3384,7 +3384,10 @@ export default function App() {
         )}
         {feedbackChip}
         </div>
-        {exifVisible && current && (
+        {/* No rail on the empty-filter screen: `current` still points at the
+            last-viewed frame there, and its EXIF next to "no matches" reads
+            as stale ghost data. */}
+        {exifVisible && current && positionInFilter !== -1 && (
           <ExifRail
             metadata={currentMeta}
             histogramUrl={currentHistogram}
