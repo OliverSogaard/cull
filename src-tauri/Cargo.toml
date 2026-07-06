@@ -15,12 +15,17 @@ name = "cull_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
+# smart-ml is DEFAULT as of 2026-07-06 (user decision): plain `pnpm tauri dev`
+# and release installers ship with ML active — the models are bundled either
+# way, and the in-app toggle is the user-facing switch. A lean ML-free build
+# remains available via `--no-default-features`.
+default = ["smart-ml"]
 # Re-enables dlog! diagnostics in release builds (debug builds always log).
 verbose-logs = []
 # Smart-culling Tier-2 (Phase 3a): YuNet face detection via ONNX Runtime.
 # The ONE native (non-pure-Rust) dependency in the backend — sanctioned by
-# SMART_CULLING_PLAN for Tier-2 only, and only behind this flag: default
-# builds compile without onnxruntime entirely (faces stay empty on the wire).
+# SMART_CULLING_PLAN for Tier-2; behind this flag so `--no-default-features`
+# still compiles without onnxruntime entirely (faces stay empty on the wire).
 smart-ml = ["dep:ort"]
 
 [build-dependencies]
