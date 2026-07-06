@@ -4460,12 +4460,10 @@ function SaveStatusPill({
 }) {
   const state =
     failedCount > 0 ? "failed" : savingCount > 0 ? "saving" : "idle";
-  const text =
-    state === "failed"
-      ? "failed · retry"
-      : state === "saving"
-        ? "saving…"
-        : "saved";
+  // Quiet when there's nothing to say: a standing "saved" on a fresh home
+  // screen reads as noise. The pill exists for in-flight and failed writes.
+  if (state === "idle") return null;
+  const text = state === "failed" ? "failed · retry" : "saving…";
   return (
     <span
       className={`cull-save-status cull-save-status--${state}`}
@@ -4485,9 +4483,7 @@ function SaveStatusPill({
       title={
         state === "failed"
           ? "ratings failed to save · click to retry"
-          : state === "saving"
-            ? `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
-            : "all ratings saved to disk"
+          : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
       }
     >
       <span className="cull-save-status__dot" />
