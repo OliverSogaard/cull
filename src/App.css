@@ -2353,9 +2353,10 @@ body,
 /* ── empty-state (no filter matches) ──────────────────────────
    Loupe + Grid render this when the active filter has zero matches.
    Eyebrow, headline with the missing filter highlighted in accent, and
-   small kbd-style key hints to switch out. The "analyzing" / "analyzed"
-   variants keep a small glyph icon; the two true no-match variants
-   (--desert) drop the icon for the desert backdrop below. */
+   small kbd-style key hints to switch out. Every variant (including the
+   Smart filter's disabled/analyzing/analyzed states) renders via
+   NoMatchEmptyState, so all of them get the --desert backdrop below — no
+   glyph icon circle. */
 .cull-empty-state {
   flex: 1 1 auto;
   position: relative;
@@ -2370,18 +2371,6 @@ body,
   overflow: hidden;
   /* The backdrop's z-index:-1 must resolve against THIS box. */
   isolation: isolate;
-}
-
-.cull-empty-state__icon {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  border: 1.5px solid var(--border);
-  display: grid;
-  place-items: center;
-  font-size: 26px;
-  color: var(--muted);
-  margin-bottom: 8px;
 }
 
 /* Desert backdrop — the "no matches" empty states sit on a faint monochrome

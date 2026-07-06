@@ -57,6 +57,7 @@ import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
 import { snapToFilter as snapToFilterPure } from "./utils/snap";
+import { pickSmartEmptyState } from "./utils/smartEmptyState";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
 import { scrubSpeedForHeldMs, type ScrubSpeed } from "./utils/scrubAccel";
@@ -1336,16 +1337,6 @@ export default function App() {
     compareMode && images[challengerIndex] ? images[challengerIndex].path : "",
     { wantFull: false },
   );
-
-  // The Smart tab only renders while smart culling is on (SettingsDialog can
-  // toggle it off mid-cull). A Smart filter active at that moment would
-  // otherwise strand the view on a tab that no longer exists in the footer —
-  // reset to "all" the instant the setting drops.
-  useEffect(() => {
-    if (!settings.smartCulling && topOf(filter) === "suggested") {
-      setFilter("all");
-    }
-  }, [settings.smartCulling, filter]);
 
   // Auto-jump: if current falls out of the active filter, hop to the nearest
   // match (before paint, so no flash of an out-of-filter state). Suspended during
@@ -2853,9 +2844,12 @@ export default function App() {
           chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
           break;
         case "4":
+          // Smart tab is a valid filter state even with smart culling off —
+          // it lands on the "disabled" empty screen. Only kick off analysis
+          // when the feature is actually on.
+          setFilter((f) => cycleFilter(f, "suggested"));
+          chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
           if (settings.smartCulling) {
-            setFilter((f) => cycleFilter(f, "suggested"));
-            chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
             startAnalysis(); // no-op unless "analyze on open" is off and unrun
           }
           break;
@@ -3266,7 +3260,14 @@ export default function App() {
         {images.length === 0 ? (
           <div className="cull-message">no images</div>
         ) : positionInFilter === -1 ? (
-          <EmptyFilter filter={filter} analyzing={qualityAnalyzing} scoredCount={Object.keys(qualityScores).length} progress={qualityProgress} />
+          <EmptyFilter
+            filter={filter}
+            smartCulling={settings.smartCulling}
+            smartCullingOnOpen={settings.smartCullingOnOpen}
+            analyzing={qualityAnalyzing}
+            scoredCount={Object.keys(qualityScores).length}
+            progress={qualityProgress}
+          />
         ) : cur.stage === "shimmer" && cur.error ? (
           // Full-screen error only when there's NO thumb to fall back to. If a
           // thumb exists, resolveStage keeps stage "thumb" (with error set) and
@@ -3619,76 +3620,79 @@ export default function App() {
                 </span>
               )}
             </span>
-            {settings.smartCulling && (
-              <span className="cull-filter-tab-group">
-                <button
-                  type="button"
-                  className={topOf(filter) === "suggested" ? "is-active" : ""}
-                  onClick={() => {
-                    setFilter((f) => cycleFilter(f, "suggested"));
-                    chipsTooltip.pulse();
+            {/* Always visible — smart culling off just lands on the
+                "disabled" empty screen (see EmptyFilter) instead of a tab
+                that vanishes out from under an active filter. */}
+            <span className="cull-filter-tab-group">
+              <button
+                type="button"
+                className={topOf(filter) === "suggested" ? "is-active" : ""}
+                onClick={() => {
+                  setFilter((f) => cycleFilter(f, "suggested"));
+                  chipsTooltip.pulse();
+                  if (settings.smartCulling) {
                     startAnalysis(); // no-op unless "analyze on open" is off and unrun
-                  }}
-                  title="4 · show unrated frames with a smart-culling suggestion (press again to narrow by verdict)"
-                  {...(topOf(filter) === "suggested" ? chipsTooltip.hoverProps : undefined)}
+                  }
+                }}
+                title="4 · show unrated frames with a smart-culling suggestion (press again to narrow by verdict)"
+                {...(topOf(filter) === "suggested" ? chipsTooltip.hoverProps : undefined)}
+              >
+                {qualityAnalyzing && qualityProgress
+                  ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
+                  : "Smart"}
+              </button>
+              {topOf(filter) === "suggested" && (
+                <span
+                  className={`cull-filter-tab-tooltip${chipsTooltip.visible ? " is-on" : ""}`}
+                  {...chipsTooltip.hoverProps}
                 >
-                  {qualityAnalyzing && qualityProgress
-                    ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
-                    : "Smart"}
-                </button>
-                {topOf(filter) === "suggested" && (
-                  <span
-                    className={`cull-filter-tab-tooltip${chipsTooltip.visible ? " is-on" : ""}`}
-                    {...chipsTooltip.hoverProps}
+                  <button
+                    type="button"
+                    className={filter === "suggested" ? "is-active" : ""}
+                    onClick={() => {
+                      setFilter("suggested");
+                      chipsTooltip.pulse();
+                    }}
+                    title="any suggestion"
                   >
-                    <button
-                      type="button"
-                      className={filter === "suggested" ? "is-active" : ""}
-                      onClick={() => {
-                        setFilter("suggested");
-                        chipsTooltip.pulse();
-                      }}
-                      title="any suggestion"
-                    >
-                      all
-                    </button>
-                    <button
-                      type="button"
-                      className={filter === "suggestedRejects" ? "is-active" : ""}
-                      onClick={() => {
-                        setFilter("suggestedRejects");
-                        chipsTooltip.pulse();
-                      }}
-                      title="suggested rejects"
-                    >
-                      ✕
-                    </button>
-                    <button
-                      type="button"
-                      className={filter === "suggestedKeeps" ? "is-active" : ""}
-                      onClick={() => {
-                        setFilter("suggestedKeeps");
-                        chipsTooltip.pulse();
-                      }}
-                      title="suggested keeps"
-                    >
-                      ✓
-                    </button>
-                    <button
-                      type="button"
-                      className={filter === "suggestedFavs" ? "is-active" : ""}
-                      onClick={() => {
-                        setFilter("suggestedFavs");
-                        chipsTooltip.pulse();
-                      }}
-                      title="suggested favorites"
-                    >
-                      ★
-                    </button>
-                  </span>
-                )}
-              </span>
-            )}
+                    all
+                  </button>
+                  <button
+                    type="button"
+                    className={filter === "suggestedRejects" ? "is-active" : ""}
+                    onClick={() => {
+                      setFilter("suggestedRejects");
+                      chipsTooltip.pulse();
+                    }}
+                    title="suggested rejects"
+                  >
+                    ✕
+                  </button>
+                  <button
+                    type="button"
+                    className={filter === "suggestedKeeps" ? "is-active" : ""}
+                    onClick={() => {
+                      setFilter("suggestedKeeps");
+                      chipsTooltip.pulse();
+                    }}
+                    title="suggested keeps"
+                  >
+                    ✓
+                  </button>
+                  <button
+                    type="button"
+                    className={filter === "suggestedFavs" ? "is-active" : ""}
+                    onClick={() => {
+                      setFilter("suggestedFavs");
+                      chipsTooltip.pulse();
+                    }}
+                    title="suggested favorites"
+                  >
+                    ★
+                  </button>
+                </span>
+              )}
+            </span>
           </div>
         )}
         {(stats.keeps > 0 || rejectedPaths.length > 0) && !actionsOpen && (
@@ -3840,7 +3844,14 @@ export default function App() {
         <>
           <div className="cull-grid-wrap">
             {visibleIndices.length === 0 ? (
-              <EmptyFilter filter={filter} analyzing={qualityAnalyzing} scoredCount={Object.keys(qualityScores).length} progress={qualityProgress} />
+              <EmptyFilter
+                filter={filter}
+                smartCulling={settings.smartCulling}
+                smartCullingOnOpen={settings.smartCullingOnOpen}
+                analyzing={qualityAnalyzing}
+                scoredCount={Object.keys(qualityScores).length}
+                progress={qualityProgress}
+              />
             ) : (
               <GridView
                 images={images}
@@ -3988,11 +3999,19 @@ function NoMatchEmptyState({
 
 function EmptyFilter({
   filter,
+  smartCulling,
+  smartCullingOnOpen,
   analyzing,
   scoredCount,
   progress,
 }: {
   filter: Filter;
+  /** `settings.smartCulling` — the master switch. Smart is now a valid filter
+   *  state even when off, so this drives the "disabled" empty screen. */
+  smartCulling?: boolean;
+  /** `settings.smartCullingOnOpen` — whether the pass self-starts; changes
+   *  the not-analyzed hint (self-starting passes never need a "press 4"). */
+  smartCullingOnOpen?: boolean;
   analyzing?: boolean;
   /** How many frames the smart pass has scored — distinguishes "analyzed,
    *  no obvious calls" (the healthy quiet case) from "never analyzed". */
@@ -4002,55 +4021,97 @@ function EmptyFilter({
    *  a count "analyzing" is indistinguishable from "hung". */
   progress?: { done: number; total: number } | null;
 }) {
-  // The whole "suggested" family (base + verdict sub-modes) has three empty
+  // The whole "suggested" family (base + verdict sub-modes) has five empty
   // states, and telling them apart is the difference between "working as
-  // designed" and "looks broken":
+  // designed" and "looks broken". All five are NoMatchEmptyState (desert
+  // backdrop, no icon circle) — see pickSmartEmptyState for the precedence.
   if (topOf(filter) === "suggested") {
-    if (analyzing) {
-      // Not done yet — suggestions fill in progressively per chunk.
-      return (
-        <div className="cull-empty-state">
-          <div className="cull-empty-state__icon">…</div>
-          <div className="cull-empty-state__eyebrow">Analyzing</div>
-          <div className="cull-empty-state__title">
-            Looking for obvious calls
-            {progress ? ` — ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} scored` : ""}
-          </div>
-          <div className="cull-empty-state__hint">
-            fills in as frames are scored — culling always takes priority · <kbd>1</kbd> for all
-          </div>
-        </div>
-      );
+    const state = pickSmartEmptyState({
+      smartCulling: smartCulling ?? false,
+      autoStart: smartCullingOnOpen ?? false,
+      analyzing: analyzing ?? false,
+      scoredCount: scoredCount ?? 0,
+    });
+    switch (state) {
+      case "disabled":
+        return (
+          <NoMatchEmptyState
+            eyebrow="Smart culling off"
+            title="Smart culling is turned off"
+            hint={
+              <>
+                <kbd>{modGlyph} ,</kbd> for Settings · <kbd>1</kbd> for all
+              </>
+            }
+          />
+        );
+      case "analyzing":
+        // Not done yet — suggestions fill in progressively per chunk.
+        return (
+          <NoMatchEmptyState
+            eyebrow="Analyzing"
+            title={
+              <>
+                Looking for obvious calls
+                {progress
+                  ? ` — ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} scored`
+                  : ""}
+              </>
+            }
+            hint={
+              <>
+                fills in as frames are scored — culling always takes priority ·{" "}
+                <kbd>1</kbd> for all
+              </>
+            }
+          />
+        );
+      case "analyzedNoSuggestions":
+        // The healthy quiet case: everything scored (or since rated away),
+        // nothing worth flagging. An advisory tool only speaks on clear
+        // calls — silence is a verdict, whether this filter never had a hit
+        // or every hit it had has since been rated.
+        return (
+          <NoMatchEmptyState
+            eyebrow="Analyzed"
+            title={
+              <>Analysis done — no suggestions left here ({scoredCount} scored)</>
+            }
+            hint={
+              <>
+                <kbd>1</kbd> for all
+              </>
+            }
+          />
+        );
+      case "notAnalyzedAutoStart":
+        // The pass self-starts — this screen is a blink, no "press 4" needed.
+        return (
+          <NoMatchEmptyState
+            eyebrow="Not analyzed"
+            title="No frames have been scored yet"
+            hint={
+              <>
+                <kbd>1</kbd> for all
+              </>
+            }
+          />
+        );
+      case "notAnalyzedManual":
+        // Auto-analyze off: the pass hasn't run, or every chunk failed
+        // (drive hiccup) — 5 retries in both cases.
+        return (
+          <NoMatchEmptyState
+            eyebrow="Not analyzed"
+            title="No frames have been scored yet"
+            hint={
+              <>
+                <kbd>4</kbd> to analyze · <kbd>1</kbd> for all
+              </>
+            }
+          />
+        );
     }
-    if ((scoredCount ?? 0) > 0) {
-      // The healthy quiet case: everything scored, nothing worth flagging.
-      // An advisory tool only speaks on clear calls — silence is a verdict.
-      return (
-        <div className="cull-empty-state">
-          <div className="cull-empty-state__icon">✓</div>
-          <div className="cull-empty-state__eyebrow">Analyzed</div>
-          <div className="cull-empty-state__title">
-            No obvious calls in this folder ({scoredCount} scored)
-          </div>
-          <div className="cull-empty-state__hint">
-            <kbd>1</kbd> for all
-          </div>
-        </div>
-      );
-    }
-    // Zero scores and not analyzing: the pass hasn't run (auto-analyze off)
-    // or every chunk failed (drive hiccup) — 5 retries in both cases.
-    return (
-      <NoMatchEmptyState
-        eyebrow="Not analyzed"
-        title="No frames have been scored yet"
-        hint={
-          <>
-            <kbd>4</kbd> to analyze · <kbd>1</kbd> for all
-          </>
-        }
-      />
-    );
   }
   // Label the user-facing filter name. "All" can never actually be empty (it
   // includes unrated), so falling back to "this" covers the impossible-case.
