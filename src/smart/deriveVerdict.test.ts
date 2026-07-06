@@ -297,6 +297,37 @@ describe("heavy blur (Rule 2b — whole-frame smear the AF crop couldn't judge)"
     expect(s.reasons).toContain("heavy blur");
   });
 
+  test("THE bird (_MG_8961, the calibration anchor) rejects at Balanced", () => {
+    // Exact harness-measured values for the live-test frame that motivated
+    // this rule (2026-07-06). If a threshold change silences this frame
+    // again, that change needs a better calibration story than this one.
+    const bird = score({
+      afSharpness: 0.063,
+      afTexture: 0.01,
+      tenengrad: 0.12,
+      globalSharpness: 0.11,
+      globalTexture: 0.25,
+      exposureScore: 0.89,
+    });
+    const s = deriveVerdict(bird, undefined, undefined, "medium");
+    expect(s.verdict).toBe("reject");
+    expect(s.reasons).toContain("heavy blur");
+    expect(s.confidence).toBeGreaterThanOrEqual(0.65);
+  });
+
+  test("the softest healthy corpus frame stays untouched by Rule 2b", () => {
+    // _MG_4750 (user-kept sibling band): gsharp 0.153+, tenengrad 0.39+.
+    const healthy = score({
+      afSharpness: 0.179,
+      afTexture: 0.85,
+      tenengrad: 0.41,
+      globalSharpness: 0.153,
+      globalTexture: 0.58,
+    });
+    const s = deriveVerdict(healthy, undefined, undefined, "medium");
+    expect(s.reasons).not.toContain("heavy blur");
+  });
+
   test("motion-blur-likely smear still reads 'heavy blur', not 'motion blur'", () => {
     const s = deriveVerdict(
       { ...smearedFrame(), motionBlurLikelihood: 0.9 },

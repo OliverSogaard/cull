@@ -1024,8 +1024,8 @@ mod tests {
         let (mut hit, mut false_rej, mut miss, mut quiet, mut unlabeled) = (0, 0, 0, 0, 0);
         let mut false_rejects: Vec<&str> = Vec::new();
         eprintln!(
-            "{:<28} {:>6} {:>5} {:>5} {:>5} {:>6}  {:<8} {:<8}",
-            "file", "sharp", "tex", "ten", "exp", "blown", "suggest", "user"
+            "{:<28} {:>6} {:>5} {:>5} {:>6} {:>5} {:>5} {:>6}  {:<8} {:<8}",
+            "file", "sharp", "tex", "ten", "gsharp", "gtex", "exp", "blown", "suggest", "user"
         );
         for (s, p) in scores.iter().zip(&paths) {
             let name = std::path::Path::new(p)
@@ -1037,11 +1037,13 @@ mod tests {
                 s.decode_ok && s.af_sharpness < SHARP_REJECT && s.af_texture >= TEXTURE_MIN;
             let suggest = if suggest_reject { "reject" } else { "-" };
             eprintln!(
-                "{:<28} {:>6.3} {:>5.2} {:>5.2} {:>5.2} {:>6.3}  {:<8} {:<8}",
+                "{:<28} {:>6.3} {:>5.2} {:>5.2} {:>6.3} {:>5.2} {:>5.2} {:>6.3}  {:<8} {:<8}",
                 name,
                 s.af_sharpness,
                 s.af_texture,
                 s.tenengrad,
+                s.global_sharpness,
+                s.global_texture,
                 s.exposure_score,
                 s.blown_pct,
                 suggest,

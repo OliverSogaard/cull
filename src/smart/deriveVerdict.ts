@@ -23,20 +23,21 @@ export const SHARP_STRONG = 0.55;
 /** Below this AF-crop texture spread, focus is unjudgeable — stay silent. */
 export const TEXTURE_MIN = 0.12;
 /**
- * Heavy-blur (Rule 2b) noise-floor gate: full-frame sharpness at/near the
- * sensor noise floor. Conservative seed — the calibration harness
- * (analyze.rs `calibration_report`) re-tunes this against real PRVWs; we
- * don't yet have the live-test bird file that motivated this rule to
- * calibrate against.
+ * Heavy-blur (Rule 2b) gates, CALIBRATED 2026-07-06 against the live-test
+ * bird (`_MG_8961.CR3`, the frame that motivated this rule) and the 16-file
+ * corpus (calibration harness, gsharp/gtex columns):
+ *   bird:            gsharp 0.110, tenengrad 0.12, gtex 0.25, afTex 0.01
+ *   softest healthy: gsharp 0.153, tenengrad 0.39
+ * Gates sit between those bands; tenengrad is the strong separator (3x gap),
+ * global sharpness the weak one (1.4x) — the AND of all three plus the
+ * gtex >= TEXTURE_MIN content gate keeps false rejects out.
  */
-export const HEAVY_BLUR_SHARP = 0.05;
-/** Heavy-blur cross-check on `tenengrad` — which is AF-CROP-scoped on the
- *  wire, not full-frame, so in the motivating path (AF on flat content) this
- *  gate is nearly redundant with the low-afTexture entry condition rather
- *  than an independent whole-frame corroboration. Kept as a cheap extra
- *  conservatism; if calibration wants a real second opinion, add a
- *  full-frame Tenengrad field. Same seed caveat as HEAVY_BLUR_SHARP. */
-export const HEAVY_BLUR_TENENGRAD = 0.1;
+export const HEAVY_BLUR_SHARP = 0.13;
+/** Calibrated with HEAVY_BLUR_SHARP (see above): healthy frames measure
+ *  >= 0.39 even when soft; a smeared frame has no edges anywhere. (Still
+ *  AF-crop-scoped on the wire — empirically that's fine: the bird's AF crop
+ *  covers the smeared subject.) */
+export const HEAVY_BLUR_TENENGRAD = 0.2;
 /** Burst-loser confidence = marginToWinner / MARGIN_SCALE (near-ties → silent). */
 export const MARGIN_SCALE = 0.25;
 /** Similar-set loser: a lookalike group is WEAKER evidence than a camera-
@@ -135,7 +136,16 @@ export function deriveVerdict(
     score.globalSharpness < HEAVY_BLUR_SHARP &&
     score.tenengrad < HEAVY_BLUR_TENENGRAD
   ) {
-    softConf = clamp01((HEAVY_BLUR_SHARP - score.globalSharpness) / HEAVY_BLUR_SHARP);
+    // Confidence rides tenengrad, the STRONG separator (healthy >= 0.39,
+    // smeared ~0.12): zero at 2x the gate, 1 at zero edges. The calibrated
+    // bird lands at 0.70 (rejects at Balanced); a barely-through-the-gate
+    // frame (ten 0.19) lands at 0.53 (speaks only on Chatty) — boundary
+    // caution falls out of the slope. Sharpness-based scaling was too flat:
+    // the gates' sharpness band is only 1.4x wide, so even a clear smear
+    // scored ~0.15 and never cleared any speaking threshold.
+    softConf = clamp01(
+      (2 * HEAVY_BLUR_TENENGRAD - score.tenengrad) / (2 * HEAVY_BLUR_TENENGRAD),
+    );
     if (softConf > 0) reasons.push("heavy blur");
   }
 
