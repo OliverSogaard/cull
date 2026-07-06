@@ -1875,11 +1875,12 @@ export default function App() {
       const cur = images[currentIndex];
       if (!cur) return;
       const pos = visibleIndices.indexOf(currentIndex);
-      // In grid, the cursor can fall outside the active filter (e.g. the last
-      // matching frame was just rated away, emptying the filter). There's then no
-      // visible cell to act on, so ignore the rating key rather than rate a stale,
-      // off-screen frame. Loupe/compare always display `cur`, so they're unaffected.
-      if (gridVisible && pos === -1) return;
+      // The cursor can fall outside the active filter (empty filter, or the
+      // last matching frame just rated away). Every site then shows a no-match
+      // screen instead of the photo — loupe's render switches on this exact
+      // predicate — so rating keys must not touch the invisible cursor frame:
+      // rating something you can't see is never right.
+      if (pos === -1) return;
       const nextTarget =
         pos !== -1 && pos + 1 < visibleIndices.length ? visibleIndices[pos + 1] : null;
       const nextImg = nextTarget !== null ? images[nextTarget] : null;
@@ -1954,6 +1955,10 @@ export default function App() {
 
     const cur = images[currentIndex];
     if (!cur || !ratings[cur.id]) return;
+    // Same off-screen guard as applyRating: with the cursor outside the active
+    // filter the photo isn't displayed (no-match screen), so `u` must not
+    // silently strip a hidden frame's rating.
+    if (visibleIndices.indexOf(currentIndex) === -1) return;
     recordAction({
       changes: [{ imgId: cur.id, path: cur.path, before: ratings[cur.id], after: undefined }],
     });
