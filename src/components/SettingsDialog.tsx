@@ -94,7 +94,7 @@ export function SettingsDialog({
                       { value: "all", label: "All" },
                       { value: "unrated", label: "Unrated" },
                       { value: "keeps", label: "Keeps" },
-                      { value: "keepsFavs", label: "Favorites" },
+                      { value: "keepsFavs", label: "Keeps · ★" },
                     ]}
                     onChange={(v) => set("defaultFilter", v)}
                   />
