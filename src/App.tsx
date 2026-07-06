@@ -2975,7 +2975,10 @@ export default function App() {
           else if (gridVisible) {
             if (e.shiftKey) {
               // One row per key event (OS repeat drives a held shift+arrow) —
-              // selection growth wants precision, not the staged scrub.
+              // selection growth wants precision, not the staged scrub. Shift
+              // added MID-hold must kill the rAF loop first, or the two would
+              // race over currentIndex until the arrow is released.
+              if (heldGridVertDirRef.current !== 0) stopGridVertHold();
               growGridSelection(-gridCols);
             } else if (!e.repeat && heldGridVertDirRef.current === 0) {
               // Held-arrow row-jump, staged-accelerated like the horizontal
@@ -2991,6 +2994,8 @@ export default function App() {
           if (isZooming) pan(0, PAN_STEP);
           else if (gridVisible) {
             if (e.shiftKey) {
+              // Same mid-hold guard as ArrowUp above.
+              if (heldGridVertDirRef.current !== 0) stopGridVertHold();
               growGridSelection(gridCols);
             } else if (!e.repeat && heldGridVertDirRef.current === 0) {
               clearMultiSelection();
