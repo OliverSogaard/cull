@@ -2403,10 +2403,14 @@ body,
   object-position: bottom center;
   pointer-events: none;
   z-index: -1;
-  filter: grayscale(1) brightness(0.85) contrast(1.05) blur(4px);
-  opacity: 0.15;
-  -webkit-mask-image: radial-gradient(80% 72% at 50% 100%, #000 30%, transparent 80%);
-  mask-image: radial-gradient(80% 72% at 50% 100%, #000 30%, transparent 80%);
+  /* Screenshot-tuned (scratchpad shot_v4): dark cactus greens go near-black
+     in grayscale on this bg, so the brightness LIFT is what makes the
+     illustration read as light-stroke line art instead of a smudge; the wide
+     tall mask keeps the saguaro tops instead of decapitating them. */
+  filter: grayscale(1) brightness(2.1) contrast(0.9) blur(1px);
+  opacity: 0.2;
+  -webkit-mask-image: radial-gradient(95% 115% at 50% 100%, #000 55%, transparent 96%);
+  mask-image: radial-gradient(95% 115% at 50% 100%, #000 55%, transparent 96%);
 }
 
 .cull-empty-state__eyebrow {
