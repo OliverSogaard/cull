@@ -19,6 +19,7 @@ import type {
   UndoAction,
 } from "./types";
 import "./App.css";
+import desertBackdrop from "./assets/desert.png";
 
 import { mergeMeta } from "./utils/mergeMeta";
 import { shimmerPhaseMs } from "./utils/shimmer";
@@ -3958,6 +3959,32 @@ export default function App() {
  * uppercase eyebrow, headline with the missing filter highlighted, and a key
  * hint to switch out.
  */
+/**
+ * Shared markup for the two true "no match" empty states (not-analyzed and
+ * filter-empty) — both drop the old `⌀` glyph for a faint desert backdrop
+ * instead. The "analyzing" / "analyzed" variants above them are transient
+ * or informational rather than "nothing here", so they keep their glyph
+ * and skip the backdrop.
+ */
+function NoMatchEmptyState({
+  eyebrow,
+  title,
+  hint,
+}: {
+  eyebrow: string;
+  title: ReactNode;
+  hint: ReactNode;
+}) {
+  return (
+    <div className="cull-empty-state cull-empty-state--desert">
+      <img className="cull-empty-state__backdrop" src={desertBackdrop} alt="" aria-hidden="true" />
+      <div className="cull-empty-state__eyebrow">{eyebrow}</div>
+      <div className="cull-empty-state__title">{title}</div>
+      <div className="cull-empty-state__hint">{hint}</div>
+    </div>
+  );
+}
+
 function EmptyFilter({
   filter,
   analyzing,
@@ -4013,14 +4040,15 @@ function EmptyFilter({
     // Zero scores and not analyzing: the pass hasn't run (auto-analyze off)
     // or every chunk failed (drive hiccup) — 5 retries in both cases.
     return (
-      <div className="cull-empty-state">
-        <div className="cull-empty-state__icon">⌀</div>
-        <div className="cull-empty-state__eyebrow">Not analyzed</div>
-        <div className="cull-empty-state__title">No frames have been scored yet</div>
-        <div className="cull-empty-state__hint">
-          <kbd>4</kbd> to analyze · <kbd>1</kbd> for all
-        </div>
-      </div>
+      <NoMatchEmptyState
+        eyebrow="Not analyzed"
+        title="No frames have been scored yet"
+        hint={
+          <>
+            <kbd>4</kbd> to analyze · <kbd>1</kbd> for all
+          </>
+        }
+      />
     );
   }
   // Label the user-facing filter name. "All" can never actually be empty (it
@@ -4034,16 +4062,19 @@ function EmptyFilter({
           ? "Unrated"
           : "this"; // "suggested*" fully handled (and narrowed away) above
   return (
-    <div className="cull-empty-state">
-      <div className="cull-empty-state__icon">⌀</div>
-      <div className="cull-empty-state__eyebrow">No matches</div>
-      <div className="cull-empty-state__title">
-        No images in the <em>{label}</em> filter
-      </div>
-      <div className="cull-empty-state__hint">
-        <kbd>1</kbd> for all
-      </div>
-    </div>
+    <NoMatchEmptyState
+      eyebrow="No matches"
+      title={
+        <>
+          No images in the <em>{label}</em> filter
+        </>
+      }
+      hint={
+        <>
+          <kbd>1</kbd> for all
+        </>
+      }
+    />
   );
 }
 

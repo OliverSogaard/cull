@@ -2352,11 +2352,13 @@ body,
 
 /* ── empty-state (no filter matches) ──────────────────────────
    Loupe + Grid render this when the active filter has zero matches.
-   Round icon, eyebrow,
-   headline with the missing filter highlighted in accent, and small
-   kbd-style key hints to switch out. */
+   Eyebrow, headline with the missing filter highlighted in accent, and
+   small kbd-style key hints to switch out. The "analyzing" / "analyzed"
+   variants keep a small glyph icon; the two true no-match variants
+   (--desert) drop the icon for the desert backdrop below. */
 .cull-empty-state {
   flex: 1 1 auto;
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2365,6 +2367,9 @@ body,
   padding: 40px;
   text-align: center;
   color: var(--text-2);
+  overflow: hidden;
+  /* The backdrop's z-index:-1 must resolve against THIS box. */
+  isolation: isolate;
 }
 
 .cull-empty-state__icon {
@@ -2377,6 +2382,31 @@ body,
   font-size: 26px;
   color: var(--muted);
   margin-bottom: 8px;
+}
+
+/* Desert backdrop — the "no matches" empty states sit on a faint monochrome
+   cactus illustration, ground-plane anchored to the bottom of the stage.
+   Same dim-to-texture, mask-fade treatment as .cull-chrome::before (the
+   pre-cull meadow backdrop), tuned for a transparent-background ground
+   illustration rather than a full-bleed photo: partial width, bottom-
+   anchored, blurred so its vector edges melt into texture instead of
+   reading as pasted clipart. */
+.cull-empty-state__backdrop {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(620px, 64%);
+  height: auto;
+  max-height: 78%;
+  object-fit: contain;
+  object-position: bottom center;
+  pointer-events: none;
+  z-index: -1;
+  filter: grayscale(1) brightness(0.85) contrast(1.05) blur(4px);
+  opacity: 0.15;
+  -webkit-mask-image: radial-gradient(80% 72% at 50% 100%, #000 30%, transparent 80%);
+  mask-image: radial-gradient(80% 72% at 50% 100%, #000 30%, transparent 80%);
 }
 
 .cull-empty-state__eyebrow {

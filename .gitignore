@@ -37,6 +37,11 @@ scripts/__pycache__/
 # Claude Code session metadata
 .claude
 
+# Ad-hoc screenshots and dropped source art at repo root — working files,
+# not repo content. Prepared/derived assets live under src/assets/.
+/Screenshot *.png
+/isolated-desert-landscape-with-cactus.png
+
 # CLIP ViT-B/32 visual tower (~175 MB, over GitHub's 100 MB file limit) --
 # published as a release asset on models-v1, pulled by scripts/fetch-models.sh
 src-tauri/models/clip_vitb32_visual.onnx
