@@ -53,7 +53,7 @@ export function SettingsDialog({
       >
         <div className="cull-settings__head">
           <span className="cull-settings__head-title">Settings</span>
-          <span className="cull-settings__head-meta">CULL 1.0</span>
+          <span className="cull-settings__head-meta">CULL</span>
         </div>
 
         <div className="cull-settings__layout">

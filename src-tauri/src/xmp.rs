@@ -292,8 +292,13 @@ fn cull_fav_value(xmp: &str) -> Option<String> {
 /// annotated). Gates destructive cleanup. Tighter than a bare "Cull" substring
 /// so a stray keyword/path/person-name can't trip it into deleting user data.
 fn authored_by_cull(xmp: &str) -> bool {
+    // Two marker generations: pre-rebrand sidecars say "Cull 1.0", current ones
+    // say "CULL" (the contains check is case-sensitive, so both spellings are
+    // needed to keep old sidecars cleanable).
     xmp.contains("CreatorTool=\"Cull")
         || xmp.contains("x:xmptk=\"Cull")
+        || xmp.contains("CreatorTool=\"CULL")
+        || xmp.contains("x:xmptk=\"CULL")
         || xmp.contains("xmlns:cull=")
 }
 
@@ -448,12 +453,12 @@ fn fresh_xmp() -> String {
     let now = chrono::Local::now().to_rfc3339();
     format!(
         "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n\
-<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Cull 1.0\">\n\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"CULL\">\n\
  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n\
   <rdf:Description rdf:about=\"\"\n\
     xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n\
     xmlns:xmpDM=\"{XMPDM_NS}\"\n\
-   xmp:CreatorTool=\"Cull 1.0\"\n\
+   xmp:CreatorTool=\"CULL\"\n\
    xmp:ModifyDate=\"{now}\">\n\
   </rdf:Description>\n\
  </rdf:RDF>\n\
@@ -591,6 +596,20 @@ mod tests {
         // A stranger's sidecar that merely mentions "Cull" + a genuine 5★ is NOT
         // misclassified as a CULL favorite.
         assert_eq!(classify_xmp("photographer: Cullen <xmp:Rating>5</xmp:Rating>"), None);
+    }
+
+    /// The rebrand writes `CreatorTool="CULL"`; sidecars from earlier versions
+    /// say `"Cull 1.0"`. Both generations must stay recognisable or unrate
+    /// stops cleaning up the older ones.
+    #[test]
+    fn authored_by_cull_matches_old_and_new_creator_tool() {
+        assert!(authored_by_cull("xmp:CreatorTool=\"Cull 1.0\""));
+        assert!(authored_by_cull("x:xmptk=\"Cull 1.0\""));
+        assert!(authored_by_cull("xmp:CreatorTool=\"CULL\""));
+        assert!(authored_by_cull("x:xmptk=\"CULL\""));
+        assert!(!authored_by_cull("xmp:CreatorTool=\"Adobe Lightroom 15.3\""));
+        // Fresh sidecars must carry a marker the gate recognises.
+        assert!(authored_by_cull(&fresh_xmp()));
     }
 
     /// Unrate strips CULL's fields; a fresh CULL sidecar becomes deletable.
