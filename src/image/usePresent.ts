@@ -1,7 +1,47 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { MutableRefObject } from "react";
 import { Presenter } from "./present";
-import type { PresentSnapshot } from "./present";
+import type { PresentLayer, PresentSnapshot } from "./present";
+import { dlog, dlogEnabled } from "../utils/dlog";
+
+/**
+ * mid-dims-bug-report §6.1 — present-time bottom-strip probe. Runs AFTER
+ * `el.decode()` resolves (so it re-decodes the SAME resource WKWebView just
+ * decoded) and samples the bottom ~2 rows into an offscreen canvas: a
+ * partially-decoded raster served from the engine's blob-URL-keyed cache
+ * shows as an all-zero (undrawn) strip even though `decode()` resolved
+ * clean. Log-only — this does not gate the flip (that's remedy A, deferred).
+ *
+ * Guarded by `dlogEnabled()` BEFORE doing any work: in production this is a
+ * single cached boolean check, no canvas, no readback.
+ */
+function probeBottomStrip(layer: PresentLayer, url: string, el: HTMLImageElement): void {
+  if (!dlogEnabled()) return;
+  try {
+    const w = el.naturalWidth;
+    const h = el.naturalHeight;
+    if (!w || !h || typeof document === "undefined") return;
+    const stripH = Math.min(2, h);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = stripH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(el, 0, h - stripH, w, stripH, 0, 0, w, stripH);
+    const { data } = ctx.getImageData(0, 0, w, stripH);
+    let allZero = true;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0) {
+        allZero = false;
+        break;
+      }
+    }
+    dlog("present", "bottom-strip probe", { layer, url, w, h, allZero });
+  } catch {
+    // Advisory only — canvas readback failures (e.g. a tainted canvas) must
+    // never affect presentation.
+  }
+}
 
 /**
  * React binding for the Presenter (pipeline Phase 4): owns the two physical
@@ -44,7 +84,9 @@ export function usePresent(
           // decode() rejects when the src changes mid-decode (a superseding
           // offer took the layer) or the data is undecodable — exactly the
           // failure semantics the presenter's gate expects.
-          return el.decode();
+          return el.decode().then(() => {
+            probeBottomStrip(layer, url, el);
+          });
         },
       }),
   );

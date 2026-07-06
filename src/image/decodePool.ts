@@ -16,7 +16,19 @@
  * Decoded RGBA is the real budget (preview ≈ 7 MB, full ≈ 130 MB at
  * 32.5 MP) — caps live in the performance profiles (decodedPoolPreviews /
  * decodedPoolFulls) and are passed per retain() call.
+ *
+ * Remedy B (mid-dims-bug-report §4/§7B): a cursor-band re-aim that drops a
+ * path mid-decode used to clear `src` immediately, which ABORTS the
+ * in-flight decode. That abort was identified as the highest-frequency seed
+ * of a WKWebView blob-poisoning defect: the engine can retain the aborted,
+ * partially-decoded raster keyed by the (still store-valid, still-offered)
+ * blob URL, later re-presenting it as a bottom-cropped frame. `release()`
+ * now defers the `src` clear until the decode settles (resolve OR reject) —
+ * the element just finishes decoding into memory nobody reads, instead of
+ * being yanked mid-flight.
  */
+
+import { dlog } from "../utils/dlog";
 
 /** Structural slice of HTMLImageElement the pool needs (test-injectable). */
 export type PoolImage = { src: string; decode(): Promise<void> };
@@ -25,10 +37,20 @@ export type PoolTier = "preview" | "full";
 
 export type PoolEntry = { path: string; url: string };
 
+type Slot = {
+  url: string;
+  el: PoolImage;
+  /** Flips true once this slot's decode() has resolved or rejected. */
+  settled: boolean;
+  /** Set by release() when the slot is dropped while still mid-decode — the
+   *  actual `src = ""` is deferred to the decode's settle handler. */
+  releasePending: boolean;
+};
+
 export class DecodePool {
-  /** key `${tier}\0${path}` → the held element and the blob url it decodes.
+  /** key `${tier}\0${path}` → the held element + its blob url + decode state.
    *  NUL can't occur in a path, so the key never collides across tiers. */
-  private slots = new Map<string, { url: string; el: PoolImage }>();
+  private slots = new Map<string, Slot>();
   /** key → blob url whose decode REJECTED. Never re-attempted for the SAME
    *  url (an undecodable payload won't fix itself, and the band re-aims on
    *  every cursor move — retrying would burn a decode per scrub step). A
@@ -64,19 +86,35 @@ export class DecodePool {
       const key = prefix + path;
       if (this.failed.get(key) === url) continue; // known-bad blob — skip
       const el = this.createImage();
-      this.slots.set(key, { url, el });
+      const slot: Slot = { url, el, settled: false, releasePending: false };
+      this.slots.set(key, slot);
       el.src = url;
-      el.decode().catch(() => {
-        // Undecodable (or revoked underneath us): release and remember the
-        // bad url so the per-cursor-move re-aim doesn't retry it forever —
-        // unless a newer slot already took the key.
-        const cur = this.slots.get(key);
-        if (cur && cur.el === el) {
-          this.slots.delete(key);
-          this.failed.set(key, url);
-          el.src = "";
-        }
-      });
+      el.decode().then(
+        () => this.onSettle(key, slot),
+        () => this.onSettle(key, slot, url),
+      );
+    }
+  }
+
+  /** Fires once a slot's decode() resolves or rejects. `failedUrl` is set
+   *  only on rejection. Handles both the still-normal in-band case (existing
+   *  failed-tracking behavior, unchanged) and the Remedy-B deferred-release
+   *  case (a release() that happened while this decode was still in-flight). */
+  private onSettle(key: string, slot: Slot, failedUrl?: string): void {
+    slot.settled = true;
+    if (slot.releasePending) {
+      // Deferred from release(): safe to drop the src now — the decode
+      // already ran to completion, so clearing it here can't abort anything.
+      slot.el.src = "";
+      return;
+    }
+    if (failedUrl === undefined) return; // resolved — still retained, nothing else to do
+    // Rejected while still retained: release + remember as known-bad, unless
+    // a newer slot has already taken the key out from under this one.
+    if (this.slots.get(key) === slot) {
+      this.slots.delete(key);
+      this.failed.set(key, failedUrl);
+      slot.el.src = "";
     }
   }
 
@@ -101,8 +139,21 @@ export class DecodePool {
     const slot = this.slots.get(key);
     if (!slot) return;
     this.slots.delete(key);
-    // Dropping the src releases the element's hold on the decoded raster
-    // (and aborts an in-flight decode, which rejects its promise — handled).
+    if (!slot.settled) {
+      // Remedy B: don't clear src while the decode is in-flight — that abort
+      // is the poisoning seed (mid-dims-bug-report §4/§7B). Defer to
+      // onSettle(); the element just finishes decoding into memory nobody
+      // else reads.
+      slot.releasePending = true;
+      const sep = key.indexOf("\0");
+      dlog("pool", "deferred release (decode in-flight)", {
+        tier: key.slice(0, sep),
+        path: key.slice(sep + 1),
+      });
+      return;
+    }
+    // Decode already settled — dropping the src just releases the element's
+    // hold on the decoded raster (no abort possible at this point).
     slot.el.src = "";
   }
 }

@@ -27,6 +27,8 @@
  *    impossible. The binding maps it to styles.
  */
 
+import { dlog } from "../utils/dlog";
+
 export type PresentTier = "thumb" | "preview" | "mid" | "full";
 
 const TIER_RANK: Record<PresentTier, number> = { thumb: 0, preview: 1, mid: 2, full: 3 };
@@ -208,6 +210,10 @@ export class Presenter {
     const back = this.backLayer();
     const seq = ++this.pendingSeq;
     this.pendingRank = TIER_RANK[tier];
+    // mid-dims-bug-report §6.2: timestamp right before the decode call — this
+    // IS effectively "src-set time" (the injected decode() sets `el.src =
+    // url` synchronously before calling el.decode()).
+    const srcSetAt = this.deps.now();
     const decodePromise = this.deps.decode(back, url);
     // Ownership bookkeeping rides a PARALLEL subscriber — chaining (.finally)
     // would add a microtask hop to every presentation path.
@@ -215,7 +221,17 @@ export class Presenter {
       // Release only if no later offer took the element over.
       if (seq === this.pendingSeq) this.pendingRank = null;
     };
-    void decodePromise.then(release, release);
+    void decodePromise.then(release, () => {
+      // Mid-flight aborts at tens of ms are the WKWebView blob-poisoning
+      // candidates (mid-dims-bug-report §4); same-tick clobbers (~0ms) are
+      // ordinary back-element ownership churn, not a signal.
+      dlog("present", "decode rejected", {
+        tier,
+        url,
+        ms: this.deps.now() - srcSetAt,
+      });
+      release();
+    });
 
     if (this.scrubbing) {
       // Frame-budget race: accept only a decode that wins against the next

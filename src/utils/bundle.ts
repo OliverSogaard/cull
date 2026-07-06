@@ -1,5 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ImageMetadata } from "../types";
+import { dlog, dlogEnabled } from "./dlog";
+
+/**
+ * mid-dims-bug-report §6.4 — blob-creation integrity check, all four tiers.
+ * Logs the sliced payload's byte length and whether it ends with the JPEG
+ * EOI marker (FFD9). This is purely diagnostic: it permanently excludes wire
+ * truncation as a cause for any future report of the bottom-cut defect (§2
+ * of that report already verified the pipeline is truncation-free, but a
+ * live log beats re-deriving that by hand every time). Guarded by
+ * `dlogEnabled()` so production pays only the cached boolean check — the
+ * byte-ends scan never runs with the flag off.
+ */
+function logBlobIntegrity(tier: string, bytes: Uint8Array): void {
+  if (!dlogEnabled()) return;
+  const len = bytes.length;
+  const endsWithFFD9 = len >= 2 && bytes[len - 2] === 0xff && bytes[len - 1] === 0xd9;
+  dlog("blob", `${tier} blob created`, { len, endsWithFFD9 });
+}
 
 /**
  * Parse the binary frame shared by the navigation-tier commands.
@@ -60,10 +78,10 @@ export async function fetchNav(path: string, gen: number): Promise<NavResult> {
       const header = JSON.parse(
         new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
       ) as NavHeader;
+      const previewBytes = new Uint8Array(buf, 4 + headerLen, header.previewLen);
+      logBlobIntegrity("preview", previewBytes);
       const previewUrl = URL.createObjectURL(
-        new Blob([new Uint8Array(buf, 4 + headerLen, header.previewLen)], {
-          type: "image/jpeg",
-        }),
+        new Blob([previewBytes], { type: "image/jpeg" }),
       );
       return {
         previewUrl,
@@ -106,9 +124,9 @@ export async function fetchFullres(
   const header = JSON.parse(
     new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
   ) as FullresHeader;
-  const url = URL.createObjectURL(
-    new Blob([new Uint8Array(buf, 4 + headerLen, header.fullLen)], { type: "image/jpeg" }),
-  );
+  const fullBytes = new Uint8Array(buf, 4 + headerLen, header.fullLen);
+  logBlobIntegrity("fullres", fullBytes);
+  const url = URL.createObjectURL(new Blob([fullBytes], { type: "image/jpeg" }));
   return { url };
 }
 
@@ -141,9 +159,9 @@ export async function fetchMid(
   const header = JSON.parse(
     new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
   ) as MidHeader;
-  const url = URL.createObjectURL(
-    new Blob([new Uint8Array(buf, 4 + headerLen, header.midLen)], { type: "image/jpeg" }),
-  );
+  const midBytes = new Uint8Array(buf, 4 + headerLen, header.midLen);
+  logBlobIntegrity("mid", midBytes);
+  const url = URL.createObjectURL(new Blob([midBytes], { type: "image/jpeg" }));
   return { url, width: header.width, height: header.height };
 }
 
@@ -200,8 +218,8 @@ export async function fetchThumbnail(path: string): Promise<ThumbResult> {
   const header = JSON.parse(
     new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
   ) as ThumbHeader;
-  const url = URL.createObjectURL(
-    new Blob([new Uint8Array(buf, 4 + headerLen, header.jpegLen)], { type: "image/jpeg" }),
-  );
+  const thumbBytes = new Uint8Array(buf, 4 + headerLen, header.jpegLen);
+  logBlobIntegrity("thumb", thumbBytes);
+  const url = URL.createObjectURL(new Blob([thumbBytes], { type: "image/jpeg" }));
   return { url, width: header.width, height: header.height, meta: header.meta ?? null };
 }
