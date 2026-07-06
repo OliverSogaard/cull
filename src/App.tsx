@@ -1452,14 +1452,32 @@ export default function App() {
       return;
     }
     if (scrubbing) return; // overlays are hidden mid-scrub; skip measure + RO churn
-    // NEVER measure while zoomed: getBoundingClientRect returns the
-    // TRANSFORMED (scaled) box, and a preview landing mid-zoom re-fires this
-    // effect — the corrupted rect then collapses every zoom factor derived
-    // from it (the "zooms back out and breaks" bug from the macOS matrix).
-    // imgRect keeps its last-good fit-size value; the isZooming dep re-runs
-    // the measure the moment zoom disengages.
+    // While zoomed, the img's own getBoundingClientRect is the TRANSFORMED
+    // (scaled) box — measuring it corrupted every zoom factor derived from it
+    // (the "zooms back out and breaks" bug from the macOS matrix). But a
+    // carried-zoom rating advance can land on a frame with a DIFFERENT aspect
+    // ratio, whose fit box the last-good rect no longer describes (wrong 1:1
+    // scale, misaligned hi-res). Transform-safe answer: measure the img's
+    // parent — the __clip window div is never transformed, the base layer
+    // fills it exactly (inset 0, 100%), and frame AR == photo AR makes it the
+    // displayed-photo rect. No ResizeObserver while zoomed (as before); the
+    // isZooming dep re-runs the full measure path on release.
     if (isZooming) {
       wasZoomingRef.current = true;
+      const clip = imgRef.current?.parentElement;
+      const stage = stageRef.current;
+      if (clip && stage) {
+        const cr = clip.getBoundingClientRect();
+        const sr = stage.getBoundingClientRect();
+        if (cr.width >= 1) {
+          setImgRect({
+            left: cr.left - sr.left,
+            top: cr.top - sr.top,
+            width: cr.width,
+            height: cr.height,
+          });
+        }
+      }
       return;
     }
     // …and when zoom JUST disengaged, the layers are still mid-transition
@@ -1928,8 +1946,6 @@ export default function App() {
       const nextTarget =
         pos !== -1 && pos + 1 < visibleIndices.length ? visibleIndices[pos + 1] : null;
       const nextImg = nextTarget !== null ? images[nextTarget] : null;
-      // (Rating is blocked while zoomed — see the keymap — so zoom is never active
-      // here and the next frame can't inherit it.)
       // Flash the verdict on the INCOMING frame's id: the full-frame wash is keyed
       // to the current frame, which the advance below makes nextImg, so keying it to
       // the outgoing cur.id meant the wash was wiped the instant we advanced.
