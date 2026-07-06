@@ -678,7 +678,10 @@ pub(crate) async fn generate_mid(
 /// ({display width/height, jpeg length, metadata}), then the THMB JPEG bytes.
 /// `meta` ships on fresh parses (the moov head is already parsed — Phase 2
 /// metadata fast path) AND on v2 disk-cache hits (the stored header carries
-/// it — Phase 7 closed the v1 `meta: null` gap).
+/// it — Phase 7 closed the v1 `meta: null` gap). Since the "similar groups are
+/// a standing fact" change, `meta.phash` rides along the same way: computed
+/// once on a fresh parse (see [`thumb_phash`]) and replayed verbatim on cache
+/// hits — never recomputed on a hit.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThumbHeader {
@@ -688,11 +691,34 @@ struct ThumbHeader {
     meta: Option<ImageMetadata>,
 }
 
+/// 64-bit DCT pHash (16 lowercase hex chars) of a decoded thumbnail JPEG —
+/// the STANDING near-duplicate signal for `groupSimilar`'s pHash tier,
+/// independent of smart culling (that pass computes its OWN pHash from the
+/// PRVW decode; the two are different resolutions and must never be
+/// Hamming-compared against each other). `None` on a decode failure — never
+/// observed against real THMB JPEGs in practice, but a thumb whose pixels
+/// can't be hashed still serves its JPEG payload rather than erroring the
+/// whole read.
+fn thumb_phash(jpeg: &[u8]) -> Option<String> {
+    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
+    let mut dec = JpegDecoder::new_with_options(ZCursor::new(jpeg), opts);
+    let rgb = dec.decode().ok()?;
+    let info = dec.info()?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    if rgb.len() != w * h * 3 {
+        return None;
+    }
+    let luma = crate::phash::luma_of(&rgb);
+    Some(format!("{:016x}", crate::phash::phash64(&luma, w, h)))
+}
+
 /// Tiny embedded thumbnail (160×120), already EXIF-oriented, plus display
 /// dimensions. Served from the on-disk tier cache when current — validated
 /// against the SESSION STAT TABLE (mtime ms + size, fed by analyze's dir
 /// listings), so a cache hit costs ZERO source-file round-trips; un-analyzed
-/// paths stat once and memoize. Misses parse the CR3 and cache header+JPEG.
+/// paths stat once and memoize. Misses parse the CR3 and cache header+JPEG,
+/// stamping `meta.phash` (see [`thumb_phash`]) — the standing near-duplicate
+/// signal `groupSimilar` groups on, rendered whether or not smart culling runs.
 #[tauri::command]
 pub(crate) async fn extract_thumbnail(
     path: String,
@@ -719,6 +745,7 @@ pub(crate) async fn extract_thumbnail(
         if let Some((_, size)) = stat {
             meta.file_size = Some(size);
         }
+        meta.phash = thumb_phash(&t.jpeg);
         let header = ThumbHeader {
             width: t.width,
             height: t.height,
@@ -744,4 +771,84 @@ pub(crate) async fn clear_thumb_cache(cache: State<'_, Arc<TierCache>>) -> Resul
 #[tauri::command]
 pub(crate) async fn thumb_cache_size(cache: State<'_, Arc<TierCache>>) -> Result<u64, String> {
     Ok(cache.size_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jpeg_encoder::{ColorType, Encoder};
+
+    /// Deterministic photo-ish RGB (same recipe as `midtier.rs` tests):
+    /// asymmetric per channel so a channel-order bug shows up as a gross
+    /// hash change rather than hiding in a gradient-symmetric fixture.
+    fn synth_rgb(w: u32, h: u32) -> Vec<u8> {
+        let mut px = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let n = ((x.wrapping_mul(31)).wrapping_add(y.wrapping_mul(17)) % 13) as u8;
+                px.push(((x * 255 / w.max(1)) as u8).wrapping_add(n));
+                px.push((y * 255 / h.max(1)) as u8);
+                px.push(((x + y) * 255 / (w + h).max(1)) as u8);
+            }
+        }
+        px
+    }
+
+    fn synth_jpeg(w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        Encoder::new(&mut out, 90)
+            .encode(&synth_rgb(w, h), w as u16, h as u16, ColorType::Rgb)
+            .expect("synth encode");
+        out
+    }
+
+    fn is_well_formed_phash(s: &str) -> bool {
+        s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    }
+
+    #[test]
+    fn thumb_phash_hashes_a_decodable_thumb_jpeg() {
+        let jpeg = synth_jpeg(160, 120);
+        let hex = thumb_phash(&jpeg).expect("decodable JPEG must hash");
+        assert!(is_well_formed_phash(&hex), "not a well-formed 16-hex phash: {hex}");
+    }
+
+    #[test]
+    fn thumb_phash_identical_jpegs_hash_identically() {
+        let jpeg = synth_jpeg(160, 120);
+        assert_eq!(thumb_phash(&jpeg), thumb_phash(&jpeg));
+    }
+
+    #[test]
+    fn thumb_phash_none_on_undecodable_bytes() {
+        assert_eq!(thumb_phash(b"not a jpeg"), None);
+        assert_eq!(thumb_phash(&[]), None);
+    }
+
+    // Real-corpus check: every THMB in a folder of real CR3s decodes to a
+    // well-formed 16-hex pHash via the exact path `extract_thumbnail` uses.
+    // Gated like every other corpus test in this codebase (cr3.rs, analyze.rs):
+    // `CULL_TEST_CR3_DIR=path cargo test -- --nocapture`.
+    #[test]
+    fn thumb_phash_over_sample_dir_is_well_formed() {
+        let Ok(dir) = std::env::var("CULL_TEST_CR3_DIR") else {
+            eprintln!("skip: set CULL_TEST_CR3_DIR to a folder of .CR3 files");
+            return;
+        };
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .expect("read dir")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cr3")))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "no CR3 files in {dir}");
+
+        for p in &paths {
+            let ps = p.to_string_lossy().to_string();
+            let t = cr3::read_thumbnail(&ps).unwrap_or_else(|e| panic!("{ps}: thumb {e}"));
+            let hex = thumb_phash(&t.jpeg).unwrap_or_else(|| panic!("{ps}: thumb must hash"));
+            assert!(is_well_formed_phash(&hex), "{ps}: not well-formed: {hex}");
+        }
+    }
 }

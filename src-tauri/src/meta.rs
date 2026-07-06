@@ -58,6 +58,17 @@ pub(crate) struct ImageMetadata {
     /// CULL's own stamp, not a user rating — the frontend filters that case
     /// using the (cull) rating it already has.
     pub lrc_rating: Option<u8>,
+    /// 64-bit DCT pHash of the DECODED THUMBNAIL (Rec.601 luma, `phash::phash64`),
+    /// 16 lowercase hex chars — STRING because JS numbers lose bits past 2^53.
+    /// Filled in by the thumb handler ONLY (`bundle::extract_thumbnail`), not
+    /// from CR3/EXIF content — same "patched after `From`" pattern as
+    /// `file_size`. This is the STANDING near-duplicate signal (always
+    /// available once a frame's thumbnail has decoded, independent of smart
+    /// culling) and is a DIFFERENT source than `analyze::ImageScore.phash`
+    /// (computed from the PRVW decode, a different resolution) — the two must
+    /// never be Hamming-compared against each other. `None` on a thumb decode
+    /// failure.
+    pub phash: Option<String>,
 }
 
 // MAINTAINERS: this mapping is exhaustive on purpose — adding a field to
@@ -87,6 +98,7 @@ impl From<cr3::Cr3Meta> for ImageMetadata {
             pixel_height: m.pixel_height,
             file_size: None,
             lrc_rating: None,
+            phash: None,
         }
     }
 }

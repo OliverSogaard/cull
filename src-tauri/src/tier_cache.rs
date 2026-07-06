@@ -37,7 +37,14 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 const MAGIC: &[u8; 4] = b"CUL2";
-const VERSION: u8 = 2;
+/// v3 (similar-groups-are-standing change): `ThumbHeader`'s `meta` gained a
+/// `phash` field (the standing near-duplicate signal `groupSimilar` now
+/// groups on) — a semantic change to the stored header per the CONTRACT
+/// above, so the version bumps. Cost: EVERY tier's cached entries (not just
+/// thumb) invalidate once, since `VERSION` is shared across tiers and each
+/// `get()` checks it before the tier byte; accepted, same one-time silent
+/// regeneration as the v1→v2 bump.
+const VERSION: u8 = 3;
 /// magic + version + tier + mtime_ms + file_size + header_len
 const PRELUDE: usize = 4 + 1 + 1 + 8 + 8 + 4;
 
@@ -529,6 +536,33 @@ mod tests {
         bytes[5] = CacheTier::Prvw.byte();
         std::fs::write(store.dir.join(&key), &bytes).unwrap();
         assert!(store.get(&src, 1000, 3).is_none(), "tier mismatch refused");
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// The VERSION-bump contract in action: an entry stamped with a stale
+    /// (pre-bump) version byte — e.g. a v2 header predating `meta.phash` —
+    /// fails the check exactly like any other corrupt entry: refused AND
+    /// dropped (index + file), forcing the next read to regenerate a fresh
+    /// header with the new field rather than silently replaying the old
+    /// shape (`ThumbHeader`/`ImageMetadata`'s own `serde(default)` would
+    /// otherwise happily parse the stale JSON with `phash` defaulted to
+    /// `None` forever, since the source file itself never changes).
+    #[test]
+    fn stale_version_byte_is_refused_and_dropped() {
+        let work = tmp("staleversion");
+        std::fs::create_dir_all(&work).unwrap();
+        let store = small_store(work.join("t"), 10_000, 1_000);
+        let src = src_file(&work, "a.cr3", b"cr3");
+        let key = key_for(&src);
+
+        store.put(&src, 1000, 3, b"{}", b"jpeg");
+        let mut bytes = std::fs::read(store.dir.join(&key)).unwrap();
+        bytes[4] = VERSION - 1; // a previous format's stamp
+        std::fs::write(store.dir.join(&key), &bytes).unwrap();
+        assert!(store.get(&src, 1000, 3).is_none(), "stale version refused");
+        assert!(!store.dir.join(&key).exists(), "stale-version file deleted");
+        assert_eq!(store.size_bytes(), 0);
 
         let _ = std::fs::remove_dir_all(&work);
     }

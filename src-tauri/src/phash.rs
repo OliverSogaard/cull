@@ -5,6 +5,18 @@
 //! coefficient > median. Robust to re-encode/resize/small exposure shifts;
 //! Hamming distance ≤ ~10 ⇒ near-exact duplicate.
 
+/// Rec.601 luma from a tightly-packed RGB8 buffer (`w*h*3` bytes). Shared by
+/// the analyze-pass metric core (`analyze::score_one`) and the thumb-tier
+/// pHash (`bundle::thumb_phash`) — ONE weighting so the two decodes (PRVW vs
+/// THMB) at least agree on how luma is derived, even though their resulting
+/// pHashes are never compared against each other (different source
+/// resolutions — see `groupSimilar::SimilarInput`).
+pub(crate) fn luma_of(rgb: &[u8]) -> Vec<u8> {
+    rgb.chunks_exact(3)
+        .map(|p| ((77 * p[0] as u32 + 150 * p[1] as u32 + 29 * p[2] as u32) >> 8) as u8)
+        .collect()
+}
+
 /// 64-bit DCT pHash of a tightly-packed luma buffer.
 pub fn phash64(luma: &[u8], w: usize, h: usize) -> u64 {
     if w == 0 || h == 0 || luma.len() < w * h {

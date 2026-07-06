@@ -20,6 +20,8 @@ use tauri::State;
 
 use crate::bundle;
 use crate::io_gate::{IoGate, SessionGate, Tier};
+/// Rec.601 luma — shared with the thumb-tier pHash (`bundle::thumb_phash`).
+use crate::phash::luma_of;
 use crate::tier_cache::TierCache;
 
 /// All-3-channel clip thresholds — faithful port of `clipScan`'s test
@@ -346,13 +348,6 @@ pub(crate) fn motion_blur_likelihood(
 pub(crate) fn captured_at_ms(captured_at: Option<&str>, sub_sec_ms: Option<u16>) -> Option<i64> {
     let dt = chrono::NaiveDateTime::parse_from_str(captured_at?, "%Y-%m-%dT%H:%M:%S").ok()?;
     Some(dt.and_utc().timestamp_millis() + sub_sec_ms.unwrap_or(0) as i64)
-}
-
-/// Rec.601 integer luma of a packed RGB8 buffer.
-fn luma_of(rgb: &[u8]) -> Vec<u8> {
-    rgb.chunks_exact(3)
-        .map(|p| ((77 * p[0] as u32 + 150 * p[1] as u32 + 29 * p[2] as u32) >> 8) as u8)
-        .collect()
 }
 
 /// Full metric pass over one decoded preview.
