@@ -62,7 +62,7 @@ export function useSmartCulling(opts: {
   /** Which staged set the auto-start already fired for. */
   const startedForRef = useRef<readonly Img[] | null>(null);
   /** Did the last MAIN pass land ANY scores? A fully-failed pass (drive
-   *  vanished, every chunk skipped) may be retried manually via `5`/the Smart
+   *  vanished, every chunk skipped) may be retried manually via `4`/the Smart
    *  tab. Catch-up passes don't touch it — a failed 1-frame catch-up must not
    *  re-open the door to a full re-run. */
   const gotScoresRef = useRef(false);
@@ -134,7 +134,7 @@ export function useSmartCulling(opts: {
   );
 
   const startAnalysis = useCallback(() => {
-    // Once per staged set (running OR completed): the `5` key and the Smart
+    // Once per staged set (running OR completed): the `4` key and the Smart
     // tab call this unconditionally as the manual-start escape hatch when
     // "analyze on open" is off — repeat presses must not re-run the pass.
     // Exception: a pass that produced ZERO scores (every chunk failed) may be
@@ -144,7 +144,7 @@ export function useSmartCulling(opts: {
     startedForRef.current = images;
     const dispatched = unratedTargets(images, ratedIds);
     if (dispatched.length === 0) {
-      // Fully-rated folder: the pass is vacuously complete — latch it so `5`
+      // Fully-rated folder: the pass is vacuously complete — latch it so `4`
       // doesn't retry, and let the catch-up effect own any later unrates.
       gotScoresRef.current = true;
       return;

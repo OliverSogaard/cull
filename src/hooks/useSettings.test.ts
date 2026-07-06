@@ -25,3 +25,21 @@ describe("coerceSettings — smart culling fields auto-default (no key bump)", (
     );
   });
 });
+
+describe("coerceSettings — defaultFilter migration", () => {
+  it("migrates the pre-sub-mode-rework 'favorites' value to 'keepsFavs'", () => {
+    const s = coerceSettings({ defaultFilter: "favorites" });
+    expect(s.defaultFilter).toBe("keepsFavs");
+  });
+
+  it("keeps a valid modern defaultFilter value as-is", () => {
+    expect(coerceSettings({ defaultFilter: "keepsFavs" }).defaultFilter).toBe("keepsFavs");
+    expect(coerceSettings({ defaultFilter: "keeps" }).defaultFilter).toBe("keeps");
+  });
+
+  it("falls back to the default for unknown/garbage defaultFilter values", () => {
+    expect(coerceSettings({ defaultFilter: "nonsense" }).defaultFilter).toBe(
+      DEFAULT_SETTINGS.defaultFilter,
+    );
+  });
+});

@@ -76,7 +76,7 @@ export type Settings = {
   openLastFolderOnLaunch: boolean;
 
   // — Smart culling (advisory only; nothing is ever written by the AI) —
-  /** Master switch for suggestions (ghost dots, burst visuals, `5` filter). */
+  /** Master switch for suggestions (ghost dots, burst visuals, `4` filter). */
   smartCulling: boolean;
   /** How confident a REJECT suggestion must be before it shows. */
   smartCullingConfidence: SmartLevel;

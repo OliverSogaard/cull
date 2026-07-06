@@ -42,9 +42,15 @@ export function coerceSettings(raw: unknown): Settings {
       p.storageMode === "local" || p.storageMode === "network"
         ? (p.storageMode as StorageMode)
         : d.storageMode,
-    defaultFilter: FILTERS.includes(p.defaultFilter as Filter)
-      ? (p.defaultFilter as Filter)
-      : d.defaultFilter,
+    // "favorites" was the pre-sub-mode-rework value (dd2a632 split filters into
+    // top-level + sub-mode); map it 1:1 to its modern equivalent instead of
+    // falling back to the default, so users who set it don't silently lose it.
+    defaultFilter:
+      p.defaultFilter === "favorites"
+        ? "keepsFavs"
+        : FILTERS.includes(p.defaultFilter as Filter)
+          ? (p.defaultFilter as Filter)
+          : d.defaultFilter,
     defaultThumbsVisible: bool(p.defaultThumbsVisible, d.defaultThumbsVisible),
     defaultExifVisible: bool(p.defaultExifVisible, d.defaultExifVisible),
     defaultClippingVisible: bool(p.defaultClippingVisible, d.defaultClippingVisible),
