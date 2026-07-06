@@ -13,19 +13,16 @@ export const RATING_COLOR: Record<Rating, string> = {
 };
 
 /**
- * True when the LrC star rating is a real pre-existing user rating, not just
- * CULL's own favorite stamp.
+ * True when the LrC star rating is a real pre-existing user rating.
  *
- * CULL writes `xmp:Rating="1"` for its own favorite — so a lone 1★ on a frame
- * whose CULL rating is "favorite" is just CULL's mark, not a user rating that
- * should be surfaced. Everything else (2–5★, or 1★ on a non-fav frame) counts
- * as a user rating.
+ * Star ownership is decided at the read boundary: Rust's `parse_lrc_rating`
+ * never reports CULL's own `cull:fav="star"` stamp, so any star that reaches
+ * the frontend is the user's — including a genuine 1★ on a flag-mode favorite.
+ * (The old frontend rule keyed on the CURRENT rating, which flips on demote
+ * while the loaded star doesn't: that was the phantom "LrC 1★" after unrating
+ * a favorite.)
  */
-export function hasLrcRating(
-  lrcRating: number | null | undefined,
-  cullRating: Rating | undefined,
-): boolean {
+export function hasLrcRating(lrcRating: number | null | undefined): boolean {
   if (lrcRating == null || lrcRating < 1) return false;
-  if (lrcRating === 1 && cullRating === "favorite") return false;
   return true;
 }

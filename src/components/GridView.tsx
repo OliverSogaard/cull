@@ -462,7 +462,7 @@ const GridCell = memo(function GridCell({
   // Verdict glyph + colour modifier for the dot (shared with the strip's ThumbCell).
   const dotIcon = verdictGlyph(rating, 12);
   const dotClass = verdictDotClass(rating, "cull-grid__dot");
-  const showLrc = hasLrcRating(lrcRating, rating);
+  const showLrc = hasLrcRating(lrcRating);
   // Ghost suggestion only while unrated — the committed dot supersedes in
   // place. Ghosts are suggestion-driven only; the run outline is drawn
   // at the grid level (segment boxes), not per cell.

@@ -168,15 +168,20 @@ pub(crate) fn read_ratings(cr3_path: &str) -> (Option<String>, Option<u8>) {
 
 /// The user's Lightroom Classic 1–5★ star rating from a sidecar string.
 ///
-/// Returns `Some(n)` for `n ∈ 1..=5` and `None` for absent / zero / unparseable.
-/// This is the RAW `xmp:Rating` value — including the lone 1★ that CULL itself
-/// writes for its favorite mark. Disambiguating "user's pre-existing LrC rating"
-/// vs "CULL's favorite stamp" needs the CULL rating too (a 1★ on a CULL-favorite
-/// is just CULL's flag, not a pre-existing user rating); the frontend already
-/// has both fields and applies that rule when rendering badges. Reached only
-/// through [`read_ratings`]'s bulk analyze pass — the per-navigation sidecar
-/// read was deleted from `read_bundle` (one NAS round-trip saved per nav).
+/// Returns `Some(n)` for `n ∈ 1..=5` and `None` for absent / zero / unparseable
+/// — and `None` when the star is CULL's OWN favorite stamp
+/// ([`cull_owned_fav_star`]): the courtesy 1★ is a flag, not a user rating.
+/// Ownership is decided HERE, at the read boundary, because the frontend keys
+/// its badges on the CURRENT rating — which changes on demote while the loaded
+/// star value doesn't, leaving a phantom "LrC 1★" (the live bug this fixes).
+/// A flag-mode favorite's user star (any 1–5★, `cull:fav="flag"`) still reads
+/// back in full. Reached only through [`read_ratings`]'s bulk analyze pass —
+/// the per-navigation sidecar read was deleted from `read_bundle` (one NAS
+/// round-trip saved per nav).
 fn parse_lrc_rating(content: &str) -> Option<u8> {
+    if cull_owned_fav_star(content) {
+        return None;
+    }
     let n = parse_xmp_rating(content)?;
     if (1..=5).contains(&n) {
         Some(n as u8)
@@ -727,6 +732,43 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         assert_eq!(parse_lrc_rating("no rating here"), None);
         // Element form (older sidecars).
         assert_eq!(parse_lrc_rating("<xmp:Rating>3</xmp:Rating>"), Some(3));
+    }
+
+    /// CULL's own favorite stamp must never read back as a user LrC rating —
+    /// otherwise demoting a favorite leaves a phantom "LrC 1★" in the UI
+    /// (the restore pass loaded the raw stamp before the demote cleaned it).
+    #[test]
+    fn cull_favorite_stamp_is_not_an_lrc_rating() {
+        // CULL-stamped courtesy star → not a user rating.
+        assert_eq!(
+            parse_lrc_rating("xmp:Rating=\"1\" cull:fav=\"star\" xmpDM:pick=\"1\""),
+            None
+        );
+        // Flag-mode favorite riding the user's own stars → user rating stands,
+        // including a genuine user 1★.
+        assert_eq!(
+            parse_lrc_rating("xmp:Rating=\"3\" cull:fav=\"flag\" xmpDM:pick=\"1\""),
+            Some(3)
+        );
+        assert_eq!(
+            parse_lrc_rating("xmp:Rating=\"1\" cull:fav=\"flag\" xmpDM:pick=\"1\""),
+            Some(1)
+        );
+        // Legacy CULL favorite (pre-marker: CULL-authored + lone 1★) → stamp.
+        assert_eq!(
+            parse_lrc_rating("x:xmptk=\"Cull 1.0\" <xmp:Rating>1</xmp:Rating>"),
+            None
+        );
+        // A genuine LrC 1★ with no CULL involvement is a real user rating.
+        assert_eq!(
+            parse_lrc_rating("x:xmptk=\"Adobe XMP Core\" xmp:Rating=\"1\""),
+            Some(1)
+        );
+        // End-to-end: favorite a fresh frame, then read back — the stamp must
+        // classify as favorite WITHOUT surfacing as an LrC star.
+        let fav = apply_rating_to_xmp(&fresh_xmp(), "favorite").unwrap();
+        assert_eq!(classify_xmp(&fav).as_deref(), Some("favorite"));
+        assert_eq!(parse_lrc_rating(&fav), None);
     }
 
     /// LrC rating reads back what LrC 15.3 wrote on real sample files. CULL's

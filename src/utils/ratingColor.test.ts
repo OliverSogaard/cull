@@ -10,29 +10,22 @@ describe("RATING_COLOR", () => {
 });
 
 describe("hasLrcRating", () => {
-  // Pre-existing user ratings (2–5★) always count, regardless of CULL rating.
   it("treats 2–5★ as a real user rating", () => {
     for (const n of [2, 3, 4, 5]) {
-      expect(hasLrcRating(n, undefined)).toBe(true);
-      expect(hasLrcRating(n, "keep")).toBe(true);
-      expect(hasLrcRating(n, "reject")).toBe(true);
-      expect(hasLrcRating(n, "favorite")).toBe(true);
+      expect(hasLrcRating(n)).toBe(true);
     }
   });
 
-  it("treats 1★ as a real rating UNLESS CULL marked it as favorite", () => {
-    // Lone 1★ on a non-favorite frame is a real LrC rating.
-    expect(hasLrcRating(1, undefined)).toBe(true);
-    expect(hasLrcRating(1, "keep")).toBe(true);
-    expect(hasLrcRating(1, "reject")).toBe(true);
-    // 1★ on a CULL favorite is just CULL's own stamp — suppress.
-    expect(hasLrcRating(1, "favorite")).toBe(false);
+  it("treats 1★ as a real rating — the backend excludes CULL's stamp at read time", () => {
+    // Star ownership lives in Rust now (parse_lrc_rating returns None for
+    // cull:fav="star"), so any 1★ that reaches the frontend IS the user's.
+    expect(hasLrcRating(1)).toBe(true);
   });
 
   it("returns false for null / undefined / 0 / negative", () => {
-    expect(hasLrcRating(null, undefined)).toBe(false);
-    expect(hasLrcRating(undefined, undefined)).toBe(false);
-    expect(hasLrcRating(0, undefined)).toBe(false);
-    expect(hasLrcRating(-1, undefined)).toBe(false);
+    expect(hasLrcRating(null)).toBe(false);
+    expect(hasLrcRating(undefined)).toBe(false);
+    expect(hasLrcRating(0)).toBe(false);
+    expect(hasLrcRating(-1)).toBe(false);
   });
 });

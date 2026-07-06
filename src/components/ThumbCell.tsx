@@ -71,7 +71,7 @@ export const ThumbCell = memo(function ThumbCell({
   const outlineColor =
     (isCurrent || roleVariant) && !isGhost ? "var(--accent)" : "transparent";
 
-  const showLrc = hasLrcRating(lrcRating, rating);
+  const showLrc = hasLrcRating(lrcRating);
 
   // Ghost suggestion renders ONLY while unrated — a keypress paints the solid
   // dot and this guard stops rendering it (superseded in place, never stored).

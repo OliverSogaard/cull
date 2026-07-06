@@ -61,7 +61,7 @@ export function ExifRail({
     meta?.fileSize ?? null,
   );
   const lrc = meta?.lrcRating ?? null;
-  const showLrc = hasLrcRating(lrc, cullRating);
+  const showLrc = hasLrcRating(lrc);
 
   // Exposure section
   const shutter = formatShutter(meta?.shutterSeconds ?? null);
@@ -249,8 +249,8 @@ export function CompareExifRail({
 
     const lrcA = championMeta?.lrcRating ?? null;
     const lrcB = challengerMeta?.lrcRating ?? null;
-    const showLrcA = hasLrcRating(lrcA, championRating);
-    const showLrcB = hasLrcRating(lrcB, challengerRating);
+    const showLrcA = hasLrcRating(lrcA);
+    const showLrcB = hasLrcRating(lrcB);
     const lrcRow =
       showLrcA || showLrcB
         ? {
