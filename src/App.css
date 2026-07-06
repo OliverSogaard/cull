@@ -419,8 +419,11 @@ body,
   align-items: center;
   gap: 0;
   border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   padding-left: 18px;
+  padding-right: 18px;
   margin-left: 4px;
+  margin-right: 4px;
   flex-shrink: 0;
 }
 
