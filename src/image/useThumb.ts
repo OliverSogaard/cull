@@ -21,6 +21,12 @@ import { dlog, dlogEnabled } from "../utils/dlog";
  *
  * The nav url remains as FALLBACK for the thumbless case only (big scrub
  * jump: preview lands before the thumb) — better the preview than a shimmer.
+ * ACCEPTED TRADE-OFF: that fallback frame swaps preview→thumb once when the
+ * thumb finally lands — one src change, one potential single-frame blank on
+ * that cell (the same mechanism this function exists to prevent). Rare (only
+ * frames whose preview won the race) and once-per-frame, vs the old code's
+ * flash on EVERY 8-away prefetch landing; shimmer-until-thumb would avoid it
+ * at the cost of blanking every big-jump landing zone.
  */
 export function thumbDisplayUrl(img: Resolved): string | undefined {
   return img.thumbUrl ?? (img.stage === "shimmer" ? undefined : img.url);
