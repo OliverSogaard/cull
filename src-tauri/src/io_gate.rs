@@ -80,7 +80,11 @@ impl IoGate {
     /// Swap the permit cap for a storage-mode change. Wholesale replacement:
     /// permits already owned belong to (and release into) the old semaphore.
     pub fn set_profile(&self, network: bool) {
-        let permits = if network { NETWORK_PERMITS } else { LOCAL_PERMITS };
+        let permits = if network {
+            NETWORK_PERMITS
+        } else {
+            LOCAL_PERMITS
+        };
         let mut sem = match self.sem.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -251,7 +255,7 @@ mod tests {
         // Local default: plenty of permits.
         let p1 = gate.acquire().await;
         gate.set_profile(true); // network: new semaphore, 6 permits
-        // New acquisitions come from the new instance even with p1 alive.
+                                // New acquisitions come from the new instance even with p1 alive.
         let mut held = Vec::new();
         for _ in 0..NETWORK_PERMITS {
             held.push(gate.acquire().await);
@@ -263,7 +267,10 @@ mod tests {
         };
         assert!(sem.try_acquire().is_err(), "network cap not enforced");
         drop(p1); // releases into the OLD semaphore — harmless
-        assert!(sem.try_acquire().is_err(), "old-instance release leaked into new cap");
+        assert!(
+            sem.try_acquire().is_err(),
+            "old-instance release leaked into new cap"
+        );
         drop(held);
         assert!(sem.try_acquire().is_ok());
         // Timeouts follow the mode.

@@ -35,7 +35,8 @@ const PREVIEW_UUID: [u8; 16] = [
 ];
 
 fn be_u32(d: &[u8], i: usize) -> Option<u32> {
-    d.get(i..i + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    d.get(i..i + 4)
+        .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
 }
 fn be_u64(d: &[u8], i: usize) -> Option<u64> {
     d.get(i..i + 8)
@@ -63,7 +64,9 @@ fn boxes(d: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
         // Checked add: a 64-bit large-size box (s32 == 1) can carry a size near
         // usize::MAX, and `i + size` would wrap (release) or panic (debug). Bail
         // on overflow or a box that runs past the parent range.
-        let Some(box_end) = i.checked_add(size) else { break };
+        let Some(box_end) = i.checked_add(size) else {
+            break;
+        };
         if size < hdr || box_end > end {
             break;
         }
@@ -199,7 +202,11 @@ impl<'a> Tiff<'a> {
                 let typ = self.u16(entry + 2)?;
                 let cnt = self.u32(entry + 4)?;
                 let bytes = type_size(typ).saturating_mul(cnt as usize);
-                let voff = if bytes <= 4 { entry + 8 } else { self.u32(entry + 8)? as usize };
+                let voff = if bytes <= 4 {
+                    entry + 8
+                } else {
+                    self.u32(entry + 8)? as usize
+                };
                 return Some((typ, cnt, voff));
             }
         }
@@ -253,7 +260,11 @@ impl<'a> Tiff<'a> {
         (0..cnt as usize)
             .filter_map(|k| {
                 let o = voff + 8 * k;
-                if typ == 10 { self.srational_at(o) } else { self.urational_at(o) }
+                if typ == 10 {
+                    self.srational_at(o)
+                } else {
+                    self.urational_at(o)
+                }
             })
             .collect()
     }
@@ -332,8 +343,7 @@ fn strip_app1_exif(jpeg: &mut Vec<u8>) {
         if len < 2 || i + 2 + len > jpeg.len() {
             break;
         }
-        let is_exif =
-            marker == 0xE1 && jpeg.len() >= i + 10 && &jpeg[i + 4..i + 10] == b"Exif\0\0";
+        let is_exif = marker == 0xE1 && jpeg.len() >= i + 10 && &jpeg[i + 4..i + 10] == b"Exif\0\0";
         if is_exif {
             jpeg.drain(i..i + 2 + len); // next segment shifts down to i
         } else {
@@ -431,9 +441,15 @@ pub fn full_jpeg_location(d: &[u8], moov_start: usize, moov_end: usize) -> Optio
         if &fourcc != b"trak" {
             continue;
         }
-        let Some((ms, me)) = child_box(d, ts, te, b"mdia") else { continue };
-        let Some((ns, ne)) = child_box(d, ms, me, b"minf") else { continue };
-        let Some((ss, se)) = child_box(d, ns, ne, b"stbl") else { continue };
+        let Some((ms, me)) = child_box(d, ts, te, b"mdia") else {
+            continue;
+        };
+        let Some((ns, ne)) = child_box(d, ms, me, b"minf") else {
+            continue;
+        };
+        let Some((ss, se)) = child_box(d, ns, ne, b"stbl") else {
+            continue;
+        };
 
         // stsz (full box): ver/flags u32, sample_size u32, sample_count u32,
         // then per-sample u32 entries when sample_size == 0.
@@ -586,7 +602,7 @@ fn read_fullres_from(f: &mut File, buf: &mut Vec<u8>, flen: usize) -> std::io::R
                     // SOI present but the JPEG runs past the buffer — read more.
                 }
                 None if window_full => break, // mdat has no leading JPEG → PRVW
-                None => {}                     // mdat just reached buffer tail → read more
+                None => {}                    // mdat just reached buffer tail → read more
             }
         }
         if buf.len() >= flen.min(MAX_JPEG) || !grow(f, buf, GROW, flen)? {
@@ -618,20 +634,28 @@ pub struct Bundle {
 /// in the rare case it spills past the head. INVARIANT: read-only.
 pub fn read_bundle(path: &str) -> std::io::Result<Bundle> {
     const HEAD: usize = 12 << 20; // ftyp + moov + preview uuid + most full-res JPEGs
-    // Bound on how far we'll grow the buffer hunting for moov: a malformed file
-    // with no moov box must not be read in its entirety into RAM (OOM/DoS). moov
-    // sits near the front of any real CR3, so 64 MiB is generous.
+                                  // Bound on how far we'll grow the buffer hunting for moov: a malformed file
+                                  // with no moov box must not be read in its entirety into RAM (OOM/DoS). moov
+                                  // sits near the front of any real CR3, so 64 MiB is generous.
     const MOOV_SCAN_CAP: usize = 64 << 20;
     let (mut buf, mut f, flen) = read_head(path, HEAD)?;
 
     // Ensure the (small) moov box is fully buffered before parsing it.
-    while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 4 << 20, flen)? {}
+    while moov_range(&buf).is_none()
+        && buf.len() < MOOV_SCAN_CAP
+        && grow(&mut f, &mut buf, 4 << 20, flen)?
+    {}
 
     let meta = metadata_from_prefix(&buf);
     let orient = meta.orientation; // parsed once in metadata_from_prefix; reuse it
     let preview = with_exif_orientation(read_fullres_from(&mut f, &mut buf, flen)?, orient);
 
-    Ok(Bundle { preview, meta, orientation: orient, file_size: flen as u64 })
+    Ok(Bundle {
+        preview,
+        meta,
+        orientation: orient,
+        file_size: flen as u64,
+    })
 }
 
 /// Everything one ~2 MiB head read yields for the NAVIGATION tier (Phase 2):
@@ -670,9 +694,9 @@ pub fn read_preview_bundle(
     // hasn't shown by then it does not exist (don't grow into the RAW payload).
     loop {
         let have_moov = moov_range(&buf).is_some();
-        let have_prvw = boxes(&buf, 0, buf.len())
-            .into_iter()
-            .any(|(fcc, cs, ce)| &fcc == b"uuid" && ce - cs >= 16 && buf[cs..cs + 16] == PREVIEW_UUID);
+        let have_prvw = boxes(&buf, 0, buf.len()).into_iter().any(|(fcc, cs, ce)| {
+            &fcc == b"uuid" && ce - cs >= 16 && buf[cs..cs + 16] == PREVIEW_UUID
+        });
         if (have_moov && have_prvw) || top_box_content_start(&buf, b"mdat").is_some() {
             break;
         }
@@ -794,7 +818,10 @@ pub fn read_fullres_scan(path: &str) -> std::io::Result<(Vec<u8>, u32)> {
     const HEAD: usize = 12 << 20;
     const MOOV_SCAN_CAP: usize = 64 << 20;
     let (mut buf, mut f, flen) = read_head(path, HEAD)?;
-    while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 4 << 20, flen)? {}
+    while moov_range(&buf).is_none()
+        && buf.len() < MOOV_SCAN_CAP
+        && grow(&mut f, &mut buf, 4 << 20, flen)?
+    {}
     let orientation = metadata_from_prefix(&buf).orientation;
     let jpeg = read_fullres_from(&mut f, &mut buf, flen)?;
     Ok((jpeg, orientation))
@@ -839,7 +866,10 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
     const HEAD: usize = 1 << 20; // moov (with THMB) virtually always fits in 1 MiB
     const MOOV_SCAN_CAP: usize = 64 << 20; // bound the hunt on malformed input (OOM/DoS)
     let (mut buf, mut f, flen) = read_head(path, HEAD)?;
-    while moov_range(&buf).is_none() && buf.len() < MOOV_SCAN_CAP && grow(&mut f, &mut buf, 2 << 20, flen)? {}
+    while moov_range(&buf).is_none()
+        && buf.len() < MOOV_SCAN_CAP
+        && grow(&mut f, &mut buf, 2 << 20, flen)?
+    {}
     let raw = thumbnail_from_prefix(&buf).ok_or_else(|| io_err("no thumbnail box"))?;
     // The moov head already holds the CMT TIFF, so orientation + EXIF pixel dims
     // — and with them the whole Cr3Meta — come free.
@@ -1103,8 +1133,16 @@ mod tests {
         }
 
         // Orientation 1 (and mirror flips we never emit) pass through untouched.
-        assert_eq!(with_exif_orientation(base.clone(), 1), base, "upright untouched");
-        assert_eq!(with_exif_orientation(base.clone(), 2), base, "mirror untouched");
+        assert_eq!(
+            with_exif_orientation(base.clone(), 1),
+            base,
+            "upright untouched"
+        );
+        assert_eq!(
+            with_exif_orientation(base.clone(), 2),
+            base,
+            "mirror untouched"
+        );
     }
 
     // Re-injecting must REPLACE, not stack, EXIF segments.
@@ -1126,19 +1164,30 @@ mod tests {
         };
         let b = read_bundle(&path).expect("read_bundle failed");
         assert_eq!(&b.preview[..2], &[0xFF, 0xD8], "preview missing SOI");
-        assert_eq!(&b.preview[b.preview.len() - 2..], &[0xFF, 0xD9], "preview missing EOI");
+        assert_eq!(
+            &b.preview[b.preview.len() - 2..],
+            &[0xFF, 0xD9],
+            "preview missing EOI"
+        );
         let img = image::load_from_memory(&b.preview).expect("preview decode failed");
         // Thumbnail is now a separate read (its own pool), not part of the bundle.
         let tn = read_thumbnail(&path).expect("read_thumbnail failed");
         let (thumb, torient) = (tn.jpeg, tn.orientation);
         eprintln!(
             "preview {}x{}, {} B, orient {}; thumb {} B; camera {:?}",
-            img.width(), img.height(), b.preview.len(), b.orientation, thumb.len(), b.meta.camera,
+            img.width(),
+            img.height(),
+            b.preview.len(),
+            b.orientation,
+            thumb.len(),
+            b.meta.camera,
         );
         // Sensor frame is landscape regardless of how the shot was framed.
         assert!(
             img.width() >= 6000 && img.height() >= 4000,
-            "not full resolution: {}x{}", img.width(), img.height()
+            "not full resolution: {}x{}",
+            img.width(),
+            img.height()
         );
         // The spliced tag must match the CR3's CMT1 orientation.
         if matches!(b.orientation, 3 | 6 | 8) {
@@ -1156,9 +1205,21 @@ mod tests {
         assert_eq!(sub_sec_to_ms("4"), Some(400), "one digit = tenths");
         assert_eq!(sub_sec_to_ms("47"), Some(470), "two digits = hundredths");
         assert_eq!(sub_sec_to_ms("473"), Some(473), "three digits = ms");
-        assert_eq!(sub_sec_to_ms("4738"), Some(473), "extra precision truncates");
-        assert_eq!(sub_sec_to_ms("47 "), Some(470), "EXIF space padding tolerated");
-        assert_eq!(sub_sec_to_ms("000"), Some(0), "zero is a real value, not absent");
+        assert_eq!(
+            sub_sec_to_ms("4738"),
+            Some(473),
+            "extra precision truncates"
+        );
+        assert_eq!(
+            sub_sec_to_ms("47 "),
+            Some(470),
+            "EXIF space padding tolerated"
+        );
+        assert_eq!(
+            sub_sec_to_ms("000"),
+            Some(0),
+            "zero is a real value, not absent"
+        );
         assert_eq!(sub_sec_to_ms(""), None, "empty = absent");
         assert_eq!(sub_sec_to_ms("  "), None, "only padding = absent");
         assert_eq!(sub_sec_to_ms("x7"), None, "non-digit garbage = absent");
@@ -1169,13 +1230,31 @@ mod tests {
     /// never-emitted, un-rotated mirror values 5/7 must NOT swap.
     #[test]
     fn display_dims_swaps_for_rotated_orientations() {
-        assert_eq!(display_dims(1, Some(6000), Some(4000)), (Some(6000), Some(4000)));
-        assert_eq!(display_dims(3, Some(6000), Some(4000)), (Some(6000), Some(4000)));
-        assert_eq!(display_dims(6, Some(6000), Some(4000)), (Some(4000), Some(6000)));
-        assert_eq!(display_dims(8, Some(6000), Some(4000)), (Some(4000), Some(6000)));
+        assert_eq!(
+            display_dims(1, Some(6000), Some(4000)),
+            (Some(6000), Some(4000))
+        );
+        assert_eq!(
+            display_dims(3, Some(6000), Some(4000)),
+            (Some(6000), Some(4000))
+        );
+        assert_eq!(
+            display_dims(6, Some(6000), Some(4000)),
+            (Some(4000), Some(6000))
+        );
+        assert_eq!(
+            display_dims(8, Some(6000), Some(4000)),
+            (Some(4000), Some(6000))
+        );
         // Mirror orientations are passed through un-rotated, so dims stay as-is.
-        assert_eq!(display_dims(5, Some(6000), Some(4000)), (Some(6000), Some(4000)));
-        assert_eq!(display_dims(7, Some(6000), Some(4000)), (Some(6000), Some(4000)));
+        assert_eq!(
+            display_dims(5, Some(6000), Some(4000)),
+            (Some(6000), Some(4000))
+        );
+        assert_eq!(
+            display_dims(7, Some(6000), Some(4000)),
+            (Some(6000), Some(4000))
+        );
     }
 
     // Exercises read_bundle over every .CR3 in a directory, validating each and
@@ -1196,24 +1275,48 @@ mod tests {
         paths.sort();
         assert!(!paths.is_empty(), "no CR3 files in {dir}");
 
-        eprintln!("{:<16} {:>5} {:>6} {:>6} {:>8} {:>7}", "file", "orient", "MP", "thmbKB", "prevKB", "fit1read");
+        eprintln!(
+            "{:<16} {:>5} {:>6} {:>6} {:>8} {:>7}",
+            "file", "orient", "MP", "thmbKB", "prevKB", "fit1read"
+        );
         for p in &paths {
             let ps = p.to_string_lossy().to_string();
             let b = read_bundle(&ps).unwrap_or_else(|e| panic!("read_bundle({ps}): {e}"));
 
             // Preview is a valid JPEG at full sensor resolution.
             assert_eq!(&b.preview[..2], &[0xFF, 0xD8], "{ps}: preview SOI");
-            assert_eq!(&b.preview[b.preview.len() - 2..], &[0xFF, 0xD9], "{ps}: preview EOI");
-            let img = image::load_from_memory(&b.preview).unwrap_or_else(|e| panic!("{ps}: decode {e}"));
-            assert!(img.width() >= 6000 && img.height() >= 4000, "{ps}: {}x{}", img.width(), img.height());
+            assert_eq!(
+                &b.preview[b.preview.len() - 2..],
+                &[0xFF, 0xD9],
+                "{ps}: preview EOI"
+            );
+            let img =
+                image::load_from_memory(&b.preview).unwrap_or_else(|e| panic!("{ps}: decode {e}"));
+            assert!(
+                img.width() >= 6000 && img.height() >= 4000,
+                "{ps}: {}x{}",
+                img.width(),
+                img.height()
+            );
 
             // The thumbnail (separate read) is a real, EXIF-oriented JPEG.
             let tn = read_thumbnail(&ps).unwrap_or_else(|e| panic!("{ps}: thumb {e}"));
             let (thumb, torient) = (tn.jpeg, tn.orientation);
-            assert!(thumb.starts_with(&[0xFF, 0xD8]), "{ps}: thumbnail missing/!JPEG");
+            assert!(
+                thumb.starts_with(&[0xFF, 0xD8]),
+                "{ps}: thumbnail missing/!JPEG"
+            );
             if matches!(b.orientation, 3 | 6 | 8) {
-                assert_eq!(exif_orientation_of(&b.preview), b.orientation as u8, "{ps}: preview orient");
-                assert_eq!(exif_orientation_of(&thumb), torient as u8, "{ps}: thumb orient");
+                assert_eq!(
+                    exif_orientation_of(&b.preview),
+                    b.orientation as u8,
+                    "{ps}: preview orient"
+                );
+                assert_eq!(
+                    exif_orientation_of(&thumb),
+                    torient as u8,
+                    "{ps}: thumb orient"
+                );
             }
 
             // Did the full-res JPEG fit inside the 12 MiB head (no grow)? It does
@@ -1231,8 +1334,11 @@ mod tests {
             // Print EXIF extras to eyeball against known values.
             eprintln!(
                 "    exif {:?}x{:?}  eV={:?}  wb={:?}  drive={:?}",
-                b.meta.pixel_width, b.meta.pixel_height,
-                b.meta.exposure_bias, b.meta.white_balance, b.meta.drive_mode,
+                b.meta.pixel_width,
+                b.meta.pixel_height,
+                b.meta.exposure_bias,
+                b.meta.white_balance,
+                b.meta.drive_mode,
             );
         }
     }
@@ -1326,8 +1432,8 @@ mod tests {
             let (off, len) = b.full_hint.unwrap_or_else(|| panic!("{ps}: no hint"));
             let ranged = read_fullres_at(&ps, off, len, &|| false)
                 .unwrap_or_else(|e| panic!("{ps}: range read {e}"));
-            let (scanned, scan_orient) = read_fullres_scan(&ps)
-                .unwrap_or_else(|e| panic!("{ps}: scan {e}"));
+            let (scanned, scan_orient) =
+                read_fullres_scan(&ps).unwrap_or_else(|e| panic!("{ps}: scan {e}"));
             assert_eq!(ranged, scanned, "{ps}: ranged JPEG != scanned JPEG");
             // The scan's self-derived orientation must agree with the preview
             // header's (the hintless zoom path splices this one).
@@ -1360,8 +1466,8 @@ mod tests {
             let d = std::fs::read(p).unwrap_or_else(|e| panic!("read {ps}: {e}"));
 
             // Ground truth: the scan path's result, on the WHOLE file.
-            let mstart = top_box_content_start(&d, b"mdat")
-                .unwrap_or_else(|| panic!("{ps}: no mdat box"));
+            let mstart =
+                top_box_content_start(&d, b"mdat").unwrap_or_else(|| panic!("{ps}: no mdat box"));
             let soi = find_soi(&d, mstart, (mstart + 8192).min(d.len()))
                 .unwrap_or_else(|| panic!("{ps}: no SOI at mdat head"));
             let end = jpeg_extent(&d, soi).unwrap_or_else(|| panic!("{ps}: no EOI"));
@@ -1373,7 +1479,8 @@ mod tests {
 
             assert_eq!(
                 hint.0, soi as u64,
-                "{ps}: hint offset {} != scanned SOI {soi}", hint.0
+                "{ps}: hint offset {} != scanned SOI {soi}",
+                hint.0
             );
             // stsz may legitimately pad past EOI; the hinted range must CONTAIN
             // the JPEG (read_fullres_at truncates at the parsed EOI), and not
@@ -1381,11 +1488,13 @@ mod tests {
             let scanned_len = (end - soi) as u64;
             assert!(
                 hint.1 >= scanned_len,
-                "{ps}: hint len {} < scanned JPEG len {scanned_len}", hint.1
+                "{ps}: hint len {} < scanned JPEG len {scanned_len}",
+                hint.1
             );
             assert!(
                 hint.1 <= scanned_len + 64 * 1024,
-                "{ps}: hint len {} overshoots scanned len {scanned_len} by >64KiB", hint.1
+                "{ps}: hint len {} overshoots scanned len {scanned_len} by >64KiB",
+                hint.1
             );
             eprintln!(
                 "{:<24} hint=({}, {})  scan=({soi}, {scanned_len})  ok",

@@ -143,7 +143,9 @@ fn kernel_interior(w: usize, h: usize, rect: Rect) -> Option<Rect> {
 /// Variance of the 4-neighbour Laplacian over `rect` of a luma buffer
 /// (Welford one-pass). Flat input → ~0. Higher = more edge energy.
 pub(crate) fn var_laplacian(luma: &[u8], w: usize, h: usize, rect: Rect) -> f64 {
-    let Some(r) = kernel_interior(w, h, rect) else { return 0.0 };
+    let Some(r) = kernel_interior(w, h, rect) else {
+        return 0.0;
+    };
     let (mut n, mut mean, mut m2) = (0f64, 0f64, 0f64);
     for y in r.y0..r.y1 {
         for x in r.x0..r.x1 {
@@ -159,12 +161,18 @@ pub(crate) fn var_laplacian(luma: &[u8], w: usize, h: usize, rect: Rect) -> f64 
             m2 += d * (lap - mean);
         }
     }
-    if n < 2.0 { 0.0 } else { m2 / n }
+    if n < 2.0 {
+        0.0
+    } else {
+        m2 / n
+    }
 }
 
 /// Tenengrad (mean squared Sobel magnitude) over `rect` — the cross-check signal.
 pub(crate) fn tenengrad(luma: &[u8], w: usize, h: usize, rect: Rect) -> f64 {
-    let Some(r) = kernel_interior(w, h, rect) else { return 0.0 };
+    let Some(r) = kernel_interior(w, h, rect) else {
+        return 0.0;
+    };
     let px = |x: usize, y: usize| luma[y * w + x] as f64;
     let (mut sum, mut n) = (0f64, 0f64);
     for y in r.y0..r.y1 {
@@ -181,7 +189,11 @@ pub(crate) fn tenengrad(luma: &[u8], w: usize, h: usize, rect: Rect) -> f64 {
             n += 1.0;
         }
     }
-    if n == 0.0 { 0.0 } else { sum / n }
+    if n == 0.0 {
+        0.0
+    } else {
+        sum / n
+    }
 }
 
 /// Noise floor: LOWER median Laplacian variance over the [`NOISE_TILES`]
@@ -209,7 +221,17 @@ pub(crate) fn noise_floor(luma: &[u8], w: usize, h: usize) -> f64 {
     }
     if vars.is_empty() {
         // Buffer smaller than one tile: the whole frame is the only sample.
-        return var_laplacian(luma, w, h, Rect { x0: 0, y0: 0, x1: w, y1: h });
+        return var_laplacian(
+            luma,
+            w,
+            h,
+            Rect {
+                x0: 0,
+                y0: 0,
+                x1: w,
+                y1: h,
+            },
+        );
     }
     vars.sort_by(|a, b| a.total_cmp(b));
     let k = vars.len().min(NOISE_TILES);
@@ -320,7 +342,15 @@ pub(crate) fn af_crop(
     };
     let x0 = ((cx - side as f32 / 2.0).round().max(0.0) as usize).min(w - side);
     let y0 = ((cy - side as f32 / 2.0).round().max(0.0) as usize).min(h - side);
-    (Rect { x0, y0, x1: x0 + side, y1: y0 + side }, valid)
+    (
+        Rect {
+            x0,
+            y0,
+            x1: x0 + side,
+            y1: y0 + side,
+        },
+        valid,
+    )
 }
 
 /// Motion-blur likelihood: clamp(shutter / blur_thresh) · (1 − global_sharpness),
@@ -354,7 +384,12 @@ pub(crate) fn captured_at_ms(captured_at: Option<&str>, sub_sec_ms: Option<u16>)
 pub(crate) fn score_one(input: &DecodedInput, index: usize) -> ImageScore {
     let (w, h) = (input.w, input.h);
     let luma = luma_of(&input.rgb);
-    let full = Rect { x0: 0, y0: 0, x1: w, y1: h };
+    let full = Rect {
+        x0: 0,
+        y0: 0,
+        x1: w,
+        y1: h,
+    };
     let floor = noise_floor(&luma, w, h);
     let (af_rect, af_valid) = af_crop(input.orientation, input.af_x_pct, input.af_y_pct, w, h);
 
@@ -426,7 +461,11 @@ pub(crate) fn score_chunk(
                 enrich(&input, &mut score);
                 out.push(score);
             }
-            Err(_) => out.push(ImageScore { index, decode_ok: false, ..ImageScore::default() }),
+            Err(_) => out.push(ImageScore {
+                index,
+                decode_ok: false,
+                ..ImageScore::default()
+            }),
         }
     }
     // A cancel that lands during the LAST file must not hand back a chunk
@@ -509,10 +548,8 @@ fn attach_faces(input: &DecodedInput, score: &mut ImageScore) {
                 x1: ((d.x + d.w) as usize).min(w),
                 y1: ((d.y + d.h) as usize).min(h),
             };
-            let sharp = normalize_sharpness(
-                var_laplacian(&luma, w, h, rect),
-                score.noise_floor as f64,
-            );
+            let sharp =
+                normalize_sharpness(var_laplacian(&luma, w, h, rect), score.noise_floor as f64);
             // Phase 3b: OCEC on both eye landmarks (kps 0/1 = right/left eye).
             let inter = ((d.kps[0] - d.kps[2]).powi(2) + (d.kps[1] - d.kps[3]).powi(2)).sqrt();
             let eye_prob = |ex: f32, ey: f32| -> Option<f32> {
@@ -559,7 +596,10 @@ mod tests {
     struct Lcg(u64);
     impl Lcg {
         fn next_u8(&mut self) -> u8 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (self.0 >> 33) as u8
         }
     }
@@ -573,7 +613,11 @@ mod tests {
         let mut b = vec![0u8; w * h];
         for y in 0..h {
             for x in 0..w {
-                b[y * w + x] = if ((x / 2) + (y / 2)) % 2 == 0 { 30 } else { 220 };
+                b[y * w + x] = if ((x / 2) + (y / 2)) % 2 == 0 {
+                    30
+                } else {
+                    220
+                };
             }
         }
         b
@@ -607,7 +651,12 @@ mod tests {
     }
 
     fn full_rect(w: usize, h: usize) -> Rect {
-        Rect { x0: 0, y0: 0, x1: w, y1: h }
+        Rect {
+            x0: 0,
+            y0: 0,
+            x1: w,
+            y1: h,
+        }
     }
 
     fn rgb_solid(w: usize, h: usize, rgb: [u8; 3]) -> Vec<u8> {
@@ -645,9 +694,15 @@ mod tests {
         let v_soft = var_laplacian(&soft, w, h, r);
         let v_flat = var_laplacian(&flat(w, h, 128), w, h, r);
 
-        assert!(v_sharp > v_soft * 2.0, "sharp {v_sharp} must dominate blurred {v_soft}");
+        assert!(
+            v_sharp > v_soft * 2.0,
+            "sharp {v_sharp} must dominate blurred {v_soft}"
+        );
         assert!(v_soft > v_flat, "blurred detail still beats flat");
-        assert!(v_flat < 1e-6, "flat field has ~zero Laplacian variance, got {v_flat}");
+        assert!(
+            v_flat < 1e-6,
+            "flat field has ~zero Laplacian variance, got {v_flat}"
+        );
     }
 
     #[test]
@@ -663,8 +718,8 @@ mod tests {
     #[test]
     fn noise_normalization_discounts_pure_noise_but_keeps_real_detail() {
         let (w, h) = (512, 384); // several 128px noise tiles
-        // Pure noise: raw Laplacian variance is HIGH everywhere, but so is the
-        // noise floor → normalized sharpness must stay low.
+                                 // Pure noise: raw Laplacian variance is HIGH everywhere, but so is the
+                                 // noise floor → normalized sharpness must stay low.
         let noise = uniform_noise(w, h, 42);
         let nf_noise = noise_floor(&noise, w, h);
         let v_noise = var_laplacian(&noise, w, h, full_rect(w, h));
@@ -680,7 +735,12 @@ mod tests {
             }
         }
         let nf_scene = noise_floor(&scene, w, h);
-        let centre = Rect { x0: 128, y0: 96, x1: 384, y1: 288 };
+        let centre = Rect {
+            x0: 128,
+            y0: 96,
+            x1: 384,
+            y1: 288,
+        };
         let s_scene = normalize_sharpness(var_laplacian(&scene, w, h, centre), nf_scene);
 
         assert!(nf_noise > nf_scene, "noise field has the higher floor");
@@ -688,7 +748,10 @@ mod tests {
             s_scene > s_noise + 0.2,
             "real detail ({s_scene}) must clearly outrank pure noise ({s_noise})"
         );
-        assert!(s_noise < 0.35, "pure noise must normalize low, got {s_noise}");
+        assert!(
+            s_noise < 0.35,
+            "pure noise must normalize low, got {s_noise}"
+        );
         assert!((0.0..=1.0).contains(&s_scene) && (0.0..=1.0).contains(&s_noise));
     }
 
@@ -699,8 +762,9 @@ mod tests {
         let (w, h) = (128, 96);
         let r = full_rect(w, h);
         // Smooth vertical gradient across a small luma range — "smooth skin".
-        let gradient: Vec<u8> =
-            (0..w * h).map(|i| 110 + ((i / w) * 20 / h.max(1)) as u8).collect();
+        let gradient: Vec<u8> = (0..w * h)
+            .map(|i| 110 + ((i / w) * 20 / h.max(1)) as u8)
+            .collect();
 
         let t_flat = texture_spread(&flat(w, h, 128), w, h, r);
         let t_grad = texture_spread(&gradient, w, h, r);
@@ -708,7 +772,10 @@ mod tests {
 
         assert!(t_flat < 0.05, "flat has ~no spread, got {t_flat}");
         assert!(t_grad < 0.15, "smooth gradient stays low, got {t_grad}");
-        assert!(t_detail > 0.5, "checkerboard spans the range, got {t_detail}");
+        assert!(
+            t_detail > 0.5,
+            "checkerboard spans the range, got {t_detail}"
+        );
     }
 
     // ── Clipping (all-3-channel port) ──────────────────────────────────────
@@ -725,8 +792,14 @@ mod tests {
         // Saturated yellow: R and G at ceiling, B at floor — NEITHER blown nor
         // crushed (the all-3-channel rule; validates the clipScan port).
         let (blown_y, crushed_y) = clip_pcts(&rgb_solid(w, h, [255, 210, 0]));
-        assert!(blown_y < 0.01, "saturated yellow is not blown, got {blown_y}");
-        assert!(crushed_y < 0.01, "saturated yellow is not crushed, got {crushed_y}");
+        assert!(
+            blown_y < 0.01,
+            "saturated yellow is not blown, got {blown_y}"
+        );
+        assert!(
+            crushed_y < 0.01,
+            "saturated yellow is not crushed, got {crushed_y}"
+        );
 
         let (blown_m, crushed_m) = clip_pcts(&rgb_solid(w, h, [128, 128, 128]));
         assert!(blown_m < 0.01 && crushed_m < 0.01, "mid-gray clips nothing");
@@ -744,7 +817,10 @@ mod tests {
 
         assert!(e_mid > e_dark, "mid ({e_mid}) beats dark ({e_dark})");
         assert!(e_dark > e_black, "dark ({e_dark}) beats black ({e_black})");
-        assert!(e_mid > e_bright, "mid ({e_mid}) beats near-white ({e_bright})");
+        assert!(
+            e_mid > e_bright,
+            "mid ({e_mid}) beats near-white ({e_bright})"
+        );
         assert!((0.0..=1.0).contains(&e_mid) && (0.0..=1.0).contains(&e_black));
     }
 
@@ -763,25 +839,37 @@ mod tests {
         let (r1, valid) = af_crop(1, Some(25.0), Some(10.0), w, h);
         assert!(valid);
         let (cx, cy) = centre_of(r1);
-        assert!((cx - 250.0).abs() <= 1.0 && (cy - 60.0).abs() <= 1.0, "o1 got ({cx},{cy})");
+        assert!(
+            (cx - 250.0).abs() <= 1.0 && (cy - 60.0).abs() <= 1.0,
+            "o1 got ({cx},{cy})"
+        );
 
         // o=3 (180°): sensor = (1−x, 1−y) → (750, 540).
         let (r3, _) = af_crop(3, Some(25.0), Some(10.0), w, h);
         let (cx, cy) = centre_of(r3);
-        assert!((cx - 750.0).abs() <= 1.0 && (cy - 540.0).abs() <= 1.0, "o3 got ({cx},{cy})");
+        assert!(
+            (cx - 750.0).abs() <= 1.0 && (cy - 540.0).abs() <= 1.0,
+            "o3 got ({cx},{cy})"
+        );
 
         // o=6 (sensor rotated 90° CW for display): display (xd,yd) ← sensor via
         // xd = 1−ys, yd = xs  ⇒  inverse: xs = yd, ys = 1−xd.
         // (25%, 10%) → sensor (10%, 75%) → (100, 450).
         let (r6, _) = af_crop(6, Some(25.0), Some(10.0), w, h);
         let (cx, cy) = centre_of(r6);
-        assert!((cx - 100.0).abs() <= 1.0 && (cy - 450.0).abs() <= 1.0, "o6 got ({cx},{cy})");
+        assert!(
+            (cx - 100.0).abs() <= 1.0 && (cy - 450.0).abs() <= 1.0,
+            "o6 got ({cx},{cy})"
+        );
 
         // o=8 (90° CCW): xd = ys, yd = 1−xs ⇒ inverse: xs = 1−yd, ys = xd.
         // (25%, 10%) → sensor (90%, 25%) → (900, 150).
         let (r8, _) = af_crop(8, Some(25.0), Some(10.0), w, h);
         let (cx, cy) = centre_of(r8);
-        assert!((cx - 900.0).abs() <= 1.0 && (cy - 150.0).abs() <= 1.0, "o8 got ({cx},{cy})");
+        assert!(
+            (cx - 900.0).abs() <= 1.0 && (cy - 150.0).abs() <= 1.0,
+            "o8 got ({cx},{cy})"
+        );
 
         // Crop size: 0.20 · min(1000,600) = 120px square (all orientations).
         for r in [r1, r3, r6, r8] {
@@ -794,8 +882,14 @@ mod tests {
     fn af_crop_without_af_point_centres_and_flags_invalid() {
         let (rect, valid) = af_crop(6, None, None, 1000, 600);
         assert!(!valid);
-        let (cx, cy) = (((rect.x0 + rect.x1) / 2) as i64, ((rect.y0 + rect.y1) / 2) as i64);
-        assert!((cx - 500).abs() <= 1 && (cy - 300).abs() <= 1, "centred, got ({cx},{cy})");
+        let (cx, cy) = (
+            ((rect.x0 + rect.x1) / 2) as i64,
+            ((rect.y0 + rect.y1) / 2) as i64,
+        );
+        assert!(
+            (cx - 500).abs() <= 1 && (cy - 300).abs() <= 1,
+            "centred, got ({cx},{cy})"
+        );
     }
 
     #[test]
@@ -822,9 +916,20 @@ mod tests {
 
         assert!(slow_soft > 0.7, "slow+soft is likely blur, got {slow_soft}");
         assert!(fast_soft < 0.15, "fast shutter exonerates, got {fast_soft}");
-        assert!(slow_sharp < 0.15, "sharp frame can't be motion-blurred, got {slow_sharp}");
-        assert_eq!(motion_blur_likelihood(None, Some(85.0), 0.1), 0.0, "missing shutter → 0");
-        assert_eq!(motion_blur_likelihood(Some(0.1), None, 0.1), 0.0, "missing focal → 0");
+        assert!(
+            slow_sharp < 0.15,
+            "sharp frame can't be motion-blurred, got {slow_sharp}"
+        );
+        assert_eq!(
+            motion_blur_likelihood(None, Some(85.0), 0.1),
+            0.0,
+            "missing shutter → 0"
+        );
+        assert_eq!(
+            motion_blur_likelihood(Some(0.1), None, 0.1),
+            0.0,
+            "missing focal → 0"
+        );
     }
 
     // ── score_one glue ─────────────────────────────────────────────────────
@@ -845,8 +950,14 @@ mod tests {
         assert_eq!(s.iso, Some(400));
         assert_eq!(s.sub_sec_ms, Some(470));
         assert!(s.af_valid);
-        assert!(s.faces.is_empty() && s.aesthetic.is_none(), "Tier-2 fields stay empty in MVP");
-        assert!(s.af_sharpness > 0.0 && s.af_texture > 0.5, "checkerboard scores sharp+textured");
+        assert!(
+            s.faces.is_empty() && s.aesthetic.is_none(),
+            "Tier-2 fields stay empty in MVP"
+        );
+        assert!(
+            s.af_sharpness > 0.0 && s.af_texture > 0.5,
+            "checkerboard scores sharp+textured"
+        );
         // The Tenengrad cross-check must reach TS on the wire (plan formula:
         // "large disagreement lowers TS confidence") — same normalization scale.
         assert!(
@@ -884,7 +995,9 @@ mod tests {
         let s = score_one(&input, 0);
         let hex = s.phash.expect("phash set on every decoded frame");
         assert_eq!(hex.len(), 16);
-        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(hex
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         // Deterministic: same buffer, same hash.
         assert_eq!(score_one(&input, 0).phash, Some(hex));
     }
@@ -934,21 +1047,32 @@ mod tests {
         session.begin(1);
         let tmp = std::env::temp_dir().join(format!("cull-analyze-test-{}", std::process::id()));
         let cache = crate::tier_cache::TierCache::new(tmp.clone());
-        let fetch =
-            |p: &str| crate::bundle::fetch_decoded_preview(p, 1, &session, &cache);
+        let fetch = |p: &str| crate::bundle::fetch_decoded_preview(p, 1, &session, &cache);
 
         let scores = score_chunk(&paths, 0, &fetch, &|| false, &|_, _| {}).expect("cold chunk");
         for s in &scores {
             assert!(s.decode_ok, "corpus file must decode");
             assert!(s.mtime_ms > 0, "mtime echoed for TS grouping");
-            for v in [s.af_sharpness, s.af_texture, s.global_sharpness, s.tenengrad] {
+            for v in [
+                s.af_sharpness,
+                s.af_texture,
+                s.global_sharpness,
+                s.tenengrad,
+            ] {
                 assert!((0.0..=1.0).contains(&v), "metric out of range: {v}");
             }
             eprintln!(
                 "corpus idx {}: sharp {:.3} tex {:.3} ten {:.3} exp {:.2} blown {:.3} \
                  sub {:?} drive {:?} iso {:?}",
-                s.index, s.af_sharpness, s.af_texture, s.tenengrad, s.exposure_score,
-                s.blown_pct, s.sub_sec_ms, s.drive_mode, s.iso,
+                s.index,
+                s.af_sharpness,
+                s.af_texture,
+                s.tenengrad,
+                s.exposure_score,
+                s.blown_pct,
+                s.sub_sec_ms,
+                s.drive_mode,
+                s.iso,
             );
         }
         // Run 2 must serve from the prvw cache — the stored wire header carries
@@ -958,7 +1082,10 @@ mod tests {
             assert_eq!(a.iso, b.iso, "meta survives the cache round-trip");
             assert_eq!(a.sub_sec_ms, b.sub_sec_ms);
             assert_eq!(a.drive_mode, b.drive_mode);
-            assert!((a.af_sharpness - b.af_sharpness).abs() < 1e-6, "identical scores");
+            assert!(
+                (a.af_sharpness - b.af_sharpness).abs() < 1e-6,
+                "identical scores"
+            );
         }
         let _ = std::fs::remove_dir_all(tmp);
     }
@@ -981,7 +1108,9 @@ mod tests {
             .into_iter()
             .flatten()
             .filter(|e| {
-                e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("cr3"))
+                e.path()
+                    .extension()
+                    .is_some_and(|x| x.eq_ignore_ascii_case("cr3"))
             })
             .map(|e| e.path().to_string_lossy().into_owned())
             .collect();
@@ -1080,8 +1209,10 @@ mod tests {
             };
             let ham = match (&a.phash, &b.phash) {
                 (Some(x), Some(y)) => {
-                    let (x, y) =
-                        (u64::from_str_radix(x, 16).unwrap(), u64::from_str_radix(y, 16).unwrap());
+                    let (x, y) = (
+                        u64::from_str_radix(x, 16).unwrap(),
+                        u64::from_str_radix(y, 16).unwrap(),
+                    );
                     crate::phash::hamming(x, y) as i64
                 }
                 _ => -1,
@@ -1101,7 +1232,8 @@ mod tests {
     #[test]
     fn score_chunk_assigns_absolute_indices() {
         let paths: Vec<String> = (0..3).map(|i| format!("p{i}.CR3")).collect();
-        let scores = score_chunk(&paths, 40, &ok_fetch(64, 48), &|| false, &|_, _| {}).expect("chunk ok");
+        let scores =
+            score_chunk(&paths, 40, &ok_fetch(64, 48), &|| false, &|_, _| {}).expect("chunk ok");
         let idx: Vec<usize> = scores.iter().map(|s| s.index).collect();
         assert_eq!(idx, vec![40, 41, 42], "index = chunk_start + offset");
     }
@@ -1137,7 +1269,8 @@ mod tests {
             Ok(input_from_luma(checkerboard(64, 48), 64, 48))
         };
         let cancelled = || fetches.get() >= 3; // flips true mid-final-file
-        let err = score_chunk(&paths, 0, &fetch, &cancelled, &|_, _| {}).expect_err("stale chunk rejected");
+        let err = score_chunk(&paths, 0, &fetch, &cancelled, &|_, _| {})
+            .expect_err("stale chunk rejected");
         assert!(err.contains("cancelled"));
     }
 
@@ -1151,7 +1284,8 @@ mod tests {
                 Ok(input_from_luma(checkerboard(64, 48), 64, 48))
             }
         };
-        let scores = score_chunk(&paths, 10, &fetch, &|| false, &|_, _| {}).expect("chunk survives");
+        let scores =
+            score_chunk(&paths, 10, &fetch, &|| false, &|_, _| {}).expect("chunk survives");
         assert_eq!(scores.len(), 3, "failed file still yields a score");
         assert!(scores[0].decode_ok && scores[2].decode_ok);
         assert!(!scores[1].decode_ok, "p1 marked decode_ok=false");

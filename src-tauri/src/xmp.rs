@@ -88,7 +88,10 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
     // the expensive part on the NAS this design targets. A brand-new sidecar always
     // differs from fresh_xmp() (a flag was added), so that path still writes.
     if contents == base {
-        dlog!("[cull] write_xmp_rating({}): {rating} (unchanged, skipped)", xmp_path.display());
+        dlog!(
+            "[cull] write_xmp_rating({}): {rating} (unchanged, skipped)",
+            xmp_path.display()
+        );
         return Ok(());
     }
     atomic_write_xmp(&xmp_path, &contents)?;
@@ -130,7 +133,10 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(format!("remove xmp: {e}")),
         }
-        dlog!("[cull] clear_xmp_rating({}): removed sidecar", xmp_path.display());
+        dlog!(
+            "[cull] clear_xmp_rating({}): removed sidecar",
+            xmp_path.display()
+        );
         return Ok(());
     }
 
@@ -138,7 +144,10 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
     // data) → no write. Only pay the temp+fsync+rename when bytes actually change.
     if stripped != existing {
         atomic_write_xmp(&xmp_path, &stripped)?;
-        dlog!("[cull] clear_xmp_rating({}): stripped rating", xmp_path.display());
+        dlog!(
+            "[cull] clear_xmp_rating({}): stripped rating",
+            xmp_path.display()
+        );
     }
     Ok(())
 }
@@ -440,7 +449,15 @@ fn remove_rating_from_xmp(xmp: &str) -> String {
 /// safe to remove.
 fn xmp_has_user_content(xmp: &str) -> bool {
     const MARKERS: [&str; 9] = [
-        "xmp:Label", "dc:", "lr:", "crs:", "photoshop:", "tiff:", "exif:", "aux:", "xmpMM:",
+        "xmp:Label",
+        "dc:",
+        "lr:",
+        "crs:",
+        "photoshop:",
+        "tiff:",
+        "exif:",
+        "aux:",
+        "xmpMM:",
     ];
     if MARKERS.iter().any(|m| xmp.contains(m)) {
         return true;
@@ -533,7 +550,11 @@ mod tests {
     fn fresh_states_round_trip() {
         for rating in ["keep", "reject", "favorite"] {
             let xmp = apply_rating_to_xmp(&fresh_xmp(), rating).unwrap();
-            assert_eq!(classify_xmp(&xmp).as_deref(), Some(rating), "round-trip {rating}");
+            assert_eq!(
+                classify_xmp(&xmp).as_deref(),
+                Some(rating),
+                "round-trip {rating}"
+            );
         }
     }
 
@@ -562,7 +583,11 @@ mod tests {
         let three = set_rating(&fresh_xmp(), 3);
         let kept = apply_rating_to_xmp(&three, "keep").unwrap();
         assert_eq!(parse_xmp_rating(&kept), Some(3), "user 3★ preserved");
-        assert_eq!(classify_xmp(&kept).as_deref(), Some("keep"), "flag+3★ is keep, not favorite");
+        assert_eq!(
+            classify_xmp(&kept).as_deref(),
+            Some("keep"),
+            "flag+3★ is keep, not favorite"
+        );
     }
 
     /// Re-rating a real-looking LrC sidecar preserves its edits and namespace.
@@ -570,7 +595,10 @@ mod tests {
     fn preserves_lrc_content_on_rerate() {
         let lrc = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n <rdf:RDF>\n  <rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n    xmlns:xmpDM=\"http://ns.adobe.com/xmp/1.0/DynamicMedia/\"\n    xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\"\n   xmpDM:pick=\"0\"\n   crs:Contrast2012=\"25\">\n  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>";
         let out = apply_rating_to_xmp(lrc, "reject").unwrap();
-        assert!(out.contains("crs:Contrast2012=\"25\""), "user edits preserved");
+        assert!(
+            out.contains("crs:Contrast2012=\"25\""),
+            "user edits preserved"
+        );
         assert_eq!(parse_attr_i32(&out, "xmpDM:pick"), Some(-1));
         assert_eq!(classify_xmp(&out).as_deref(), Some("reject"));
     }
@@ -600,7 +628,10 @@ mod tests {
         );
         // A stranger's sidecar that merely mentions "Cull" + a genuine 5★ is NOT
         // misclassified as a CULL favorite.
-        assert_eq!(classify_xmp("photographer: Cullen <xmp:Rating>5</xmp:Rating>"), None);
+        assert_eq!(
+            classify_xmp("photographer: Cullen <xmp:Rating>5</xmp:Rating>"),
+            None
+        );
     }
 
     /// The rebrand writes `CreatorTool="CULL"`; sidecars from earlier versions
@@ -612,7 +643,9 @@ mod tests {
         assert!(authored_by_cull("x:xmptk=\"Cull 1.0\""));
         assert!(authored_by_cull("xmp:CreatorTool=\"CULL\""));
         assert!(authored_by_cull("x:xmptk=\"CULL\""));
-        assert!(!authored_by_cull("xmp:CreatorTool=\"Adobe Lightroom 15.3\""));
+        assert!(!authored_by_cull(
+            "xmp:CreatorTool=\"Adobe Lightroom 15.3\""
+        ));
         // Fresh sidecars must carry a marker the gate recognises.
         assert!(authored_by_cull(&fresh_xmp()));
     }
@@ -623,7 +656,10 @@ mod tests {
         let fav = apply_rating_to_xmp(&fresh_xmp(), "favorite").unwrap();
         let stripped = strip_cull_fields(&fav);
         assert_eq!(classify_xmp(&stripped), None);
-        assert!(!xmp_has_user_content(&stripped), "pure CULL sidecar → deletable");
+        assert!(
+            !xmp_has_user_content(&stripped),
+            "pure CULL sidecar → deletable"
+        );
     }
 
     /// CRITICAL regression (favorite over a user star): favoriting a frame that
@@ -634,12 +670,27 @@ mod tests {
         for n in [2, 3, 4, 5] {
             let starred = set_rating(&fresh_xmp(), n);
             let fav = apply_rating_to_xmp(&starred, "favorite").unwrap();
-            assert_eq!(parse_xmp_rating(&fav), Some(n), "user {n}★ preserved through favorite");
-            assert_eq!(classify_xmp(&fav).as_deref(), Some("favorite"), "still reads favorite at {n}★");
-            assert!(fav.contains("cull:fav=\"flag\""), "favorite is flag-only at {n}★");
+            assert_eq!(
+                parse_xmp_rating(&fav),
+                Some(n),
+                "user {n}★ preserved through favorite"
+            );
+            assert_eq!(
+                classify_xmp(&fav).as_deref(),
+                Some("favorite"),
+                "still reads favorite at {n}★"
+            );
+            assert!(
+                fav.contains("cull:fav=\"flag\""),
+                "favorite is flag-only at {n}★"
+            );
             // Demoting the flag-only favorite leaves the user's star intact.
             let keep = apply_rating_to_xmp(&fav, "keep").unwrap();
-            assert_eq!(parse_xmp_rating(&keep), Some(n), "user {n}★ survives favorite→keep");
+            assert_eq!(
+                parse_xmp_rating(&keep),
+                Some(n),
+                "user {n}★ survives favorite→keep"
+            );
         }
     }
 
@@ -657,12 +708,23 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         let keep = apply_rating_to_xmp(lrc, "keep").unwrap();
         assert_eq!(parse_xmp_rating(&keep), Some(1), "user 1★ survives keep");
         let reject = apply_rating_to_xmp(lrc, "reject").unwrap();
-        assert_eq!(parse_xmp_rating(&reject), Some(1), "user 1★ survives reject");
+        assert_eq!(
+            parse_xmp_rating(&reject),
+            Some(1),
+            "user 1★ survives reject"
+        );
         // Unrate (pure core): strip CULL fields, the user's 1★ stays and keeps
         // the sidecar from being deleted as litter.
         let stripped = strip_cull_fields(&keep);
-        assert_eq!(parse_xmp_rating(&stripped), Some(1), "user 1★ survives unrate");
-        assert!(xmp_has_user_content(&stripped), "surviving 1★ blocks sidecar deletion");
+        assert_eq!(
+            parse_xmp_rating(&stripped),
+            Some(1),
+            "user 1★ survives unrate"
+        );
+        assert!(
+            xmp_has_user_content(&stripped),
+            "surviving 1★ blocks sidecar deletion"
+        );
     }
 
     /// CULL's own favorite (courtesy 1★ + cull:fav="star") IS removable on demote
@@ -673,7 +735,11 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         assert!(fav.contains("cull:fav=\"star\""), "CULL-owned star marker");
         assert_eq!(parse_xmp_rating(&fav), Some(1));
         let keep = apply_rating_to_xmp(&fav, "keep").unwrap();
-        assert_eq!(parse_xmp_rating(&keep), None, "CULL's own 1★ removed on demote");
+        assert_eq!(
+            parse_xmp_rating(&keep),
+            None,
+            "CULL's own 1★ removed on demote"
+        );
         assert!(!keep.contains("cull:fav"), "favorite marker cleared");
         assert_eq!(classify_xmp(&keep).as_deref(), Some("keep"));
     }
@@ -684,8 +750,15 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
     fn writes_into_nonempty_rdf_about() {
         let xmp = "<rdf:Description rdf:about=\"uuid:abc-123\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\n  </rdf:Description>";
         let out = apply_rating_to_xmp(xmp, "reject").unwrap();
-        assert_eq!(parse_attr_i32(&out, "xmpDM:pick"), Some(-1), "rating actually landed");
-        assert!(out.contains("rdf:about=\"uuid:abc-123\""), "about value untouched");
+        assert_eq!(
+            parse_attr_i32(&out, "xmpDM:pick"),
+            Some(-1),
+            "rating actually landed"
+        );
+        assert!(
+            out.contains("rdf:about=\"uuid:abc-123\""),
+            "about value untouched"
+        );
     }
 
     /// Re-applying the same rating is idempotent on the resulting bytes.
@@ -779,7 +852,10 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../sample_cr3s/sample_LrCFlaggedCR3s");
         if !dir.exists() {
-            eprintln!("[cull] skipping real-LrC star test: {} absent", dir.display());
+            eprintln!(
+                "[cull] skipping real-LrC star test: {} absent",
+                dir.display()
+            );
             return;
         }
         for (file, want) in [

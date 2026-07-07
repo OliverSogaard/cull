@@ -122,12 +122,8 @@ mod platform {
         const MASK_ALL: usize = 0x1 | 0x2 | 0x4; // NORMAL | WARN | CRITICAL
         unsafe {
             let queue = dispatch_get_global_queue(0, 0); // QOS default
-            let source = dispatch_source_create(
-                &_dispatch_source_type_memorypressure,
-                0,
-                MASK_ALL,
-                queue,
-            );
+            let source =
+                dispatch_source_create(&_dispatch_source_type_memorypressure, 0, MASK_ALL, queue);
             if source.is_null() {
                 dlog!("[cull] memory-pressure source unavailable");
                 return;

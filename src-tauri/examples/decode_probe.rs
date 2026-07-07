@@ -15,7 +15,11 @@ fn main() {
         Ok(rgb) => {
             let info = dec.info().expect("info");
             let (w, h) = (info.width as usize, info.height as usize);
-            println!("decode OK: {w}x{h}, buffer {} bytes (expected {})", rgb.len(), w * h * 3);
+            println!(
+                "decode OK: {w}x{h}, buffer {} bytes (expected {})",
+                rgb.len(),
+                w * h * 3
+            );
             // Mean luma per 10% horizontal band — a truncated decode shows
             // black (0) bands at the bottom.
             for band in 0..10 {

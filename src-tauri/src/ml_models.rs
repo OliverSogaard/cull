@@ -17,7 +17,11 @@ pub struct LazySession {
 
 impl LazySession {
     pub const fn new(name: &'static str) -> Self {
-        Self { name, path: OnceLock::new(), session: OnceLock::new() }
+        Self {
+            name,
+            path: OnceLock::new(),
+            session: OnceLock::new(),
+        }
     }
 
     pub fn init(&self, model_path: PathBuf) {

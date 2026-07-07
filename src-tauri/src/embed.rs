@@ -7,7 +7,9 @@ pub const EMBED_SIDE: usize = 224;
 pub const DINOV2_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 pub const DINOV2_STD: [f32; 3] = [0.229, 0.224, 0.225];
 pub const CLIP_MEAN: [f32; 3] = [0.481_454_66, 0.457_827_5, 0.408_210_73];
-pub const CLIP_STD: [f32; 3] = [0.268_629_54, 0.261_302_58, 0.275_777_11];
+// Truncated to f32-representable precision (clippy::excessive_precision) —
+// same bit patterns as the published OpenAI CLIP normalization constants.
+pub const CLIP_STD: [f32; 3] = [0.268_629_54, 0.261_302_6, 0.275_777_1];
 /// DINOv2-small hidden size (the CLS slice we keep).
 pub const EMBED_DIM: usize = 384;
 
@@ -156,7 +158,10 @@ mod smoke {
         };
         let models = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models");
         init_embedder(models.join("dinov2s.onnx"));
-        init_aesthetic(models.join("clip_vitb32_visual.onnx"), models.join("laion_aesthetic.onnx"));
+        init_aesthetic(
+            models.join("clip_vitb32_visual.onnx"),
+            models.join("laion_aesthetic.onnx"),
+        );
         // Decode one corpus preview — same preamble as
         // faces.rs::corpus_smoke_runs_the_real_model.
         let path = std::fs::read_dir(&dir)
@@ -180,7 +185,10 @@ mod smoke {
         let e = embedding(&rgb, w, h).expect("embedding");
         assert_eq!(e.len(), EMBED_DIM);
         let norm: f32 = e.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((norm - 1.0).abs() < 1e-3, "embedding must be L2-normalized: {norm}");
+        assert!(
+            (norm - 1.0).abs() < 1e-3,
+            "embedding must be L2-normalized: {norm}"
+        );
         // Same frame twice → cosine ≈ 1 (determinism / graph sanity).
         let e2 = embedding(&rgb, w, h).expect("embedding 2");
         let cos: f32 = e.iter().zip(&e2).map(|(a, b)| a * b).sum();

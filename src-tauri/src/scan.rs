@@ -46,7 +46,9 @@ fn walk_folder(root: &Path, ignore: Option<&str>) -> ScanResult {
             e.depth() == 0
                 || !(e.file_type().is_dir()
                     && ignore.is_some_and(|name| {
-                        e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(name))
+                        e.file_name()
+                            .to_str()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(name))
                     }))
         })
         .filter_map(|e| e.ok())
@@ -164,7 +166,11 @@ pub(crate) async fn analyze_folder(
     let concurrent_restore = concurrent_restore.unwrap_or(false);
     let n = paths.len();
     if n == 0 {
-        return Ok(AnalyzeResult { order: vec![], ratings: vec![], lrc_ratings: vec![] });
+        return Ok(AnalyzeResult {
+            order: vec![],
+            ratings: vec![],
+            lrc_ratings: vec![],
+        });
     }
     let start = Instant::now();
 
@@ -180,7 +186,9 @@ pub(crate) async fn analyze_folder(
     let mut done = 0usize;
 
     for dir in parents {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             // Sweep crash-orphaned atomic-write temps ("<base>.xmp.<seq>.tmp") left
@@ -199,7 +207,10 @@ pub(crate) async fn analyze_folder(
                     }
                 }
             }
-            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xmp")) {
+            if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("xmp"))
+            {
                 xmp_stems.insert(path.with_extension("").to_string_lossy().to_lowercase());
                 continue;
             }
@@ -229,7 +240,11 @@ pub(crate) async fn analyze_folder(
             if done.is_multiple_of(step) || done == n {
                 let _ = window.emit(
                     "analyze-progress",
-                    AnalyzeProgress { done, total: n, phase: "reading".into() },
+                    AnalyzeProgress {
+                        done,
+                        total: n,
+                        phase: "reading".into(),
+                    },
                 );
             }
         }
@@ -241,7 +256,11 @@ pub(crate) async fn analyze_folder(
     // one final full tick (idempotent in the normal case) so it always completes.
     let _ = window.emit(
         "analyze-progress",
-        AnalyzeProgress { done: n, total: n, phase: "reading".into() },
+        AnalyzeProgress {
+            done: n,
+            total: n,
+            phase: "reading".into(),
+        },
     );
 
     // Feed the session stat table (Phase 2, sizes added in Phase 7): the tier
@@ -265,7 +284,10 @@ pub(crate) async fn analyze_folder(
     // sitting full while we work.
     let to_read: Vec<usize> = (0..n)
         .filter(|&i| {
-            let stem = Path::new(&paths[i]).with_extension("").to_string_lossy().to_lowercase();
+            let stem = Path::new(&paths[i])
+                .with_extension("")
+                .to_string_lossy()
+                .to_lowercase();
             xmp_stems.contains(&stem)
         })
         .collect();
@@ -297,7 +319,11 @@ pub(crate) async fn analyze_folder(
                         if d.is_multiple_of(step) || d == total_xmp {
                             let _ = window_ref.emit(
                                 "analyze-progress",
-                                AnalyzeProgress { done: d, total: total_xmp, phase: "restoring".into() },
+                                AnalyzeProgress {
+                                    done: d,
+                                    total: total_xmp,
+                                    phase: "restoring".into(),
+                                },
                             );
                         }
                     }
@@ -325,7 +351,11 @@ pub(crate) async fn analyze_folder(
             if done.is_multiple_of(step) || done == total_xmp {
                 let _ = window.emit(
                     "analyze-progress",
-                    AnalyzeProgress { done, total: total_xmp, phase: "restoring".into() },
+                    AnalyzeProgress {
+                        done,
+                        total: total_xmp,
+                        phase: "restoring".into(),
+                    },
                 );
             }
         }
@@ -342,14 +372,22 @@ pub(crate) async fn analyze_folder(
 
     let _ = window.emit(
         "analyze-progress",
-        AnalyzeProgress { done: n, total: n, phase: "done".into() },
+        AnalyzeProgress {
+            done: n,
+            total: n,
+            phase: "done".into(),
+        },
     );
     dlog!(
         "[cull] analyze_folder: {} images in {:?} (mtime fast path)",
         n,
         start.elapsed()
     );
-    Ok(AnalyzeResult { order, ratings, lrc_ratings })
+    Ok(AnalyzeResult {
+        order,
+        ratings,
+        lrc_ratings,
+    })
 }
 
 #[cfg(test)]

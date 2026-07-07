@@ -152,9 +152,13 @@ impl TierStore {
                             }
                             index.total += meta.len();
                             index.tick += 1;
-                            index
-                                .entries
-                                .insert(key, Entry { size: meta.len(), used: index.tick });
+                            index.entries.insert(
+                                key,
+                                Entry {
+                                    size: meta.len(),
+                                    used: index.tick,
+                                },
+                            );
                         }
                     }
                 }
@@ -182,7 +186,9 @@ impl TierStore {
     /// cross-process divergence contract.
     fn drop_entry(&self, key: &str, delete_file: bool) {
         let known = {
-            let Ok(mut idx) = self.index.lock() else { return };
+            let Ok(mut idx) = self.index.lock() else {
+                return;
+            };
             match idx.entries.remove(key) {
                 Some(e) => {
                     idx.total = idx.total.saturating_sub(e.size);
@@ -225,7 +231,9 @@ impl TierStore {
             && u64::from_le_bytes(bytes[14..22].try_into().ok()?) == file_size
             && {
                 let header_len = u32::from_le_bytes(bytes[22..26].try_into().ok()?) as usize;
-                PRELUDE.checked_add(header_len).is_some_and(|end| end <= bytes.len())
+                PRELUDE
+                    .checked_add(header_len)
+                    .is_some_and(|end| end <= bytes.len())
             };
         if !valid {
             // Corrupt / stale (source changed) / v1 format / torn by another
@@ -251,9 +259,7 @@ impl TierStore {
     fn put(&self, src_path: &str, mtime_ms: i64, file_size: u64, header: &[u8], payload: &[u8]) {
         let entry_len = PRELUDE as u64 + header.len() as u64 + payload.len() as u64;
         if entry_len > self.max_entry_bytes {
-            dlog!(
-                "[cull] tier_cache: refusing oversized entry ({entry_len}B) for {src_path}"
-            );
+            dlog!("[cull] tier_cache: refusing oversized entry ({entry_len}B) for {src_path}");
             return;
         }
         let key = key_for(src_path);
@@ -315,8 +321,11 @@ impl TierStore {
     /// (and totals) under the lock. The CALLER deletes the files after the
     /// lock is dropped.
     fn select_victims_locked(&self, idx: &mut Index) -> Vec<String> {
-        let mut v: Vec<(String, u64)> =
-            idx.entries.iter().map(|(k, e)| (k.clone(), e.used)).collect();
+        let mut v: Vec<(String, u64)> = idx
+            .entries
+            .iter()
+            .map(|(k, e)| (k.clone(), e.used))
+            .collect();
         // unstable sort: the `used` tick is unique + monotonic, so ordering is
         // deterministic regardless of stability.
         v.sort_unstable_by_key(|(_, u)| *u);
@@ -342,13 +351,17 @@ impl TierStore {
     fn has_current(&self, src_path: &str, mtime_ms: i64, file_size: u64) -> bool {
         let key = key_for(src_path);
         {
-            let Ok(idx) = self.index.lock() else { return false };
+            let Ok(idx) = self.index.lock() else {
+                return false;
+            };
             if !idx.entries.contains_key(&key) {
                 return false;
             }
         }
         let mut buf = [0u8; PRELUDE];
-        let Ok(mut f) = std::fs::File::open(self.dir.join(&key)) else { return false };
+        let Ok(mut f) = std::fs::File::open(self.dir.join(&key)) else {
+            return false;
+        };
         if std::io::Read::read_exact(&mut f, &mut buf).is_err() {
             return false;
         }
@@ -362,7 +375,9 @@ impl TierStore {
     fn clear(&self) {
         // Same outside-the-lock discipline as eviction.
         let keys: Vec<String> = {
-            let Ok(mut idx) = self.index.lock() else { return };
+            let Ok(mut idx) = self.index.lock() else {
+                return;
+            };
             let keys = idx.entries.keys().cloned().collect();
             idx.entries.clear();
             idx.total = 0;
@@ -423,12 +438,19 @@ impl TierCache {
         header: &[u8],
         payload: &[u8],
     ) {
-        self.store(tier).put(src_path, mtime_ms, file_size, header, payload);
+        self.store(tier)
+            .put(src_path, mtime_ms, file_size, header, payload);
     }
 
     /// True when a current entry exists for `src_path` (prelude validation
     /// only — no payload read, no LRU bump). See [`TierStore::has_current`].
-    pub fn has_current(&self, tier: CacheTier, src_path: &str, mtime_ms: i64, file_size: u64) -> bool {
+    pub fn has_current(
+        &self,
+        tier: CacheTier,
+        src_path: &str,
+        mtime_ms: i64,
+        file_size: u64,
+    ) -> bool {
         self.store(tier).has_current(src_path, mtime_ms, file_size)
     }
 
@@ -451,11 +473,8 @@ mod tests {
     use std::path::Path;
 
     fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "cull-tiercache-{}-{}",
-            name,
-            std::process::id()
-        ));
+        let d =
+            std::env::temp_dir().join(format!("cull-tiercache-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -475,14 +494,40 @@ mod tests {
         std::fs::create_dir_all(&work).unwrap();
         let cache = TierCache::new(work.join("tiers"));
         let src = src_file(&work, "a.cr3", b"cr3");
-        cache.put(CacheTier::Thumb, &src, 1_700_000_000_123, 3, b"{\"t\":1}", b"\xFF\xD8thumb");
-        cache.put(CacheTier::Prvw, &src, 1_700_000_000_123, 3, b"{\"p\":2}", b"\xFF\xD8prvw");
-        let (th, tp) = cache.get(CacheTier::Thumb, &src, 1_700_000_000_123, 3).expect("thumb hit");
-        assert_eq!((th.as_slice(), tp.as_slice()), (&b"{\"t\":1}"[..], &b"\xFF\xD8thumb"[..]));
-        let (ph, pp) = cache.get(CacheTier::Prvw, &src, 1_700_000_000_123, 3).expect("prvw hit");
-        assert_eq!((ph.as_slice(), pp.as_slice()), (&b"{\"p\":2}"[..], &b"\xFF\xD8prvw"[..]));
+        cache.put(
+            CacheTier::Thumb,
+            &src,
+            1_700_000_000_123,
+            3,
+            b"{\"t\":1}",
+            b"\xFF\xD8thumb",
+        );
+        cache.put(
+            CacheTier::Prvw,
+            &src,
+            1_700_000_000_123,
+            3,
+            b"{\"p\":2}",
+            b"\xFF\xD8prvw",
+        );
+        let (th, tp) = cache
+            .get(CacheTier::Thumb, &src, 1_700_000_000_123, 3)
+            .expect("thumb hit");
+        assert_eq!(
+            (th.as_slice(), tp.as_slice()),
+            (&b"{\"t\":1}"[..], &b"\xFF\xD8thumb"[..])
+        );
+        let (ph, pp) = cache
+            .get(CacheTier::Prvw, &src, 1_700_000_000_123, 3)
+            .expect("prvw hit");
+        assert_eq!(
+            (ph.as_slice(), pp.as_slice()),
+            (&b"{\"p\":2}"[..], &b"\xFF\xD8prvw"[..])
+        );
         // Mid never written → miss.
-        assert!(cache.get(CacheTier::Mid, &src, 1_700_000_000_123, 3).is_none());
+        assert!(cache
+            .get(CacheTier::Mid, &src, 1_700_000_000_123, 3)
+            .is_none());
         let _ = std::fs::remove_dir_all(&work);
     }
 
@@ -528,7 +573,10 @@ mod tests {
         let mut bytes = std::fs::read(store.dir.join(&key)).unwrap();
         bytes[22..26].copy_from_slice(&u32::MAX.to_le_bytes());
         std::fs::write(store.dir.join(&key), &bytes).unwrap();
-        assert!(store.get(&src, 1000, 3).is_none(), "overlong header refused");
+        assert!(
+            store.get(&src, 1000, 3).is_none(),
+            "overlong header refused"
+        );
 
         // Wrong tier byte (a prvw entry can't serve a thumb request).
         store.put(&src, 1000, 3, b"{}", b"jpeg");
@@ -576,7 +624,11 @@ mod tests {
         store.put(&src, 1000, 3, b"{}", &[0u8; 100]); // 26 + 2 + 100 > 64
         assert!(store.get(&src, 1000, 3).is_none());
         assert_eq!(store.size_bytes(), 0);
-        assert_eq!(std::fs::read_dir(&store.dir).unwrap().count(), 0, "nothing written");
+        assert_eq!(
+            std::fs::read_dir(&store.dir).unwrap().count(),
+            0,
+            "nothing written"
+        );
         let _ = std::fs::remove_dir_all(&work);
     }
 
@@ -597,7 +649,11 @@ mod tests {
         assert!(store.get(&b, 1000, 3).is_some());
         assert!(store.get(&c, 1000, 3).is_some());
         assert_eq!(store.size_bytes(), 156);
-        assert_eq!(std::fs::read_dir(&store.dir).unwrap().count(), 2, "evicted file deleted");
+        assert_eq!(
+            std::fs::read_dir(&store.dir).unwrap().count(),
+            2,
+            "evicted file deleted"
+        );
         let _ = std::fs::remove_dir_all(&work);
     }
 
@@ -614,8 +670,14 @@ mod tests {
         std::fs::write(dir.join("deadbeef.1234.7.tmp"), b"orphan").unwrap();
         let reopened = small_store(dir.clone(), 10_000, 1_000);
         let (h, p) = reopened.get(&src, 1000, 3).expect("hit after reopen");
-        assert_eq!((h.as_slice(), p.as_slice()), (&b"{\"w\":160}"[..], &b"\xFF\xD8jpeg"[..]));
-        assert!(!dir.join("deadbeef.1234.7.tmp").exists(), "orphan tmp cleaned");
+        assert_eq!(
+            (h.as_slice(), p.as_slice()),
+            (&b"{\"w\":160}"[..], &b"\xFF\xD8jpeg"[..])
+        );
+        assert!(
+            !dir.join("deadbeef.1234.7.tmp").exists(),
+            "orphan tmp cleaned"
+        );
         let _ = std::fs::remove_dir_all(&work);
     }
 
@@ -645,7 +707,14 @@ mod tests {
         let cache = TierCache::new(work.join("tiers"));
         let src = src_file(&work, "a.cr3", b"cr3");
         let jpeg = vec![0xFFu8; 1_200_000]; // a realistic q80 2560px payload
-        cache.put(CacheTier::Mid, &src, 1000, 3, b"{\"midLen\":1200000}", &jpeg);
+        cache.put(
+            CacheTier::Mid,
+            &src,
+            1000,
+            3,
+            b"{\"midLen\":1200000}",
+            &jpeg,
+        );
         let (h, p) = cache.get(CacheTier::Mid, &src, 1000, 3).expect("mid hit");
         assert_eq!(h.as_slice(), b"{\"midLen\":1200000}");
         assert_eq!(p.len(), jpeg.len());
@@ -674,7 +743,10 @@ mod tests {
         // stat (unlike get(), which deletes on mismatch).
         assert!(!store.has_current(&src, 2000, 3));
         assert!(!store.has_current(&src, 1000, 4));
-        assert!(store.has_current(&src, 1000, 3), "mismatch probe must not evict");
+        assert!(
+            store.has_current(&src, 1000, 3),
+            "mismatch probe must not evict"
+        );
         assert!(store.get(&src, 1000, 3).is_some());
         let _ = std::fs::remove_dir_all(&work);
     }

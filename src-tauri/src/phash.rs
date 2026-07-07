@@ -80,7 +80,8 @@ pub(crate) fn dct32(px: &[f32]) -> Vec<f32> {
     let mut cos = [[0f32; N]; N];
     for (u, row) in cos.iter_mut().enumerate() {
         for (x, c) in row.iter_mut().enumerate() {
-            *c = (std::f32::consts::PI * (2.0 * x as f32 + 1.0) * u as f32 / (2.0 * N as f32)).cos();
+            *c =
+                (std::f32::consts::PI * (2.0 * x as f32 + 1.0) * u as f32 / (2.0 * N as f32)).cos();
         }
     }
     // Rows, then columns.
@@ -115,7 +116,10 @@ mod tests {
     struct Lcg(u64);
     impl Lcg {
         fn next_u8(&mut self) -> u8 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (self.0 >> 33) as u8
         }
     }
@@ -129,7 +133,11 @@ mod tests {
         for y in 0..h {
             for x in 0..w {
                 let grad = (255 * x / w.max(1)) as i32;
-                let block = if (x / (w / 4).max(1) + y / (h / 4).max(1)) % 2 == 0 { 60 } else { -60 };
+                let block = if (x / (w / 4).max(1) + y / (h / 4).max(1)).is_multiple_of(2) {
+                    60
+                } else {
+                    -60
+                };
                 let noise = (lcg.next_u8() % 8) as i32;
                 out[y * w + x] = (grad + block + noise).clamp(0, 255) as u8;
             }
@@ -156,7 +164,10 @@ mod tests {
             }
         }
         let d = hamming(phash64(&a, 320, 200), phash64(&b, 640, 400));
-        assert!(d <= 2, "2x replication must hash near-identically: hamming={d}");
+        assert!(
+            d <= 2,
+            "2x replication must hash near-identically: hamming={d}"
+        );
     }
 
     #[test]

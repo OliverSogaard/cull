@@ -157,8 +157,7 @@ pub(crate) async fn move_rejects_to_subfolder(
             return Err(format!("not a directory: {folder}"));
         }
         let dest = folder_path.join(&subfolder);
-        std::fs::create_dir_all(&dest)
-            .map_err(|e| format!("create {}: {e}", dest.display()))?;
+        std::fs::create_dir_all(&dest).map_err(|e| format!("create {}: {e}", dest.display()))?;
         Ok(batch_files(&paths, &dest, |s, d| std::fs::rename(s, d)))
     })
     .await
@@ -202,7 +201,9 @@ fn trash_batch(paths: &[String], trash_op: impl Fn(&Path) -> Result<(), String>)
 #[tauri::command]
 pub(crate) async fn move_rejects_to_trash(paths: Vec<String>) -> Result<FileOpResult, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<FileOpResult, String> {
-        Ok(trash_batch(&paths, |p| trash::delete(p).map_err(|e| e.to_string())))
+        Ok(trash_batch(&paths, |p| {
+            trash::delete(p).map_err(|e| e.to_string())
+        }))
     })
     .await
     .map_err(|e| format!("trash task failed: {e}"))?
@@ -277,11 +278,9 @@ mod tests {
         fs::create_dir_all(&dest).unwrap();
         fs::write(dest.join("a.cr3"), b"DEST").unwrap();
 
-        let r = batch_files(
-            &[src.to_string_lossy().to_string()],
-            &dest,
-            |s, d| fs::copy(s, d).map(|_| ()),
-        );
+        let r = batch_files(&[src.to_string_lossy().to_string()], &dest, |s, d| {
+            fs::copy(s, d).map(|_| ())
+        });
         assert_eq!(r.completed, 0);
         assert_eq!(r.skipped, 1);
         // Destination preserved.
@@ -305,11 +304,9 @@ mod tests {
         // Destination has a lone sidecar (no CR3) carrying user data.
         fs::write(dest.join("b.xmp"), b"USER_EDITS").unwrap();
 
-        let r = batch_files(
-            &[src.to_string_lossy().to_string()],
-            &dest,
-            |s, d| fs::copy(s, d).map(|_| ()),
-        );
+        let r = batch_files(&[src.to_string_lossy().to_string()], &dest, |s, d| {
+            fs::copy(s, d).map(|_| ())
+        });
         assert_eq!(r.completed, 1, "CR3 copied (no CR3 collision)");
         // The pre-existing sidecar is preserved, not clobbered.
         assert_eq!(fs::read(dest.join("b.xmp")).unwrap(), b"USER_EDITS");
@@ -366,7 +363,10 @@ mod tests {
 
         let trashed = std::sync::Mutex::new(Vec::<std::path::PathBuf>::new());
         let r = trash_batch(
-            &[a.to_string_lossy().to_string(), gone.to_string_lossy().to_string()],
+            &[
+                a.to_string_lossy().to_string(),
+                gone.to_string_lossy().to_string(),
+            ],
             |p| {
                 trashed.lock().unwrap().push(p.to_path_buf());
                 fs::remove_file(p).map_err(|e| e.to_string())
@@ -399,4 +399,3 @@ mod tests {
         let _ = fs::remove_dir_all(&work);
     }
 }
-

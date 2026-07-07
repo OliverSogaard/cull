@@ -67,7 +67,11 @@ pub fn mid_dims(w: u32, h: u32) -> Option<(u32, u32)> {
     // Round-half-up in u64 so 32 MP sources can't overflow the multiply.
     let scaled = ((short as u64 * MID_LONG_EDGE as u64 + long as u64 / 2) / long as u64) as u32;
     let scaled = scaled.max(1);
-    Some(if w >= h { (MID_LONG_EDGE, scaled) } else { (scaled, MID_LONG_EDGE) })
+    Some(if w >= h {
+        (MID_LONG_EDGE, scaled)
+    } else {
+        (scaled, MID_LONG_EDGE)
+    })
 }
 
 /// Decode → resize → encode → orientation splice. `cancelled` is polled
@@ -125,7 +129,11 @@ pub fn generate_mid_jpeg(
     // Same orientation mechanism as every other tier: splice the source's
     // EXIF Orientation APP1; the webview rotates on display.
     let jpeg = with_exif_orientation(out, orientation);
-    Ok(MidJpeg { jpeg, width: tw, height: th })
+    Ok(MidJpeg {
+        jpeg,
+        width: tw,
+        height: th,
+    })
 }
 
 /// Generation-concurrency gate: a swap-on-profile semaphore over the CPU work
@@ -150,7 +158,11 @@ impl MidGen {
 
     /// Swap the generation cap for a storage-mode change (1 network / 2 local).
     pub fn set_profile(&self, network: bool) {
-        let permits = if network { NETWORK_GEN_PERMITS } else { LOCAL_GEN_PERMITS };
+        let permits = if network {
+            NETWORK_GEN_PERMITS
+        } else {
+            LOCAL_GEN_PERMITS
+        };
         let mut sem = match self.sem.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -259,7 +271,10 @@ mod tests {
         let (r, g, b) = (px[i] as i32, px[i + 1] as i32, px[i + 2] as i32);
         assert!((r - 191).abs() < 20, "R at 3/4-x should be ≈191, got {r}");
         assert!((g - 64).abs() < 20, "G at 1/4-y should be ≈64, got {g}");
-        assert!((b - 140).abs() < 20, "B on the diagonal should be ≈140, got {b}");
+        assert!(
+            (b - 140).abs() < 20,
+            "B on the diagonal should be ≈140, got {b}"
+        );
     }
 
     #[test]
@@ -315,7 +330,10 @@ mod tests {
         paths.sort();
         assert!(!paths.is_empty(), "no CR3 files under {dir}");
 
-        eprintln!("{:<16} {:>6} {:>9} {:>9} {:>8}", "file", "orient", "fullKB", "midKB", "genMs");
+        eprintln!(
+            "{:<16} {:>6} {:>9} {:>9} {:>8}",
+            "file", "orient", "fullKB", "midKB", "genMs"
+        );
         for p in &paths {
             let ps = p.to_string_lossy().to_string();
             let (full, orient) = crate::cr3::read_fullres_scan(&ps)
@@ -325,12 +343,20 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{ps}: generate {e}"));
             let ms = t0.elapsed().as_millis();
             // Valid JPEG at ≤2560 long edge, aspect preserved within a pixel.
-            let img = image::load_from_memory(&m.jpeg)
-                .unwrap_or_else(|e| panic!("{ps}: mid decode {e}"));
+            let img =
+                image::load_from_memory(&m.jpeg).unwrap_or_else(|e| panic!("{ps}: mid decode {e}"));
             assert_eq!(img.width().max(img.height()), 2560, "{ps}: long edge");
-            assert_eq!((img.width(), img.height()), (m.width, m.height), "{ps}: header dims");
+            assert_eq!(
+                (img.width(), img.height()),
+                (m.width, m.height),
+                "{ps}: header dims"
+            );
             let ar = img.width() as f64 / img.height() as f64;
-            let src_ar = if m.width >= m.height { 3.0 / 2.0 } else { 2.0 / 3.0 };
+            let src_ar = if m.width >= m.height {
+                3.0 / 2.0
+            } else {
+                2.0 / 3.0
+            };
             assert!((ar - src_ar).abs() < 0.01, "{ps}: aspect drifted to {ar}");
             // Fits the mid tier's per-entry cap with the prelude + header.
             assert!(
@@ -403,7 +429,12 @@ mod tests {
                 &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3)),
             )
             .unwrap();
-        eprintln!("resize  → {}x{}: {} ms (Lanczos3 SIMD)", tw, th, t.elapsed().as_millis());
+        eprintln!(
+            "resize  → {}x{}: {} ms (Lanczos3 SIMD)",
+            tw,
+            th,
+            t.elapsed().as_millis()
+        );
         let rgb = dst.buffer();
 
         const ITERS: usize = 8;
@@ -435,11 +466,15 @@ mod tests {
         zj_ms.sort_unstable();
         eprintln!(
             "jpeg-encoder(simd) q80: min {} / med {} ms → {} KB",
-            je_ms[0], je_ms[ITERS / 2], je_len / 1024
+            je_ms[0],
+            je_ms[ITERS / 2],
+            je_len / 1024
         );
         eprintln!(
             "zenjpeg q80 4:2:0:      min {} / med {} ms → {} KB",
-            zj_ms[0], zj_ms[ITERS / 2], zj_len / 1024
+            zj_ms[0],
+            zj_ms[ITERS / 2],
+            zj_len / 1024
         );
     }
 }

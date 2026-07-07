@@ -47,19 +47,19 @@ macro_rules! dlog {
 mod analyze;
 // Without smart-ml only the (always-compiled, always-tested) pure decode math
 // is present — no callers, by design. Never dead in feature builds.
+mod bundle;
+mod cr3;
 #[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
 mod embed;
 #[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
 mod faces;
-mod phash;
-mod bundle;
-mod cr3;
 mod file_ops;
 mod io_gate;
 mod memory_pressure;
 mod meta;
 mod midtier;
 mod ml_models;
+mod phash;
 mod scan;
 mod tier_cache;
 mod xmp;
@@ -71,8 +71,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let dir = app.path().app_cache_dir().unwrap_or_else(|_| std::env::temp_dir());
-            app.manage(std::sync::Arc::new(tier_cache::TierCache::new(dir.join("tiers"))));
+            let dir = app
+                .path()
+                .app_cache_dir()
+                .unwrap_or_else(|_| std::env::temp_dir());
+            app.manage(std::sync::Arc::new(tier_cache::TierCache::new(
+                dir.join("tiers"),
+            )));
             app.manage(std::sync::Arc::new(io_gate::IoGate::new()));
             app.manage(std::sync::Arc::new(io_gate::SessionGate::new()));
             app.manage(std::sync::Arc::new(midtier::MidGen::new()));
@@ -88,18 +93,19 @@ pub fn run() {
             }
             // Phase 3b: the OCEC eye-state model rides the same lazy pattern.
             #[cfg(feature = "smart-ml")]
-            if let Ok(p) = app.path().resolve(
-                "models/ocec_s.onnx",
-                tauri::path::BaseDirectory::Resource,
-            ) {
+            if let Ok(p) = app
+                .path()
+                .resolve("models/ocec_s.onnx", tauri::path::BaseDirectory::Resource)
+            {
                 faces::init_eye_classifier(p);
             }
             // Phase 3d/3c: DINOv2 embeddings (near-dupe grouping) + CLIP/LAION
             // aesthetic scoring — same lazy-init pattern, each model resolved
             // independently so a missing file only disables that one feature.
             #[cfg(feature = "smart-ml")]
-            if let Ok(p) =
-                app.path().resolve("models/dinov2s.onnx", tauri::path::BaseDirectory::Resource)
+            if let Ok(p) = app
+                .path()
+                .resolve("models/dinov2s.onnx", tauri::path::BaseDirectory::Resource)
             {
                 embed::init_embedder(p);
             }
@@ -144,13 +150,8 @@ pub fn run() {
             {
                 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 
-                let quit = MenuItem::with_id(
-                    app,
-                    "cull-quit",
-                    "Quit CULL",
-                    true,
-                    Some("CmdOrCtrl+Q"),
-                )?;
+                let quit =
+                    MenuItem::with_id(app, "cull-quit", "Quit CULL", true, Some("CmdOrCtrl+Q"))?;
                 let app_menu = SubmenuBuilder::new(app, "CULL")
                     .about(None)
                     .separator()

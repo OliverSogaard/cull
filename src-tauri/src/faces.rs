@@ -69,7 +69,14 @@ pub fn decode_heads(
                 kps[2 * n] = (head.kps[idx * 10 + 2 * n] + col as f32) * s;
                 kps[2 * n + 1] = (head.kps[idx * 10 + 2 * n + 1] + row as f32) * s;
             }
-            out.push(Detection { x: cx - w / 2.0, y: cy - h / 2.0, w, h, score, kps });
+            out.push(Detection {
+                x: cx - w / 2.0,
+                y: cy - h / 2.0,
+                w,
+                h,
+                score,
+                kps,
+            });
         }
     }
     out
@@ -85,7 +92,11 @@ pub fn nms(mut dets: Vec<Detection>, iou_threshold: f32, top_k: usize) -> Vec<De
         let y1 = (a.y + a.h).min(b.y + b.h);
         let inter = (x1 - x0).max(0.0) * (y1 - y0).max(0.0);
         let union = a.w * a.h + b.w * b.h - inter;
-        if union <= 0.0 { 0.0 } else { inter / union }
+        if union <= 0.0 {
+            0.0
+        } else {
+            inter / union
+        }
     };
     let mut kept: Vec<Detection> = Vec::new();
     for d in dets {
@@ -164,7 +175,15 @@ pub fn eye_crop_box(
 }
 
 /// Tightly-packed RGB8 crop (caller guarantees the box is in-bounds).
-pub fn crop_rgb(rgb: &[u8], w: usize, _h: usize, x: usize, y: usize, cw: usize, ch: usize) -> Vec<u8> {
+pub fn crop_rgb(
+    rgb: &[u8],
+    w: usize,
+    _h: usize,
+    x: usize,
+    y: usize,
+    cw: usize,
+    ch: usize,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(cw * ch * 3);
     for row in y..y + ch {
         let start = (row * w + x) * 3;
@@ -304,13 +323,17 @@ mod ml {
     /// Detect faces on a decoded RGB8 preview. Failures are empty results —
     /// face data is advisory enrichment, never worth failing a score over.
     pub fn detect_faces(rgb: &[u8], w: usize, h: usize) -> Vec<Detection> {
-        let Some(lock) = YUNET.get() else { return Vec::new() };
+        let Some(lock) = YUNET.get() else {
+            return Vec::new();
+        };
         let (pw, ph) = (pad32(w), pad32(h));
         let chw = rgb_to_bgr_chw_padded(rgb, w, h, pw, ph);
         let Ok(input) = ort::value::Tensor::from_array(([1usize, 3, ph, pw], chw)) else {
             return Vec::new();
         };
-        let Ok(mut sess) = lock.lock() else { return Vec::new() };
+        let Ok(mut sess) = lock.lock() else {
+            return Vec::new();
+        };
         let input_name = match sess.inputs().first() {
             Some(i) => i.name().to_string(),
             None => return Vec::new(),
@@ -324,7 +347,9 @@ mod ml {
                 .and_then(|v| v.try_extract_array::<f32>().ok())
                 .map(|a| a.iter().copied().collect())
         };
-        let mut bufs: Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)> = Vec::new();
+        /// One detection stride's raw output planes: (stride, cls, obj, bbox, kps).
+        type StridePlanes = (usize, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>);
+        let mut bufs: Vec<StridePlanes> = Vec::new();
         for s in [8usize, 16, 32] {
             let (Some(cls), Some(obj), Some(bbox), Some(kps)) = (
                 grab(&format!("cls_{s}")),
@@ -338,7 +363,13 @@ mod ml {
         }
         let heads: Vec<RawHead> = bufs
             .iter()
-            .map(|(s, cls, obj, bbox, kps)| RawHead { stride: *s, cls, obj, bbox, kps })
+            .map(|(s, cls, obj, bbox, kps)| RawHead {
+                stride: *s,
+                cls,
+                obj,
+                bbox,
+                kps,
+            })
             .collect();
         let dets = decode_heads(&heads, pw, ph, SCORE_THRESHOLD);
         nms(dets, NMS_IOU, TOP_K)
@@ -383,13 +414,21 @@ mod tests {
         // 32×32 padded input, stride 8 → 4×4 grid. Hit at (row 1, col 1):
         // cx=(1+0.5)*8=12, cy=12, w=exp(ln 2)*8=16, h=exp(ln 3)*8=24
         // → x = 12−8 = 4, y = 12−12 = 0; score = sqrt(1·1) = 1.
-        let (cls, obj, bbox, kps) =
-            head_with_hit(8, 4, 4, 5, [0.5, 0.5, (2f32).ln(), (3f32).ln()]);
-        let heads = [RawHead { stride: 8, cls: &cls, obj: &obj, bbox: &bbox, kps: &kps }];
+        let (cls, obj, bbox, kps) = head_with_hit(8, 4, 4, 5, [0.5, 0.5, (2f32).ln(), (3f32).ln()]);
+        let heads = [RawHead {
+            stride: 8,
+            cls: &cls,
+            obj: &obj,
+            bbox: &bbox,
+            kps: &kps,
+        }];
         let dets = decode_heads(&heads, 32, 32, 0.7);
         assert_eq!(dets.len(), 1, "only the hit cell passes the threshold");
         let d = &dets[0];
-        assert!((d.x - 4.0).abs() < 1e-4 && (d.y - 0.0).abs() < 1e-4, "{d:?}");
+        assert!(
+            (d.x - 4.0).abs() < 1e-4 && (d.y - 0.0).abs() < 1e-4,
+            "{d:?}"
+        );
         assert!((d.w - 16.0).abs() < 1e-4 && (d.h - 24.0).abs() < 1e-4);
         assert!((d.score - 1.0).abs() < 1e-5);
         // Landmark 0: (kps + col) * stride = (0.25 + 1) * 8 = 10.
@@ -400,7 +439,13 @@ mod tests {
     fn score_is_geometric_mean_and_clamped_inputs_stay_sane() {
         let (mut cls, obj, bbox, kps) = head_with_hit(8, 4, 4, 0, [0.0; 4]);
         cls[0] = 0.64;
-        let heads = [RawHead { stride: 8, cls: &cls, obj: &obj, bbox: &bbox, kps: &kps }];
+        let heads = [RawHead {
+            stride: 8,
+            cls: &cls,
+            obj: &obj,
+            bbox: &bbox,
+            kps: &kps,
+        }];
         let dets = decode_heads(&heads, 32, 32, 0.7);
         assert_eq!(dets.len(), 1);
         assert!((dets[0].score - 0.8).abs() < 1e-5, "sqrt(0.64·1.0) = 0.8");
@@ -423,11 +468,18 @@ mod tests {
             0.3,
             32,
         );
-        assert_eq!(kept.len(), 2, "overlapping pair collapses, disjoint survives");
+        assert_eq!(
+            kept.len(),
+            2,
+            "overlapping pair collapses, disjoint survives"
+        );
         assert!((kept[0].score - 0.9).abs() < 1e-6, "best first");
         assert!((kept[1].x - 100.0).abs() < 1e-6);
         // top_k caps the survivors.
-        assert_eq!(nms(vec![boxed(0.0, 0.9), boxed(100.0, 0.7)], 0.3, 1).len(), 1);
+        assert_eq!(
+            nms(vec![boxed(0.0, 0.9), boxed(100.0, 0.7)], 0.3, 1).len(),
+            1
+        );
     }
 
     #[test]
@@ -503,12 +555,16 @@ mod tests {
     #[test]
     fn bilinear_resize_identity_and_downsample_average() {
         let rgb = [10u8, 0, 0, 20, 0, 0, 30, 0, 0, 40, 0, 0]; // 2×2, R only
-        // Identity: same dims → same pixels.
+                                                              // Identity: same dims → same pixels.
         assert_eq!(resize_rgb_bilinear(&rgb, 2, 2, 2, 2), rgb.to_vec());
         // 2×2 → 1×1 samples the center → average of the four corners.
         let one = resize_rgb_bilinear(&rgb, 2, 2, 1, 1);
         assert_eq!(one.len(), 3);
-        assert!((one[0] as i32 - 25).abs() <= 1, "R ≈ (10+20+30+40)/4, got {}", one[0]);
+        assert!(
+            (one[0] as i32 - 25).abs() <= 1,
+            "R ≈ (10+20+30+40)/4, got {}",
+            one[0]
+        );
     }
 
     #[test]
@@ -558,9 +614,16 @@ mod tests {
         let info = dec.info().expect("dims");
         let (w, h) = (info.width as usize, info.height as usize);
 
-        assert!(detector_ready(), "ONNX session failed to initialize — check model path/ort build");
+        assert!(
+            detector_ready(),
+            "ONNX session failed to initialize — check model path/ort build"
+        );
         let dets = detect_faces(&rgb, w, h);
-        eprintln!("yunet smoke: {} face(s) on {} ({w}x{h})", dets.len(), path.display());
+        eprintln!(
+            "yunet smoke: {} face(s) on {} ({w}x{h})",
+            dets.len(),
+            path.display()
+        );
         for d in &dets {
             assert!(d.x >= 0.0 && d.y >= 0.0 && d.x + d.w <= w as f32 + 1.0);
             assert!(d.score >= SCORE_THRESHOLD && d.score <= 1.0);

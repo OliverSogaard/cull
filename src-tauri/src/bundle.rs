@@ -155,8 +155,7 @@ pub(crate) async fn read_bundle(
             meta,
             preview_len: b.preview.len() as u32,
         };
-        let header_json =
-            serde_json::to_vec(&header).map_err(|e| format!("bundle header: {e}"))?;
+        let header_json = serde_json::to_vec(&header).map_err(|e| format!("bundle header: {e}"))?;
         dlog!(
             "[cull] read_bundle({}): orient={} preview={}B in {:?}",
             path,
@@ -280,7 +279,10 @@ pub(crate) fn fetch_decoded_preview(
     let info = dec.info().ok_or("prvw decode: no header info")?;
     let (w, h) = (info.width as usize, info.height as usize);
     if rgb.len() != w * h * 3 {
-        return Err(format!("prvw decode: unexpected buffer ({} bytes for {w}x{h} RGB)", rgb.len()));
+        return Err(format!(
+            "prvw decode: unexpected buffer ({} bytes for {w}x{h} RGB)",
+            rgb.len()
+        ));
     }
 
     let m = header.meta;
@@ -378,6 +380,7 @@ fn full_with_orientation(
 /// the full's bytes are already in memory, so the ≤2560px tier costs CPU
 /// only, zero extra I/O (this is how the mid cache fills on network mode).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: the signature IS the wire contract
 pub(crate) async fn read_fullres(
     path: String,
     gen: u64,
@@ -395,14 +398,10 @@ pub(crate) async fn read_fullres(
     let label = format!("read_fullres({path})");
     gated_read(&gate, Tier::Full, label.clone(), move || {
         let start = Instant::now();
-        let (raw, orient) = full_with_orientation(
-            &label,
-            &path,
-            full_offset,
-            full_len,
-            orientation,
-            &|| session.is_cancelled(gen),
-        )?;
+        let (raw, orient) =
+            full_with_orientation(&label, &path, full_offset, full_len, orientation, &|| {
+                session.is_cancelled(gen)
+            })?;
         let jpeg = cr3::with_exif_orientation(raw, orient);
         maybe_generate_mid_opportunistic(&cache, &session, &midgen, gen, &path, orient, &jpeg);
         let header_json = serde_json::to_vec(&FullresHeader {
@@ -478,7 +477,9 @@ fn maybe_generate_mid_opportunistic(
     orientation: u32,
     full_jpeg: &[u8],
 ) {
-    let Some(stat) = resolve_stat(session, path) else { return };
+    let Some(stat) = resolve_stat(session, path) else {
+        return;
+    };
     if cache.has_current(CacheTier::Mid, path, stat.0, stat.1) {
         return;
     }
@@ -526,6 +527,7 @@ fn maybe_generate_mid_opportunistic(
 ///   resize → q80 encode → splice orientation, cache, return — under a
 ///   MidGen permit (concurrency 2 local / 1 network).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: the signature IS the wire contract
 pub(crate) async fn read_mid(
     path: String,
     gen: u64,
@@ -577,14 +579,24 @@ pub(crate) async fn read_mid(
     }
     let permit = midgen.acquire().await;
     let result = {
-        let (cache, session, path, label) =
-            (Arc::clone(&cache), Arc::clone(&session), path.clone(), label.clone());
+        let (cache, session, path, label) = (
+            Arc::clone(&cache),
+            Arc::clone(&session),
+            path.clone(),
+            label.clone(),
+        );
         gated(&gate, Tier::Full, label.clone(), move || {
             let _permit = permit;
             let start = Instant::now();
             let cancelled = || session.is_cancelled(gen);
-            let (raw, orient) =
-                full_with_orientation(&label, &path, full_offset, full_len, orientation, &cancelled)?;
+            let (raw, orient) = full_with_orientation(
+                &label,
+                &path,
+                full_offset,
+                full_len,
+                orientation,
+                &cancelled,
+            )?;
             let (header, payload) =
                 generate_and_cache_mid(&cache, &path, stat, &raw, orient, &cancelled)?;
             dlog!(
@@ -608,6 +620,7 @@ pub(crate) async fn read_mid(
 /// local-only — the frontend's sweep gates on the profile too, but the hard
 /// rule must not depend on frontend discipline.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: the signature IS the wire contract
 pub(crate) async fn generate_mid(
     path: String,
     gen: u64,
@@ -648,14 +661,24 @@ pub(crate) async fn generate_mid(
     }
     let permit = midgen.acquire().await;
     let result = {
-        let (cache, session, path, label) =
-            (Arc::clone(&cache), Arc::clone(&session), path.clone(), label.clone());
+        let (cache, session, path, label) = (
+            Arc::clone(&cache),
+            Arc::clone(&session),
+            path.clone(),
+            label.clone(),
+        );
         gated(&gate, Tier::Full, label.clone(), move || {
             let _permit = permit;
             let start = Instant::now();
             let cancelled = || session.is_cancelled(gen);
-            let (raw, orient) =
-                full_with_orientation(&label, &path, full_offset, full_len, orientation, &cancelled)?;
+            let (raw, orient) = full_with_orientation(
+                &label,
+                &path,
+                full_offset,
+                full_len,
+                orientation,
+                &cancelled,
+            )?;
             let (_, payload) =
                 generate_and_cache_mid(&cache, &path, stat, &raw, orient, &cancelled)?;
             dlog!(
@@ -765,7 +788,8 @@ pub(crate) async fn extract_thumbnail(
 /// they cover EVERY tier subdir, not just thumbnails.
 #[tauri::command]
 pub(crate) async fn clear_thumb_cache(cache: State<'_, Arc<TierCache>>) -> Result<(), String> {
-    cache.clear(); Ok(())
+    cache.clear();
+    Ok(())
 }
 
 #[tauri::command]
@@ -803,14 +827,19 @@ mod tests {
     }
 
     fn is_well_formed_phash(s: &str) -> bool {
-        s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        s.len() == 16
+            && s.bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     }
 
     #[test]
     fn thumb_phash_hashes_a_decodable_thumb_jpeg() {
         let jpeg = synth_jpeg(160, 120);
         let hex = thumb_phash(&jpeg).expect("decodable JPEG must hash");
-        assert!(is_well_formed_phash(&hex), "not a well-formed 16-hex phash: {hex}");
+        assert!(
+            is_well_formed_phash(&hex),
+            "not a well-formed 16-hex phash: {hex}"
+        );
     }
 
     #[test]
