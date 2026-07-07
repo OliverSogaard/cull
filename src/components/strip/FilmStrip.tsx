@@ -49,7 +49,13 @@ export function FilmStrip({
   });
 
   const items: ReactNode[] = [];
-  for (let i = first; i < last; i++) {
+  // Clamp to the LIVE count: the virtualizer's {first,last} is state synced
+  // by a layout effect, so a render forced between a list shrink and that
+  // sync (store-driven sync flush during a compare decide, 2026-07-07) can
+  // hold a window that overruns the new list. Same bug class as the grid's
+  // thumb-flash (window state lands a frame late) — clamp at render time.
+  const lastClamped = Math.min(last, count);
+  for (let i = Math.max(0, first); i < lastClamped; i++) {
     items.push(
       <div
         key={keyForItem(i)}

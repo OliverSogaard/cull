@@ -78,7 +78,9 @@ export function PhotoStrip({
         buffer={STRIP_BUFFER}
         overlays={burstBoxes}
         prefix={prefix}
-        keyForItem={(i) => images[indices[i]].id}
+        // Optional-chained for the same transient-window reason as renderItem
+        // below (the key path was the 2026-07-07 crash's second surface).
+        keyForItem={(i) => images[indices[i]]?.id ?? `gap-${i}`}
         // indices[i] can be transiently undefined when a store-driven sync
         // flush renders between a rating landing and its index state (the
         // compare-decide crash, 2026-07-07): an empty cell for one frame
