@@ -194,9 +194,20 @@ export const PhotoPane = memo(function PhotoPane({
     if (scrubbing) return; // overlays are hidden mid-scrub; skip measure + RO churn
     if (isZooming) {
       wasZoomingRef.current = true;
-      const zoomedRect = measurePaneRect(imgRef.current, measureContainerRef.current, true);
-      if (zoomedRect) applyRect(zoomedRect);
-      return;
+      const measureZoomed = () => {
+        const zoomedRect = measurePaneRect(imgRef.current, measureContainerRef.current, true);
+        if (zoomedRect) applyRect(zoomedRect);
+      };
+      measureZoomed();
+      // The container can RESIZE while zoomed — a compare decide swapping in
+      // a different-aspect challenger redistributes the panel row, and the
+      // loupe's strip/rail toggles reflow the stage. The zoomed measure is
+      // transform-safe (the __clip parent never scales), so observing is
+      // safe; without it every zoom factor derived from the stale rect
+      // mis-scales (the mixed-AR zoomed-decide ghost, 2026-07-07).
+      const zro = new ResizeObserver(measureZoomed);
+      if (measureContainerRef.current) zro.observe(measureContainerRef.current);
+      return () => zro.disconnect();
     }
     const justUnzoomed = wasZoomingRef.current;
     wasZoomingRef.current = false;
@@ -247,6 +258,18 @@ export const PhotoPane = memo(function PhotoPane({
       if (hiResTimer.current) clearTimeout(hiResTimer.current);
     };
   }, [path, navReady, settleResetKey, fullSettleMs]);
+
+  // A zoom full can be dropped OUT FROM UNDER an engaged zoom — the decide
+  // swap's dropZoomFullsExcept, an errored read, an eviction — and nothing
+  // else re-fires the fetch (the settle and engage effects key on path/zoom,
+  // which didn't change), leaving the pane on the blurry upscaled preview
+  // with the loading ring forever. Re-request whenever zoomed with the nav
+  // ready but no zoom full in hand; requestZoomFull's own guards (ready /
+  // loading / queued / cooldown) keep this storm-free. The critical-pressure
+  // shed exits zoom in the same breath, so this never fights it.
+  useEffect(() => {
+    if (isZooming && navReady && !img.full && path) imageStore.requestZoomFull(path);
+  }, [isZooming, navReady, img.full, path]);
 
   // ── Geometry ──────────────────────────────────────────────────────────────
   // Frame size source: the orientation-correct THMB display dims (w/h > 1

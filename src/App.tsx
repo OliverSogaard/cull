@@ -2294,7 +2294,10 @@ export default function App() {
     // jetsam kill). AFTER the last setState on purpose: the store's invalidate
     // forces a SYNC React flush, and flushing between setRatings and
     // setChallengerIndex rendered a half-updated strip (the 2026-07-07 crash).
-    if (isZoomingRef.current && !exiting) {
+    // Runs on UNZOOMED decides too since the pane unification: PhotoPane's
+    // settle policy keeps both panes' fulls resident even unzoomed, so
+    // without the drop each decide accumulated the outgoing challenger's.
+    if (!exiting) {
       const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
         (x): x is string => Boolean(x),
       );
@@ -2353,8 +2356,9 @@ export default function App() {
         setChallengerIndex(nextChallenger);
       }
       // Outgoing challenger's full dropped AFTER the last setState (see
-      // challengerLoses for the sync-flush ordering rationale).
-      if (isZoomingRef.current && !exiting) {
+      // challengerLoses for the sync-flush ordering rationale; unzoomed too
+      // since the pane unification keeps fulls resident).
+      if (!exiting) {
         const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
           (x): x is string => Boolean(x),
         );
@@ -2426,8 +2430,9 @@ export default function App() {
     }
     // Sequential swap: the old champion's full goes NOW (the new champion IS
     // the old challenger, so its full is already resident, no refetch). AFTER
-    // the last setState (see challengerLoses for the sync-flush rationale).
-    if (isZoomingRef.current && !exiting) {
+    // the last setState (see challengerLoses for the sync-flush rationale;
+    // unzoomed too since the pane unification keeps fulls resident).
+    if (!exiting) {
       const keep = [images[newChamp]?.path, images[nextChallenger]?.path].filter(
         (x): x is string => Boolean(x),
       );
@@ -4133,6 +4138,8 @@ export default function App() {
             panOffset={panOffset}
             feedback={feedback}
             scrubbing={scrubbing}
+            fullSettleMs={profile.fullSettleMs}
+            settleResetKey={`${thumbsVisible}|${exifVisible}`}
             championSuggestion={
               images[championIndex] && !ratings[images[championIndex].id]
                 ? suggestions[images[championIndex].id] ?? null
