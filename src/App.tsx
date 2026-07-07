@@ -886,14 +886,19 @@ export default function App() {
   // very pixels the user is inspecting (P5). Engaging zoom also fetches the
   // zoom-tier full immediately (Phase 3) — if the settle already warmed it
   // this is a no-op; if not, the preview upscales until the full lands.
+  // LOUPE ONLY: compare pins + fetches its own pair (the session-pin effect
+  // above and ComparePanel's zoom fetch). currentIndex is FROZEN while
+  // compare is open, so running this there pinned and fetched a stale frame
+  // nobody displays — a phantom ~130 MB raster during the exact operation
+  // the memory budget protects (review catch on the jetsam work).
   useEffect(() => {
-    if (!isZooming) return undefined;
+    if (!isZooming || compareMode) return undefined;
     const p = images[currentIndex]?.path;
     if (!p) return undefined;
     imageStore.pinFull(p);
     imageStore.requestZoomFull(p);
     return () => imageStore.unpinFull(p);
-  }, [isZooming, currentIndex, images]);
+  }, [isZooming, compareMode, currentIndex, images]);
 
   // Folder-trouble retry: re-run the scan as a reachability probe on every
   // source folder, then re-arm the store's queues IN PLACE — same session,
