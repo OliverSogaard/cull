@@ -180,7 +180,10 @@ export class ImageStore {
   private pendingZoom = new Set<string>();
   /** path → exact-range hint + orientation from the preview header. Derived
    *  from immutable file content — survives reset(), cleared on hardReset. */
-  private fullHints = new Map<string, { offset: number | null; len: number | null; orientation: number }>();
+  private fullHints = new Map<
+    string,
+    { offset: number | null; len: number | null; orientation: number }
+  >();
   /** path → NATIVE full-res display dims (sensor pixels, orientation-swapped)
    *  for the hi-res layer's transform math. Same lifetime as fullHints. */
   private nativeDims = new Map<string, ImageDims>();
@@ -239,7 +242,17 @@ export class ImageStore {
    *  IPC transfer cost of the ~10 MB full, i.e. the Phase 2 Windows
    *  benchmark readout. */
   private zoomTimings: { name: string; ms: number }[] = [];
-  private counts = { navLoads: 0, zoomLoads: 0, thumbLoads: 0, midLoads: 0, midGens: 0, previewEvicts: 0, zoomEvicts: 0, midEvicts: 0, errors: 0 };
+  private counts = {
+    navLoads: 0,
+    zoomLoads: 0,
+    thumbLoads: 0,
+    midLoads: 0,
+    midGens: 0,
+    previewEvicts: 0,
+    zoomEvicts: 0,
+    midEvicts: 0,
+    errors: 0,
+  };
   // ── Concurrency counters ───────────────────────────────────────────────
   private thumbInFlight = 0;
   private fullInFlight = 0;
@@ -286,8 +299,7 @@ export class ImageStore {
   constructor(opts: ImageStoreOptions = {}) {
     this.thumbLruCap = opts.thumbLruCap ?? THUMB_LRU_CAP;
     const poolFactory =
-      opts.poolImageFactory ??
-      (typeof Image !== "undefined" ? () => new Image() : undefined);
+      opts.poolImageFactory ?? (typeof Image !== "undefined" ? () => new Image() : undefined);
     this.pool = poolFactory ? new DecodePool(poolFactory) : null;
   }
 
@@ -362,7 +374,10 @@ export class ImageStore {
   /** Fire-and-forget backend push (session gen / io profile). Quiet on a
    *  pre-Phase-2 backend (unknown command) and skipped entirely in unit tests
    *  (node env, no webview). */
-  private pushBackend(cmd: "begin_session" | "set_io_profile", args: Record<string, unknown>): void {
+  private pushBackend(
+    cmd: "begin_session" | "set_io_profile",
+    args: Record<string, unknown>,
+  ): void {
     if (typeof window === "undefined") return;
     void (async () => {
       try {
@@ -925,10 +940,7 @@ export class ImageStore {
   // ── Thumb pump ─────────────────────────────────────────────────────────
 
   private pumpThumbs(): void {
-    while (
-      this.thumbInFlight < this.profile.thumbConcurrency &&
-      this.thumbQueue.length > 0
-    ) {
+    while (this.thumbInFlight < this.profile.thumbConcurrency && this.thumbQueue.length > 0) {
       const path = this.thumbQueue.shift()!;
       if (this.requestedThumb.has(path) || this.thumbs.has(path)) continue;
       this.requestedThumb.add(path);
@@ -1070,10 +1082,7 @@ export class ImageStore {
   // ── Full-res pump ───────────────────────────────────────────────────────
 
   private pumpFull(): void {
-    while (
-      this.fullInFlight < this.profile.previewConcurrency &&
-      this.fullQueue.length > 0
-    ) {
+    while (this.fullInFlight < this.profile.previewConcurrency && this.fullQueue.length > 0) {
       const path = this.fullQueue.shift()!;
       // single-flight per path — never start a second loadFull while one is
       // already in flight for this path (the guard lives here, before the
@@ -1341,14 +1350,17 @@ export class ImageStore {
    *  register/unregister churn are harmless no-ops. */
   private scheduleFullRetry(path: string, te: TierError, gen: number): void {
     if (te.attempts >= MAX_TIER_ATTEMPTS || this.folderTrouble) return;
-    setTimeout(() => {
-      if (this.generation !== gen || this.folderTrouble) return;
-      if (!this.wantFull.has(path)) return; // nobody's looking — re-register retries
-      if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) return;
-      if (this.fulls.get(path)?.status === "ready") return;
-      if (!this.fullQueue.includes(path)) this.fullQueue.unshift(path);
-      this.pumpFull();
-    }, Math.max(0, te.nextRetryAt - Date.now()));
+    setTimeout(
+      () => {
+        if (this.generation !== gen || this.folderTrouble) return;
+        if (!this.wantFull.has(path)) return; // nobody's looking — re-register retries
+        if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) return;
+        if (this.fulls.get(path)?.status === "ready") return;
+        if (!this.fullQueue.includes(path)) this.fullQueue.unshift(path);
+        this.pumpFull();
+      },
+      Math.max(0, te.nextRetryAt - Date.now()),
+    );
   }
 
   // ── Mid tier (Phase 8): the display-adaptive ≤2560px settled fit view ───
@@ -1565,10 +1577,7 @@ export class ImageStore {
       this.armMidSweepTimer();
       return;
     }
-    while (
-      this.midSweepInFlight < this.profile.midGenConcurrency &&
-      this.onDemandIdle()
-    ) {
+    while (this.midSweepInFlight < this.profile.midGenConcurrency && this.onDemandIdle()) {
       const path = this.pickMidSweep();
       if (!path) return;
       this.midSweepDone.add(path);
@@ -1728,9 +1737,7 @@ export class ImageStore {
     if (this.generation !== gen) return;
     // The queue is UNORDERED — pickBg() finds the grid-viewport-first /
     // nearest-cursor candidate by argmin at pump time, against the live cursor.
-    this.bgQueue = this.paths.filter(
-      (p) => !this.thumbs.has(p) && !this.requestedThumb.has(p),
-    );
+    this.bgQueue = this.paths.filter((p) => !this.thumbs.has(p) && !this.requestedThumb.has(p));
     this.pumpBg();
   }
 
@@ -1790,8 +1797,24 @@ export class ImageStore {
     navMsAvg: number;
     lanes: { preview: string; zoom: string; thumb: string; bg: string };
     caches: { previews: number; zoomFulls: number; thumbs: number; dims: number };
-    counts: { navLoads: number; zoomLoads: number; thumbLoads: number; midLoads: number; midGens: number; previewEvicts: number; zoomEvicts: number; midEvicts: number; errors: number };
-    mid: { engaged: boolean; needPx: number | null; lane: string; cached: number; sweepLeft: number };
+    counts: {
+      navLoads: number;
+      zoomLoads: number;
+      thumbLoads: number;
+      midLoads: number;
+      midGens: number;
+      previewEvicts: number;
+      zoomEvicts: number;
+      midEvicts: number;
+      errors: number;
+    };
+    mid: {
+      engaged: boolean;
+      needPx: number | null;
+      lane: string;
+      cached: number;
+      sweepLeft: number;
+    };
     decodedMB: number;
     legacyNav: boolean;
   } {
@@ -1835,12 +1858,16 @@ export class ImageStore {
         })(),
         lane: `${this.midInFlight}/${this.profile.midGenConcurrency} q${this.midQueue.length}`,
         cached: mids,
-        sweepLeft: this.profile.concurrentRestore && this.midEngaged
-          ? Math.max(0, this.paths.length - this.midSweepDone.size)
-          : 0,
+        sweepLeft:
+          this.profile.concurrentRestore && this.midEngaged
+            ? Math.max(0, this.paths.length - this.midSweepDone.size)
+            : 0,
       },
       decodedMB: Math.round(
-        (this.navLegacy ? previews * 130 : previews * 7) + zoomMB + mids * 17 + this.thumbs.size * 0.08,
+        (this.navLegacy ? previews * 130 : previews * 7) +
+          zoomMB +
+          mids * 17 +
+          this.thumbs.size * 0.08,
       ),
       legacyNav: this.navLegacy,
     };

@@ -7,7 +7,6 @@ import { stripExt } from "../utils/path";
 import { useThumb } from "../image/useThumb";
 import { ghostGlyph, ghostTitle, verdictDotClass, verdictGlyph } from "./verdictGlyph";
 
-
 type ThumbCellProps = {
   img: Img;
   index: number;
@@ -66,8 +65,7 @@ export const ThumbCell = memo(function ThumbCell({
   ]
     .filter(Boolean)
     .join(" ");
-  const outlineColor =
-    (isCurrent || roleVariant) && !isGhost ? "var(--accent)" : "transparent";
+  const outlineColor = (isCurrent || roleVariant) && !isGhost ? "var(--accent)" : "transparent";
 
   const showLrc = hasLrcRating(lrcRating);
 
@@ -75,8 +73,7 @@ export const ThumbCell = memo(function ThumbCell({
   // dot and this guard stops rendering it (superseded in place, never stored).
   // Ghosts are SUGGESTION-driven only (the burst winner's ✓ arrives via its
   // rail's Burst row); the run itself is outlined by the strip-level box.
-  const ghost =
-    !rating && (suggestion?.verdict ?? null);
+  const ghost = !rating && (suggestion?.verdict ?? null);
 
   return (
     <div
@@ -89,10 +86,7 @@ export const ThumbCell = memo(function ThumbCell({
       }`}
       style={{ opacity: cellOpacity }}
     >
-      <div
-        className={frameClass}
-        style={{ ["--thumb-outline" as string]: outlineColor }}
-      >
+      <div className={frameClass} style={{ ["--thumb-outline" as string]: outlineColor }}>
         {url ? (
           // decoding="sync": these are ~15 KB JPEGs — once the bytes are in,
           // decode with layout/paint instead of letting an async decode
@@ -101,13 +95,7 @@ export const ThumbCell = memo(function ThumbCell({
           // cache-warm), so a cell mounted INSIDE the viewport paints ~a frame
           // late regardless — cells must enter via the offscreen overscan
           // buffer (STRIP_BUFFER / GRID_BUFFER_ROWS + same-frame windowing).
-          <img
-            className="cull-thumb__img"
-            src={url}
-            alt=""
-            decoding="sync"
-            onLoad={probeOnLoad}
-          />
+          <img className="cull-thumb__img" src={url} alt="" decoding="sync" onLoad={probeOnLoad} />
         ) : (
           <div
             className="cull-thumb__placeholder"
@@ -130,14 +118,7 @@ export const ThumbCell = memo(function ThumbCell({
             <span className="cull-thumb__role-badge-text">
               {isGhost ? "champion" : roleVariant}
             </span>
-            {showLrc && (
-              <Star
-                size={8}
-                strokeWidth={2.4}
-                fill="currentColor"
-                aria-hidden
-              />
-            )}
+            {showLrc && <Star size={8} strokeWidth={2.4} fill="currentColor" aria-hidden />}
           </div>
         ) : (
           showLrc && (

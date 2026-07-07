@@ -363,4 +363,3 @@ function CompareRow({ k, a, b }: { k: string; a: string; b: string }) {
     </div>
   );
 }
-

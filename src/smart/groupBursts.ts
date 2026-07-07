@@ -65,8 +65,7 @@ function extendsRun(
 
   // Cadence source: SubSec-precise capture clock when BOTH frames carry it —
   // immune to buffer-dump mtime stretch and copy-tool mtime flattening.
-  const fine =
-    a.capturedAtMs != null && b.capturedAtMs != null && a.hasSubSec && b.hasSubSec;
+  const fine = a.capturedAtMs != null && b.capturedAtMs != null && a.hasSubSec && b.hasSubSec;
   if (fine) return Math.abs(b.capturedAtMs! - a.capturedAtMs!) < BURST_GAP_MS;
 
   // mtime fallback (scores path only), with the coarse capture-time guard:
