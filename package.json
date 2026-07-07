@@ -3,7 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "description": "Keyboard-fast culling for Canon CR3 RAW photos.",
-  "author": "Olive",
+  "author": "Oliver Søgaard-Andersen",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
