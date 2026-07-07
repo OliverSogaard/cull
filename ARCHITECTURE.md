@@ -102,7 +102,7 @@ stays NAS-polite and never starves on-screen reads. Cursor moves and grid
 scrolling re-prioritize the queue toward the viewport; leaving the grid clears
 its range so prefetch follows the loupe cursor.
 
-### On-disk tier cache (v2)
+### On-disk tier cache (format v3)
 
 `src-tauri/src/tier_cache.rs` (pipeline Phase 7) is a per-tier LRU on-disk
 cache in the OS cache dir: `thumb/` (500 MB) behind `extract_thumbnail`,
@@ -110,7 +110,11 @@ cache in the OS cache dir: `thumb/` (500 MB) behind `extract_thumbnail`,
 `mid/` (4 GB) behind `read_mid` (Phase 8) — filled opportunistically from
 zoom reads' in-memory bytes on every profile, by `read_mid` misses on the
 local profile, and by the local idle sweep (`generate_mid`); the NAS profile
-NEVER fetches a full solely to generate. Each v2 entry stores dual validators —
+NEVER fetches a full solely to generate. The format `VERSION` byte is shared
+across all tiers, so any bump regenerates every tier's entries once; v2 → v3
+(2026-07-06) happened when the perceptual hash started riding the thumbnail
+pipeline — cached thumb headers now carry `phash`, so pre-change entries had
+to regenerate. Each entry stores dual validators —
 source mtime in MILLISECONDS plus file size, checked against the session stat
 table fed by analyze's dir listings, so a hit costs zero source-file
 round-trips — alongside the command's wire header (metadata included) and the
@@ -260,6 +264,44 @@ All three are downscaled to a working size (~1600 px for masks, ~256 px
 for the histogram), cached per path while their overlay is on, and
 dropped when it's off so they don't bloat the session.
 
+## Smart culling
+
+Suggestions are **advisory only — the analysis never writes a rating, an
+XMP, or anything else**; it surfaces ghost dots, burst / "Similar ×N"
+groupings, and the Smart (`4`) filter, and every real verdict stays a user
+keystroke. That invariant is structural, not policy: the smart layer's output
+feeds rendering and filtering only, never `persistRating`.
+
+The design is two-layer:
+
+- **Rust computes cached per-image metrics.** `analyze_folder` streams
+  `ImageScore` records — classical metrics from the embedded previews
+  (AF-point sharpness with a noise-floor normalization, exposure, clipping,
+  texture; `analyze.rs`), plus the always-on 64-bit DCT perceptual hash
+  (`phash.rs`, computed on the thumbnail pipeline and persisted in the tier
+  cache). Builds with the `smart-ml` feature (the default) add ONNX-backed
+  signals through `ml_models.rs`'s lazy per-model sessions: YuNet face
+  detection + OCEC eyes-open probability (`faces.rs`), DINOv2-small
+  embeddings and the CLIP + LAION aesthetic score (`embed.rs`). Without the
+  feature (`--no-default-features`), those fields stay empty on the wire and
+  everything else still works.
+- **Pure TS derives cross-frame verdicts.** `src/smart/` groups bursts from
+  capture cadence (`groupBursts.ts`), chains near-duplicates by pHash +
+  embedding cosine within a time window (`groupSimilar.ts`), picks group
+  winners on one shared ladder (`pickWinner.ts`), cascades per-frame
+  suggestion verdicts with margin-scaled confidence (`deriveVerdict.ts`),
+  and caps aesthetic favorites per session (`capFavorites.ts`). All of it is
+  pure and unit-tested; React only subscribes.
+
+The in-app switches live in Settings: suggestions master switch, reject
+confidence level, analyze-on-open, and **Deep analysis** (the ML tier's
+user-facing toggle — inert on builds without the model runtime).
+
+**Calibration provenance:** every threshold in `deriveVerdict.ts` cites a
+corpus frame, and only the calibration harness — a confusion-matrix report
+over an already-culled folder, comparing suggestions against the user's real
+ratings — may change them. See [TESTING.md](TESTING.md) for the invocation.
+
 ## Settings
 
 User prefs live in `localStorage` under `cull:settings:v1`, exposed by
@@ -305,8 +347,15 @@ The frontend follows a strict layering — no circular deps:
 App.tsx (orchestration + state)
   ↓ imports
 components/  — presentational; receive callbacks + state via props
+  ├─ pane/   — PhotoPane: the one loupe/compare pane recipe (presenter layers, zoom)
+  └─ strip/  — PhotoStrip family: film strip, virtualizer, burst boxes
   ↓ imports
-utils/       — pure helpers (format, filter, path, snap, bundle)
+image/       — imageStore (tier lanes, eviction, generations), presenter, decode pool
+smart/       — burst/similar grouping + verdict derivation (pure TS, no React)
+overlays/    — clipping/peaking mask scans + histogram (inline + worker paths)
+hooks/       — useSettings, useRecents, focus trap
+  ↓ imports
+utils/       — pure helpers (format, filter, path, snap, bundle, dlog)
   ↓ imports
 types/       — shared TypeScript types
 ```
@@ -314,31 +363,30 @@ types/       — shared TypeScript types
 The backend follows the same shape:
 
 ```
-lib.rs (run() + Tauri command wiring + managed state)
+lib.rs (run() + Tauri command wiring + managed state)  /  main.rs (entry)
   ↓ uses
-bundle / scan / xmp / file_ops / io_gate (Tauri command modules)
+bundle / scan / xmp / file_ops / midtier   (Tauri command modules)
   ↓ use
-meta / cr3 / tier_cache    (data + parser + disk cache)
+analyze / faces / embed / phash / ml_models   (smart-culling metrics; ml behind `smart-ml`)
+meta / cr3 / tier_cache / io_gate / memory_pressure   (data, parser, cache, infra)
 ```
 
 `cr3.rs` is the parser and stays untouched by everything except
 `bundle.rs` and `scan.rs`. `meta.rs` owns the IPC-facing `ImageMetadata`
 struct and the conversion from `cr3::Cr3Meta`. `io_gate.rs` owns the
 global read-permit backstop (IoGate), the tiered read timeouts, and the
-session generation + mtime table (SessionGate).
+session generation + mtime table (SessionGate). `memory_pressure.rs`
+watches for jetsam-class pressure on macOS and tells the frontend to shed.
 
 ## Test surface
 
-- **Backend (`cargo test`).** XMP encode/decode round-trip + idempotency,
-  flag-encoding-matches-LrC checks against real LrC sidecars in
-  `sample_cr3s/sample_LrCFlaggedCR3s/`, batch_files idempotency +
-  non-overwrite + error cap, plus CR3-parser tests env-var-gated against
-  real CR3 fixtures in `sample_cr3s/`.
-- **Frontend (`pnpm test`, Vitest).** Pure-helper unit tests
-  (`passesFilter`, all `format*` helpers, `snapToFilter`, `basename` /
-  `stripExt`) plus the image-pipeline invariants: `imageStore.test.ts`
-  (blob-URL pairing, generation scoping, queue priority, LRU + protection
-  predicates, retry/backoff, the zoom-full lane), `stage.test.ts`, and
-  `present.test.ts` (the decode-gated presenter's full rule set with an
-  injected fake decoder). No component tests — the components are
-  presentational, and testing them would test JSX shape, not behaviour.
+Two suites: **backend** (`cargo test`, XMP round-trips against real LrC
+sidecars, CR3 parser, tier cache, analyze/faces/phash, io_gate) and
+**frontend** (`pnpm test`, Vitest — the image-pipeline invariants in
+`imageStore` / `stage` / `present`, the whole `smart/` verdict layer, and
+the pure utils). No component tests — the components are presentational,
+and testing them would test JSX shape, not behaviour. Corpus-dependent
+tests are env-var-gated and skip cleanly when fixtures are absent.
+
+Commands, the env-gated corpus tests, and the calibration harness are all
+documented in [TESTING.md](TESTING.md).
