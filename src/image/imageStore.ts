@@ -10,7 +10,8 @@
  *
  * Blob-URL revoke sites:
  *  1. enforceThumbLru — when the LRU cap evicts an old thumb entry
- *  2. evictFull / evictFullAround — when a full-res entry leaves the windowed cache
+ *  2. evictFullAround — when a full-res entry leaves the windowed cache
+ *     (2b. evictFull — test-only direct eviction of one path)
  *  3. loadFull — when a full-res entry is REPLACED by a fresher one (no double-keep)
  *  4. hardReset — revokes ALL thumb + full blob URLs (folder change / session end)
  *  5. reset(paths) — revokes full-res for all tracked paths; thumbs are kept
@@ -1633,7 +1634,7 @@ export class ImageStore {
   evictFull(path: string): void {
     const state = this.fulls.get(path);
     if (state?.status === "ready") {
-      URL.revokeObjectURL(state.url); // REVOKE SITE 2 (direct eviction)
+      URL.revokeObjectURL(state.url); // REVOKE SITE 2b (test-only direct eviction)
     }
     this.fulls.delete(path);
     // do NOT drop requestedFull while a loadFull is still in flight for

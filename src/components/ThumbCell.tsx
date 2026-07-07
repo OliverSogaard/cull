@@ -18,16 +18,14 @@ type ThumbCellProps = {
   lrcRating?: number | null;
   dimmed: boolean;
   onPick: (index: number) => void;
-  /** Role variant in compare mode — adds a champagne outline + role badge. */
-  /** "champion-ghost": the champion in its candidate-track slot — heavily
+  /** Role variant in compare mode — adds a champagne outline + role badge.
+   *  "champion-ghost": the champion in its candidate-track slot — heavily
    *  grayed, unselectable, wearing the champion tag (no pinned cell). */
   roleVariant?: "challenger" | "champion-ghost";
   /** Smart-culling ghost suggestion — renders in the verdict-dot slot ONLY
    *  while the frame is unrated (compare strips never pass it: suppressed
    *  by construction there). */
   suggestion?: Suggestion | null;
-  /** Burst membership — run tint, "Burst · N" pill on the first cell, and a
-   *  solid winner border. */
 };
 
 /**

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { stripExt } from "../utils/path";
 import type { ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
@@ -219,7 +220,7 @@ export function CompareExifRail({
     const champTime = formatTime(championMeta?.capturedAt ?? null);
     const challTime = formatTime(challengerMeta?.capturedAt ?? null);
     const frameRows: { k: string; a: string; b: string }[] = [
-      { k: "File", a: stripExtName(championName), b: stripExtName(challengerName) },
+      { k: "File", a: stripExt(championName), b: stripExt(challengerName) },
       { k: "Body", a: championMeta?.camera ?? "—", b: challengerMeta?.camera ?? "—" },
       { k: "Lens", a: championMeta?.lens ?? "—", b: challengerMeta?.lens ?? "—" },
       { k: "Time", a: champTime ?? "—", b: challTime ?? "—" },
@@ -363,7 +364,3 @@ function CompareRow({ k, a, b }: { k: string; a: string; b: string }) {
   );
 }
 
-function stripExtName(filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  return dot > 0 ? filename.slice(0, dot) : filename;
-}

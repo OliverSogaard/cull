@@ -37,6 +37,7 @@ import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
+import { verdictGlyph } from "./components/verdictGlyph";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
@@ -102,10 +103,8 @@ const NAV_REPEAT_MS = 33;
 // sustained hold pauses briefly then ramps into the ~30/s repeat above.
 const NAV_HOLD_DELAY_MS = 280;
 
-/** Wait for the layers' 200ms unzoom transform-transition to finish before
- *  re-measuring — a mid-animation getBoundingClientRect returns a scaled box. */
 // sizerSrc (the aspect-carrying transparent SVG) moved to utils/sizer.ts —
-// rendered by PhotoPane.
+// rendered by PhotoPane (which also owns the unzoom re-measure discipline).
 
 /**
  * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
@@ -3750,15 +3749,6 @@ export default function App() {
     reject: "cull-statusbar__verdict--reject",
     favorite: "cull-statusbar__verdict--fav",
   };
-  // Glyph rendered as a Lucide SVG icon (not a Unicode character) so it
-  // centers perfectly inside the 14px circle. Unicode ★ ✓ ✕ in Segoe UI
-  // Symbol / system-ui have inconsistent baselines on Windows — `flex; center;
-  // center` alone wasn't enough to put the star visually mid-circle.
-  const verdictGlyph: Record<Rating, ReactNode> = {
-    keep: <Check size={9} color="#0a0a0c" strokeWidth={3} />,
-    reject: <XIcon size={9} color="#0a0a0c" strokeWidth={3} />,
-    favorite: <Star size={9} color="#0a0a0c" strokeWidth={2.6} fill="#0a0a0c" />,
-  };
   const totalKeeps = stats.keeps; // includes favorites
   const bottomStatusBar = (
     <footer className="cull-statusbar">
@@ -3774,7 +3764,7 @@ export default function App() {
             aria-label={verdictLabel[currentRating]}
           >
             <span className="cull-statusbar__verdict-glyph" aria-hidden>
-              {verdictGlyph[currentRating]}
+              {verdictGlyph(currentRating, 9)}
             </span>
             {verdictLabel[currentRating]}
           </span>
@@ -4316,26 +4306,6 @@ export default function App() {
 }
 
 /**
- * XMP save-status pill rendered in the top chrome (next to the brand). The
- * bottom status bar also surfaces failed saves — this is a peripheral mirror
- * the user catches with their peripheral vision so a failed write doesn't sit
- * unnoticed when the bottom bar is occluded by a modal.
- *
- * Three states, fully derived from existing state (no new state machinery):
- *  - failed   → red pill, clickable, runs the same retry path as the bottom bar
- *  - saving   → champagne dot pulsing, "saving…" text
- *  - idle     → muted dot, "saved" text (default)
- *
- * Failed wins over saving so an in-flight retry doesn't visually mask the
- * still-failing batch behind it.
- */
-/**
- * Centered empty-state shown in loupe / grid when the active filter has zero
- * matches. Small icon,
- * uppercase eyebrow, headline with the missing filter highlighted, and a key
- * hint to switch out.
- */
-/**
  * Shared markup for the two true "no match" empty states (not-analyzed and
  * filter-empty) — both drop the old `⌀` glyph for a faint desert backdrop
  * instead. The "analyzing" / "analyzed" variants above them are transient
@@ -4360,6 +4330,12 @@ function NoMatchEmptyState({
   );
 }
 
+/**
+ * Centered empty-state shown in loupe / grid when the active filter has zero
+ * matches. Small icon,
+ * uppercase eyebrow, headline with the missing filter highlighted, and a key
+ * hint to switch out.
+ */
 function EmptyFilter({
   filter,
   smartCulling,
@@ -4584,6 +4560,20 @@ function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }
   );
 }
 
+/**
+ * XMP save-status pill rendered in the top chrome (next to the brand). The
+ * bottom status bar also surfaces failed saves — this is a peripheral mirror
+ * the user catches with their peripheral vision so a failed write doesn't sit
+ * unnoticed when the bottom bar is occluded by a modal.
+ *
+ * Three states, fully derived from existing state (no new state machinery):
+ *  - failed   → red pill, clickable, runs the same retry path as the bottom bar
+ *  - saving   → champagne dot pulsing, "saving…" text
+ *  - idle     → muted dot, "saved" text (default)
+ *
+ * Failed wins over saving so an in-flight retry doesn't visually mask the
+ * still-failing batch behind it.
+ */
 function SaveStatusPill({
   failedCount,
   savingCount,

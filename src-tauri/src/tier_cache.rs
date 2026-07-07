@@ -1,10 +1,11 @@
-//! On-disk LRU cache for image tiers, format v2 (pipeline Phase 7).
+//! On-disk LRU cache for image tiers (pipeline Phase 7; format [`VERSION`] —
+//! v3 since pHash rode into the thumb headers, 2026-07-06).
 //! Generalizes the v1 thumbnail cache to per-tier subdirs — `thumb/` (THMB
 //! JPEGs), `prvw/` (1620×1080 PRVW JPEGs, filled by piggyback on
 //! `read_preview` misses ONLY — never a standalone NAS sweep), `mid/`
-//! (reserved for the Phase 8 generated tier).
+//! (the generated mid tier — Phase 8, shipped).
 //!
-//! ## Entry format v2 (little-endian)
+//! ## Entry format (little-endian)
 //!
 //! `"CUL2"` magic · version u8 · tier u8 · source mtime i64 in MILLISECONDS
 //! (matches `analyze_folder`'s ms mtimes) · source file size u64 (second
