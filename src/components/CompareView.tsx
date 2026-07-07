@@ -10,6 +10,11 @@ import { offerTiers } from "../image/present";
 import { afZoomOrigin } from "../utils/zoom";
 import { sizerSrc } from "../utils/sizer";
 import { HiResLayer } from "./loupe/HiResLayer";
+import {
+  hiResTransform,
+  measurePaneRect,
+  ZOOM_UNSETTLE_MEASURE_DELAY_MS,
+} from "./loupe/paneGeometry";
 import { PresentLayers } from "./loupe/PresentLayers";
 import { usePresent } from "../image/usePresent";
 
@@ -250,47 +255,16 @@ const ComparePanel = memo(function ComparePanel({
     if (scrubbing) return;
     if (isZooming) {
       wasZoomingRef.current = true;
-      // A zoomed decide swaps this pane's frame (new challenger / promoted
-      // champion) — the fit box can differ (mixed orientations), so measure
-      // transform-safe via the img's parent: the __clip window never scales
-      // and the base layer fills it exactly (same fix as the loupe's carry).
-      const clip = imgRef.current?.parentElement;
-      const panel = panelRef.current;
-      if (clip && panel) {
-        const cr = clip.getBoundingClientRect();
-        const pr = panel.getBoundingClientRect();
-        if (cr.width >= 1) {
-          setRect({
-            left: cr.left - pr.left,
-            top: cr.top - pr.top,
-            width: cr.width,
-            height: cr.height,
-          });
-        }
-      }
+      // A zoomed decide swaps this pane's frame — measure transform-safe via
+      // the shared helper (the loupe carry's fix, now one implementation).
+      const zoomedRect = measurePaneRect(imgRef.current, panelRef.current, true);
+      if (zoomedRect) setRect(zoomedRect);
       return;
     }
     const justUnzoomed = wasZoomingRef.current;
     wasZoomingRef.current = false;
     const measure = () => {
-      const im = imgRef.current;
-      const p = panelRef.current;
-      if (!im || !p) {
-        setRect(null);
-        return;
-      }
-      const ir = im.getBoundingClientRect();
-      const pr = p.getBoundingClientRect();
-      if (ir.width < 1) {
-        setRect(null);
-        return;
-      }
-      setRect({
-        left: ir.left - pr.left,
-        top: ir.top - pr.top,
-        width: ir.width,
-        height: ir.height,
-      });
+      setRect(measurePaneRect(imgRef.current, panelRef.current, false));
     };
     // Observe the panel so overlays re-align on any size change — window
     // resize AND the panels growing when the candidate strip toggles.
@@ -300,7 +274,7 @@ const ComparePanel = memo(function ComparePanel({
       measure();
       if (panelRef.current) ro.observe(panelRef.current);
     };
-    if (justUnzoomed) armTimer = window.setTimeout(arm, 260);
+    if (justUnzoomed) armTimer = window.setTimeout(arm, ZOOM_UNSETTLE_MEASURE_DELAY_MS);
     else arm();
     return () => {
       ro.disconnect();
@@ -333,9 +307,10 @@ const ComparePanel = memo(function ComparePanel({
   // Per-pane decode-gated hi-res transform (mirrors the loupe's derivation:
   // rect is the displayed image's box, the layer reproduces scale(Z) about
   // the synced origin starting from the native-pixel-size element).
-  const cmpHiResTx = rect ? (originX / 100) * rect.width * (1 - zoomZ) : 0;
-  const cmpHiResTy = rect ? (originY / 100) * rect.height * (1 - zoomZ) : 0;
-  const cmpHiResScale = rect && zoomNativeDims ? (rect.width / zoomNativeDims.w) * zoomZ : 1;
+  const cmpHiRes = hiResTransform(rect, zoomNativeDims, originX, originY, zoomZ);
+  const cmpHiResTx = cmpHiRes.tx;
+  const cmpHiResTy = cmpHiRes.ty;
+  const cmpHiResScale = cmpHiRes.scale;
 
   return (
     <div
@@ -396,6 +371,11 @@ const ComparePanel = memo(function ComparePanel({
             tx={cmpHiResTx}
             ty={cmpHiResTy}
             scale={cmpHiResScale}
+            // The loupe glide fix that never got ported: without this the
+            // hi-res raster animated on the default 200ms ease-out while
+            // every other layer rode the 300ms engage curve — the pan/engage
+            // tearing Oliver saw in compare (2026-07-07).
+            transition={zoomGlide}
             className="cull-cmp-img cull-image--hires"
             onDecoded={setHiResReady}
           />

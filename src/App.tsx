@@ -55,6 +55,11 @@ import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { cycleFilter, topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
+import {
+  hiResTransform,
+  measurePaneRect,
+  ZOOM_UNSETTLE_MEASURE_DELAY_MS,
+} from "./components/loupe/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
@@ -95,8 +100,6 @@ const NAV_HOLD_DELAY_MS = 280;
 
 /** Wait for the layers' 200ms unzoom transform-transition to finish before
  *  re-measuring — a mid-animation getBoundingClientRect returns a scaled box. */
-const ZOOM_UNSETTLE_MEASURE_DELAY_MS = 260;
-
 // sizerSrc (the aspect-carrying transparent SVG) moved to utils/sizer.ts —
 // shared with LoupeStage and the compare panes.
 
@@ -1583,20 +1586,8 @@ export default function App() {
     // isZooming dep re-runs the full measure path on release.
     if (isZooming) {
       wasZoomingRef.current = true;
-      const clip = imgRef.current?.parentElement;
-      const stage = stageRef.current;
-      if (clip && stage) {
-        const cr = clip.getBoundingClientRect();
-        const sr = stage.getBoundingClientRect();
-        if (cr.width >= 1) {
-          setImgRect({
-            left: cr.left - sr.left,
-            top: cr.top - sr.top,
-            width: cr.width,
-            height: cr.height,
-          });
-        }
-      }
+      const zoomedRect = measurePaneRect(imgRef.current, stageRef.current, true);
+      if (zoomedRect) setImgRect(zoomedRect);
       return;
     }
     // …and when zoom JUST disengaged, the layers are still mid-transition
@@ -1606,24 +1597,7 @@ export default function App() {
     const justUnzoomed = wasZoomingRef.current;
     wasZoomingRef.current = false;
     const measure = () => {
-      const img = imgRef.current;
-      const stage = stageRef.current;
-      if (!img || !stage) {
-        setImgRect(null);
-        return;
-      }
-      const ir = img.getBoundingClientRect();
-      const sr = stage.getBoundingClientRect();
-      if (ir.width < 1) {
-        setImgRect(null);
-        return;
-      }
-      setImgRect({
-        left: ir.left - sr.left,
-        top: ir.top - sr.top,
-        width: ir.width,
-        height: ir.height,
-      });
+      setImgRect(measurePaneRect(imgRef.current, stageRef.current, false));
     };
     const ro = new ResizeObserver(measure);
     let armTimer: number | null = null;
@@ -3695,12 +3669,13 @@ export default function App() {
   // hi-res, clip/peak masks) — "none" for the carried-zoom frame swap, the
   // directional glide otherwise. Single source so layers can't tear apart.
   const zoomGlide = zoomSwapInstant ? "none" : zoomTransition(isZooming);
-  const hiResScale = imgRect && zoomNative ? (imgRect.width / zoomNative.w) * zoomZ : 1;
+  const hiResT = hiResTransform(imgRect, zoomNative, originX, originY, zoomZ);
+  const hiResScale = hiResT.scale;
   // The hi-res layer lives INSIDE the content-clip box (at 0,0 — the clip IS
   // exactly the displayed image area), so we only need the origin offset INSIDE
   // the image area. imgRect.width/height still report the displayed image's size.
-  const hiResTx = imgRect ? (originX / 100) * imgRect.width * (1 - zoomZ) : 0;
-  const hiResTy = imgRect ? (originY / 100) * imgRect.height * (1 - zoomZ) : 0;
+  const hiResTx = hiResT.tx;
+  const hiResTy = hiResT.ty;
 
   // Frame size source: the orientation-correct THMB display dims (w/h > 1 guards
   // the {1,1} UNKNOWN sentinel), else a NEUTRAL SQUARE while the aspect is
