@@ -1,4 +1,4 @@
-//! Smart-culling Phase 1: classical per-file quality metrics (SMART_CULLING_PLAN.md).
+//! Smart-culling Phase 1: classical per-file quality metrics (docs/history/SMART_CULLING_PLAN.md).
 //!
 //! The backend computes RAW PER-FILE METRICS ONLY — all cross-frame derivation
 //! (burst grouping, winner selection, verdicts) lives in pure TS over the
@@ -44,7 +44,7 @@ const NOISE_TILES: usize = 16;
 const NOISE_TILE_PX: usize = 128;
 
 /// Raw per-file metrics + the per-file inputs TS-side grouping needs, echoed
-/// from the same head read. Wire shape is pinned by SMART_CULLING_PLAN.md —
+/// from the same head read. Wire shape is pinned by docs/history/SMART_CULLING_PLAN.md —
 /// camelCase, mirrors `meta.rs`.
 #[derive(Clone, Debug, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -438,7 +438,7 @@ pub(crate) fn score_chunk(
 }
 
 /// Chunked quality scoring. `paths` is the CHUNK's paths only — there is no
-/// full-list pass anywhere (SMART_CULLING_PLAN.md, final review (a)). `gen` is
+/// full-list pass anywhere (docs/history/SMART_CULLING_PLAN.md, final review (a)). `gen` is
 /// the session generation: checked between files, threaded into each read, so a
 /// folder switch kills the pass within ~one file and the permit frees for the
 /// new folder's interactive reads. Progress is frontend-derived from each

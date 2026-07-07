@@ -6,7 +6,7 @@
  * injected (the React binding passes `el.src = url; return el.decode()`), so
  * every rule here is unit-testable with a fake decoder.
  *
- * Rules (the doc of record is IMAGE_PIPELINE_PLAN.md § presenter):
+ * Rules (the doc of record is docs/history/IMAGE_PIPELINE_PLAN.md § presenter):
  *  - ONLY-UPGRADE: an offer at tier ≤ the front tier for the same path is
  *    ignored — a late thumb can never replace a shown preview. Re-checked at
  *    decode COMPLETION too, so out-of-order decodes can't downgrade.

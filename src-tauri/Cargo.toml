@@ -25,7 +25,7 @@ default = ["smart-ml"]
 verbose-logs = []
 # Smart-culling Tier-2 (Phase 3a): YuNet face detection via ONNX Runtime.
 # The ONE native (non-pure-Rust) dependency in the backend — sanctioned by
-# SMART_CULLING_PLAN for Tier-2; behind this flag so `--no-default-features`
+# docs/history/SMART_CULLING_PLAN.md for Tier-2; behind this flag so `--no-default-features`
 # still compiles without onnxruntime entirely (faces stay empty on the wire).
 smart-ml = ["dep:ort"]
 
@@ -45,7 +45,7 @@ memchr = "2" # SIMD byte scan for finding JPEG EOI in the embedded full-res stre
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 # Phase 8 mid tier: pure-Rust decode → SIMD resize → encode (no C deps).
 # Encoder choice (jpeg-encoder over zenjpeg) was benchmarked at implementation
-# time — numbers + decision recorded in IMAGE_PIPELINE_PLAN.md Phase 8 note.
+# time — numbers + decision recorded in docs/history/IMAGE_PIPELINE_PLAN.md Phase 8 note.
 zune-jpeg = "0.5"
 fast_image_resize = "6"
 jpeg-encoder = { version = "0.7", features = ["simd"] }

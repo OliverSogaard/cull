@@ -1335,7 +1335,7 @@ mod tests {
         }
     }
 
-    // THE Phase 2 hard validation gate (IMAGE_PIPELINE_PLAN.md): the moov
+    // THE Phase 2 hard validation gate (docs/history/IMAGE_PIPELINE_PLAN.md): the moov
     // sample-table hint must agree with the mdat scan for EVERY corpus CR3
     // (subfolders included). No frontend work may depend on range-reads until
     // this passes on all samples. Gated on CULL_TEST_CR3_DIR.

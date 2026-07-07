@@ -255,7 +255,7 @@ fn preview_parts(
     Ok((header_json, b.preview, false))
 }
 
-/// Smart culling's per-file fetch (SMART_CULLING_PLAN.md Phase 1): the same
+/// Smart culling's per-file fetch (docs/history/SMART_CULLING_PLAN.md Phase 1): the same
 /// prvw acquisition as [`read_preview`] — validated cache hit, else ONE head
 /// read that piggy-back-fills the cache — then a zune-jpeg RGB decode of the
 /// PRVW for the metric pass. Runs inside `analyze_quality`'s gated chunk; the

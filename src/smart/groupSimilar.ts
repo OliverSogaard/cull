@@ -92,7 +92,7 @@ function linked(
 }
 
 /**
- * Time-local near-duplicate grouping (spec: SMART_CULLING_PHASE3_DESIGN.md).
+ * Time-local near-duplicate grouping (spec: docs/history/SMART_CULLING_PHASE3_DESIGN.md).
  * Pure derivation, mirrors groupBursts: adjacent frames chain when EITHER the
  * pHash tier (standing, always available once thumbnails have decoded) or the
  * embedding tier (ML builds, from `scores`) links them; frames without a

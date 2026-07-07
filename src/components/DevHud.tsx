@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { imageStore } from "../image/imageStore";
 
 /**
- * Dev-only performance HUD (IMAGE_PIPELINE_PLAN.md Phase 3): per-nav fetch
+ * Dev-only performance HUD (docs/history/IMAGE_PIPELINE_PLAN.md Phase 3): per-nav fetch
  * timings, lane/queue utilization, cache sizes, eviction/error counters, and
  * the decoded-memory estimate. Enable with `localStorage["cull:devhud"]="1"`
  * in devtools + reload. Every later profile-tuning claim cites these numbers,
