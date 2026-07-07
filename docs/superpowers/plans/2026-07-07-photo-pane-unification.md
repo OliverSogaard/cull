@@ -38,3 +38,53 @@
 - WKWebView stale-paint patterns (see 2026-07-06 notes: layer opacity + layout shift ghosts) — visual gates per step, no batching steps.
 - The presenter's decode-gated double-buffer is timing-sensitive (mid-scrub offers must stay sequenced best-first).
 - App's imgRect consumers (overlay masks, zoom math, cursor-anchored zoom mousedown) must keep one rect source — the pane reports it up.
+
+---
+
+## Implementation note — 2026-07-07 (steps 1–3 DONE, live-gated; step 4 partial)
+
+Executed in one session with Oliver gating each step live (hot-reload). Commits
+`ac5f588` (step 1) → `1b194f5` (step 2) → `0fd0cf2` (step 3), all local until
+Oliver's push say-so. Suites at every step: 414 TS + 103 Rust, tsc clean.
+
+**Step 1 (extract, zero drift — GATE PASSED).** `src/components/pane/PhotoPane.tsx`
+absorbed LoupeStage verbatim PLUS the App glue: the measure discipline (now
+pane-owned, reported up via `onRectChange`; App keeps only the mouse-zoom math
+and a `zoomZ` drag-factor mirror), the settle policy (`fullSettleMs` prop +
+`settleResetKey` replacing the thumbs/exif deps), frame div + sizer +
+`--photo-ar`, hi-res transform, and the mask/thirds overlays (mask URLs as
+props). New shared `paneZoomZ()` in paneGeometry (TDD) — the zoomLevel×1:1
+formula that existed as three hand-copies. LoupeStage deleted.
+
+**Step 2 (compare swap — ACCEPTANCE TEST PASSED).** ComparePanel kept only its
+chrome (role chip, rating dot, `useImage wantFull:!scrubbing`, the zoom-engage
+fetch); everything else is PhotoPane. Compare's hi-res reveal GLIDES —
+confirmed live; the settle-gated pre-mount is what does it. The gate surfaced
+one real bug + the audit two more, all fixed in `1b194f5`:
+1. **Zoomed measure now observes container resizes.** Compare's panels RESIZE
+   mid-zoom (a decide swapping in a different-AR challenger redistributes the
+   row) — the stale rect mis-scaled every derived zoom factor on the STAYING
+   pane (Oliver's blurry-champion, landscape+portrait case). The zoomed
+   measure is transform-safe (__clip parent), so observing is safe. Also fixes
+   the loupe's latent strip/rail-toggle-while-zoomed variant.
+2. **Drop-recovery:** zoomed + nav-ready + no zoom full → the pane re-requests
+   it (decide drops / errored reads previously left the blurry preview + ring
+   forever; nothing else re-fired the fetch).
+3. **Decide drops now run UNZOOMED too** (all three decide callbacks): the
+   settle policy keeps both panes' fulls resident even unzoomed, so unzoomed
+   decides accumulated the outgoing challenger's full. Same after-last-setState
+   position (sync-flush hazard unchanged).
+
+**Deliberate policy change:** compare panes now settle-fetch their zoom fulls
+(both panes, ~10 MB blobs + a fit-scale native raster each) even unzoomed —
+that IS the glide. Memory guarded by decide drops + the pressure stack.
+
+**Step 3 (consolidation).** HiResLayer/PresentLayers/paneGeometry/zoomTransition
+moved `components/loupe/` → `components/pane/`; loupe/ gone; old-split comments
+swept (usePresent header, ARCHITECTURE.md presenter + deferred-zoom sections).
+Identical bundle hash before/after = zero behavior change.
+
+**Step 4 (regression lap) — remaining live items:** NAS-profile run, 8927-class
+paint checks, one more mixed-AR carry lap in loupe AND compare, memory watch in
+a long compare session (Activity Monitor on WebContent). Code-side items done:
+sequential swap verified firing on every decide; post-diff review pass run.
