@@ -73,7 +73,16 @@ fn atomic_write_xmp(xmp_path: &Path, contents: &str) -> Result<(), String> {
 /// Set a rating on the CR3's sidecar (creating the sidecar if absent).
 #[tauri::command]
 pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(), String> {
-    let cr3 = Path::new(&path);
+    // Spawn-blocking: the read-modify-atomic-write below is sync fs I/O
+    // (including an fsync, possibly over SMB) and must not stall the async
+    // runtime — same pattern as the file_ops commands.
+    tauri::async_runtime::spawn_blocking(move || write_xmp_rating_sync(&path, &rating))
+        .await
+        .map_err(|e| format!("write_xmp_rating task failed: {e}"))?
+}
+
+fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
+    let cr3 = Path::new(path);
     let xmp_path = cr3.with_extension("xmp");
 
     let base = match std::fs::read_to_string(&xmp_path) {
@@ -82,7 +91,7 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
         Err(e) => return Err(format!("read existing xmp: {e}")),
     };
 
-    let contents = apply_rating_to_xmp(&base, &rating)?;
+    let contents = apply_rating_to_xmp(&base, rating)?;
     // Re-rating to the value already on disk (idempotent retries, a same-key
     // re-press) needs no write — skip the temp+fsync+rename round-trip, which is
     // the expensive part on the NAS this design targets. A brand-new sidecar always
@@ -114,7 +123,15 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
 /// modified.
 #[tauri::command]
 pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
-    let cr3 = Path::new(&path);
+    // Spawn-blocking for the same reason as write_xmp_rating: sync fs I/O
+    // (read + possible fsync'd rewrite or remove) off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || clear_xmp_rating_sync(&path))
+        .await
+        .map_err(|e| format!("clear_xmp_rating task failed: {e}"))?
+}
+
+fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
+    let cr3 = Path::new(path);
     let xmp_path = cr3.with_extension("xmp");
 
     let existing = match std::fs::read_to_string(&xmp_path) {
@@ -867,5 +884,36 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
             let content = std::fs::read_to_string(dir.join(file)).unwrap();
             assert_eq!(parse_lrc_rating(&content), want, "{file}");
         }
+    }
+
+    /// The async command wrappers keep their result shape end-to-end on disk:
+    /// Ok(()) on a fresh write, on the idempotent re-write (skip path), and on
+    /// clear — with the sidecar appearing and disappearing accordingly. Pins
+    /// the behavior across the spawn-blocking refactor.
+    #[test]
+    fn command_wrappers_round_trip_on_disk() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-cmd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("r.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let p = cr3.to_string_lossy().to_string();
+
+        let write = tauri::async_runtime::block_on(write_xmp_rating(p.clone(), "keep".into()));
+        assert_eq!(write, Ok(()));
+        assert_eq!(read_ratings(&p).0.as_deref(), Some("keep"));
+
+        // Re-rating to the value already on disk takes the no-write skip path.
+        let rewrite = tauri::async_runtime::block_on(write_xmp_rating(p.clone(), "keep".into()));
+        assert_eq!(rewrite, Ok(()));
+
+        let clear = tauri::async_runtime::block_on(clear_xmp_rating(p.clone()));
+        assert_eq!(clear, Ok(()));
+        assert!(
+            !cr3.with_extension("xmp").exists(),
+            "CULL-authored sidecar removed on unrate"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
     }
 }

@@ -83,8 +83,17 @@ pub(crate) async fn scan_folder(
     path: String,
     ignore_subdir: Option<String>,
 ) -> Result<ScanResult, String> {
+    // Spawn-blocking: the recursive walk is sync fs I/O (potentially thousands
+    // of NAS round-trips) and must not stall the async runtime — same pattern
+    // as the file_ops commands.
+    tauri::async_runtime::spawn_blocking(move || scan_folder_sync(&path, ignore_subdir))
+        .await
+        .map_err(|e| format!("scan task failed: {e}"))?
+}
+
+fn scan_folder_sync(path: &str, ignore_subdir: Option<String>) -> Result<ScanResult, String> {
     let start = Instant::now();
-    let root = Path::new(&path);
+    let root = Path::new(path);
 
     // Classify the failure so the UI can tell a genuinely-gone folder (evict it
     // from recents) from a transient NAS/SMB blip (keep it — the user retries).
@@ -162,6 +171,23 @@ pub(crate) async fn analyze_folder(
     paths: Vec<String>,
     concurrent_restore: Option<bool>,
     session: tauri::State<'_, std::sync::Arc<crate::io_gate::SessionGate>>,
+) -> Result<AnalyzeResult, String> {
+    // Spawn-blocking: directory listings + sequential sidecar restore are sync
+    // fs I/O sized in NAS round-trips — off the async runtime, like scan_folder.
+    // The State borrow can't cross into the 'static closure; the Arc can.
+    let session = session.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        analyze_folder_sync(window, paths, concurrent_restore, &session)
+    })
+    .await
+    .map_err(|e| format!("analyze task failed: {e}"))?
+}
+
+fn analyze_folder_sync(
+    window: tauri::Window,
+    paths: Vec<String>,
+    concurrent_restore: Option<bool>,
+    session: &crate::io_gate::SessionGate,
 ) -> Result<AnalyzeResult, String> {
     let concurrent_restore = concurrent_restore.unwrap_or(false);
     let n = paths.len();
@@ -330,7 +356,20 @@ pub(crate) async fn analyze_folder(
                     out
                 }));
             }
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
+            handles
+                .into_iter()
+                .map(|h| match h.join() {
+                    Ok(part) => part,
+                    // A panicked restore worker must not poison the whole
+                    // analyze: its chunk simply reads back as unrated, the
+                    // same as if those sidecars were absent. The other
+                    // workers' restores still land.
+                    Err(_) => {
+                        dlog!("[cull] analyze_folder: restore worker panicked; its chunk restores as unrated");
+                        Vec::new()
+                    }
+                })
+                .collect()
         });
 
         for part in parts {
