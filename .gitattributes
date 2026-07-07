@@ -1,0 +1,11 @@
+# Normalize line endings: LF in the repo, native in checkouts — except shell
+# scripts, which must stay LF even on Windows (git-bash runs them in CI).
+* text=auto
+*.sh text eol=lf
+
+# Binary model weights; keep them out of language stats and diffs.
+*.onnx -text linguist-generated
+
+# Lockfiles: machine-written, collapse in diffs/stats.
+Cargo.lock linguist-generated
+pnpm-lock.yaml linguist-generated

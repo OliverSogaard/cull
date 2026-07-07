@@ -1,0 +1,33 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  frontend:
+    runs-on: ubuntu-latest # lint/typecheck/vitest are platform-neutral; keep CI cheap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint && pnpm lint:css
+      - run: pnpm typecheck && pnpm typecheck:tests
+      - run: pnpm test
+  backend:
+    runs-on: windows-latest # primary platform; Linux would not compile (by design)
+    defaults: { run: { working-directory: src-tauri } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy, rustfmt" }
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - run: cargo fmt --check
+      # smart-ml is a default feature, so this compiles ort (onnxruntime is
+      # fetched by its download-binaries step). Corpus/ML tests pass-by-skip
+      # without models or fixtures (see TESTING.md). If the ort download ever
+      # turns slow/flaky on runners, add --no-default-features to both steps.
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test

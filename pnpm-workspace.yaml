@@ -1,2 +1,4 @@
+# NOT a workspace — pnpm 10 reads its build-script approval from this file;
+# esbuild (vite's dep) needs its postinstall allowed to run.
 allowBuilds:
   esbuild: true
