@@ -56,6 +56,7 @@ mod bundle;
 mod cr3;
 mod file_ops;
 mod io_gate;
+mod memory_pressure;
 mod meta;
 mod midtier;
 mod ml_models;
@@ -123,6 +124,11 @@ pub fn run() {
             tauri::async_runtime::spawn_blocking(move || {
                 let _ = std::fs::remove_dir_all(&legacy);
             });
+
+            // Forward OS memory-pressure to the webview so the image caches
+            // can shed BEFORE jetsam kills the WebContent process (the gray-
+            // window crash). See memory_pressure.rs for the receipts.
+            memory_pressure::start(app.handle().clone());
 
             // macOS: replace the default menu so Cmd+Q routes through
             // window.close() and the JS close-guard (pending XMP writes) gets

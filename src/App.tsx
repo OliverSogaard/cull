@@ -55,6 +55,7 @@ import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { cycleFilter, topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
+import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
@@ -494,6 +495,11 @@ export default function App() {
   // unmounted / sleep-wake): shows the non-blocking "folder unreachable" chip.
   // Full retry-flow state (checking / still / recovered) lives in folderRetry.ts.
   const [folderTrouble, setFolderTrouble] = useState<TroubleState>("hidden");
+  // OS memory pressure, forwarded by the Rust side. warn = caches shrunk;
+  // critical = zoom rasters dropped + zoom released. The response exists so
+  // the WebContent process sheds BEFORE jetsam kills it (the proven gray-
+  // window crash: 2.25 GB lifetimeMax at the 2026-07-06 jetsam event).
+  const [memPressure, setMemPressure] = useState<PressureLevel>("normal");
   // Dev HUD flag, read once at mount: localStorage["cull:devhud"]="1" + reload.
   const [devHudOn] = useState(() => {
     try {
@@ -523,6 +529,24 @@ export default function App() {
     setMouseZooming(false); // a mouse-held zoom ends with the zoom, always
     setPanOffset({ x: 0, y: 0 });
   }, []);
+
+  // Subscribe to the Rust-side pressure events (see the memPressure state
+  // above for why). Registered once; resetZoom is identity-stable.
+  useEffect(() => {
+    const un = listen<PressureLevel>("memory-pressure", (e) => {
+      const level = e.payload;
+      setMemPressure(level);
+      imageStore.setMemoryPressure(level);
+      if (level === "critical") {
+        // The scaled zoom rasters are the largest live allocations — release
+        // zoom entirely; the chip explains why the view just un-zoomed.
+        resetZoom();
+      }
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [resetZoom]);
 
   // Leaving a zoomed frame via a cursor move drops the zoom (the new image
   // would land scaled to the old pan) — with ONE exception: a rating advance
@@ -2065,6 +2089,12 @@ export default function App() {
           keepZoomOnAdvanceRef.current = true;
           setZoomSwapInstant(true);
           setPanOffset({ x: 0, y: 0 });
+          // Sequential swap: release the outgoing frame's ~130 MB zoom raster
+          // BEFORE the incoming one decodes, so a carried advance never holds
+          // two fulls at once (the jetsam-kill class). The prefetched next
+          // full survives (it IS the target).
+          const targetPath = images[target]?.path;
+          if (targetPath) imageStore.dropZoomFullsExcept([targetPath]);
         }
         setCurrentIndex(target);
       };
@@ -2376,8 +2406,16 @@ export default function App() {
     setRatings(next);
     // Zoomed decide: the challenger pane's content swaps under the live
     // transform — land it at scale, no drift. Champion pane is untouched
-    // (shared pan kept), so its view can't jump.
-    if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
+    // (shared pan kept), so its view can't jump. Sequential swap: drop every
+    // zoom full outside the surviving pair BEFORE the new challenger's
+    // decodes (holding both pairs at once is the proven jetsam kill).
+    if (isZoomingRef.current && !exiting) {
+      setZoomSwapInstant(true);
+      const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
+        (x): x is string => Boolean(x),
+      );
+      imageStore.dropZoomFullsExcept(keep);
+    }
     if (exiting) {
       // No more candidates — pop back to whichever site we came from, landing on
       // the (unchanged) champion. ESC after this lands further up the stack.
@@ -2428,8 +2466,15 @@ export default function App() {
       flashFeedback(verdict, challImg.id);
       persistRating(challImg.path, verdict);
       setRatings(next);
-      // Same zoomed-decide handling as challengerLoses: champion untouched.
-      if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
+      // Same zoomed-decide handling as challengerLoses: champion untouched,
+      // outgoing challenger's full dropped before the incoming one decodes.
+      if (isZoomingRef.current && !exiting) {
+        setZoomSwapInstant(true);
+        const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
+          (x): x is string => Boolean(x),
+        );
+        imageStore.dropZoomFullsExcept(keep);
+      }
       if (exiting) {
         // No more candidates — pop back to whichever site we came from, landing
         // on the (unchanged) champion, exactly like challengerLoses' exit.
@@ -2491,6 +2536,12 @@ export default function App() {
     if (isZoomingRef.current && !exiting) {
       setZoomSwapInstant(true);
       setPanOffset({ x: 0, y: 0 });
+      // Sequential swap: the old champion's full goes NOW (the new champion
+      // IS the old challenger, so its full is already resident, no refetch).
+      const keep = [images[newChamp]?.path, images[nextChallenger]?.path].filter(
+        (x): x is string => Boolean(x),
+      );
+      imageStore.dropZoomFullsExcept(keep);
     }
     setChampionIndex(newChamp);
     if (exiting) {
@@ -3041,10 +3092,12 @@ export default function App() {
 
       if (compareMode) {
         switch (e.key) {
-          // Deciding works WHILE ZOOMED: compare zoom persists across the
-          // swap (nothing watches challenger/champion indices to reset it),
-          // and each action sets zoomSwapInstant so the pane lands at scale
-          // with no drift. Wins also resets pan (new champion, new AF anchor).
+          // Deciding works WHILE ZOOMED via the memory-budgeted swap: each
+          // action first DROPS every zoom full outside the surviving pair
+          // (dropZoomFullsExcept), so the old and new pairs never coexist —
+          // holding both is what jetsam-killed WebContent (gray window,
+          // 2026-07-07, 2.25 GB lifetimeMax). Under real OS pressure the
+          // caches shed further (memory-pressure event → pressureProfile).
           case "Enter":
             e.preventDefault();
             if (!e.repeat) challengerWins();
@@ -4237,6 +4290,18 @@ export default function App() {
                     ? "reconnected"
                     : "folder unreachable · retry"}
             </button>
+          )}
+          {memPressure !== "normal" && (
+            <span
+              className={`cull-mem-chip${memPressure === "critical" ? " is-critical" : ""}`}
+              title={
+                memPressure === "critical"
+                  ? "system memory critically low. Zoom was released and its caches dropped to keep the app alive"
+                  : "system memory is running low. Image caches shrunk; full speed returns when pressure eases"
+              }
+            >
+              {memPressure === "critical" ? "low memory · zoom off" : "low memory"}
+            </span>
           )}
         </div>
       </header>

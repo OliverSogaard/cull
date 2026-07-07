@@ -42,6 +42,7 @@ import {
 } from "../utils/bundle";
 import { nextMidEngaged } from "./midSelect";
 import type { PerformanceProfile } from "../types/settings";
+import { clampProfileForPressure, type PressureLevel } from "./pressureProfile";
 import { PERFORMANCE_PROFILES } from "../types/settings";
 import { DecodePool } from "./decodePool";
 import type { PoolEntry, PoolImage } from "./decodePool";
@@ -267,6 +268,10 @@ export class ImageStore {
   private generation = 0;
   // ── Performance profile ────────────────────────────────────────────────
   private profile: PerformanceProfile = PERFORMANCE_PROFILES.local;
+  /** The settings-selected profile BEFORE the memory-pressure clamp — kept so
+   *  pressure easing restores the user's real numbers, not the clamped ones. */
+  private baseProfile: PerformanceProfile = PERFORMANCE_PROFILES.local;
+  private pressure: PressureLevel = "normal";
   // ── Metadata sink ──────────────────────────────────────────────────────
   // The full-res bundle read also returns the image's EXIF metadata (camera /
   // lens / AF point / pixel dims). The store doesn't own metadata state — it
@@ -288,7 +293,8 @@ export class ImageStore {
   // ── Public API ─────────────────────────────────────────────────────────
 
   setProfile(p: PerformanceProfile): void {
-    this.profile = p;
+    this.baseProfile = p;
+    this.profile = clampProfileForPressure(p, this.pressure);
     // Mirror the storage mode into the backend's IoGate (permit cap + timeout
     // tiers). Heuristic on a profile field rather than a mode string so this
     // stays decoupled from the settings shape.
@@ -309,6 +315,47 @@ export class ImageStore {
     this.pumpZoom();
     this.pumpMid();
     this.pumpMidSweep();
+  }
+
+  /**
+   * OS memory-pressure response. Re-derives the effective profile through
+   * {@link clampProfileForPressure} and re-runs the SAME eviction cascade
+   * setProfile uses, so shrunken windows/pools free their bytes immediately —
+   * the whole point is to shed BEFORE jetsam kills the WebContent process
+   * (the proven gray-window crash). Easing back to "normal" restores the
+   * user's real profile numbers.
+   */
+  setMemoryPressure(level: PressureLevel): void {
+    if (level === this.pressure) return;
+    this.pressure = level;
+    this.setProfile(this.baseProfile);
+    if (level === "critical") {
+      // The ~130 MB decoded fulls are the biggest single lever: drop every
+      // zoom blob except in-flight ones. Pins are deliberately bypassed —
+      // a pinned raster is exactly what is killing the process.
+      this.dropZoomFullsExcept([]);
+    }
+  }
+
+  /**
+   * Release every READY zoom-full blob except `keep` (and in-flight reads).
+   * Deliberately ignores pins: callers use this at the moments pins lie —
+   * a zoomed compare decide (the outgoing pair is still pinned but must go
+   * BEFORE the incoming pair's fulls arrive, or the transient overlap spikes
+   * WebContent past the jetsam line) and the critical-pressure shed above.
+   */
+  dropZoomFullsExcept(keep: readonly string[]): void {
+    const keepSet = new Set(keep);
+    for (const [p, state] of this.zoomFulls) {
+      if (state?.status !== "ready") continue;
+      if (keepSet.has(p) || this.zoomInFlightPaths.has(p)) continue;
+      URL.revokeObjectURL(state.url);
+      this.zoomFulls.delete(p);
+      this.requestedZoom.delete(p);
+      this.counts.zoomEvicts++;
+      this.invalidate(p);
+    }
+    this.refreshPool();
   }
 
   /** Fire-and-forget backend push (session gen / io profile). Quiet on a
