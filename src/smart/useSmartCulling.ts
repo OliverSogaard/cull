@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { imageStore } from "../image/imageStore";
-import {
-  LOCAL_CHUNK,
-  LOCAL_IDLE_MS,
-  NET_CHUNK,
-  NET_IDLE_MS,
-  runAnalysis,
-} from "./analysisDriver";
+import { LOCAL_CHUNK, LOCAL_IDLE_MS, NET_CHUNK, NET_IDLE_MS, runAnalysis } from "./analysisDriver";
 import { missingTargets, unratedTargets } from "./analysisTargets";
 import type { ImageScore } from "../types/ipc";
 import type { Img } from "../types/image";

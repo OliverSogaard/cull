@@ -241,10 +241,9 @@ describe("imageStore", () => {
     for (const p of paths) {
       store.requestThumbFor(p);
     }
-    await vi.waitUntil(
-      () => paths.every((p) => store.snapshot(p).stage === "thumb"),
-      { timeout: 2000 },
-    );
+    await vi.waitUntil(() => paths.every((p) => store.snapshot(p).stage === "thumb"), {
+      timeout: 2000,
+    });
 
     expect(liveUrls.size).toBeGreaterThanOrEqual(paths.length);
     store.hardReset();
@@ -255,7 +254,7 @@ describe("imageStore", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     vi.mocked(invoke)
       .mockResolvedValueOnce(makeThumbnailBuf(800, 600)) // thumb
-      .mockResolvedValueOnce(makeBundleBuf());            // full
+      .mockResolvedValueOnce(makeBundleBuf()); // full
 
     const store = await getStore();
     store.hardReset();
@@ -268,10 +267,7 @@ describe("imageStore", () => {
 
     // Load full
     store.registerWantFull(path);
-    await vi.waitUntil(
-      () => store.snapshot(path).stage === "full",
-      { timeout: 2000 },
-    );
+    await vi.waitUntil(() => store.snapshot(path).stage === "full", { timeout: 2000 });
     const urlsAfterFull = liveUrls.size;
     expect(urlsAfterFull).toBeGreaterThan(thumbUrlsAfterThumb);
 
@@ -391,8 +387,7 @@ describe("imageStore — generation & concurrency", () => {
     // (a) A blob WAS created by the old fetch, but it must have been revoked.
     const createdAfter = vi.mocked(URL.createObjectURL).mock.calls.length;
     expect(createdAfter).toBe(createdBefore + 1);
-    const staleUrl = vi.mocked(URL.createObjectURL).mock.results[createdAfter - 1]
-      .value as string;
+    const staleUrl = vi.mocked(URL.createObjectURL).mock.results[createdAfter - 1].value as string;
     expect(liveUrls.has(staleUrl)).toBe(false); // revoked
 
     // (b) It did NOT populate thumbs for the old path in the new session.
@@ -822,8 +817,7 @@ describe("imageStore — Phase 3 zoom tier", () => {
     const { invoke: inv } = { invoke };
     const fullresCalls: Record<string, unknown>[] = [];
     vi.mocked(inv).mockImplementation((cmd: unknown, args?: unknown) => {
-      if (cmd === "read_preview")
-        return Promise.resolve(makePreviewBuf(opts?.orientation ?? 1));
+      if (cmd === "read_preview") return Promise.resolve(makePreviewBuf(opts?.orientation ?? 1));
       if (cmd === "read_fullres") {
         fullresCalls.push(args as Record<string, unknown>);
         if (opts?.rejectFullres) return Promise.reject(opts.rejectFullres);
@@ -982,8 +976,7 @@ describe("Phase 5 — direction-biased prefetch + decode pool", () => {
         previewsRequested.push((args as { path: string }).path);
         return Promise.resolve(makePreviewBuf());
       }
-      if (cmd === "extract_thumbnail")
-        return Promise.resolve(makeThumbnailBuf(60, 40));
+      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(60, 40));
       return Promise.resolve(new ArrayBuffer(0)); // begin_session / set_io_profile
     });
     const Store = await getStoreClass();
@@ -1008,9 +1001,7 @@ describe("Phase 5 — direction-biased prefetch + decode pool", () => {
     // ahead=4 / behind=2 is touched.
     store.setCursor(11);
     await flush();
-    expect(new Set(previewsRequested)).toEqual(
-      new Set(["/p/15.cr3", "/p/10.cr3"]),
-    );
+    expect(new Set(previewsRequested)).toEqual(new Set(["/p/15.cr3", "/p/10.cr3"]));
 
     previewsRequested.length = 0;
     // Jump LEFT to 5: travel direction flips → ahead = 4,3,2,1; behind = 6,7.
@@ -1033,8 +1024,7 @@ describe("Phase 5 — direction-biased prefetch + decode pool", () => {
     const mockInvoke = vi.mocked(invoke);
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
-      if (cmd === "extract_thumbnail")
-        return Promise.resolve(makeThumbnailBuf(60, 40));
+      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(60, 40));
       return Promise.resolve(new ArrayBuffer(0));
     });
     const poolImages: { src: string }[] = [];
@@ -1079,17 +1069,14 @@ describe("mid tier (Phase 8)", () => {
 
   /** Route invoke by command; records calls. Unrouted commands resolve to a
    *  valid frame of their kind so background machinery never poisons a test. */
-  function routeMidInvoke(
-    overrides: Record<string, (args: unknown) => Promise<unknown>> = {},
-  ) {
+  function routeMidInvoke(overrides: Record<string, (args: unknown) => Promise<unknown>> = {}) {
     const calls: { cmd: string; args: Record<string, unknown> }[] = [];
     vi.mocked(invoke).mockImplementation((cmd: unknown, args?: unknown) => {
       calls.push({ cmd: cmd as string, args: (args ?? {}) as Record<string, unknown> });
       const route = overrides[cmd as string];
       if (route) return route(args);
       if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
-      if (cmd === "extract_thumbnail")
-        return Promise.resolve(makeThumbnailBuf(60, 40));
+      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(60, 40));
       if (cmd === "read_mid") return Promise.resolve(makeMidBuf());
       if (cmd === "generate_mid") return Promise.resolve(true);
       return Promise.resolve(new ArrayBuffer(0));

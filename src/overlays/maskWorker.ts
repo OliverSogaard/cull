@@ -40,10 +40,7 @@ const ctx = self as unknown as {
 
 /** Draw `bitmap` into a fresh OffscreenCanvas bounded to `maxEdge`, close the
  *  bitmap, and return the 2d context (null if the runtime refuses one). */
-function rasterize(
-  bitmap: ImageBitmap,
-  maxEdge: number,
-): OffscreenCanvasRenderingContext2D | null {
+function rasterize(bitmap: ImageBitmap, maxEdge: number): OffscreenCanvasRenderingContext2D | null {
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
   const w = Math.max(1, Math.round(bitmap.width * scale));
   const h = Math.max(1, Math.round(bitmap.height * scale));

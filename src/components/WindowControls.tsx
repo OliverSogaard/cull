@@ -31,10 +31,12 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
       }
     };
     void sync();
-    void w.onResized(() => void sync()).then((u) => {
-      if (dead) u();
-      else unlisten = u;
-    });
+    void w
+      .onResized(() => void sync())
+      .then((u) => {
+        if (dead) u();
+        else unlisten = u;
+      });
     return () => {
       dead = true;
       unlisten?.();

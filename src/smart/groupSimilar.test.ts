@@ -107,8 +107,20 @@ describe("groupSimilar", () => {
     const images = [img(1), img(2)];
     const inputs = { 1: input(0), 2: input(1000) };
     const sharp = {
-      1: { afSharpness: 0.9, globalSharpness: 0.9, clipSum: 0, faceSharpness: null, eyesOpen: null },
-      2: { afSharpness: 0.5, globalSharpness: 0.5, clipSum: 0, faceSharpness: null, eyesOpen: null },
+      1: {
+        afSharpness: 0.9,
+        globalSharpness: 0.9,
+        clipSum: 0,
+        faceSharpness: null,
+        eyesOpen: null,
+      },
+      2: {
+        afSharpness: 0.5,
+        globalSharpness: 0.5,
+        clipSum: 0,
+        faceSharpness: null,
+        eyesOpen: null,
+      },
     };
     const out = groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, sharp, { 1: true, 2: true });
     expect(out.get(1)?.isWinner).toBe(true);
@@ -136,30 +148,29 @@ describe("groupSimilar", () => {
 });
 
 describe("buildSimilarInputs", () => {
-  const meta = (over: Partial<ImageMetadata> = {}): ImageMetadata =>
-    ({
-      capturedAt: "2026-05-17T17:18:14",
-      camera: null,
-      lens: null,
-      focalLengthMm: 105,
-      aperture: null,
-      shutterSeconds: null,
-      iso: null,
-      gpsLat: null,
-      gpsLon: null,
-      afXPct: null,
-      afYPct: null,
-      exposureBias: null,
-      whiteBalance: null,
-      driveMode: 8,
-      pixelWidth: null,
-      pixelHeight: null,
-      fileSize: null,
-      lrcRating: null,
-      subSecMs: 470,
-      phash: "1234000000000000",
-      ...over,
-    });
+  const meta = (over: Partial<ImageMetadata> = {}): ImageMetadata => ({
+    capturedAt: "2026-05-17T17:18:14",
+    camera: null,
+    lens: null,
+    focalLengthMm: 105,
+    aperture: null,
+    shutterSeconds: null,
+    iso: null,
+    gpsLat: null,
+    gpsLon: null,
+    afXPct: null,
+    afYPct: null,
+    exposureBias: null,
+    whiteBalance: null,
+    driveMode: 8,
+    pixelWidth: null,
+    pixelHeight: null,
+    fileSize: null,
+    lrcRating: null,
+    subSecMs: 470,
+    phash: "1234000000000000",
+    ...over,
+  });
 
   test("phash ALWAYS comes from the standing thumb metadata, never from the score", () => {
     const images = [img(1)];

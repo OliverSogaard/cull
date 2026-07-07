@@ -233,7 +233,16 @@ export const PhotoPane = memo(function PhotoPane({
     };
     // img.stage/img.dims: the sizer reflows the frame when dims arrive; the RO
     // is on the container (which doesn't resize when the inner frame does).
-  }, [path, measureNonce, scrubbing, isZooming, img.stage, img.dims, applyRect, measureContainerRef]);
+  }, [
+    path,
+    measureNonce,
+    scrubbing,
+    isZooming,
+    img.stage,
+    img.dims,
+    applyRect,
+    measureContainerRef,
+  ]);
 
   // ── Hi-res settle policy (the loupe's, everywhere) ────────────────────────
   // The browser rasterizes the on-screen JPEG only at screen-fit size (keeps
@@ -337,8 +346,7 @@ export const PhotoPane = memo(function PhotoPane({
     return () => clearTimeout(t);
   }, [isZooming]);
 
-  const hiResWanted =
-    (hiRes || isZooming) && dimsKnown && !justUnzoomed && !unzoomSettling;
+  const hiResWanted = (hiRes || isZooming) && dimsKnown && !justUnzoomed && !unzoomSettling;
 
   // Overlay transform: masks scale with the image so they stay aligned
   // through zoom, on the SAME shared glide as every other scaling layer.

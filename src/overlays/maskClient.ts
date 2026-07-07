@@ -118,7 +118,11 @@ function requestBlob(message: Record<string, unknown>, bitmap: ImageBitmap): Pro
  * (the caller then falls back to the main-thread path). `bitmap` is transferred,
  * so the caller must not use it afterwards.
  */
-export function requestMaskOffThread(kind: MaskKind, bitmap: ImageBitmap, max: number): Promise<string> {
+export function requestMaskOffThread(
+  kind: MaskKind,
+  bitmap: ImageBitmap,
+  max: number,
+): Promise<string> {
   return requestBlob({ op: "mask", kind, max }, bitmap).then(blobToDataUrl);
 }
 

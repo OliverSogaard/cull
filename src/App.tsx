@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -334,7 +343,8 @@ export default function App() {
     [images, qualityScores, metadata],
   );
   const similarCtx = useMemo(
-    () => groupSimilar(images, similarData, qualityScores, burstCtx, burstData.sharp, keepEligibleMap),
+    () =>
+      groupSimilar(images, similarData, qualityScores, burstCtx, burstData.sharp, keepEligibleMap),
     [images, similarData, qualityScores, burstCtx, burstData.sharp, keepEligibleMap],
   );
   // Only frames with an emitted verdict land in the map — the badge/filter
@@ -345,7 +355,12 @@ export default function App() {
     const out: Record<number, Suggestion> = {};
     for (const [idStr, s] of Object.entries(qualityScores)) {
       const id = Number(idStr);
-      const sug = deriveVerdict(s, burstCtx.get(id), similarCtx.get(id), settings.smartCullingConfidence);
+      const sug = deriveVerdict(
+        s,
+        burstCtx.get(id),
+        similarCtx.get(id),
+        settings.smartCullingConfidence,
+      );
       if (sug.verdict) out[id] = sug;
     }
     for (const id of capFavorites(qualityScores, out, settings.smartCullingConfidence)) {
@@ -1132,7 +1147,7 @@ export default function App() {
   // remembered, skip the home screen and load it straight away. Runs once on
   // app mount; intentionally NOT triggered every time settings.openLastFolderOnLaunch
   // flips, since that would re-open the folder mid-cull.
-   
+
   useEffect(() => {
     if (!settings.openLastFolderOnLaunch) return;
     const lastDir = localStorage.getItem("cull:lastDir");
@@ -1172,7 +1187,9 @@ export default function App() {
     setAnalyzeError(null);
     setProgress({ done: 0, total: images.length, phase: "reading" });
     setPhase("analyzing");
-    const unlisten = await listen<AnalyzeProgress>("analyze-progress", (e) => setProgress(e.payload));
+    const unlisten = await listen<AnalyzeProgress>("analyze-progress", (e) =>
+      setProgress(e.payload),
+    );
     let ok = true;
     try {
       const result = await invoke<AnalyzeResult>("analyze_folder", {
@@ -1356,58 +1373,61 @@ export default function App() {
   // folder B's `_rejected`. One backend call per source folder, results merged
   // into a single FileOpResult for the dialog. The subfolder name comes from
   // settings (default `_rejected`).
-  const doMoveRejects = useCallback(async (dest: "subfolder" | "trash" = "subfolder") => {
-    if (rejectedPaths.length === 0 || actionBusy !== null) return;
-    setActionBusy("move");
-    setMoveResult(null);
-    try {
-      if (dest === "trash") {
-        // OS Trash: no destination folder, so no per-source-folder split — one
-        // call for the whole set. Recoverable by design (never a hard delete).
-        try {
-          setMoveResult(
-            await invoke<FileOpResult>("move_rejects_to_trash", { paths: rejectedPaths }),
-          );
-        } catch (e) {
-          setMoveResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1 });
+  const doMoveRejects = useCallback(
+    async (dest: "subfolder" | "trash" = "subfolder") => {
+      if (rejectedPaths.length === 0 || actionBusy !== null) return;
+      setActionBusy("move");
+      setMoveResult(null);
+      try {
+        if (dest === "trash") {
+          // OS Trash: no destination folder, so no per-source-folder split — one
+          // call for the whole set. Recoverable by design (never a hard delete).
+          try {
+            setMoveResult(
+              await invoke<FileOpResult>("move_rejects_to_trash", { paths: rejectedPaths }),
+            );
+          } catch (e) {
+            setMoveResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1 });
+          }
+          return;
         }
-        return;
-      }
-      const subfolder = normalizeRejectedSubfolder(settings.rejectedSubfolder);
-      const byFolder = new Map<string, string[]>();
-      for (const im of images) {
-        if (ratings[im.id] !== "reject") continue;
-        const list = byFolder.get(im.srcFolder);
-        if (list) list.push(im.path);
-        else byFolder.set(im.srcFolder, [im.path]);
-      }
-      const merged: FileOpResult = { completed: 0, skipped: 0, errors: [], errorCount: 0 };
-      for (const [srcFolder, paths] of byFolder) {
-        try {
-          const res = await invoke<FileOpResult>("move_rejects_to_subfolder", {
-            folder: srcFolder,
-            paths,
-            subfolder,
-          });
-          merged.completed += res.completed;
-          merged.skipped += res.skipped;
-          merged.errors.push(...res.errors);
-          merged.errorCount = (merged.errorCount ?? 0) + (res.errorCount ?? res.errors.length);
-        } catch (e) {
-          // One folder failing (offline NAS, permissions) must not abort the
-          // moves for the folders that ARE reachable.
-          merged.errors.push(`${srcFolder}: ${String(e)}`);
-          merged.errorCount = (merged.errorCount ?? 0) + 1;
+        const subfolder = normalizeRejectedSubfolder(settings.rejectedSubfolder);
+        const byFolder = new Map<string, string[]>();
+        for (const im of images) {
+          if (ratings[im.id] !== "reject") continue;
+          const list = byFolder.get(im.srcFolder);
+          if (list) list.push(im.path);
+          else byFolder.set(im.srcFolder, [im.path]);
         }
+        const merged: FileOpResult = { completed: 0, skipped: 0, errors: [], errorCount: 0 };
+        for (const [srcFolder, paths] of byFolder) {
+          try {
+            const res = await invoke<FileOpResult>("move_rejects_to_subfolder", {
+              folder: srcFolder,
+              paths,
+              subfolder,
+            });
+            merged.completed += res.completed;
+            merged.skipped += res.skipped;
+            merged.errors.push(...res.errors);
+            merged.errorCount = (merged.errorCount ?? 0) + (res.errorCount ?? res.errors.length);
+          } catch (e) {
+            // One folder failing (offline NAS, permissions) must not abort the
+            // moves for the folders that ARE reachable.
+            merged.errors.push(`${srcFolder}: ${String(e)}`);
+            merged.errorCount = (merged.errorCount ?? 0) + 1;
+          }
+        }
+        // Mirror the backend's error-list cap so a huge failure can't bloat the UI;
+        // errorCount still carries the true total.
+        merged.errors = merged.errors.slice(0, 20);
+        setMoveResult(merged);
+      } finally {
+        setActionBusy(null);
       }
-      // Mirror the backend's error-list cap so a huge failure can't bloat the UI;
-      // errorCount still carries the true total.
-      merged.errors = merged.errors.slice(0, 20);
-      setMoveResult(merged);
-    } finally {
-      setActionBusy(null);
-    }
-  }, [images, ratings, rejectedPaths, actionBusy, settings.rejectedSubfolder]);
+    },
+    [images, ratings, rejectedPaths, actionBusy, settings.rejectedSubfolder],
+  );
 
   // Copy keeps + favorites (+sidecars) to `dest`. The finish dialog decides
   // where dest comes from — for pinned mode it joins the pinned root with the
@@ -1456,24 +1476,17 @@ export default function App() {
   // `wantFull` only while NOT scrubbing: a scrub flies past frames it never
   // decodes, so we want just the (blurred) thumb mid-scrub; full loads on
   // release (scrubbing flips false → wantFull true → store fetches the full).
-  const cur = useImage(
-    !gridVisible && !compareMode ? images[currentIndex]?.path ?? "" : "",
-    {
-      // Only want the full-res ONCE CULLING HAS STARTED. Before that (staged
-      // screen) this hook still runs at App scope, and without the phase gate it
-      // requested the full at the pre-reset generation; beginCulling's reset() then
-      // discarded that load, and since path/wantFull didn't change across the reset
-      // the effect never re-fired — so the first frame stayed blurred until you
-      // navigated. Gating on phase makes wantFull flip false→true AFTER the reset,
-      // re-firing the effect so the first frame loads at the live generation.
-      wantFull:
-        phase === "culling" &&
-        !gridVisible &&
-        !compareMode &&
-        !!images[currentIndex] &&
-        !scrubbing,
-    },
-  );
+  const cur = useImage(!gridVisible && !compareMode ? (images[currentIndex]?.path ?? "") : "", {
+    // Only want the full-res ONCE CULLING HAS STARTED. Before that (staged
+    // screen) this hook still runs at App scope, and without the phase gate it
+    // requested the full at the pre-reset generation; beginCulling's reset() then
+    // discarded that load, and since path/wantFull didn't change across the reset
+    // the effect never re-fired — so the first frame stayed blurred until you
+    // navigated. Gating on phase makes wantFull flip false→true AFTER the reset,
+    // re-firing the effect so the first frame loads at the live generation.
+    wantFull:
+      phase === "culling" && !gridVisible && !compareMode && !!images[currentIndex] && !scrubbing,
+  });
   // NOTE: the hi-res zoom warm-up (settle timer + zoom-full fetch) and the
   // displayed-image measure discipline both live in PhotoPane now — the loupe
   // passes profile.fullSettleMs and a settleResetKey for the stage-resizing
@@ -1676,9 +1689,14 @@ export default function App() {
       });
 
     const prev = writeQueue.current.get(path) ?? Promise.resolve();
-    const next = prev.then(() => tryWrite(0), () => tryWrite(0)).finally(() => {
-      if (writeQueue.current.get(path) === next) writeQueue.current.delete(path);
-    });
+    const next = prev
+      .then(
+        () => tryWrite(0),
+        () => tryWrite(0),
+      )
+      .finally(() => {
+        if (writeQueue.current.get(path) === next) writeQueue.current.delete(path);
+      });
     writeQueue.current.set(path, next);
 
     next.then(
@@ -1803,11 +1821,16 @@ export default function App() {
     // it appeared — otherwise destroy() fires on the overlay's first painted frame
     // and the user never sees the "saving…" panel.
     const elapsed = performance.now() - quitShownAtRef.current;
-    const t = window.setTimeout(() => {
-      if (destroyedRef.current) return;
-      destroyedRef.current = true;
-      getCurrentWindow().destroy().catch(() => {});
-    }, Math.max(0, 350 - elapsed));
+    const t = window.setTimeout(
+      () => {
+        if (destroyedRef.current) return;
+        destroyedRef.current = true;
+        getCurrentWindow()
+          .destroy()
+          .catch(() => {});
+      },
+      Math.max(0, 350 - elapsed),
+    );
     return () => window.clearTimeout(t);
   }, [quitGuard, savingCount, failedCount]);
 
@@ -2160,74 +2183,77 @@ export default function App() {
   // confirm (the only "site above loupe" is leaving the cull entirely). Empty
   // stack at compare/grid (shouldn't normally happen, but defends against
   // edge cases) falls back to loupe.
-  const goBack = useCallback((landIndex?: number) => {
-    // ESC in grid with a multi-selection clears the selection first, instead
-    // of popping the nav stack. The user almost certainly wants "deselect"
-    // before "go back", so we make the cheap intent succeed first.
-    if (gridVisible && selectedIndices.size > 0) {
-      clearMultiSelection();
-      return;
-    }
-    // When leaving compare, land on the caller's explicit index if provided (e.g.
-    // the freshly-crowned champion), else the current champion. The closure's
-    // championIndex alone can be stale (the just-rejected frame) on auto-exit.
-    const compareLanding = () =>
-      setCurrentIndex(snapToFilter(landIndex != null ? landIndex : championIndex));
-    if (navStack.length === 0) {
-      if (compareMode || gridVisible) {
-        if (compareMode) compareLanding();
-        setCompareMode(false);
-        setGridVisible(false);
-        resetZoom();
-      } else {
-        setConfirmHome(true);
+  const goBack = useCallback(
+    (landIndex?: number) => {
+      // ESC in grid with a multi-selection clears the selection first, instead
+      // of popping the nav stack. The user almost certainly wants "deselect"
+      // before "go back", so we make the cheap intent succeed first.
+      if (gridVisible && selectedIndices.size > 0) {
+        clearMultiSelection();
+        return;
       }
-      return;
-    }
-
-    const entry = navStack[navStack.length - 1];
-    setNavStack((s) => s.slice(0, -1));
-
-    // Leaving compare? Land on the explicit/champion landing.
-    if (compareMode) compareLanding();
-
-    if (entry.site === "compare") {
-      // Only restore the saved pair if its champion is still a sensible keeper.
-      // If it was rejected since the entry was saved (lost a later compare, or was
-      // re-rated/undone), don't reseat a reject in the champion slot — fall through
-      // to loupe at the latest champion.
-      const champImg = images[entry.champ];
-      const champValid = champImg && ratings[champImg.id] !== "reject";
-      const chall = champValid ? reviveChallenger(entry.champ, entry.chall) : -1;
-      if (chall === -1) {
-        // Saved compare is unrestorable (champion no longer a keeper, or no
-        // unrated challenger remains) — fall through to loupe at the latest champion.
-        setCompareMode(false);
-        setGridVisible(false);
-      } else {
-        setChampionIndex(entry.champ);
-        setChallengerIndex(chall);
-        setCompareMode(true);
-        setGridVisible(false);
+      // When leaving compare, land on the caller's explicit index if provided (e.g.
+      // the freshly-crowned champion), else the current champion. The closure's
+      // championIndex alone can be stale (the just-rejected frame) on auto-exit.
+      const compareLanding = () =>
+        setCurrentIndex(snapToFilter(landIndex != null ? landIndex : championIndex));
+      if (navStack.length === 0) {
+        if (compareMode || gridVisible) {
+          if (compareMode) compareLanding();
+          setCompareMode(false);
+          setGridVisible(false);
+          resetZoom();
+        } else {
+          setConfirmHome(true);
+        }
+        return;
       }
-    } else {
-      setCompareMode(false);
-      setGridVisible(entry.site === "grid");
-    }
-    resetZoom();
-  }, [
-    navStack,
-    compareMode,
-    gridVisible,
-    championIndex,
-    snapToFilter,
-    reviveChallenger,
-    selectedIndices,
-    clearMultiSelection,
-    images,
-    ratings,
-    resetZoom,
-  ]);
+
+      const entry = navStack[navStack.length - 1];
+      setNavStack((s) => s.slice(0, -1));
+
+      // Leaving compare? Land on the explicit/champion landing.
+      if (compareMode) compareLanding();
+
+      if (entry.site === "compare") {
+        // Only restore the saved pair if its champion is still a sensible keeper.
+        // If it was rejected since the entry was saved (lost a later compare, or was
+        // re-rated/undone), don't reseat a reject in the champion slot — fall through
+        // to loupe at the latest champion.
+        const champImg = images[entry.champ];
+        const champValid = champImg && ratings[champImg.id] !== "reject";
+        const chall = champValid ? reviveChallenger(entry.champ, entry.chall) : -1;
+        if (chall === -1) {
+          // Saved compare is unrestorable (champion no longer a keeper, or no
+          // unrated challenger remains) — fall through to loupe at the latest champion.
+          setCompareMode(false);
+          setGridVisible(false);
+        } else {
+          setChampionIndex(entry.champ);
+          setChallengerIndex(chall);
+          setCompareMode(true);
+          setGridVisible(false);
+        }
+      } else {
+        setCompareMode(false);
+        setGridVisible(entry.site === "grid");
+      }
+      resetZoom();
+    },
+    [
+      navStack,
+      compareMode,
+      gridVisible,
+      championIndex,
+      snapToFilter,
+      reviveChallenger,
+      selectedIndices,
+      clearMultiSelection,
+      images,
+      ratings,
+      resetZoom,
+    ],
+  );
 
   // ← / → → move the challenger to the next/previous unrated frame (champion skipped).
   const cycleChallenger = useCallback(
@@ -2414,7 +2440,12 @@ export default function App() {
       // just-rejected old one). On the last-frame auto-exit we leave compare.
       cursorAfter: exiting
         ? { compareMode: false, championIndex: newChamp, challengerIndex, currentIndex: newChamp }
-        : { compareMode: true, championIndex: newChamp, challengerIndex: nextChallenger, currentIndex },
+        : {
+            compareMode: true,
+            championIndex: newChamp,
+            challengerIndex: nextChallenger,
+            currentIndex,
+          },
     });
     flashFeedback("keep", challImg.id);
     persistRating(champImg.path, "reject"); // dethroned
@@ -2440,8 +2471,8 @@ export default function App() {
     // the last setState (see challengerLoses for the sync-flush rationale;
     // unzoomed too since the pane unification keeps fulls resident).
     if (!exiting) {
-      const keep = [images[newChamp]?.path, images[nextChallenger]?.path].filter(
-        (x): x is string => Boolean(x),
+      const keep = [images[newChamp]?.path, images[nextChallenger]?.path].filter((x): x is string =>
+        Boolean(x),
       );
       imageStore.dropZoomFullsExcept(keep);
     }
@@ -2616,10 +2647,7 @@ export default function App() {
         // ONE call with step = gridCols * speed — same one-call rule as the
         // horizontal hold above (see its comment): N single-row calls would
         // all read the same render-frozen position and go nowhere.
-        const moved = advanceRef.current(
-          heldGridVertDirRef.current,
-          gridColsRef.current * speed,
-        );
+        const moved = advanceRef.current(heldGridVertDirRef.current, gridColsRef.current * speed);
         // Same shared "scrubbing" flag the loupe hold flips (see startHold) —
         // only true once actually moving, so parking at the top/bottom edge
         // doesn't flash the footer's "Scrubbing" chip for nothing.
@@ -2744,7 +2772,14 @@ export default function App() {
       setCurrentIndex(i);
       goToSite("loupe");
     },
-    [visibleIndices, selectionAnchor, selectedIndices, clearMultiSelection, goToSite, stopGridVertHold],
+    [
+      visibleIndices,
+      selectionAnchor,
+      selectedIndices,
+      clearMultiSelection,
+      goToSite,
+      stopGridVertHold,
+    ],
   );
 
   // Shift+arrow selection growth — the keyboard twin of shift-click. The
@@ -3324,9 +3359,8 @@ export default function App() {
               ⚠ {failedCount} rating{failedCount > 1 ? "s" : ""} didn’t save
             </div>
             <div className="cull-quitguard__body">
-              {failedCount} {failedCount > 1 ? "ratings are" : "rating is"} not on disk
-              (the sidecar write kept failing). Closing now will lose{" "}
-              {failedCount > 1 ? "them" : "it"}.
+              {failedCount} {failedCount > 1 ? "ratings are" : "rating is"} not on disk (the sidecar
+              write kept failing). Closing now will lose {failedCount > 1 ? "them" : "it"}.
             </div>
             <div className="cull-quitguard__actions">
               <button className="cull-pick-button cull-pick-button--primary" onClick={retryFailed}>
@@ -3340,7 +3374,9 @@ export default function App() {
                 onClick={() => {
                   if (destroyedRef.current) return;
                   destroyedRef.current = true;
-                  getCurrentWindow().destroy().catch(() => {});
+                  getCurrentWindow()
+                    .destroy()
+                    .catch(() => {});
                 }}
               >
                 close anyway
@@ -3398,10 +3434,7 @@ export default function App() {
             />
           </div>
         </header>
-        <div
-          className={`cull-chrome${isDragOver ? " is-drag-over" : ""}`}
-          data-tauri-drag-region
-        >
+        <div className={`cull-chrome${isDragOver ? " is-drag-over" : ""}`} data-tauri-drag-region>
           {isDragOver && (
             <div className="cull-drag-indicator" aria-hidden>
               <div className="cull-drag-indicator__arrow">↓</div>
@@ -3418,11 +3451,7 @@ export default function App() {
                 Lightroom-compatible XMP sidecars.
               </p>
               <div className="cull-hero__cta-row">
-                <button
-                  className="cull-hero__cta"
-                  onClick={pickFolder}
-                  disabled={pickerBusy}
-                >
+                <button className="cull-hero__cta" onClick={pickFolder} disabled={pickerBusy}>
                   {pickerBusy ? "opening…" : "Open folders"}
                   <span className="cull-hero__cta-key">{modGlyph} O</span>
                 </button>
@@ -3559,8 +3588,7 @@ export default function App() {
   // of the ZOOM raster: the zoom tier's meta-derived dims → the thumb's
   // sensor display dims (cur.dims is orientation-adjusted, not 160×120).
   const zoomNative =
-    cur.full?.dims ??
-    (cur.dims && cur.dims.w > 1 && cur.dims.h > 1 ? cur.dims : undefined);
+    cur.full?.dims ?? (cur.dims && cur.dims.w > 1 && cur.dims.h > 1 ? cur.dims : undefined);
   const zoomZ = paneZoomZ(zoomNative, imgRect, zoomLevel, isZooming);
   // Render-phase ref mirror for the mouse-drag pan loop (see its effect):
   // pure function of state, same value every render, no tearing concern.
@@ -3599,8 +3627,8 @@ export default function App() {
     exifVisible && current ? overlayService.get("histogram", current.path) : undefined;
 
   const singleModeBody = (
-      <div className="cull-stage">
-        <div className="cull-loupe-body">
+    <div className="cull-stage">
+      <div className="cull-loupe-body">
         <div
           className={`cull-image-area${
             positionInFilter !== -1 && !isZooming
@@ -3612,76 +3640,74 @@ export default function App() {
           ref={stageRef}
           onMouseDown={handleStageMouseDown}
         >
-        {images.length === 0 ? (
-          <div className="cull-message">no images</div>
-        ) : positionInFilter === -1 ? (
-          <EmptyFilter
-            filter={filter}
-            smartCulling={settings.smartCulling}
-            smartCullingOnOpen={settings.smartCullingOnOpen}
-            analyzing={qualityAnalyzing}
-            scoredCount={Object.keys(qualityScores).length}
-            progress={qualityProgress}
-          />
-        ) : cur.stage === "shimmer" && cur.error ? (
-          // Full-screen error only when there's NO thumb to fall back to. If a
-          // thumb exists, resolveStage keeps stage "thumb" (with error set) and
-          // we keep showing it rather than blanking the frame.
-          <div className="cull-message">
-            <div className="cull-message__title">preview failed</div>
-            <pre className="cull-message__body">{cur.error}</pre>
-            <button
-              type="button"
-              className="cull-message__retry"
-              onClick={() => current && imageStore.retry(current.path)}
-            >
-              retry
-            </button>
-          </div>
-        ) : (
-          // Photo-frame stays mounted across image transitions AND across
-          // scrubbing so the matte + outer structure don't pop in/out on
-          // every tap-to-navigate or arrow-key release. The inner <img>
-          // swaps between full preview (when ready and not scrubbing) and
-          // the thumbnail fallback (during scrub / while preview loads),
-          // so there's always pixels in the frame and no remount of overlays.
-          // The spinner appears only when neither scrubbing nor ready —
-          // i.e. true "waiting on disk" state.
-          <>
-            {/* The unified pane (PhotoPane): frame + sizer, decode-gated
+          {images.length === 0 ? (
+            <div className="cull-message">no images</div>
+          ) : positionInFilter === -1 ? (
+            <EmptyFilter
+              filter={filter}
+              smartCulling={settings.smartCulling}
+              smartCullingOnOpen={settings.smartCullingOnOpen}
+              analyzing={qualityAnalyzing}
+              scoredCount={Object.keys(qualityScores).length}
+              progress={qualityProgress}
+            />
+          ) : cur.stage === "shimmer" && cur.error ? (
+            // Full-screen error only when there's NO thumb to fall back to. If a
+            // thumb exists, resolveStage keeps stage "thumb" (with error set) and
+            // we keep showing it rather than blanking the frame.
+            <div className="cull-message">
+              <div className="cull-message__title">preview failed</div>
+              <pre className="cull-message__body">{cur.error}</pre>
+              <button
+                type="button"
+                className="cull-message__retry"
+                onClick={() => current && imageStore.retry(current.path)}
+              >
+                retry
+              </button>
+            </div>
+          ) : (
+            // Photo-frame stays mounted across image transitions AND across
+            // scrubbing so the matte + outer structure don't pop in/out on
+            // every tap-to-navigate or arrow-key release. The inner <img>
+            // swaps between full preview (when ready and not scrubbing) and
+            // the thumbnail fallback (during scrub / while preview loads),
+            // so there's always pixels in the frame and no remount of overlays.
+            // The spinner appears only when neither scrubbing nor ready —
+            // i.e. true "waiting on disk" state.
+            <>
+              {/* The unified pane (PhotoPane): frame + sizer, decode-gated
                 presenter layers, shimmer, spinner, error chip, the settle-
                 gated post-decode zoom layer, and the mask/thirds overlays.
                 It measures the displayed image against the stage and reports
                 the rect up for the mouse-zoom math. */}
-            <PhotoPane
-              variant="loupe"
-              path={current?.path ?? ""}
-              img={cur}
-              scrubbing={scrubbing}
-              isZooming={isZooming}
-              zoomGlide={zoomGlide}
-              zoomLevel={zoomLevel}
-              originX={originX}
-              originY={originY}
-              fullSettleMs={profile.fullSettleMs}
-              settleResetKey={`${thumbsVisible}|${exifVisible}`}
-              flashRating={
-                feedback && current && feedback.imageId === current.id
-                  ? feedback.rating
-                  : null
-              }
-              clipMaskUrl={currentClipMask}
-              peakingMaskUrl={currentPeakMask}
-              showComposition={compositionVisible}
-              measureContainerRef={stageRef}
-              onRectChange={setImgRect}
-            />
-            {/* Verdict is now shown in the bottom status bar's pill; the floating
+              <PhotoPane
+                variant="loupe"
+                path={current?.path ?? ""}
+                img={cur}
+                scrubbing={scrubbing}
+                isZooming={isZooming}
+                zoomGlide={zoomGlide}
+                zoomLevel={zoomLevel}
+                originX={originX}
+                originY={originY}
+                fullSettleMs={profile.fullSettleMs}
+                settleResetKey={`${thumbsVisible}|${exifVisible}`}
+                flashRating={
+                  feedback && current && feedback.imageId === current.id ? feedback.rating : null
+                }
+                clipMaskUrl={currentClipMask}
+                peakingMaskUrl={currentPeakMask}
+                showComposition={compositionVisible}
+                measureContainerRef={stageRef}
+                onRectChange={setImgRect}
+              />
+              {/* Verdict is now shown in the bottom status bar's pill; the floating
                 corner dot is dropped to avoid duplicate signaling and to keep the
                 stage clean alongside the EXIF rail. */}
-          </>
-        )}
-        {feedbackChip}
+            </>
+          )}
+          {feedbackChip}
         </div>
         {/* No rail on the empty-filter screen: `current` still points at the
             last-viewed frame there, and its EXIF next to "no matches" reads
@@ -3696,8 +3722,8 @@ export default function App() {
             similar={similarCtx.get(current.id) ?? null}
           />
         )}
-        </div>
       </div>
+    </div>
   );
 
   // Build the bottom status bar JSX once so it renders inside each view's
@@ -3761,9 +3787,7 @@ export default function App() {
         {scrubbing && (
           <span className="cull-statusbar__scrub" aria-label="scrubbing">
             Scrubbing
-            {scrubSpeed > 1 && (
-              <span className="cull-statusbar__scrubspeed">{scrubSpeed}×</span>
-            )}
+            {scrubSpeed > 1 && <span className="cull-statusbar__scrubspeed">{scrubSpeed}×</span>}
           </span>
         )}
         {/* Overlay cluster — five circular toggle chips. Hidden in grid (those
@@ -3845,7 +3869,11 @@ export default function App() {
         </span>
         <span
           className="cull-statusbar__pos"
-          title={compareMode ? "challenger position / total candidates" : "current position / filtered total"}
+          title={
+            compareMode
+              ? "challenger position / total candidates"
+              : "current position / filtered total"
+          }
         >
           {compareMode ? (
             <>
@@ -4156,12 +4184,12 @@ export default function App() {
             settleResetKey={`${thumbsVisible}|${exifVisible}`}
             championSuggestion={
               images[championIndex] && !ratings[images[championIndex].id]
-                ? suggestions[images[championIndex].id] ?? null
+                ? (suggestions[images[championIndex].id] ?? null)
                 : null
             }
             challengerSuggestion={
               images[challengerIndex] && !ratings[images[challengerIndex].id]
-                ? suggestions[images[challengerIndex].id] ?? null
+                ? (suggestions[images[challengerIndex].id] ?? null)
                 : null
             }
           />
@@ -4395,8 +4423,7 @@ function EmptyFilter({
             }
             hint={
               <>
-                fills in as frames are scored · culling comes first ·{" "}
-                <kbd>1</kbd> for all
+                fills in as frames are scored · culling comes first · <kbd>1</kbd> for all
               </>
             }
           />
@@ -4409,9 +4436,7 @@ function EmptyFilter({
         return (
           <NoMatchEmptyState
             eyebrow="Analyzed"
-            title={
-              <>Analysis done · no suggestions left here ({scoredCount} scored)</>
-            }
+            title={<>Analysis done · no suggestions left here ({scoredCount} scored)</>}
             hint={
               <>
                 <kbd>1</kbd> for all
@@ -4505,11 +4530,7 @@ function RecentFolders({
       ) : (
         <div className="cull-recent__items">
           {recents.map((r) => (
-            <RecentRow
-              key={recentKey(r.paths)}
-              entry={r}
-              onPick={() => !pickerBusy && onPick(r)}
-            />
+            <RecentRow key={recentKey(r.paths)} entry={r} onPick={() => !pickerBusy && onPick(r)} />
           ))}
         </div>
       )}
@@ -4544,7 +4565,8 @@ function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }
             <>
               <b>{entry.count}</b>
               <span className="cull-recent__done" aria-label="finished">
-                {" "}✓
+                {" "}
+                ✓
               </span>
             </>
           ) : entry.rated > 0 ? (
@@ -4571,8 +4593,7 @@ function SaveStatusPill({
   savingCount: number;
   onRetry: () => void;
 }) {
-  const state =
-    failedCount > 0 ? "failed" : savingCount > 0 ? "saving" : "idle";
+  const state = failedCount > 0 ? "failed" : savingCount > 0 ? "saving" : "idle";
   // Quiet when there's nothing to say: a standing "saved" on a fresh home
   // screen reads as noise. The pill exists for in-flight and failed writes.
   if (state === "idle") return null;

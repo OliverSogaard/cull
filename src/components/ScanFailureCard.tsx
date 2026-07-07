@@ -26,7 +26,9 @@ export function ScanFailureCard({ failures }: { failures: readonly ScanFailure[]
   return (
     <div className="cull-scanfail" role="alert">
       <div className="cull-scanfail__title">
-        {failures.length === 1 ? "couldn't open folder" : `couldn't open ${failures.length} folders`}
+        {failures.length === 1
+          ? "couldn't open folder"
+          : `couldn't open ${failures.length} folders`}
       </div>
       <ul className="cull-scanfail__list">
         {failures.map((f) => {
@@ -47,8 +49,8 @@ export function ScanFailureCard({ failures }: { failures: readonly ScanFailure[]
       </ul>
       {anyPermanent && (
         <div className="cull-scanfail__note">
-          A missing folder was usually moved, renamed, or its drive isn't connected. Entries
-          that can't open anymore were removed from recents.
+          A missing folder was usually moved, renamed, or its drive isn't connected. Entries that
+          can't open anymore were removed from recents.
         </div>
       )}
     </div>

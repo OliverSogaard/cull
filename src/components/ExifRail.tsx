@@ -81,16 +81,13 @@ export function ExifRail({
           <div className="cull-exif-rail__label">Suggestion</div>
           <div className="cull-exif-rail__rows">
             <div className="cull-exif-rail__row">
-              <span
-                className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}
-              >
+              <span className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}>
                 {ghost.verdict === "reject"
                   ? "Reject"
                   : ghost.verdict === "favorite"
                     ? "Favorite"
                     : "Keep"}{" "}
-                ·{" "}
-                {Math.round(ghost.confidence * 100)}%
+                · {Math.round(ghost.confidence * 100)}%
               </span>
               <span className="cull-exif-rail__v cull-exif-rail__v--dim">
                 {ghost.reasons.join(", ")}

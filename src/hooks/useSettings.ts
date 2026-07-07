@@ -37,9 +37,7 @@ export function coerceSettings(raw: unknown): Settings {
 
   return {
     storageMode:
-      p.storageMode === "local" || p.storageMode === "network"
-        ? (p.storageMode)
-        : d.storageMode,
+      p.storageMode === "local" || p.storageMode === "network" ? p.storageMode : d.storageMode,
     // "favorites" was the pre-sub-mode-rework value (dd2a632 split filters into
     // top-level + sub-mode); map it 1:1 to its modern equivalent instead of
     // falling back to the default, so users who set it don't silently lose it.
@@ -56,7 +54,7 @@ export function coerceSettings(raw: unknown): Settings {
     defaultCompositionVisible: bool(p.defaultCompositionVisible, d.defaultCompositionVisible),
     thumbsPosition:
       p.thumbsPosition === "bottom" || p.thumbsPosition === "top"
-        ? (p.thumbsPosition)
+        ? p.thumbsPosition
         : d.thumbsPosition,
     rejectedSubfolder:
       typeof p.rejectedSubfolder === "string"
