@@ -523,6 +523,16 @@ stylelint / clippy `-D warnings` / `cargo fmt --check` — ALL clean.**
   was already clean), `pnpm-workspace.yaml` comment header (pnpm still parses
   it, verified).
 
-**Gate 2 asks:** CI green on a test branch push — **needs your say-so to push
-a throwaway branch** (e.g. `ci-smoke` from this HEAD; delete after). Nothing
-pushed yet.
+**Gate 2 PASSED (2026-07-07):** CI proven green via throwaway draft PR #1
+(`ci-smoke` → main; run 28894003988): frontend 46 s, backend 14 m 51 s on
+windows-latest (fmt --check + clippy -D warnings + cargo test all passed on
+the platform where ort/DirectML paths actually compile). Branch push alone
+did NOT trigger — the workflow fires on push-to-main and pull_request only,
+so the PR lane was used (and thereby validated). PR closed, branch deleted;
+main still unpushed. rust-cache is now warm → future backend runs should
+drop to a few minutes. Noted for later: GitHub deprecation warning on the
+Node-20-targeting actions (checkout@v4 / setup-node@v4 / pnpm-action@v4) —
+bump to current majors in a future phase, warning-only today. A `style:`
+commit (`5161f0c`) rides along: Oliver's format-on-edit prettier hook caught
+up with the 12 Phase-2-touched files after the 2.1 commit (scoped formatting,
+suites re-verified).
