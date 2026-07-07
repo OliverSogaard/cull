@@ -10,9 +10,9 @@ function useLatest<T>(value: T) {
 /**
  * Native-size zoom raster, revealed only after its pixels are DECODED — the
  * preview-upscale beneath never pops to a half-decoded full (pipeline Phase
- * 4's decode-gated hi-res pattern, shared by the loupe and the compare
- * panes). The element owns its own src imperatively; a url/path change
- * re-gates, and the live flag drops superseded decodes.
+ * 4's decode-gated hi-res pattern, rendered by PhotoPane in every surface).
+ * The element owns its own src imperatively; a url/path change re-gates, and
+ * the live flag drops superseded decodes.
  */
 export function HiResLayer({
   url,

@@ -1,8 +1,9 @@
 /**
- * Geometry shared by the LOUPE stage and each COMPARE pane. The two surfaces
- * grew as hand-copied siblings and drifted (the compare glide/measure gaps of
- * 2026-07-07); anything both need now lives here so a fix lands in both by
- * construction.
+ * Pure geometry for PhotoPane (and App's mouse-zoom mirror). Historical note:
+ * the loupe stage and each compare pane grew as hand-copied siblings and
+ * drifted (the compare glide/measure gaps of 2026-07-07); this module was the
+ * first consolidation step, PhotoPane the last — one pane implementation, so
+ * a fix lands everywhere by construction.
  */
 
 /** Displayed-image rect relative to its measuring container. */

@@ -7,15 +7,15 @@ import type { Resolved } from "../../image/stage";
 import type { Rating } from "../../types";
 import { shimmerPhaseMs } from "../../utils/shimmer";
 import { sizerSrc } from "../../utils/sizer";
-import { HiResLayer } from "../loupe/HiResLayer";
-import { PresentLayers } from "../loupe/PresentLayers";
+import { HiResLayer } from "./HiResLayer";
+import { PresentLayers } from "./PresentLayers";
 import {
   hiResTransform,
   measurePaneRect,
   paneZoomZ,
   ZOOM_UNSETTLE_MEASURE_DELAY_MS,
   type PaneRect,
-} from "../loupe/paneGeometry";
+} from "./paneGeometry";
 
 /** How long after unzoom starts before the settle-time hi-res layer may
  *  return — the release glide plus slack. */

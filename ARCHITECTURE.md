@@ -55,8 +55,9 @@ requests only the thumb; `wantFull: true` (loupe + compare panes) also drives
 the navigation preview. The zoom tier is pulled separately
 (`requestZoomFull`) by the settle timer and zoom engage.
 
-In the loupe, what actually paints is decided by the **presenter**
-(`src/image/present.ts` + `usePresent` + `LoupeStage`): a decode-gated,
+What actually paints — in the loupe AND each compare pane, all rendered by
+the one `PhotoPane` (`src/components/pane/`) — is decided by the **presenter**
+(`src/image/present.ts` + `usePresent`): a decode-gated,
 double-buffered state machine over two `<img>` layers. The visible frame
 never swaps to undecoded pixels; offers only ever upgrade (a late thumb can
 never replace a shown preview); a nav token drops stale decode completions;
@@ -211,8 +212,9 @@ store FETCHES the 32 MP zoom-tier JPEG — one exact-range read via the moov
 hint, no head scan — and a second `<img>` mounts at the image's native pixel
 size, revealed only once `el.decode()` resolves (the preview-upscale beneath
 never pops to a half-decoded full). Engaging zoom requests it immediately if
-the settle hadn't already. Compare zoom uses the same decode-gated per-pane
-layer.
+the settle hadn't already. The settle timer, measure discipline, and layer
+all live in `PhotoPane`, so each compare pane runs the identical policy —
+that pre-mounted sharp raster is why compare's reveal glides like the loupe's.
 
 The settle delay means rapid arrow-through never pays the ~10 MB fetch or
 the native-resolution decode. The layer drops on every navigation and on

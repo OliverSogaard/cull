@@ -41,7 +41,7 @@ import { deriveVerdict, keepEligible, type Suggestion } from "./smart/deriveVerd
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
 import { PhotoPane } from "./components/pane/PhotoPane";
-import { zoomTransition } from "./components/loupe/zoomTransition";
+import { zoomTransition } from "./components/pane/zoomTransition";
 
 import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
@@ -54,7 +54,7 @@ import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { cycleFilter, topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
-import { paneZoomZ, type PaneRect } from "./components/loupe/paneGeometry";
+import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";

@@ -50,14 +50,14 @@ function probeBottomStrip(layer: PresentLayer, url: string, el: HTMLImageElement
  * pixels are ready (WebView2 + WKWebView; see the plan's platform notes).
  *
  * Flip side-effects (layout effect, before paint):
- *  - `frontRefOut.current` points at the new front element, so App's existing
- *    imgRect measurement machinery keeps working unchanged. If the front
- *    isn't mounted the ref simply keeps its last value — the measure effect's
- *    "keep last-good imgRect" contract.
+ *  - `frontRefOut.current` points at the new front element, so PhotoPane's
+ *    rect measurement keeps working unchanged. If the front isn't mounted
+ *    the ref simply keeps its last value — the measure effect's "keep
+ *    last-good rect" contract.
  *  - the crossfade runs IMPERATIVELY on the front element via el.animate()
  *    (React must never remount the element — its decoded bitmap IS the
  *    double-buffer; a remount would throw the decode work away).
- *  - `onFlip()` lets App seed a re-measure (measureNonce bump).
+ *  - `onFlip()` lets PhotoPane seed a re-measure (measureNonce bump).
  *
  * IMPORTANT: the layer <img>s must be rendered WITHOUT a React-managed `src`
  * — the decoder owns it. React never touches unmanaged attributes on
