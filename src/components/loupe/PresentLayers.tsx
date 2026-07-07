@@ -3,8 +3,9 @@ import { TIER_PRESENTATION } from "../../image/present";
 import type { PresentSnapshot, PresentTier } from "../../image/present";
 
 /**
- * The two presenter-owned <img> layers, shared by the loupe (LoupeStage) and
- * the compare panes. src is OWNED by the decoder (usePresent) — the elements
+ * The two presenter-owned <img> layers, rendered by PhotoPane (and, until
+ * the unification completes, the compare panes). src is OWNED by the decoder
+ * (usePresent) — the elements
  * render src-less and React never touches it. Presentation is FIXED per tier
  * (TIER_PRESENTATION) so objectFit/filter can never change while a layer is
  * visible; the zoom transform applies to both layers so they stay coincident.

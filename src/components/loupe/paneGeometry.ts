@@ -36,6 +36,25 @@ export function hiResTransform(
 }
 
 /**
+ * The pane's zoom scale factor: zoomLevel × the true-1:1 scale (native pixels
+ * over displayed width — rendering the displayed image at that factor lands
+ * one image pixel per screen pixel). Falls back to a 5× one-to-one while dims
+ * or rect are unknown; 1 while not zooming. One formula for the loupe stage,
+ * each compare pane, and App's mouse-drag factor mirror (they had identical
+ * hand-copies).
+ */
+export function paneZoomZ(
+  native: { w: number; h: number } | null | undefined,
+  rect: PaneRect | null | undefined,
+  zoomLevel: number,
+  isZooming: boolean,
+): number {
+  if (!isZooming) return 1;
+  const oneToOne = native && rect ? native.w / rect.width : 5;
+  return zoomLevel * oneToOne;
+}
+
+/**
  * Measure the displayed image's rect relative to `container`, transform-safe.
  *
  * - Un-zoomed: the img's own rect IS the displayed box.

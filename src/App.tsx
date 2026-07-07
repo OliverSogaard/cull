@@ -22,7 +22,6 @@ import type {
 import "./App.css";
 
 import { mergeMeta } from "./utils/mergeMeta";
-import { shimmerPhaseMs } from "./utils/shimmer";
 import { CompareStrip } from "./components/CompareStrip";
 import { CompareView } from "./components/CompareView";
 import { ExifRail } from "./components/ExifRail";
@@ -41,7 +40,7 @@ import { capFavorites } from "./smart/capFavorites";
 import { deriveVerdict, keepEligible, type Suggestion } from "./smart/deriveVerdict";
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
-import { LoupeStage } from "./components/loupe/LoupeStage";
+import { PhotoPane } from "./components/pane/PhotoPane";
 import { zoomTransition } from "./components/loupe/zoomTransition";
 
 import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
@@ -55,11 +54,7 @@ import { useImage } from "./image/useImage";
 import { passesFilter } from "./utils/filter";
 import { cycleFilter, topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
-import {
-  hiResTransform,
-  measurePaneRect,
-  ZOOM_UNSETTLE_MEASURE_DELAY_MS,
-} from "./components/loupe/paneGeometry";
+import { paneZoomZ, type PaneRect } from "./components/loupe/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
@@ -101,7 +96,7 @@ const NAV_HOLD_DELAY_MS = 280;
 /** Wait for the layers' 200ms unzoom transform-transition to finish before
  *  re-measuring — a mid-animation getBoundingClientRect returns a scaled box. */
 // sizerSrc (the aspect-carrying transparent SVG) moved to utils/sizer.ts —
-// shared with LoupeStage and the compare panes.
+// rendered by PhotoPane.
 
 /**
  * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
@@ -449,29 +444,12 @@ export default function App() {
   // zoomZ is computed each culling render.
   const zoomZRef = useRef(1);
 
-  // Measured rect of the displayed image (relative to the stage). Consumed ONLY
-  // by the deferred hi-res zoom layer's transform (so it composites pixel-aligned
-  // with the base image) — the analysis overlays align via CSS, not this rect.
+  // Measured rect of the displayed image (relative to the stage), reported up
+  // by the loupe's PhotoPane (which owns the measure discipline). Consumed by
+  // the cursor-anchored mouse zoom + the drag-factor mirror below — the
+  // analysis overlays align via CSS, not this rect.
   const stageRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
-  const [imgRect, setImgRect] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  const [measureNonce, setMeasureNonce] = useState(0);
-  // True when the measure effect last ran with zoom engaged — its next
-  // unzoomed run delays past the 200ms transform transition (see the effect).
-  const wasZoomingRef = useRef(false);
-
-  // Deferred full-res zoom: the browser rasterizes the on-screen JPEG only at
-  // screen-fit size (keeps navigation instant), so zooming GPU-upscales that
-  // until it re-decodes — the ~0.2s softness. Once you settle on a frame we mount
-  // a second copy rendered at the image's native pixel size, which forces a
-  // full-resolution raster, so the zoom composites from already-sharp pixels.
-  const [hiRes, setHiRes] = useState(false);
-  const hiResTimer = useRef<number | null>(null);
+  const [imgRect, setImgRect] = useState<PaneRect | null>(null);
 
   const [clippingVisible, setClippingVisible] = useState(false);
 
@@ -511,9 +489,6 @@ export default function App() {
       return false;
     }
   });
-  // LoupeStage flips its double-buffer → re-measure the (new) front layer.
-  const bumpMeasureNonce = useCallback(() => setMeasureNonce((n) => n + 1), []);
-
   const pan = useCallback((dx: number, dy: number) => {
     // Mouse-drag zoom owns panning while the button is held: this keyboard
     // clamp (±40%) would visibly snap a drag anchored near an edge.
@@ -1498,42 +1473,11 @@ export default function App() {
         !scrubbing,
     },
   );
-  // curReady gates the hi-res zoom warm-up on the CURRENT image's full preview
-  // being ready (so an unrelated prefetch landing doesn't reset it).
-  const curReady = cur.stage === "full";
-  // Phase for the loupe matte shimmer, pinned per image so every shimmer syncs.
-  const loupeShimmerDelay = useMemo(() => shimmerPhaseMs(), [currentIndex]);
-
-  // Warm the full-res zoom layer once the cursor rests on a ready frame; reset on
-  // every navigation / compare toggle so rapid arrow-through never pays the heavy
-  // fetch + native-resolution decode. Since Phase 3 the settle FETCHES the full
-  // (the displayed nav tier is the 1620px preview): requestZoomFull pulls the
-  // ~10 MB mdat JPEG via the exact-range hint; the layer mounts when it lands
-  // (cur.full). fullSettleMs (400 net / 150 local) only charges deliberately-
-  // parked frames. Also resets when the thumbnail strip toggles: that resizes
-  // the stage, and the deferred layer (positioned from the measured rect)
-  // would otherwise linger at the OLD size, overlapping the reflowed base image.
-  useEffect(() => {
-    setHiRes(false);
-    if (hiResTimer.current) clearTimeout(hiResTimer.current);
-    if (phase !== "culling" || compareMode || !curReady) return;
-    const path = images[currentIndex]?.path;
-    hiResTimer.current = window.setTimeout(() => {
-      setHiRes(true);
-      if (path) {
-        // Phase 8: the settled fit view prefers the mid on high-DPI stages —
-        // the store re-checks needPx fresh and no-ops below the threshold.
-        imageStore.maybeRequestMid(path);
-        imageStore.requestZoomFull(path);
-      }
-    }, profile.fullSettleMs);
-    return () => {
-      if (hiResTimer.current) clearTimeout(hiResTimer.current);
-    };
-    // exifVisible included: toggling the info rail resizes the stage too, so the
-    // hi-res layer must drop + re-derive at the new rect (same reason as thumbsVisible).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, currentIndex, compareMode, curReady, thumbsVisible, exifVisible, profile.fullSettleMs]);
+  // NOTE: the hi-res zoom warm-up (settle timer + zoom-full fetch) and the
+  // displayed-image measure discipline both live in PhotoPane now — the loupe
+  // passes profile.fullSettleMs and a settleResetKey for the stage-resizing
+  // chrome toggles (thumb strip / info rail), and receives the measured rect
+  // back via onRectChange for the mouse-zoom math below.
 
   // NOTE: preview/thumbnail eviction, the unmount blob-cleanup, and compare's
   // full-res scheduling are all owned by `imageStore` now — its windowed
@@ -1562,60 +1506,6 @@ export default function App() {
     const forward = visibleIndices.find((i) => i >= currentIndex);
     setCurrentIndex(forward ?? visibleIndices[visibleIndices.length - 1]);
   }, [visibleIndices, currentIndex, positionInFilter, images.length, compareMode]);
-
-  // Measure the displayed image's rect (relative to the stage) to feed the
-  // deferred hi-res zoom layer's transform. A ResizeObserver on the stage
-  // re-measures on ANY layout change — window resize AND the image growing /
-  // shrinking when the thumbnail strip or info rail toggles — so the hi-res layer
-  // never lands at the old size. (The analysis overlays align via CSS, not this.)
-  useLayoutEffect(() => {
-    if (phase !== "culling") {
-      setImgRect(null);
-      return;
-    }
-    if (scrubbing) return; // overlays are hidden mid-scrub; skip measure + RO churn
-    // While zoomed, the img's own getBoundingClientRect is the TRANSFORMED
-    // (scaled) box — measuring it corrupted every zoom factor derived from it
-    // (the "zooms back out and breaks" bug from the macOS matrix). But a
-    // carried-zoom rating advance can land on a frame with a DIFFERENT aspect
-    // ratio, whose fit box the last-good rect no longer describes (wrong 1:1
-    // scale, misaligned hi-res). Transform-safe answer: measure the img's
-    // parent — the __clip window div is never transformed, the base layer
-    // fills it exactly (inset 0, 100%), and frame AR == photo AR makes it the
-    // displayed-photo rect. No ResizeObserver while zoomed (as before); the
-    // isZooming dep re-runs the full measure path on release.
-    if (isZooming) {
-      wasZoomingRef.current = true;
-      const zoomedRect = measurePaneRect(imgRef.current, stageRef.current, true);
-      if (zoomedRect) setImgRect(zoomedRect);
-      return;
-    }
-    // …and when zoom JUST disengaged, the layers are still mid-transition
-    // (transform 200ms ease-out back to identity) — measuring immediately
-    // captures the animating, still-scaled box (the "unzoom snaps to a huge
-    // top-left image" bug). Arm the measure + observer after the transition.
-    const justUnzoomed = wasZoomingRef.current;
-    wasZoomingRef.current = false;
-    const measure = () => {
-      setImgRect(measurePaneRect(imgRef.current, stageRef.current, false));
-    };
-    const ro = new ResizeObserver(measure);
-    let armTimer: number | null = null;
-    const arm = () => {
-      measure();
-      if (stageRef.current) ro.observe(stageRef.current);
-    };
-    if (justUnzoomed) armTimer = window.setTimeout(arm, ZOOM_UNSETTLE_MEASURE_DELAY_MS);
-    else arm();
-    return () => {
-      ro.disconnect();
-      if (armTimer !== null) clearTimeout(armTimer);
-    };
-    // cur.stage/cur.dims: the sizer reflows the frame when dims arrive (thumb
-    // stage); the RO is on the stage (which doesn't resize), so re-measure here.
-    // images.length (not the array ref) so a folder append doesn't needlessly
-    // tear down + rebuild the observer when the displayed frame is unchanged.
-  }, [phase, images.length, currentIndex, measureNonce, scrubbing, isZooming, cur.stage, cur.dims]);
 
   // While zoomed with the current frame's full landed, warm the NEXT frame's
   // zoom full so a carried rating advance lands sharp (or nearly) instead of
@@ -3644,24 +3534,15 @@ export default function App() {
   // Zoom transform-origin = AF point (display coords) + pan, clamped to image.
   const { x: originX, y: originY } = afZoomOrigin(currentMeta, panOffset);
 
-  // Transform for the deferred full-res layer. Derived to reproduce the base
-  // image's `scale(Z)` about (originX%, originY%) EXACTLY — but starting from the
-  // native-pixel-size element, so it rasterizes at full resolution. Reusing the
-  // measured imgRect makes it pixel-aligned with the base by construction, so the
-  // layer can appear/disappear without any visible shift.
-  // Native dims of the ZOOM raster (the 32 MP full) — since Phase 3 the
-  // displayed image is the 1620px preview, so measured element sizes must NOT
-  // feed the zoom math. Preference: the zoom tier's meta-derived dims → the
-  // thumb's sensor display dims (cur.dims is the full sensor size,
-  // orientation-adjusted — not 160×120).
+  // The pane owns the real zoom geometry (hi-res transform, frame dims);
+  // this mirror of its zoomZ exists only for the mouse-drag pan factor, via
+  // the SAME shared formula over the rect the pane reports up. Native dims
+  // of the ZOOM raster: the zoom tier's meta-derived dims → the thumb's
+  // sensor display dims (cur.dims is orientation-adjusted, not 160×120).
   const zoomNative =
     cur.full?.dims ??
     (cur.dims && cur.dims.w > 1 && cur.dims.h > 1 ? cur.dims : undefined);
-  // True-1:1 scale: rendering the displayed image at this factor lands one image
-  // pixel per screen pixel (when fit, displayed = native × fit-ratio; this
-  // un-does the fit). Falls back to 5× if dimensions aren't known yet.
-  const oneToOneScale = zoomNative && imgRect ? zoomNative.w / imgRect.width : 5;
-  const zoomZ = isZooming ? zoomLevel * oneToOneScale : 1;
+  const zoomZ = paneZoomZ(zoomNative, imgRect, zoomLevel, isZooming);
   // Render-phase ref mirror for the mouse-drag pan loop (see its effect):
   // pure function of state, same value every render, no tearing concern.
   zoomZRef.current = zoomZ;
@@ -3669,25 +3550,6 @@ export default function App() {
   // hi-res, clip/peak masks) — "none" for the carried-zoom frame swap, the
   // directional glide otherwise. Single source so layers can't tear apart.
   const zoomGlide = zoomSwapInstant ? "none" : zoomTransition(isZooming);
-  const hiResT = hiResTransform(imgRect, zoomNative, originX, originY, zoomZ);
-  const hiResScale = hiResT.scale;
-  // The hi-res layer lives INSIDE the content-clip box (at 0,0 — the clip IS
-  // exactly the displayed image area), so we only need the origin offset INSIDE
-  // the image area. imgRect.width/height still report the displayed image's size.
-  const hiResTx = hiResT.tx;
-  const hiResTy = hiResT.ty;
-
-  // Frame size source: the orientation-correct THMB display dims (w/h > 1 guards
-  // the {1,1} UNKNOWN sentinel), else a NEUTRAL SQUARE while the aspect is
-  // unknown. Drives BOTH --photo-ar and the sizer.
-  const frameDims =
-    cur.dims && cur.dims.w > 1 && cur.dims.h > 1
-      ? cur.dims
-      // Large square (not 1×1): the sizer fills the matte by clamping its
-      // intrinsic size DOWN to the stage, so the fallback must EXCEED the stage
-      // — a square fills the stage height (width = height), like a portrait.
-      : { w: 10000, h: 10000 };
-  const photoAr = `${frameDims.w} / ${frameDims.h}`;
 
   // Rating feedback chip — a brief corner badge. Rendered INSIDE the loupe photo
   // stage and the grid view (each its own positioning context) so it sits bottom-
@@ -3767,92 +3629,34 @@ export default function App() {
           // The spinner appears only when neither scrubbing nor ready —
           // i.e. true "waiting on disk" state.
           <>
-            <div
-              className={`cull-photo-frame${
+            {/* The unified pane (PhotoPane): frame + sizer, decode-gated
+                presenter layers, shimmer, spinner, error chip, the settle-
+                gated post-decode zoom layer, and the mask/thirds overlays.
+                It measures the displayed image against the stage and reports
+                the rect up for the mouse-zoom math. */}
+            <PhotoPane
+              variant="loupe"
+              path={current?.path ?? ""}
+              img={cur}
+              scrubbing={scrubbing}
+              isZooming={isZooming}
+              zoomGlide={zoomGlide}
+              zoomLevel={zoomLevel}
+              originX={originX}
+              originY={originY}
+              fullSettleMs={profile.fullSettleMs}
+              settleResetKey={`${thumbsVisible}|${exifVisible}`}
+              flashRating={
                 feedback && current && feedback.imageId === current.id
-                  ? ` cull-photo-frame--flash-${feedback.rating === "favorite" ? "fav" : feedback.rating}`
-                  : ""
-              }`}
-              style={{ ["--photo-ar" as string]: photoAr } as React.CSSProperties}
-            >
-              {/* The decode-gated presenter (Phase 4): LoupeStage owns the
-                  sizer, double-buffered layers, shimmer, spinner, error chip,
-                  and the post-decode zoom layer. The old single-<img> path was
-                  deleted after the dual-engine manual matrix passed. */}
-              <LoupeStage
-                  path={current?.path ?? ""}
-                  cur={cur}
-                  scrubbing={scrubbing}
-                  isZooming={isZooming}
-                  zoomZ={zoomZ}
-                  zoomGlide={zoomGlide}
-                  originX={originX}
-                  originY={originY}
-                  frameDims={frameDims}
-                  shimmerDelayMs={loupeShimmerDelay}
-                  hiRes={hiRes}
-                  hasImgRect={!!imgRect}
-                  zoomNative={zoomNative}
-                  hiResTx={hiResTx}
-                  hiResTy={hiResTy}
-                  hiResScale={hiResScale}
-                  imgRef={imgRef}
-                  onFrontFlip={bumpMeasureNonce}
-                />
-              {/* Overlays inset to match the photo-frame's 14px padding (the
-                  matte). They paint over the image area only, never the matte
-                  or the stage. They scale with the image transform so they
-                  remain aligned through zoom. */}
-              {/* Overlays — positioning + sizing comes from the CSS rule
-                  (`position: absolute !important; inset: 14px`), NOT inline
-                  style. That keeps them out of flow even if a future edit
-                  drops the inline `style`, so they cannot influence the
-                  photo-frame's intrinsic size (which is what was causing
-                  the image to visibly resize when clipping toggled).
-                  Inline style is reserved for the zoom transform. */}
-              <div className="cull-photo-frame__clip" aria-hidden>
-              {!scrubbing && currentClipMask && (
-                <img
-                  className="cull-clip-overlay"
-                  src={currentClipMask}
-                  alt=""
-                  style={{
-                    transform: isZooming ? `scale(${zoomZ})` : undefined,
-                    transformOrigin: `${originX}% ${originY}%`,
-                    transition: zoomGlide,
-                  }}
-                />
-              )}
-              {!scrubbing && currentPeakMask && (
-                <img
-                  className="cull-peaking-overlay"
-                  src={currentPeakMask}
-                  alt=""
-                  style={{
-                    transform: isZooming ? `scale(${zoomZ})` : undefined,
-                    transformOrigin: `${originX}% ${originY}%`,
-                    transition: zoomGlide,
-                  }}
-                />
-              )}
-              {/* Thirds grid is a whole-frame tool: intentionally hidden while
-                  zoomed, unlike the clip/peak masks (which stay mounted and scale
-                  via the inline transform). */}
-              {compositionVisible && !isZooming && !scrubbing && (
-                <svg
-                  className="cull-composition-overlay"
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="none"
-                  aria-hidden
-                >
-                  <line x1="33.333" y1="0" x2="33.333" y2="100" />
-                  <line x1="66.667" y1="0" x2="66.667" y2="100" />
-                  <line x1="0" y1="33.333" x2="100" y2="33.333" />
-                  <line x1="0" y1="66.667" x2="100" y2="66.667" />
-                </svg>
-              )}
-              </div>
-            </div>
+                  ? feedback.rating
+                  : null
+              }
+              clipMaskUrl={currentClipMask}
+              peakingMaskUrl={currentPeakMask}
+              showComposition={compositionVisible}
+              measureContainerRef={stageRef}
+              onRectChange={setImgRect}
+            />
             {/* Verdict is now shown in the bottom status bar's pill; the floating
                 corner dot is dropped to avoid duplicate signaling and to keep the
                 stage clean alongside the EXIF rail. */}
