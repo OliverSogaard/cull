@@ -409,3 +409,63 @@ backend fixes are suite-proven). Phase 5 before 6–8 so the decompositions
 never carry the legacy branches. The three behavior-risk unifications run
 last, one per session, each individually revertible, TierLane after App.tsx
 so the store's consumers are already stable when its internals move.
+
+---
+
+# Implementation notes
+
+## Phase 1 — DONE 2026-07-07 (awaiting Gate 1)
+
+All five tasks landed as five `docs:` commits on `main` (`d98c757`, `02a713c`,
+`9ab7ac6`, `74bbb48`, `e4cffdf`); the plan + brief were already committed by
+the analysis session (`321713c`), so that 1.2 sub-item was a no-op. Suites
+verified unchanged after: **414 TS / 103 Rust / tsc clean / clippy exactly at
+the known 7-warning baseline**.
+
+- **1.1** `LICENSE` (MIT, Oliver Søgaard-Andersen) + `THIRD_PARTY_NOTICES.md`
+  (DINOv2-small, CLIP ViT-B/32 visual, LAION aesthetic head, YuNet 2023mar,
+  OCEC — each with source URL, license, bundled-vs-fetched). `license` +
+  real-author fields in `package.json` and `Cargo.toml`. **Deviation:** the
+  plan's task text said the LAION head is MIT, but the in-repo provenance it
+  told us to verify against (`scripts/export-models.py` docstring) says
+  Apache-2.0 — the notices follow the provenance. OCEC confirmed MIT from
+  `faces.rs:130` (github.com/PINTO0309/OCEC).
+- **1.2** Four root plan docs `git mv`'d to `docs/history/`; dated SUPERSEDED
+  note appended to the stale "release builds ship WITHOUT ML" caveat inside
+  `SMART_CULLING_PLAN.md`'s 2026-07-06 implementation note. Living-code
+  references (comments in `bundle.rs`, `analyze.rs`, `cr3.rs`,
+  `groupSimilar.ts`, `DevHud.tsx`, `present.ts`, `Cargo.toml`) updated to
+  `docs/history/…` paths. **Judgment call:** references inside the dated docs
+  under `docs/superpowers/plans/` (and the moved docs' references to each
+  other) were left verbatim — they are historical record, the filenames stay
+  unique and searchable, and rewriting them would falsify what those sessions
+  actually did.
+- **1.3** README rewritten: hero intro + icon, screenshot table referencing
+  `docs/media/{loupe,compare,grid}.png` (**images pending from Oliver — ask
+  at Gate 1**), Smart culling section (advisory-only, two tiers, toggles),
+  `scripts/` section, corrected 17-module layout tree, Tests pointer to
+  TESTING.md, License section, `<version>`-genericized installer paths.
+  Ride-along accuracy fix: the keyboard table's `1 – 4` row claimed
+  all/unrated/keeps/★ — `4` is the Smart filter (sub-modes cycle on
+  re-press; ★ is a sub-mode of `3`), verified against `App.tsx` +
+  `filterModes.ts`. README still shows `app-icon.png` at root; Phase 4 moves
+  it to `docs/media/` and updates the reference.
+- **1.4** ARCHITECTURE.md: both module maps now match the real trees
+  (frontend + pane/strip subdirs, image/smart/overlays/hooks; backend all 17
+  modules incl. analyze/faces/embed/phash/ml_models/midtier/
+  memory_pressure); new Smart culling section (two-layer design, structural
+  advisory-only invariant, `smart-ml` seam, calibration provenance);
+  tier-cache heading retitled "(format v3)" with the v3 bump reason (pHash on
+  thumbnail headers; VERSION byte shared across tiers); Test-surface
+  enumeration replaced with a summary + TESTING.md pointer.
+- **1.5** TESTING.md created: both suite commands + tsc, pass-by-skip
+  philosophy, the env-gate table (`CULL_TEST_CR3_DIR` — verified live at
+  `analyze.rs:918`, `bundle.rs:834`, `faces.rs:536`, `cr3.rs:1186/1302/1344`,
+  `midtier.rs:304`, `embed.rs:153`; `CULL_TEST_CR3` at `cr3.rs:1123`;
+  `CULL_BENCH=1` at `midtier.rs:365`), the LrC sidecar path-gate
+  (`xmp.rs:705`, skip-with-reason), the calibration invocation verbatim, and
+  `CULL_TEST_JPEG_DIR` for the export parity gates.
+
+**Gate 1 asks:** README/ARCHITECTURE/TESTING diff read + the three
+screenshots (loupe/compare/grid) captured from the dev app into
+`docs/media/`. Nothing pushed.
