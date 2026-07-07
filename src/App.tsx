@@ -2094,14 +2094,19 @@ export default function App() {
           keepZoomOnAdvanceRef.current = true;
           setZoomSwapInstant(true);
           setPanOffset({ x: 0, y: 0 });
+        }
+        setCurrentIndex(target);
+        if (isZoomingRef.current) {
           // Sequential swap: release the outgoing frame's ~130 MB zoom raster
-          // BEFORE the incoming one decodes, so a carried advance never holds
+          // BEFORE the incoming one decodes — a carried advance never holds
           // two fulls at once (the jetsam-kill class). The prefetched next
-          // full survives (it IS the target).
+          // full survives (it IS the target). Runs AFTER the last setState:
+          // the store's invalidate forces a SYNC React flush, and flushing
+          // mid-way rendered a half-updated cursor/ratings pair (the
+          // compare-strip crash of 2026-07-07).
           const targetPath = images[target]?.path;
           if (targetPath) imageStore.dropZoomFullsExcept([targetPath]);
         }
-        setCurrentIndex(target);
       };
 
       // Re-pressing the same verdict on an already-rated frame changes nothing on
@@ -2411,22 +2416,25 @@ export default function App() {
     setRatings(next);
     // Zoomed decide: the challenger pane's content swaps under the live
     // transform — land it at scale, no drift. Champion pane is untouched
-    // (shared pan kept), so its view can't jump. Sequential swap: drop every
-    // zoom full outside the surviving pair BEFORE the new challenger's
-    // decodes (holding both pairs at once is the proven jetsam kill).
-    if (isZoomingRef.current && !exiting) {
-      setZoomSwapInstant(true);
-      const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
-        (x): x is string => Boolean(x),
-      );
-      imageStore.dropZoomFullsExcept(keep);
-    }
+    // (shared pan kept), so its view can't jump.
+    if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
     if (exiting) {
       // No more candidates — pop back to whichever site we came from, landing on
       // the (unchanged) champion. ESC after this lands further up the stack.
       goBack(championIndex);
     } else {
       setChallengerIndex(nextChallenger);
+    }
+    // Sequential swap: drop every zoom full outside the surviving pair BEFORE
+    // the new challenger's decodes (holding both pairs at once is the proven
+    // jetsam kill). AFTER the last setState on purpose: the store's invalidate
+    // forces a SYNC React flush, and flushing between setRatings and
+    // setChallengerIndex rendered a half-updated strip (the 2026-07-07 crash).
+    if (isZoomingRef.current && !exiting) {
+      const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
+        (x): x is string => Boolean(x),
+      );
+      imageStore.dropZoomFullsExcept(keep);
     }
   }, [
     challengerIndex,
@@ -2471,21 +2479,22 @@ export default function App() {
       flashFeedback(verdict, challImg.id);
       persistRating(challImg.path, verdict);
       setRatings(next);
-      // Same zoomed-decide handling as challengerLoses: champion untouched,
-      // outgoing challenger's full dropped before the incoming one decodes.
-      if (isZoomingRef.current && !exiting) {
-        setZoomSwapInstant(true);
-        const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
-          (x): x is string => Boolean(x),
-        );
-        imageStore.dropZoomFullsExcept(keep);
-      }
+      // Same zoomed-decide handling as challengerLoses: champion untouched.
+      if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
       if (exiting) {
         // No more candidates — pop back to whichever site we came from, landing
         // on the (unchanged) champion, exactly like challengerLoses' exit.
         goBack(championIndex);
       } else {
         setChallengerIndex(nextChallenger);
+      }
+      // Outgoing challenger's full dropped AFTER the last setState (see
+      // challengerLoses for the sync-flush ordering rationale).
+      if (isZoomingRef.current && !exiting) {
+        const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
+          (x): x is string => Boolean(x),
+        );
+        imageStore.dropZoomFullsExcept(keep);
       }
     },
     [
@@ -2541,12 +2550,6 @@ export default function App() {
     if (isZoomingRef.current && !exiting) {
       setZoomSwapInstant(true);
       setPanOffset({ x: 0, y: 0 });
-      // Sequential swap: the old champion's full goes NOW (the new champion
-      // IS the old challenger, so its full is already resident, no refetch).
-      const keep = [images[newChamp]?.path, images[nextChallenger]?.path].filter(
-        (x): x is string => Boolean(x),
-      );
-      imageStore.dropZoomFullsExcept(keep);
     }
     setChampionIndex(newChamp);
     if (exiting) {
@@ -2556,6 +2559,15 @@ export default function App() {
       goBack(newChamp);
     } else {
       setChallengerIndex(nextChallenger);
+    }
+    // Sequential swap: the old champion's full goes NOW (the new champion IS
+    // the old challenger, so its full is already resident, no refetch). AFTER
+    // the last setState (see challengerLoses for the sync-flush rationale).
+    if (isZoomingRef.current && !exiting) {
+      const keep = [images[newChamp]?.path, images[nextChallenger]?.path].filter(
+        (x): x is string => Boolean(x),
+      );
+      imageStore.dropZoomFullsExcept(keep);
     }
   }, [
     championIndex,

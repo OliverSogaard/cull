@@ -79,7 +79,11 @@ export function PhotoStrip({
         overlays={burstBoxes}
         prefix={prefix}
         keyForItem={(i) => images[indices[i]].id}
-        renderItem={(i) => renderCell(indices[i], i)}
+        // indices[i] can be transiently undefined when a store-driven sync
+        // flush renders between a rating landing and its index state (the
+        // compare-decide crash, 2026-07-07): an empty cell for one frame
+        // beats an unmounted app.
+        renderItem={(i) => (indices[i] === undefined ? null : renderCell(indices[i], i))}
       />
       {indices.length > 1 && (
         <div className={`cull-scrubbar${scrubbing ? " is-on" : ""}`} aria-hidden>
