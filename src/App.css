@@ -33,7 +33,7 @@ body,
   background: var(--bg);
   overflow: hidden;
   color: var(--text);
-  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  font-family: Inter, -apple-system, system-ui, sans-serif;
   font-size: 14px;
   font-feature-settings: "ss01", "cv11", "cv10";
   -webkit-font-smoothing: antialiased;
@@ -989,7 +989,7 @@ body,
   color: var(--text);
   border: 1px solid var(--border);
   padding: 12px 24px;
-  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  font-family: Inter, -apple-system, system-ui, sans-serif;
   font-size: 13px;
   letter-spacing: 0.05em;
   cursor: pointer;
@@ -1157,7 +1157,7 @@ body,
   color: #1a1408;
   border: none;
   border-radius: 4px;
-  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  font-family: Inter, -apple-system, system-ui, sans-serif;
   font-size: 15px;
   font-weight: 500;
   cursor: pointer;
@@ -1196,7 +1196,7 @@ body,
   border-top: 1px solid var(--border-soft);
   display: flex;
   gap: 28px;
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   font-size: 12px;
   color: var(--muted);
   max-width: 500px;
@@ -1258,7 +1258,7 @@ body,
 }
 
 .cull-recent__path {
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   font-size: 14px;
   color: var(--text);
   overflow: hidden;
@@ -1291,7 +1291,7 @@ body,
 }
 
 .cull-recent__time {
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   font-size: 12px;
   color: var(--muted);
   text-align: right;
@@ -1858,7 +1858,7 @@ body,
   border-radius: 999px;
   background: transparent;
   color: var(--text-2);
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   font-size: 11px;
   letter-spacing: 0;
   text-transform: none;
@@ -1969,7 +1969,7 @@ body,
   border-radius: 2px;
   background: transparent;
   color: var(--text-2);
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   font-size: 12px;
   letter-spacing: 0;
   text-transform: none;
@@ -2059,7 +2059,7 @@ body,
   border-radius: 3px;
   padding: 7px 16px;
   color: var(--bad);
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   font-size: 12px;
   letter-spacing: 0;
   text-transform: none;
@@ -2539,7 +2539,7 @@ body,
 }
 
 .cull-empty-state__title {
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   font-size: 22px;
   font-weight: 500;
   color: var(--text);
@@ -2808,8 +2808,7 @@ body,
      (20 + 54 + 8 = 82). Overflow clips at the padding box, so overlays drawn
      into the padding area render fine. */
   padding: 20px 0 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: auto hidden;
   background: var(--bg);
   border-top: 1px solid var(--border);
   scrollbar-width: none;
@@ -3114,8 +3113,7 @@ body,
 }
 .cull-grid {
   flex: 1 1 auto;
-  overflow-y: auto;
-  overflow-x: hidden; /* hard-stop horizontal scrollbar */
+  overflow: hidden auto; /* hard-stop horizontal scrollbar */
   min-height: 0;
   background: var(--bg);
   scrollbar-width: thin;
@@ -3258,13 +3256,10 @@ body,
   animation-delay: var(--shimmer-delay, 0ms);
 }
 
-/* Keep the filename label above the sweep band. */
 .cull-grid__placeholder-name {
+  /* position/z-index keep the filename label above the sweep band. */
   position: relative;
   z-index: 1;
-}
-
-.cull-grid__placeholder-name {
   color: var(--muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
@@ -3388,7 +3383,7 @@ body,
 /* ── help overlay ─────────────────────────────────────────── */
 .cull-help {
   position: fixed;
-  inset: 36px 0 0 0;
+  inset: 36px 0 0;
   z-index: 150;
   background: rgba(8, 8, 10, 0.92);
   backdrop-filter: blur(8px);
@@ -3416,7 +3411,7 @@ body,
 }
 
 .cull-help__title {
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   font-size: 28px;
   font-weight: 500;
   color: var(--text);
@@ -3466,7 +3461,7 @@ body,
 }
 
 .cull-help__desc {
-  font-family: 'Inter', sans-serif;
+  font-family: Inter, sans-serif;
   color: var(--text-2);
   font-size: 12px;
   white-space: normal;

@@ -1086,19 +1086,20 @@ describe("mid tier (Phase 8)", () => {
     vi.mocked(invoke).mockImplementation((cmd: unknown, args?: unknown) => {
       calls.push({ cmd: cmd as string, args: (args ?? {}) as Record<string, unknown> });
       const route = overrides[cmd as string];
-      if (route) return route(args) as Promise<never>;
-      if (cmd === "read_preview") return Promise.resolve(makePreviewBuf()) as Promise<never>;
+      if (route) return route(args);
+      if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
       if (cmd === "extract_thumbnail")
-        return Promise.resolve(makeThumbnailBuf(60, 40)) as Promise<never>;
-      if (cmd === "read_mid") return Promise.resolve(makeMidBuf()) as Promise<never>;
-      if (cmd === "generate_mid") return Promise.resolve(true) as Promise<never>;
-      return Promise.resolve(new ArrayBuffer(0)) as Promise<never>;
+        return Promise.resolve(makeThumbnailBuf(60, 40));
+      if (cmd === "read_mid") return Promise.resolve(makeMidBuf());
+      if (cmd === "generate_mid") return Promise.resolve(true);
+      return Promise.resolve(new ArrayBuffer(0));
     });
     return calls;
   }
 
-  const midCalls = (calls: { cmd: string }[]) => calls.filter((c) => c.cmd === "read_mid");
-  const genCalls = (calls: { cmd: string }[]) => calls.filter((c) => c.cmd === "generate_mid");
+  type InvokeCall = { cmd: string; args: Record<string, unknown> };
+  const midCalls = (calls: InvokeCall[]) => calls.filter((c) => c.cmd === "read_mid");
+  const genCalls = (calls: InvokeCall[]) => calls.filter((c) => c.cmd === "generate_mid");
 
   it("requests read_mid only when the display engages (needPx fresh per request)", async () => {
     const { PERFORMANCE_PROFILES } = await import("../types/settings");
@@ -1176,7 +1177,7 @@ describe("mid tier (Phase 8)", () => {
         releaseNav
           ? Promise.resolve(makePreviewBuf())
           : new Promise((resolve) => {
-              releaseNav = resolve as (buf: ArrayBuffer) => void;
+              releaseNav = resolve;
             }),
     });
     const Store = await getStoreClass();
@@ -1234,7 +1235,7 @@ describe("mid tier (Phase 8)", () => {
         releaseNav
           ? Promise.resolve(makePreviewBuf())
           : new Promise((resolve) => {
-              releaseNav = resolve as (buf: ArrayBuffer) => void;
+              releaseNav = resolve;
             }),
     });
     const Store = await getStoreClass();

@@ -103,7 +103,7 @@ describe("runAnalysis", () => {
     expect(end).toBe("done");
     expect(attempts).toBe(2);
     expect(d.scored).toHaveLength(1); // only chunk 1 scored
-    expect(d.progress.at(-1)).toEqual([6, 6]); // skipped chunk still counts as done
+    expect(d.progress[d.progress.length - 1]).toEqual([6, 6]); // skipped chunk still counts as done
     // Silent failures are undiagnosable — the skip must surface to the caller.
     expect(failures).toHaveLength(1);
     expect(failures[0][0]).toBe(0);

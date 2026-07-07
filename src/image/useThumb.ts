@@ -56,7 +56,7 @@ export function useThumb(path: string): {
 } {
   const img = useImage(path, { wantFull: false });
   const url = thumbDisplayUrl(img);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   const shimmerDelayMs = useMemo(() => shimmerPhaseMs(), []);
 
   // ── dlog probes (thumb-flash) — free when the flag is off ────────────────

@@ -131,8 +131,6 @@ export function CompareView({
             challengerName={challenger.filename}
             championMeta={metadata[champion.path]}
             challengerMeta={metadata[challenger.path]}
-            championRating={ratings[champion.id]}
-            challengerRating={ratings[challenger.id]}
             championSuggestion={championSuggestion}
             challengerSuggestion={challengerSuggestion}
           />

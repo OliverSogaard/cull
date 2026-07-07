@@ -114,7 +114,7 @@ export function groupBursts(
           pos: i + 1,
           len: run.length,
           isWinner: i === w,
-          marginToWinner: w >= 0 && i !== w ? winnerAf - sharp![r.id]!.afSharpness : 0,
+          marginToWinner: w >= 0 && i !== w ? winnerAf - sharp![r.id].afSharpness : 0,
         });
       });
       groupId += 1;

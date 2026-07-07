@@ -160,7 +160,10 @@ export const PhotoPane = memo(function PhotoPane({
   }, [path, img.stage, img.url, img.mid?.url, scrubbing, presenter]);
 
   // Shimmer phase pinned per image so this pane's placeholder pulses in sync
-  // with the strip cells and any sibling pane showing the same frame.
+  // with the strip cells and any sibling pane showing the same frame. `path`
+  // isn't read inside — it IS the cache key (fresh phase per image), so the
+  // "unnecessary dependency" is the whole point.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const shimmerDelayMs = useMemo(() => shimmerPhaseMs(), [path]);
 
   // ── Measured rect of the displayed image (relative to the container) ─────
@@ -356,7 +359,7 @@ export const PhotoPane = memo(function PhotoPane({
           ? ` cull-photo-frame--flash-${flashRating === "favorite" ? "fav" : flashRating}`
           : ""
       }`}
-      style={{ ["--photo-ar" as string]: photoAr } as CSSProperties}
+      style={{ ["--photo-ar" as string]: photoAr }}
     >
       {/* Sizer: in-flow transparent replaced element at the KNOWN display
           ratio — it alone sizes the matte (see the plan's integration

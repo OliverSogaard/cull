@@ -1132,7 +1132,7 @@ export default function App() {
   // remembered, skip the home screen and load it straight away. Runs once on
   // app mount; intentionally NOT triggered every time settings.openLastFolderOnLaunch
   // flips, since that would re-open the folder mid-cull.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   useEffect(() => {
     if (!settings.openLastFolderOnLaunch) return;
     const lastDir = localStorage.getItem("cull:lastDir");
@@ -1143,11 +1143,12 @@ export default function App() {
     // localStorage, so the mount-time value is complete.)
     const session = recentFolders.find((r) => r.paths.includes(lastDir));
     if (session) {
-      openFoldersByPaths(session.paths, { fromRecentKey: recentKey(session.paths) });
+      void openFoldersByPaths(session.paths, { fromRecentKey: recentKey(session.paths) });
     } else {
-      openFoldersByPaths([lastDir]);
+      void openFoldersByPaths([lastDir]);
     }
     // Intentional empty deps — mount-only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist the recents' rated/done counts WHILE culling, not only on the way
@@ -1719,7 +1720,7 @@ export default function App() {
   // = cancel the CLOSE, never the write.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    getCurrentWindow()
+    void getCurrentWindow()
       .onCloseRequested((event) => {
         if (savingRef.current > 0 || failedCountRef.current > 0) {
           event.preventDefault();
@@ -1754,7 +1755,7 @@ export default function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    getCurrentWindow()
+    void getCurrentWindow()
       .onDragDropEvent((event) => {
         const p = event.payload;
         // Only react when the user is on a chrome screen (start/loading/etc).
@@ -1783,7 +1784,7 @@ export default function App() {
             // Best-effort: stage every dropped folder in one batch; if a path
             // is a file (not a folder), Rust's scan_folder will error and we'll
             // surface that as a scan error via the regular failure path.
-            openFoldersByPathsRef.current(dropped);
+            void openFoldersByPathsRef.current(dropped);
           }
         }
       })
@@ -2303,6 +2304,9 @@ export default function App() {
       );
       imageStore.dropZoomFullsExcept(keep);
     }
+    // currentIndex deliberately omitted: compare mode never updates it (known
+    // cursor divergence, see setCursor note) — the frozen value is intended.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     challengerIndex,
     championIndex,
@@ -2365,6 +2369,9 @@ export default function App() {
         imageStore.dropZoomFullsExcept(keep);
       }
     },
+    // currentIndex deliberately omitted: compare mode never updates it (known
+    // cursor divergence, see setCursor note) — the frozen value is intended.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       challengerIndex,
       championIndex,
@@ -2438,6 +2445,9 @@ export default function App() {
       );
       imageStore.dropZoomFullsExcept(keep);
     }
+    // currentIndex deliberately omitted: compare mode never updates it (known
+    // cursor divergence, see setCursor note) — the frozen value is intended.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     championIndex,
     challengerIndex,
@@ -2521,7 +2531,7 @@ export default function App() {
         // position, so calling them repeatedly within a tick would recompute
         // the same target `speed` times and move a single frame (the "50× that
         // scrubbed at 1×" bug). Both walk `step` frames internally instead.
-        const moved = navStepRef.current(heldDirRef.current as 1 | -1, speed);
+        const moved = navStepRef.current(heldDirRef.current, speed);
         // Blur only while actually moving. At a boundary (nothing to move to) keep
         // the current frame full-res — no point blurring when we aren't going
         // anywhere. Toggle only on change to avoid per-step re-renders.
@@ -2607,7 +2617,7 @@ export default function App() {
         // horizontal hold above (see its comment): N single-row calls would
         // all read the same render-frozen position and go nowhere.
         const moved = advanceRef.current(
-          heldGridVertDirRef.current as 1 | -1,
+          heldGridVertDirRef.current,
           gridColsRef.current * speed,
         );
         // Same shared "scrubbing" flag the loupe hold flips (see startHold) —
@@ -2803,7 +2813,7 @@ export default function App() {
         (phase === "start" || phase === "staged")
       ) {
         e.preventDefault();
-        pickFolder();
+        void pickFolder();
         return;
       }
       // Enter on the staged screen → begin culling (mirrors the primary button).
@@ -2811,7 +2821,7 @@ export default function App() {
       // leave Enter alone there so a focused button still activates.
       if (phase === "staged" && e.key === "Enter" && images.length > 0) {
         e.preventDefault();
-        beginCulling();
+        void beginCulling();
         return;
       }
       // Esc on the staged screen → discard the staged set and return Home, so
@@ -3224,6 +3234,10 @@ export default function App() {
       }
     };
     cullKeyRef.current = { onKey, onKeyUp };
+    // chipsTooltip deliberately omitted: the hook returns a fresh object each
+    // render — including it would rebuild the keymap every render for no
+    // benefit (onKey reads only its stable pulse method).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     phase,
     startHold,

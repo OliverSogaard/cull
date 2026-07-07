@@ -49,10 +49,12 @@ const reportFatal = (msg: string) => {
   el.textContent = `CULL hit an unexpected error. Restart the app.\n\n${msg}\n\n(saved to localStorage["cull:lastError"])`;
 };
 window.addEventListener("error", (e) => {
-  reportFatal(`${e.message}\n${e.error?.stack ?? `${e.filename}:${e.lineno}`}`);
+  const err: unknown = e.error;
+  const stack = err instanceof Error ? err.stack : undefined;
+  reportFatal(`${e.message}\n${stack ?? `${e.filename}:${e.lineno}`}`);
 });
 window.addEventListener("unhandledrejection", (e) => {
-  const r = e.reason;
+  const r: unknown = e.reason;
   reportFatal(r instanceof Error ? `${r.message}\n${r.stack ?? ""}` : String(r));
 });
 

@@ -40,7 +40,7 @@ export function pickWinner(
   let w = -1;
   for (let i = 0; i < ids.length; i++) {
     if (eligible && !eligible[ids[i]]) continue;
-    if (w === -1 || beats(sharps[i]!, sharps[w]!)) w = i;
+    if (w === -1 || beats(sharps[i], sharps[w])) w = i;
   }
-  return { winnerIdx: w, winnerAf: w >= 0 ? sharps[w]!.afSharpness : 0 };
+  return { winnerIdx: w, winnerAf: w >= 0 ? sharps[w].afSharpness : 0 };
 }

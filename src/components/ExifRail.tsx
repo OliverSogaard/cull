@@ -53,7 +53,7 @@ export function ExifRail({
   const date = captured ? new Date(captured) : null;
   const dateOK = date && !Number.isNaN(date.getTime());
   const dateStr = dateOK
-    ? date!.toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" })
+    ? date.toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" })
     : null;
   const imageSize = formatImageSize(
     meta?.pixelWidth ?? null,
@@ -202,8 +202,6 @@ export function CompareExifRail({
   challengerName,
   championMeta,
   challengerMeta,
-  championRating,
-  challengerRating,
   championSuggestion,
   challengerSuggestion,
 }: {
@@ -211,8 +209,6 @@ export function CompareExifRail({
   challengerName: string;
   championMeta: ImageMetadata | undefined;
   challengerMeta: ImageMetadata | undefined;
-  championRating?: Rating;
-  challengerRating?: Rating;
   /** Smart-culling suggestions per side (unrated frames only) — rendered as
    *  a two-column Suggestion section at the top, mirroring the loupe rail. */
   championSuggestion?: Suggestion | null;
@@ -294,14 +290,7 @@ export function CompareExifRail({
       },
     ];
     return { frameRows, lrcRow, exposureRows };
-  }, [
-    championName,
-    challengerName,
-    championMeta,
-    challengerMeta,
-    championRating,
-    challengerRating,
-  ]);
+  }, [championName, challengerName, championMeta, challengerMeta]);
 
   return (
     <aside className="cull-exif-rail cull-exif-rail--compare" aria-label="Compare info">

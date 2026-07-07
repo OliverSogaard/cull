@@ -64,6 +64,9 @@ export function HiResLayer({
     );
     return () => {
       live = false;
+      // Deliberate ref read in cleanup: the ref-dispatch pattern means the
+      // LATEST onDecoded must hear the reset, not the mount-time closure.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       onDecodedRef.current?.(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

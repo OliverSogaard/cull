@@ -116,7 +116,7 @@ ctx.onmessage = (e: MessageEvent<OverlayRequest>) => {
 // Boot-time capability probe (plan Phase 6): 1×1 convertToBlob, posted
 // unsolicited. Failure is an answer, not an error — the client falls back to
 // the inline main-thread histogram for the session.
-(async () => {
+void (async () => {
   try {
     const c = new OffscreenCanvas(1, 1);
     const c2d = c.getContext("2d");

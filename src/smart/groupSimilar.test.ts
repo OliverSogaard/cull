@@ -1,11 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  groupSimilar,
-  PHASH_NEAR,
-  SIMILAR_COSINE,
-  SIMILAR_WINDOW_MS,
-  type SimilarInput,
-} from "./groupSimilar";
+import { groupSimilar, SIMILAR_WINDOW_MS, type SimilarInput } from "./groupSimilar";
 import type { BurstCtx } from "./groupBursts";
 import type { ImageScore } from "../types/ipc";
 import type { ImageMetadata } from "../types";
@@ -14,7 +8,7 @@ import { img, score } from "./testScores";
 
 /** Orthogonal unit embeddings for "unrelated"; same vector for "identical". */
 const e = (dir: number): number[] => {
-  const v = new Array(8).fill(0);
+  const v = new Array<number>(8).fill(0);
   v[dir] = 1;
   return v;
 };
@@ -165,7 +159,7 @@ describe("buildSimilarInputs", () => {
       subSecMs: 470,
       phash: "1234000000000000",
       ...over,
-    }) as ImageMetadata;
+    });
 
   test("phash ALWAYS comes from the standing thumb metadata, never from the score", () => {
     const images = [img(1)];

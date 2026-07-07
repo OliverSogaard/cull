@@ -26,7 +26,7 @@ const meta = (over: Partial<ImageMetadata> = {}): ImageMetadata =>
     lrcRating: null,
     phash: null,
     ...over,
-  }) as ImageMetadata;
+  });
 
 describe("mergeMeta", () => {
   it("carries the previous phash forward when the incoming delivery has none", () => {

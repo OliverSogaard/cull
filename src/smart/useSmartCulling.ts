@@ -104,6 +104,7 @@ export function useSmartCulling(opts: {
             // Diagnostics ride the same flag as the dev HUD — never console
             // noise in normal use, one line per skipped chunk when debugging.
             if (localStorage.getItem("cull:devhud") === "1") {
+              // eslint-disable-next-line no-console
               console.debug(`[cull] analyze chunk @${chunkStart} skipped: ${message}`);
             }
           },

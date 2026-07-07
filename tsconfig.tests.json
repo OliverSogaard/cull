@@ -1,0 +1,7 @@
+{
+  // The base project WITH test files: tsconfig.json excludes *.test.ts* (Vite
+  // build stays lean), which left the suites untypechecked until this lane.
+  // Used by `pnpm typecheck:tests` and as ESLint's type-aware project.
+  "extends": "./tsconfig.json",
+  "exclude": []
+}

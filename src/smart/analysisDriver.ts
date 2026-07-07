@@ -52,7 +52,7 @@ export async function runAnalysis(
     }
     if (stale()) return "stale";
 
-    const slice = paths.slice(start, start + deps.chunkLen) as string[];
+    const slice = paths.slice(start, start + deps.chunkLen);
     let scores: ImageScore[] | null = null;
     for (let attempt = 0; attempt < 2 && !scores; attempt += 1) {
       try {

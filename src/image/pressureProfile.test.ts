@@ -36,7 +36,7 @@ describe("clampProfileForPressure — memory-pressure shedding", () => {
       const p = clampProfileForPressure(base, level);
       for (const k of Object.keys(base) as (keyof typeof base)[]) {
         if (typeof base[k] === "number") {
-          expect(p[k] as number).toBeLessThanOrEqual(base[k] as number);
+          expect(p[k] as number).toBeLessThanOrEqual(base[k]);
         }
       }
     }

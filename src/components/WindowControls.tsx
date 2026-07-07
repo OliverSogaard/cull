@@ -64,7 +64,7 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
             aria-label="minimize"
             onClick={(e) => {
               e.currentTarget.blur();
-              win.minimize();
+              void win.minimize();
             }}
           >
             <Minus size={13} strokeWidth={2.5} />
@@ -75,7 +75,7 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
             aria-label={maximized ? "restore window" : "maximize window"}
             onClick={(e) => {
               e.currentTarget.blur();
-              win.toggleMaximize();
+              void win.toggleMaximize();
             }}
           >
             {maximized ? (
@@ -91,7 +91,7 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
             aria-label="close"
             onClick={(e) => {
               e.currentTarget.blur();
-              win.close();
+              void win.close();
             }}
           >
             <XIcon size={14} strokeWidth={2.5} />

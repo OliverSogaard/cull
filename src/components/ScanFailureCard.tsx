@@ -9,6 +9,7 @@ export type ScanFailure = { path: string; msg: string; permanent: boolean };
  * card already shows, so they carry no extra detail; anything unrecognised
  * keeps its raw message as the detail line.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested pure helper; co-located with its only consumer
 export function scanFailureTag(msg: string): { tag: string; detail: string | null } {
   if (/not found/i.test(msg)) return { tag: "not found", detail: null };
   if (/not a directory/i.test(msg)) return { tag: "not a folder", detail: null };
