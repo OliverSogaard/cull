@@ -530,9 +530,14 @@ the platform where ort/DirectML paths actually compile). Branch push alone
 did NOT trigger — the workflow fires on push-to-main and pull_request only,
 so the PR lane was used (and thereby validated). PR closed, branch deleted;
 main still unpushed. rust-cache is now warm → future backend runs should
-drop to a few minutes. Noted for later: GitHub deprecation warning on the
-Node-20-targeting actions (checkout@v4 / setup-node@v4 / pnpm-action@v4) —
-bump to current majors in a future phase, warning-only today. A `style:`
+drop to a few minutes. The Node-20 action
+deprecation was fixed same-day rather than parked (`cbf2248`: checkout v7 /
+setup-node v6 / pnpm-setup v6, in BOTH ci.yml and release.yml — release.yml's
+bump is proven by proxy only, its real run is the next v* tag) and re-proven
+green via smoke PR #2 (run 28895206181, zero annotations). CI-cache note:
+PR-branch caches don't carry across deleted branches/PRs — the backend stays
+~15-25 min until main itself is pushed and seeds the shared main-branch
+cache. A `style:`
 commit (`5161f0c`) rides along: Oliver's format-on-edit prettier hook caught
 up with the 12 Phase-2-touched files after the 2.1 commit (scoped formatting,
 suites re-verified).
