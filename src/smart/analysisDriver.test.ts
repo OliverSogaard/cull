@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { runAnalysis, type DriverDeps } from "./analysisDriver";
 import { ImageStore } from "../image/imageStore";
-import { score } from "./testScores";
+import { score } from "./__fixtures__/testScores";
 import type { ImageScore } from "../types/ipc";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));

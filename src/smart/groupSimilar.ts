@@ -37,12 +37,12 @@ export type SimilarInput = {
  *  only, per the spec: a worked scene, not whole-folder lookalikes). */
 export const SIMILAR_WINDOW_MS = 300_000;
 /** pHash Hamming distance at or under this ⇒ near-exact duplicate. */
-export const PHASH_NEAR = 10;
+const PHASH_NEAR = 10;
 /** DINOv2 cosine at or above this ⇒ lookalike (ML builds only). */
-export const SIMILAR_COSINE = 0.92;
+const SIMILAR_COSINE = 0.92;
 
 /** Hamming distance between two 16-hex-char pHashes via BigInt (64-bit safe). */
-export function phashDistance(a: string, b: string): number {
+function phashDistance(a: string, b: string): number {
   let x = BigInt("0x" + a) ^ BigInt("0x" + b);
   let n = 0;
   while (x > 0n) {

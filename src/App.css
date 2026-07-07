@@ -242,16 +242,6 @@ body,
   max-width: 240px;
 }
 
-.cull-statusbar__filename-sep {
-  color: var(--border);
-  flex-shrink: 0;
-}
-
-.cull-statusbar__filename-meta {
-  color: var(--text-2);
-  flex-shrink: 0;
-}
-
 .cull-statusbar__spacer {
   flex: 1 1 auto;
 }
@@ -1813,13 +1803,6 @@ body,
   min-width: 0;
 }
 
-.cull-settings__row-head {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 24px;
-  align-items: center;
-}
-
 .cull-settings__row-name {
   color: var(--text);
   font-size: 13.5px;
@@ -2042,13 +2025,6 @@ body,
     background: var(--bg);
     border-color: var(--border);
   }
-}
-
-/* Export-folder control */
-.cull-settings__export-pinned {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 /* Reset button */
@@ -2983,9 +2959,22 @@ body,
   box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.6);
 }
 
-.cull-thumb__dot--keep   { background: var(--ok); }
-.cull-thumb__dot--reject { background: var(--bad); }
-.cull-thumb__dot--fav    { background: var(--fav); }
+/* Solid verdict colors — shared with the grid dots (grouped like the ghost
+   variants below). */
+.cull-thumb__dot--keep,
+.cull-grid__dot--keep {
+  background: var(--ok);
+}
+
+.cull-thumb__dot--reject,
+.cull-grid__dot--reject {
+  background: var(--bad);
+}
+
+.cull-thumb__dot--fav,
+.cull-grid__dot--fav {
+  background: var(--fav);
+}
 
 /* Pre-existing LrC star badge in the thumb-strip / compare-strip cell —
    a tiny champagne ★ pinned top-left with a dark translucent pill, so the
@@ -3303,9 +3292,8 @@ body,
   z-index: 3;
 }
 
-.cull-grid__dot--keep   { background: var(--ok); }
-.cull-grid__dot--reject { background: var(--bad); }
-.cull-grid__dot--fav    { background: var(--fav); }
+/* Solid verdict colors live with the strip dots (see .cull-thumb__dot--keep
+   family — grouped like the ghost variants). */
 
 /* Pre-existing LrC star badge in the grid (champagne ★ top-left on a dark
    translucent pill). Same idea as the strip badge, scaled up for the larger

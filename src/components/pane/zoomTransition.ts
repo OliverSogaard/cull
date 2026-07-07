@@ -9,8 +9,8 @@
  * visible. Releasing keeps the original ease-out: it decelerates INTO the
  * fit view, which always felt right.
  */
-export const ZOOM_ENGAGE_TRANSITION = "transform 300ms cubic-bezier(0.4, 0, 0.2, 1)";
-export const ZOOM_RELEASE_TRANSITION = "transform 200ms ease-out";
+const ZOOM_ENGAGE_TRANSITION = "transform 300ms cubic-bezier(0.4, 0, 0.2, 1)";
+const ZOOM_RELEASE_TRANSITION = "transform 200ms ease-out";
 
 export function zoomTransition(isZooming: boolean): string {
   return isZooming ? ZOOM_ENGAGE_TRANSITION : ZOOM_RELEASE_TRANSITION;

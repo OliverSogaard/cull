@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { capFavorites, FAVORITE_AESTHETIC } from "./capFavorites";
-import { score as baseScore } from "./testScores";
+import { score as baseScore } from "./__fixtures__/testScores";
 import { deriveVerdict } from "./deriveVerdict";
 import type { Suggestion } from "./deriveVerdict";
 import type { BurstCtx } from "./groupBursts";

@@ -1,7 +1,5 @@
 import type { Img } from "../types/image";
-import { pickWinner, EYES_OPEN_MIN } from "./pickWinner";
-
-export { EYES_OPEN_MIN };
+import { pickWinner } from "./pickWinner";
 
 /**
  * Per-frame grouping inputs, SOURCE-AGNOSTIC: built from smart-culling scores
@@ -48,9 +46,9 @@ export type BurstCtx = {
 };
 
 /** Frames closer than this in capture cadence extend the current burst. */
-export const BURST_GAP_MS = 700;
+const BURST_GAP_MS = 700;
 /** mtime-fallback guard: capture times this far apart NEVER group. */
-export const CAPTURED_COARSE_GUARD_MS = 2000;
+const CAPTURED_COARSE_GUARD_MS = 2000;
 
 /** Does `cur` extend the burst ending at `prev`? All gates must hold. */
 function extendsRun(

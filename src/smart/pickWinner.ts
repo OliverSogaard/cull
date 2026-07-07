@@ -1,7 +1,7 @@
 import type { SharpInput } from "./groupBursts";
 
 /** prob_open at or above this counts as "eyes open" for the winner tiebreak. */
-export const EYES_OPEN_MIN = 0.5;
+const EYES_OPEN_MIN = 0.5;
 
 /** Strict "a beats b" for winner selection (ties fall through → earliest wins). */
 function beats(a: SharpInput, b: SharpInput): boolean {

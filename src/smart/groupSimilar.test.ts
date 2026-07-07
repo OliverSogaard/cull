@@ -4,7 +4,7 @@ import type { BurstCtx } from "./groupBursts";
 import type { ImageScore } from "../types/ipc";
 import type { ImageMetadata } from "../types";
 import { buildSimilarInputs } from "./burstInputs";
-import { img, score } from "./testScores";
+import { img, score } from "./__fixtures__/testScores";
 
 /** Orthogonal unit embeddings for "unrelated"; same vector for "identical". */
 const e = (dir: number): number[] => {

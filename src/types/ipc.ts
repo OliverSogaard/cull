@@ -26,7 +26,7 @@ export type ScanResult = {
 };
 
 /** Tier-2 face metrics (empty in the classical MVP; wire contract is stable). */
-export type FaceScore = {
+type FaceScore = {
   bbox: [number, number, number, number];
   eyesOpen: number;
   faceSharpness: number;

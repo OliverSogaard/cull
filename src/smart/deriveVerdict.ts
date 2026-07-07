@@ -18,10 +18,10 @@ export type SmartLevel = "low" | "medium" | "high";
  * from the plan's 0.15 draft: the Phase-1 harness false-rejected a kept frame
  * at 0.148 while true user-rejects sat at 0.56 (composition — correctly silent).
  */
-export const SHARP_REJECT = 0.12;
-export const SHARP_STRONG = 0.55;
+const SHARP_REJECT = 0.12;
+const SHARP_STRONG = 0.55;
 /** Below this AF-crop texture spread, focus is unjudgeable — stay silent. */
-export const TEXTURE_MIN = 0.12;
+const TEXTURE_MIN = 0.12;
 /**
  * Heavy-blur (Rule 2b) gates, CALIBRATED 2026-07-06 against the live-test
  * bird (`_MG_8961.CR3`, the frame that motivated this rule) and the 16-file
@@ -39,21 +39,21 @@ export const HEAVY_BLUR_SHARP = 0.13;
  *  covers the smeared subject.) */
 export const HEAVY_BLUR_TENENGRAD = 0.2;
 /** Burst-loser confidence = marginToWinner / MARGIN_SCALE (near-ties → silent). */
-export const MARGIN_SCALE = 0.25;
+const MARGIN_SCALE = 0.25;
 /** Similar-set loser: a lookalike group is WEAKER evidence than a camera-
  *  clocked burst — bigger divisor (lower confidence per margin) and a hard
  *  near-tie floor below which we say nothing at all. */
-export const SIMILAR_MARGIN_SCALE = 0.35;
-export const SIMILAR_MARGIN_FLOOR = 0.05;
+const SIMILAR_MARGIN_SCALE = 0.35;
+const SIMILAR_MARGIN_FLOOR = 0.05;
 /** Laplacian-vs-Tenengrad gap past which the sharpness signal is distrusted. */
-export const TENENGRAD_DISAGREE = 0.35;
+const TENENGRAD_DISAGREE = 0.35;
 /** Primary-face prob_open below this fires "closed eyes", margin-scaled —
  *  deliberately far under the 0.5 open/closed line: our eye crops come from
  *  landmark heuristics, so only a CLEAR blink may reject (advisory bias). */
-export const EYES_CLOSED_REJECT = 0.2;
+const EYES_CLOSED_REJECT = 0.2;
 /** Clipping annotation thresholds — clipping NEVER rejects alone (RAW workflow). */
-export const BLOWN_NOTE_PCT = 0.25;
-export const CRUSHED_NOTE_PCT = 0.35;
+const BLOWN_NOTE_PCT = 0.25;
+const CRUSHED_NOTE_PCT = 0.35;
 /** Minimum confidence to SPEAK (reject and keep alike), per
  *  smartCullingConfidence level — High means fewer, surer suggestions of
  *  every kind, exactly what the settings copy promises. */

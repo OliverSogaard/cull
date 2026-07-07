@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { deriveVerdict, HEAVY_BLUR_SHARP, HEAVY_BLUR_TENENGRAD, LEVEL_THRESHOLD } from "./deriveVerdict";
 import type { BurstCtx } from "./groupBursts";
 import type { SimilarCtx } from "./groupSimilar";
-import { score } from "./testScores";
+import { score } from "./__fixtures__/testScores";
 
 const loser = (margin: number): BurstCtx => ({
   group: 0,

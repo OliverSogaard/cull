@@ -1,5 +1,5 @@
-import type { ImageScore } from "../types/ipc";
-import type { Img } from "../types/image";
+import type { ImageScore } from "../../types/ipc";
+import type { Img } from "../../types/image";
 
 /** A healthy, sharp, judgeable score — tests override what they probe. */
 export function score(over: Partial<ImageScore> = {}): ImageScore {

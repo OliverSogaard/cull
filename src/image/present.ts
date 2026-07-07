@@ -55,11 +55,11 @@ export const FADE_MS = 140;
  *  preview landing within the window presents directly and the blur flash
  *  (single-step nav onto a frame whose read-ahead hadn't finished) never
  *  happens. Cold starts (nothing fronting) skip it: blur beats shimmer. */
-export const THUMB_HOLDOFF_MS = 160;
+const THUMB_HOLDOFF_MS = 160;
 /** Navs arriving closer together than this are key-repeat stepping — the
  *  user is flying, so the blurred thumb presents immediately (holding the
  *  old sharp frame 160ms per step would make scrub start feel stuck). */
-export const RAPID_NAV_MS = 260;
+const RAPID_NAV_MS = 260;
 
 export type PresentLayer = "A" | "B";
 

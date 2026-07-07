@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { groupBursts, type BurstInput, type SharpInput } from "./groupBursts";
 import { buildBurstInputs, capturedAtToMs } from "./burstInputs";
-import { img, score } from "./testScores";
+import { img, score } from "./__fixtures__/testScores";
 import type { ImageMetadata } from "../types";
 
 /** Burst frame at 12 fps cadence: capturedAtMs base + i·83ms, SubSec present. */

@@ -13,8 +13,7 @@
  */
 export const SCRUB_STAGE2_AT_MS = 2000;
 export const SCRUB_STAGE3_AT_MS = 5000;
-export const SCRUB_SPEEDS = [1, 3, 10] as const;
-export type ScrubSpeed = (typeof SCRUB_SPEEDS)[number];
+export type ScrubSpeed = 1 | 3 | 10;
 
 /** Pure stage lookup: how many frames/rows per repeat tick after holding for `heldMs`. */
 export function scrubSpeedForHeldMs(heldMs: number): ScrubSpeed {

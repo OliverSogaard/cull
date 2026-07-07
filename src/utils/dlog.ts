@@ -29,11 +29,6 @@ export function dlogEnabled(): boolean {
   return cached;
 }
 
-/** Test-only: forget the cached flag (e.g. after mutating localStorage). */
-export function resetDlogForTests(): void {
-  cached = null;
-}
-
 /** Log `msg` (bracketed by `scope`) plus optional structured `data`, only
  *  when dev-logging is enabled. Mirrors the existing `console.debug("[cull] …")`
  *  convention (see `smart/useSmartCulling.ts`). */

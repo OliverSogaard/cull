@@ -30,9 +30,9 @@ const KINDS: OverlayKind[] = ["clip", "peak", "histogram"];
 
 /** Per-kind LRU bound. Overlays are ~10–100 KB data-URL PNGs computed for the
  *  on-screen frame (±compare pair); 16 keeps quick back-and-forth free. */
-export const OVERLAY_LRU_CAP = 16;
+const OVERLAY_LRU_CAP = 16;
 
-export type OverlayComputeFn = (
+type OverlayComputeFn = (
   kind: OverlayKind,
   url: string,
   /** Polled by the compute between its async steps — true once the request is
