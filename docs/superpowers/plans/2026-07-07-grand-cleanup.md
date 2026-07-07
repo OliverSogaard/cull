@@ -441,8 +441,9 @@ the known 7-warning baseline**.
   unique and searchable, and rewriting them would falsify what those sessions
   actually did.
 - **1.3** README rewritten: hero intro + icon, screenshot table referencing
-  `docs/media/{loupe,compare,grid}.png` (**images pending from Oliver — ask
-  at Gate 1**), Smart culling section (advisory-only, two tiers, toggles),
+  `docs/media/{loupe,compare,grid}.jpg` (Oliver's full-window captures,
+  downscaled 3024→1600 px + JPEG q88: 14.5 MB of PNG → 1.2 MB total,
+  UI text verified crisp; committed `fd5fcc1`), Smart culling section (advisory-only, two tiers, toggles),
   `scripts/` section, corrected 17-module layout tree, Tests pointer to
   TESTING.md, License section, `<version>`-genericized installer paths.
   Ride-along accuracy fix: the keyboard table's `1 – 4` row claimed
@@ -466,6 +467,5 @@ the known 7-warning baseline**.
   (`xmp.rs:705`, skip-with-reason), the calibration invocation verbatim, and
   `CULL_TEST_JPEG_DIR` for the export parity gates.
 
-**Gate 1 asks:** README/ARCHITECTURE/TESTING diff read + the three
-screenshots (loupe/compare/grid) captured from the dev app into
-`docs/media/`. Nothing pushed.
+**Gate 1 asks:** README/ARCHITECTURE/TESTING diff read (screenshots are in
+as of `fd5fcc1`). Nothing pushed.

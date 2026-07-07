@@ -23,7 +23,7 @@ mobile are intentionally unsupported and blocked at compile time.
 
 | Loupe | Compare | Grid |
 | ----- | ------- | ---- |
-| ![Loupe view](docs/media/loupe.png) | ![Compare view](docs/media/compare.png) | ![Grid view](docs/media/grid.png) |
+| ![Loupe view](docs/media/loupe.jpg) | ![Compare view](docs/media/compare.jpg) | ![Grid view](docs/media/grid.jpg) |
 
 ## Running CULL
 
