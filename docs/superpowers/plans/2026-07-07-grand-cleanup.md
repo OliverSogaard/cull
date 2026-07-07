@@ -541,3 +541,37 @@ cache. A `style:`
 commit (`5161f0c`) rides along: Oliver's format-on-edit prettier hook caught
 up with the 12 Phase-2-touched files after the 2.1 commit (scoped formatting,
 suites re-verified).
+
+## Phase 3 — DONE 2026-07-07 (awaiting Gate 3)
+
+Two commits: `8f03a1c` (3.1 dead code), `0fbc22d` (3.2 stale comments).
+Gate after: 414 TS / 103 Rust / both tsc lanes / eslint / stylelint /
+clippy -D / fmt --check all green; **knip exits zero findings**. Main pushed
+through Phase 2 earlier the same day (`817c452`); Phase 3 commits held local
+pending Gate 3's comment-diff eyeball.
+
+- **3.1** All 23 knip hits + 2 types resolved. Every test "hit" was a comment
+  mention, not an import, so NO symbol earned an `// exported for tests` keep:
+  export keyword dropped on 21 in-module-used symbols (incl. `EYES_OPEN_MIN`
+  in pickWinner once the groupBursts re-export + import were deleted);
+  `resetDlogForTests` deleted outright (zero consumers); `SCRUB_SPEEDS`
+  replaced by an inline `1 | 3 | 10` union (the array existed only to derive
+  the type — surfaced by eslint after the export drop). `testScores.ts` →
+  `src/smart/__fixtures__/` (5 test imports + its own 2 imports repointed).
+  CSS: the four dead selectors deleted (verified zero markup references);
+  solid verdict-dot triples grouped strip+grid like the ghost variants (the
+  duplicate placeholder-name rule was already merged in Phase 2's pull-forward).
+- **3.2** Orphaned JSDoc stack rehomed (SaveStatusPill + EmptyFilter docs now
+  sit on their functions; NoMatchEmptyState's already did); stale App.tsx
+  unzoom-measure JSDoc dropped, sizerSrc pointer kept as the one-liner;
+  ThumbCell doubled roleVariant docs merged + dangling burst-prop doc deleted;
+  imageStore revoke-site 2b relabel + catalogue cross-checked (12 sites + 2b);
+  tier_cache.rs header truth-restored (ride-along: its "format v2" claim also
+  fixed to point at `VERSION`/v3 — same lying-comment class as the plan's
+  "reserved for Phase 8" item); ExifRail `stripExtName` → shared `stripExt`
+  (note: regex vs lastIndexOf differ only on leading-dot filenames, impossible
+  for camera files); App.tsx inline glyph Record → `verdictGlyph(r, 9)` (the
+  Lucide-vs-Unicode war story lives in verdictGlyph.tsx's doc, not duplicated).
+
+**Gate 3 asks:** eyeball the comment diffs (`git show 0fbc22d`) — guardrail:
+no war story removed. Push follows the nod.
