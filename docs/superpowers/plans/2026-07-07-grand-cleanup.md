@@ -469,3 +469,60 @@ the known 7-warning baseline**.
 
 **Gate 1 asks:** README/ARCHITECTURE/TESTING diff read (screenshots are in
 as of `fd5fcc1`). Nothing pushed.
+
+## Phase 2 — DONE 2026-07-07 (awaiting Gate 2)
+
+Gate 1 passed same day (Oliver read the diffs, supplied the screenshots, said
+go). Three `chore:` commits: `dedde94` (2.1), `c1efc3e` (2.2), `f416709`
+(2.3). Full gate after: **414 TS / 103 Rust / both tsc lanes / eslint /
+stylelint / clippy `-D warnings` / `cargo fmt --check` — ALL clean.**
+
+- **2.1 Frontend toolchain.** eslint flat config (ts-eslint
+  recommended-type-checked over src incl. tests, react-hooks, react-refresh,
+  prettier-compat), `.prettierrc` (printWidth 100 measured as best house-style
+  match: 52 drifting files vs 89@80/70@120), `.stylelintrc.json`, five new
+  scripts, `tsconfig.tests.json`. **The new `typecheck:tests` lane immediately
+  caught 5 real type errors in test files** (imageStore helper type, `.at()`
+  on ES2020 lib, unused imports) — fixed. Initial lint: 96 problems → 0:
+  ~25 auto-fixed (unnecessary assertions), fire-and-forgets `void`-marked,
+  deliberate dep-array omissions inline-disabled with why-comments (the three
+  compare decides' frozen `currentIndex`, the keymap's fresh-object
+  `chipsTooltip`, PhotoPane's path-as-cache-key), crash-net narrowed via
+  `unknown`, FileReader reject wrapped in Error (message-preserving).
+  **Baseline decisions (documented in eslint.config.js):** react-hooks v7's
+  new compiler-era rules (refs/set-state-in-effect/immutability/purity) OFF —
+  they flag the codebase's deliberate render-mirror-ref and reset-on-input
+  idioms at scale (20 hits), and adopting them means timing-path refactors out
+  of a lint rollout's scope; classic rules-of-hooks + exhaustive-deps stay
+  errors. Async JSX handlers allowed (React ignores handler returns);
+  `_`-prefix = declared-unused; test-file relaxations per ts-eslint guidance
+  (unbound-method etc.). **Ride-alongs:** dead `CompareExifRail`
+  rating props removed (became provably dead once their only reference — a
+  memo dep — was cleaned); the 5 pre-existing disables verified binding.
+  **Prettier mass reformat deliberately NOT applied** (52-file drift recorded;
+  `pnpm format` exists; prettier is not a CI gate). stylelint: standard config
+  relaxed to house style (legacy `rgba()`, dense sectioned comments,
+  load-bearing `-webkit-backdrop-filter`, deliberate `word-break:
+  break-word`); the duplicate `.cull-grid__placeholder-name` merged (Phase 3.1
+  pull-forward — the rule would otherwise hold the gate red).
+- **2.2 Rust baseline.** 7 clippy warnings → 0 (CLIP_STD truncated to f32
+  precision, `StridePlanes` type alias, 3 justified `too_many_arguments`
+  allows on wire-contract commands, `is_multiple_of` in the phash test
+  helper). **Deviation from findings:** `cargo fmt` reformatted the WHOLE tree
+  (16 files, ~860 lines), not just `examples/decode_probe.rs` — the local
+  stable rustfmt disagrees with whatever the analysis checked; accepted since
+  CI enforces `fmt --check` (mechanical whitespace, comments untouched, suite
+  re-verified green). `audit.toml` with the 17 real warn-level advisory IDs
+  (Linux-only gtk stack + tauri-transitive unmaintained; comments per entry).
+  `cargo update` (lockfile-only): **the quick-xml RUSTSEC-2026-0194/0195
+  advisories are RESOLVED**; `cargo audit` exits clean of CVEs.
+- **2.3 CI.** `.github/workflows/ci.yml` per the plan (frontend on ubuntu:
+  lint, lint:css, both typechecks, vitest; backend on windows-latest:
+  fmt --check, clippy -D warnings, cargo test; ort caveat documented inline).
+  `.gitattributes` (LF-normalized — `git add --renormalize` confirmed the tree
+  was already clean), `pnpm-workspace.yaml` comment header (pnpm still parses
+  it, verified).
+
+**Gate 2 asks:** CI green on a test branch push — **needs your say-so to push
+a throwaway branch** (e.g. `ci-smoke` from this HEAD; delete after). Nothing
+pushed yet.
