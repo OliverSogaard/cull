@@ -670,3 +670,60 @@ cargo-fmt'd the whole tree); worked by content throughout.
    ARCHITECTURE.md.
 
 Standing push approval applies AFTER the live gate passes — nothing pushed yet.
+
+## Phase 5 — DONE 2026-07-08 (awaiting Gate 5 — LIVE)
+
+Two commits on `main`, held local pending Oliver's live lap: `4ba34fc`
+(5.1 frontend), `b44f13d` (5.2 backend). Full gate after: **TS 441 / Rust
+109 / both tsc lanes / eslint / stylelint / clippy `-D warnings` /
+`cargo fmt --check` / knip zero-findings / `pnpm build` clean — ALL green.**
+New baselines: **441 TS (−1, the legacy-flip case) and 109 Rust (−2, the two
+read_bundle corpus tests)**. The bundle even shrank slightly (378.66 → 378.15
+KB) from the dead-path removal. Line numbers in the plan were stale
+(Phase 2/4 shifts) — worked by symbol/content.
+
+**Why it was safe to remove:** `read_bundle`/`navLegacy` was the Phase-2/3-era
+fallback that flipped nav reads to the old `read_bundle` command ONCE, on the
+first unknown-command IPC error (old backend + new frontend shipped out of
+order). In any bundled build the backend always has `read_preview`, so the
+flip could never fire — the whole dual path was dead. Traced the full spine
+before cutting (fetchNav → imageStore lanes → PhotoPane hi-res → DevHud →
+overlay/stage docs) rather than trusting the plan's stale line numbers.
+
+- **5.1 Frontend.** `utils/bundle.ts`: deleted the `navCommand` state machine,
+  `resetNavCommandForTests`, `isUnknownCommand`, the `for(;;)` retry loop and
+  the `legacy` field — `fetchNav` is now a straight `read_preview` invoke.
+  `image/imageStore.ts`: removed the `navLegacy` flag, `isLegacyNav()`, the
+  three short-circuit guards (`requestZoomFull` / `requestMid` /
+  `pumpMidSweep` each dropped their `|| this.navLegacy` term), the
+  `noteNavTiming` legacy arg + the `navTimings`/`debugStats` `legacy` fields,
+  and the legacy branch of the decoded-memory estimate (always the preview
+  estimate now). `PhotoPane` `hiResSrc` dropped the `isLegacyNav()` fallback
+  arm (the zoom-tier full is the only hi-res source — confirmed via
+  `Resolved.full` = the ready zoom full, undefined until fetched); `DevHud`
+  dropped both LEGACY readouts. `stage.ts` + `overlayService.ts` comments
+  de-legacy'd. **Kept, per the plan:** the `"full"`-means-nav stage naming (a
+  rename would ripple through presenter tests — accepted readability tax).
+  Tests: deleted the legacy-flip case; `makeBundleBuf` stays (it's a generic
+  no-hints nav frame used by 7 other tests) with its comment corrected.
+- **5.2 Backend.** `bundle.rs`: deleted the `read_bundle` command + its
+  `BundleHeader` wire struct. `cr3.rs`: deleted the `read_bundle` parser entry
+  + the `Bundle` struct it filled (both `read_bundle`-only) and the two
+  corpus tests that exercised it. **Verified NOT orphaned:**
+  `read_fullres_from` — the shared head+grow full-res reader — stays, because
+  `read_fullres_scan` (do-not-touch item 6, the hint-mismatch fallback) still
+  rides it; `read_fullres_scan`'s own corpus test covers the same extraction
+  the deleted tests did. `lib.rs`: `read_bundle` dropped from the
+  `invoke_handler` list + module-map doc. Comment truth-restoration:
+  `cr3.rs`'s module doc now describes the split nav(preview)+zoom(fullres)
+  reads; `read_fullres_scan`'s doc points at `read_fullres_from`; `scan.rs`'s
+  lazy-EXIF doc-link retargeted to `read_preview`; `xmp.rs`'s historical
+  "per-nav sidecar read removed" note de-references the deleted fn. Left
+  untouched: `read_preview` / `preview_parts` / `read_fullres` /
+  `read_fullres_scan` and the hint-mismatch fallback.
+
+**Gate 5 asks (LIVE — the dev app hot-reloads):** confirm the nav spine never
+needed the fallback — cold folder open, scrub through it, zoom engage/release
+(loupe), a compare pair, grid, folder switch mid-session, and close/reopen the
+same folder (the tier-cache instant-paint hit path). Standing push approval
+applies AFTER this passes — nothing pushed yet.
