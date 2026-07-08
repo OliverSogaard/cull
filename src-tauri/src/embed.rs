@@ -171,14 +171,7 @@ mod smoke {
             .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cr3")))
             .expect("a CR3 in the corpus");
         let b = crate::cr3::read_preview_bundle(path.to_str().unwrap(), &|| false).expect("bundle");
-        use zune_jpeg::zune_core::bytestream::ZCursor;
-        use zune_jpeg::zune_core::colorspace::ColorSpace;
-        use zune_jpeg::zune_core::options::DecoderOptions;
-        let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
-        let mut dec = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(&b.preview[..]), opts);
-        let rgb = dec.decode().expect("decode");
-        let info = dec.info().expect("dims");
-        let (w, h) = (info.width as usize, info.height as usize);
+        let (rgb, w, h) = crate::jpeg_rgb::decode_rgb(&b.preview).expect("decode");
 
         assert!(embedder_ready(), "DINOv2 session failed to init");
         assert!(aesthetic_ready(), "CLIP/LAION sessions failed to init");

@@ -203,6 +203,23 @@ impl TierStore {
         }
     }
 
+    /// The prelude currency contract shared by [`Self::get`] and
+    /// [`Self::has_current`]: magic + format version + this tier's byte +
+    /// source mtime + source size. `buf` must hold at least [`PRELUDE`] bytes
+    /// (get reads the whole entry; has_current reads exactly the prelude) — a
+    /// short buffer reads false rather than panicking. A false means corrupt /
+    /// stale / wrong-format / wrong-tier: the caller treats it as a miss.
+    /// Byte-for-byte the checks the two sites carried separately; the header
+    /// length bound stays in `get` (only it holds the full entry).
+    fn prelude_matches(&self, buf: &[u8], mtime_ms: i64, file_size: u64) -> bool {
+        buf.len() >= PRELUDE
+            && &buf[0..4] == MAGIC
+            && buf[4] == VERSION
+            && buf[5] == self.tier_byte
+            && buf[6..14] == mtime_ms.to_le_bytes()
+            && buf[14..22] == file_size.to_le_bytes()
+    }
+
     /// Validated read: every check failing → miss, entry dropped (and the dead
     /// file deleted), caller regenerates from the CR3. Returns
     /// (header JSON, payload) exactly as stored by `put`.
@@ -224,18 +241,12 @@ impl TierStore {
                 return None;
             }
         };
-        let valid = bytes.len() >= PRELUDE
-            && &bytes[0..4] == MAGIC
-            && bytes[4] == VERSION
-            && bytes[5] == self.tier_byte
-            && i64::from_le_bytes(bytes[6..14].try_into().ok()?) == mtime_ms
-            && u64::from_le_bytes(bytes[14..22].try_into().ok()?) == file_size
-            && {
-                let header_len = u32::from_le_bytes(bytes[22..26].try_into().ok()?) as usize;
-                PRELUDE
-                    .checked_add(header_len)
-                    .is_some_and(|end| end <= bytes.len())
-            };
+        let valid = self.prelude_matches(&bytes, mtime_ms, file_size) && {
+            let header_len = u32::from_le_bytes(bytes[22..26].try_into().ok()?) as usize;
+            PRELUDE
+                .checked_add(header_len)
+                .is_some_and(|end| end <= bytes.len())
+        };
         if !valid {
             // Corrupt / stale (source changed) / v1 format / torn by another
             // process: refuse and delete — the next read re-caches it fresh.
@@ -366,11 +377,7 @@ impl TierStore {
         if std::io::Read::read_exact(&mut f, &mut buf).is_err() {
             return false;
         }
-        &buf[0..4] == MAGIC
-            && buf[4] == VERSION
-            && buf[5] == self.tier_byte
-            && buf[6..14] == mtime_ms.to_le_bytes()
-            && buf[14..22] == file_size.to_le_bytes()
+        self.prelude_matches(&buf, mtime_ms, file_size)
     }
 
     fn clear(&self) {

@@ -10,7 +10,8 @@
 //! | [`io_gate`]   | Read-permit backstop (IoGate), session gen + mtime table (SessionGate), `begin_session` / `set_io_profile`. |
 //! | [`midtier`]   | Phase 8 mid-tier generation: decode → SIMD resize ≤2560 → q80 encode + the MidGen concurrency gate. |
 //! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
-//! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid), format v2. |
+//! | [`jpeg_rgb`]  | The shared JPEG → validated-RGB8 decode ritual.          |
+//! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid), format v3 (`tier_cache::VERSION`). |
 //! | [`xmp`]       | XMP sidecar I/O: `write_xmp_rating` / `clear_xmp_rating` + the parser the analyze step uses to restore ratings. |
 //! | [`file_ops`]  | Post-cull file operations: `move_rejects_to_subfolder` / `copy_keeps_to_export`. |
 //!
@@ -55,12 +56,15 @@ mod embed;
 mod faces;
 mod file_ops;
 mod io_gate;
+mod jpeg_rgb;
 mod memory_pressure;
 mod meta;
 mod midtier;
 mod ml_models;
 mod phash;
 mod scan;
+#[cfg(test)]
+pub(crate) mod test_util;
 mod tier_cache;
 mod xmp;
 

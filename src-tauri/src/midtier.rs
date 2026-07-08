@@ -28,10 +28,6 @@ use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use jpeg_encoder::{ColorType, Encoder};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use zune_jpeg::zune_core::bytestream::ZCursor;
-use zune_jpeg::zune_core::colorspace::ColorSpace;
-use zune_jpeg::zune_core::options::DecoderOptions;
-use zune_jpeg::JpegDecoder;
 
 use crate::cr3::with_exif_orientation;
 
@@ -86,19 +82,10 @@ pub fn generate_mid_jpeg(
     if cancelled() {
         return Err("cancelled".into());
     }
-    // Decode to RGB8 regardless of the source's internal colorspace (Canon
-    // fulls are YCbCr; zune converts on output).
-    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
-    let mut decoder = JpegDecoder::new_with_options(ZCursor::new(full_jpeg), opts);
-    let pixels = decoder.decode().map_err(|e| format!("mid decode: {e:?}"))?;
-    let info = decoder.info().ok_or("mid decode: no header info")?;
-    let (w, h) = (info.width as u32, info.height as u32);
-    if pixels.len() != (w as usize) * (h as usize) * 3 {
-        return Err(format!(
-            "mid decode: unexpected buffer ({} bytes for {w}x{h} RGB)",
-            pixels.len()
-        ));
-    }
+    // Decode to RGB8 regardless of the source's internal colorspace (see
+    // jpeg_rgb; Canon fulls are YCbCr, zune converts on output).
+    let (pixels, w, h) = crate::jpeg_rgb::decode_rgb(full_jpeg).map_err(|e| format!("mid {e}"))?;
+    let (w, h) = (w as u32, h as u32);
     let Some((tw, th)) = mid_dims(w, h) else {
         return Err(format!("source not larger than mid tier ({w}x{h})"));
     };
@@ -199,39 +186,13 @@ impl MidGen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::synth_jpeg;
     use std::time::Instant;
 
-    /// Deterministic photo-ish RGB: red ramps along x, green along y, blue on
-    /// the diagonal, plus a small position hash so the entropy isn't
-    /// gradient-trivial. Asymmetric per channel ON PURPOSE: a channel-order
-    /// bug (RGB↔BGR) in the pipeline would shift sampled values massively.
-    fn synth_rgb(w: u32, h: u32) -> Vec<u8> {
-        let mut px = Vec::with_capacity((w * h * 3) as usize);
-        for y in 0..h {
-            for x in 0..w {
-                let n = ((x.wrapping_mul(31)).wrapping_add(y.wrapping_mul(17)) % 13) as u8;
-                px.push(((x * 255 / w.max(1)) as u8).wrapping_add(n));
-                px.push((y * 255 / h.max(1)) as u8);
-                px.push(((x + y) * 255 / (w + h).max(1)) as u8);
-            }
-        }
-        px
-    }
-
-    fn synth_jpeg(w: u32, h: u32, quality: u8) -> Vec<u8> {
-        let mut out = Vec::new();
-        Encoder::new(&mut out, quality)
-            .encode(&synth_rgb(w, h), w as u16, h as u16, ColorType::Rgb)
-            .expect("synth encode");
-        out
-    }
-
+    /// The shared decode ritual, u32-typed for these dimension asserts.
     fn decode_rgb(jpeg: &[u8]) -> (Vec<u8>, u32, u32) {
-        let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
-        let mut d = JpegDecoder::new_with_options(ZCursor::new(jpeg), opts);
-        let px = d.decode().expect("decode");
-        let info = d.info().expect("info");
-        (px, info.width as u32, info.height as u32)
+        let (px, w, h) = crate::jpeg_rgb::decode_rgb(jpeg).expect("decode");
+        (px, w as u32, h as u32)
     }
 
     #[test]

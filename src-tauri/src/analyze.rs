@@ -588,21 +588,10 @@ fn attach_embeddings(input: &DecodedInput, score: &mut ImageScore) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::Lcg;
     use std::cell::Cell;
 
     // ── Synthetic buffers (deterministic, no files) ────────────────────────
-
-    /// Deterministic LCG so "noise" is reproducible.
-    struct Lcg(u64);
-    impl Lcg {
-        fn next_u8(&mut self) -> u8 {
-            self.0 = self
-                .0
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (self.0 >> 33) as u8
-        }
-    }
 
     fn flat(w: usize, h: usize, v: u8) -> Vec<u8> {
         vec![v; w * h]

@@ -111,18 +111,7 @@ pub(crate) fn dct32(px: &[f32]) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Deterministic LCG (same recipe as analyze.rs tests).
-    struct Lcg(u64);
-    impl Lcg {
-        fn next_u8(&mut self) -> u8 {
-            self.0 = self
-                .0
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (self.0 >> 33) as u8
-        }
-    }
+    use crate::test_util::Lcg;
 
     /// Structured test image: smooth gradient + a few hard rectangles, so the
     /// hash has real low-frequency content (a pure-noise image is a bad pHash

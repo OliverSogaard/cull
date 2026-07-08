@@ -24,11 +24,6 @@ use std::time::Instant;
 use tauri::ipc::Response;
 use tauri::State;
 
-use zune_jpeg::zune_core::bytestream::ZCursor;
-use zune_jpeg::zune_core::colorspace::ColorSpace;
-use zune_jpeg::zune_core::options::DecoderOptions;
-use zune_jpeg::JpegDecoder;
-
 use crate::cr3;
 use crate::io_gate::{IoGate, SessionGate, Tier};
 use crate::meta::ImageMetadata;
@@ -270,20 +265,10 @@ pub(crate) fn fetch_decoded_preview(
     let header: PreviewHeader =
         serde_json::from_slice(&header_json).map_err(|e| format!("prvw header parse: {e}"))?;
 
-    // Decode to RGB8 (Canon PRVWs are YCbCr; zune converts on output). The
-    // decoder ignores the spliced EXIF orientation, so pixels come out in the
-    // UN-ROTATED sensor frame — exactly what the AF-crop inverse mapping expects.
-    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
-    let mut dec = JpegDecoder::new_with_options(ZCursor::new(&jpeg[..]), opts);
-    let rgb = dec.decode().map_err(|e| format!("prvw decode: {e:?}"))?;
-    let info = dec.info().ok_or("prvw decode: no header info")?;
-    let (w, h) = (info.width as usize, info.height as usize);
-    if rgb.len() != w * h * 3 {
-        return Err(format!(
-            "prvw decode: unexpected buffer ({} bytes for {w}x{h} RGB)",
-            rgb.len()
-        ));
-    }
+    // Decode to RGB8 (see jpeg_rgb). The decoder ignores the spliced EXIF
+    // orientation, so pixels come out in the UN-ROTATED sensor frame —
+    // exactly what the AF-crop inverse mapping expects.
+    let (rgb, w, h) = crate::jpeg_rgb::decode_rgb(&jpeg).map_err(|e| format!("prvw {e}"))?;
 
     let m = header.meta;
     Ok(crate::analyze::DecodedInput {
@@ -723,14 +708,9 @@ struct ThumbHeader {
 /// can't be hashed still serves its JPEG payload rather than erroring the
 /// whole read.
 fn thumb_phash(jpeg: &[u8]) -> Option<String> {
-    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
-    let mut dec = JpegDecoder::new_with_options(ZCursor::new(jpeg), opts);
-    let rgb = dec.decode().ok()?;
-    let info = dec.info()?;
-    let (w, h) = (info.width as usize, info.height as usize);
-    if rgb.len() != w * h * 3 {
-        return None;
-    }
+    // A thumb whose pixels can't be decoded still serves its JPEG payload
+    // rather than erroring the whole read, so a decode failure is None here.
+    let (rgb, w, h) = crate::jpeg_rgb::decode_rgb(jpeg).ok()?;
     let luma = crate::phash::luma_of(&rgb);
     Some(format!("{:016x}", crate::phash::phash64(&luma, w, h)))
 }
@@ -800,31 +780,7 @@ pub(crate) async fn thumb_cache_size(cache: State<'_, Arc<TierCache>>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jpeg_encoder::{ColorType, Encoder};
-
-    /// Deterministic photo-ish RGB (same recipe as `midtier.rs` tests):
-    /// asymmetric per channel so a channel-order bug shows up as a gross
-    /// hash change rather than hiding in a gradient-symmetric fixture.
-    fn synth_rgb(w: u32, h: u32) -> Vec<u8> {
-        let mut px = Vec::with_capacity((w * h * 3) as usize);
-        for y in 0..h {
-            for x in 0..w {
-                let n = ((x.wrapping_mul(31)).wrapping_add(y.wrapping_mul(17)) % 13) as u8;
-                px.push(((x * 255 / w.max(1)) as u8).wrapping_add(n));
-                px.push((y * 255 / h.max(1)) as u8);
-                px.push(((x + y) * 255 / (w + h).max(1)) as u8);
-            }
-        }
-        px
-    }
-
-    fn synth_jpeg(w: u32, h: u32) -> Vec<u8> {
-        let mut out = Vec::new();
-        Encoder::new(&mut out, 90)
-            .encode(&synth_rgb(w, h), w as u16, h as u16, ColorType::Rgb)
-            .expect("synth encode");
-        out
-    }
+    use crate::test_util::synth_jpeg;
 
     fn is_well_formed_phash(s: &str) -> bool {
         s.len() == 16
@@ -834,7 +790,7 @@ mod tests {
 
     #[test]
     fn thumb_phash_hashes_a_decodable_thumb_jpeg() {
-        let jpeg = synth_jpeg(160, 120);
+        let jpeg = synth_jpeg(160, 120, 90);
         let hex = thumb_phash(&jpeg).expect("decodable JPEG must hash");
         assert!(
             is_well_formed_phash(&hex),
@@ -844,7 +800,7 @@ mod tests {
 
     #[test]
     fn thumb_phash_identical_jpegs_hash_identically() {
-        let jpeg = synth_jpeg(160, 120);
+        let jpeg = synth_jpeg(160, 120, 90);
         assert_eq!(thumb_phash(&jpeg), thumb_phash(&jpeg));
     }
 
