@@ -575,3 +575,98 @@ pending Gate 3's comment-diff eyeball.
 
 **Gate 3 asks:** eyeball the comment diffs (`git show 0fbc22d`) — guardrail:
 no war story removed. Push follows the nod.
+
+## Phase 4 — DONE 2026-07-08 (awaiting Gate 4 — LIVE)
+
+Four commits on `main`, held local pending Oliver's live gate: `cecb0c6`
+(4.1), `a7f3ed1` (4.2), `99a78fd` (4.3), `a44fb8f` (4.4). Full gate after:
+**TS 442 / Rust 111 / both tsc lanes / eslint / stylelint / clippy `-D
+warnings` / `cargo fmt --check` / knip zero-findings — ALL green.** The plan
+was written against the 414/103 baseline; the new baselines are **442 TS
+(+28) and 111 Rust (+8)**. Line numbers in the plan were stale (Phase 2
+cargo-fmt'd the whole tree); worked by content throughout.
+
+- **4.1 Blocking-in-async.** `write_xmp_rating` / `clear_xmp_rating`
+  (xmp.rs) and `scan_folder` / `analyze_folder` (scan.rs) each split into a
+  sync body + a `spawn_blocking` wrapper (the file_ops pattern), moving the
+  fsync-over-SMB writes and the NAS-priced directory walks off the async
+  runtime — closing the `lib.rs:22-23` invariant violation. The
+  scoped-thread concurrent restore stays as-is INSIDE the blocking task.
+  **Note:** `analyze_folder`'s `tauri::State<SessionGate>` can't cross into
+  the `'static` closure, so the wrapper clones the inner `Arc`
+  (`session.inner().clone()`) and hands a `&SessionGate` to the sync fn. The
+  restore-worker `join().unwrap()` (scan.rs) became a graceful match: a
+  panicked worker's chunk degrades to unrated (dlog'd), the other workers'
+  restores still land — no process poison. New pin test
+  `command_wrappers_round_trip_on_disk` drives the real async commands
+  (fresh write → idempotent-skip re-write → clear-removes-sidecar).
+- **4.2 Shared helpers.** `jpeg_rgb::decode_rgb` (new module) is the one
+  "JPEG → validated RGB8" ritual; replaced the four production copies
+  (bundle `fetch_decoded_preview` + `thumb_phash`, midtier
+  `generate_mid_jpeg`) and the two ML smoke-test copies (faces, embed).
+  Removing the last decode from bundle.rs/midtier.rs left their top-level
+  `zune_jpeg` imports unused — deleted (clippy would have failed otherwise).
+  Error text keeps each tier's prefix ("prvw …", "mid …"). midtier's test
+  `decode_rgb` helper stays as a thin `u32`-typed wrapper over the shared
+  one (its dimension asserts want u32). `tier_cache::prelude_matches`
+  extracts the magic/version/tier/mtime/size check byte-for-byte from `get()`
+  and `has_current()` — **no VERSION bump** (do-not-touch item 3);
+  `get()`'s header-length bound stays get-only (only it holds the full
+  entry). `test_util` (cfg(test), registered `pub(crate)` in lib.rs) hosts
+  `synth_rgb`/`synth_jpeg`/`Lcg`, replacing the private copies in bundle /
+  midtier / phash / analyze. **Ride-along:** lib.rs's module-map row still
+  said tier cache "format v2" — corrected to v3 (same lying-comment class as
+  Phase 3's fixes). `stale_version_byte_is_refused_and_dropped` stayed green.
+- **4.3 Cheap tests.** TS (vitest, +28): `maskScans` (clip all-three-channel
+  rule + the saturated-yellow non-trigger, peak threshold + border guard,
+  runMaskScan dispatch), `burstInputs` (capturedAtToMs formats, the
+  decodeOk→metadata fallback, the −1 eyesOpen sentinel→null, primary-face
+  selection, thumb-only phash source), `utils/zoom` afZoomOrigin geometry +
+  clamp, `pane/zoomTransition` branch table. Rust (+5): two
+  **behavior-preserving extractions** in scan.rs made the inline logic
+  unit-testable — `order_by_capture` (mtime sort: missing-last + path
+  tiebreak) and `is_orphan_xmp_temp` (the crash-temp shape match, tested
+  against a decoy battery) — plus `meta::From<Cr3Meta>` round-trip pinning
+  every field (orientation dropped; file_size/lrc_rating/phash stay None).
+- **4.4 CSP + fonts + assets.** CSP set in `tauri.conf.json` (was `null`):
+  blob:-aware because every image tier / mask / histogram is a blob URL;
+  `worker-src 'self' blob:` for the overlay worker (Vite emits it as a real
+  file — verified in the build output — so `blob:` is only the ESM-fallback
+  belt); `connect-src 'self' ipc: http://ipc.localhost` for Tauri IPC;
+  `object-src 'none'` + `base-uri 'self'` harden the rest. Documented in
+  ARCHITECTURE.md ("Content Security Policy"). **Fonts self-hosted** —
+  deviation worth recording: Google's css2 serves ONE variable woff2 per
+  family for the latin subset (identical sha256 across the 400/500/600
+  requests), so rather than three near-identical files I ship one
+  `inter.woff2` + one `jetbrains-mono.woff2` (latin subset only, English app)
+  and declare the SAME discrete `@font-face` weights the old `@import` did,
+  each pointing at its family's variable file — so weight matching and
+  synthetic bold (the `<h1>/<h2>/<b>` elements) are byte-identical to before.
+  The Google `<link>`s left index.html. **backdrop.jpg 519 KB → 133 KB**
+  (downscaled 2560→1440 px, q50): it renders `grayscale(1) brightness(0.85)`
+  at `opacity: 0.11` behind a radial vignette, so the downscale is
+  imperceptible. **Deviation:** the plan floated WebP-with-fallback, but no
+  encoder was available (no cwebp / ImageMagick / sharp, and sips couldn't
+  write webp here), and a grayscale source via sips didn't shrink meaningfully
+  — a downscaled JPEG under the 150 KB target was the clean available win.
+  `app-icon.png` (1.29 MB source art) moved root → `docs/media/`; README hero
+  reference updated (the only reference; `src-tauri/icons/` holds the built
+  set, unaffected). **Prettier note:** App.css carries the pre-existing
+  Phase-2 whole-file drift (266 lines) that was deliberately not folded;
+  my `@font-face` block is stylelint- AND prettier-clean in isolation, so I
+  committed only the addition and left the drift alone — consistent with the
+  Phase 2 decision (prettier is not a gate; stylelint is).
+
+**Gate 4 asks (LIVE — the dev app hot-reloads):**
+1. **NAS-profile sanity lap** (xmp/scan threading moved to spawn_blocking):
+   open a folder in `network` storage mode, rate a few frames, undo, hit the
+   quit guard — confirm ratings still write and the analyze/scan progress
+   still ticks.
+2. **CSP live check** (the [LIVE GATE] item): with the new non-null policy,
+   verify thumbs, previews, zoom fulls, the overlays worker (clip/peak masks),
+   the histogram, and drag-drop all still work — on both platforms if handy.
+   If the worker or IPC breaks under CSP, the fix is to widen the specific
+   directive (never revert to `null`); the current policy is recorded in
+   ARCHITECTURE.md.
+
+Standing push approval applies AFTER the live gate passes — nothing pushed yet.
