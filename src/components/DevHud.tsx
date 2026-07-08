@@ -21,8 +21,8 @@ export function DevHud() {
         nav avg {stats.navMsAvg}ms · ~{stats.decodedMB}MB decoded
       </div>
       <div className="cull-devhud__row">
-        lanes&nbsp; prvw {stats.lanes.preview} · zoom {stats.lanes.zoom} · thumb {stats.lanes.thumb} · bg{" "}
-        {stats.lanes.bg}
+        lanes&nbsp; prvw {stats.lanes.preview} · zoom {stats.lanes.zoom} · thumb {stats.lanes.thumb}{" "}
+        · bg {stats.lanes.bg}
       </div>
       <div className="cull-devhud__row">
         cache&nbsp; prvw {stats.caches.previews} · zoom {stats.caches.zoomFulls} · thumb{" "}
@@ -30,17 +30,16 @@ export function DevHud() {
         {stats.pool.fulls}
       </div>
       <div className="cull-devhud__row">
-        loads n{stats.counts.navLoads} z{stats.counts.zoomLoads} t{stats.counts.thumbLoads} · evict p
-        {stats.counts.previewEvicts} z{stats.counts.zoomEvicts} · err {stats.counts.errors}
+        loads n{stats.counts.navLoads} z{stats.counts.zoomLoads} t{stats.counts.thumbLoads} · evict
+        p{stats.counts.previewEvicts} z{stats.counts.zoomEvicts} · err {stats.counts.errors}
       </div>
       {/* Phase 8: the display-adaptive readout the manual matrix cites —
           needPx (stage height × DPR) and which side of the hysteresis band
           it sits on; sweep counts down on the local profile while idle. */}
       <div className="cull-devhud__row">
-        mid&nbsp; {stats.mid.lane} · cache {stats.mid.cached} · needPx{" "}
-        {stats.mid.needPx ?? "—"} {stats.mid.engaged ? "ENGAGED" : "off"} · gen{" "}
-        {stats.counts.midLoads}+{stats.counts.midGens} · evict {stats.counts.midEvicts} · sweep{" "}
-        {stats.mid.sweepLeft}
+        mid&nbsp; {stats.mid.lane} · cache {stats.mid.cached} · needPx {stats.mid.needPx ?? "—"}{" "}
+        {stats.mid.engaged ? "ENGAGED" : "off"} · gen {stats.counts.midLoads}+{stats.counts.midGens}{" "}
+        · evict {stats.counts.midEvicts} · sweep {stats.mid.sweepLeft}
       </div>
       {stats.navTimings.map((t, i) => (
         <div className="cull-devhud__row cull-devhud__row--dim" key={i}>

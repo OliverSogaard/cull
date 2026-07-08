@@ -12,7 +12,10 @@ export type ImageState = {
    *  "full" — it means "nav tier ready". */
   full: FullState | undefined;
   /** Zoom tier (Phase 3): the 32 MP mdat JPEG, fetched on settle/zoom only. */
-  zoomFull?: { status: "loading" } | { status: "ready"; url: string; dims: ImageDims | undefined } | { status: "error"; error: string };
+  zoomFull?:
+    | { status: "loading" }
+    | { status: "ready"; url: string; dims: ImageDims | undefined }
+    | { status: "error"; error: string };
   /** Mid tier (Phase 8): the generated ≤2560px JPEG serving the settled fit
    *  view on high-DPI stages. Errors are tracked in the store's midErrors
    *  (never displayed — the fallback chain mid→preview always renders). */
@@ -62,6 +65,7 @@ export function resolveStage(s: ImageState): Resolved {
         : (s.thumb?.dims ?? s.knownDims ?? s.full.dims);
     return { stage: "full", url: s.full.url, dims, error: undefined, full, mid, thumbUrl };
   }
-  if (s.thumb) return { stage: "thumb", url: s.thumb.url, dims: s.thumb.dims, error, full, mid, thumbUrl };
+  if (s.thumb)
+    return { stage: "thumb", url: s.thumb.url, dims: s.thumb.dims, error, full, mid, thumbUrl };
   return { stage: "shimmer", url: undefined, dims: s.knownDims, error, full, mid, thumbUrl };
 }

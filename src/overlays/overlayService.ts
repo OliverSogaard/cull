@@ -103,32 +103,34 @@ export class OverlayService {
     const gen = this.deps.getGeneration();
     const live = () => flights.get(path) === token && this.deps.getGeneration() === gen;
     this.deps.pin(path);
-    this.deps.compute(kind, src, () => !live()).then(
-      (dataUrl) => {
-        this.deps.unpin(path);
-        if (!live()) {
-          // Superseded (toggle-off cleared the marker / session moved / a
-          // newer request took the slot) — drop the result; only remove the
-          // marker when it is still OURS (never a successor's).
+    this.deps
+      .compute(kind, src, () => !live())
+      .then(
+        (dataUrl) => {
+          this.deps.unpin(path);
+          if (!live()) {
+            // Superseded (toggle-off cleared the marker / session moved / a
+            // newer request took the slot) — drop the result; only remove the
+            // marker when it is still OURS (never a successor's).
+            if (flights.get(path) === token) flights.delete(path);
+            return;
+          }
+          flights.delete(path);
+          cache.set(path, dataUrl);
+          while (cache.size > this.cap) {
+            const oldest = cache.keys().next().value;
+            if (oldest === undefined) break;
+            cache.delete(oldest);
+          }
+          this.bump();
+        },
+        () => {
+          // Probe/scan failed (or bailed via cancelled()) — release the marker
+          // so a later ensure() retries cleanly.
+          this.deps.unpin(path);
           if (flights.get(path) === token) flights.delete(path);
-          return;
-        }
-        flights.delete(path);
-        cache.set(path, dataUrl);
-        while (cache.size > this.cap) {
-          const oldest = cache.keys().next().value;
-          if (oldest === undefined) break;
-          cache.delete(oldest);
-        }
-        this.bump();
-      },
-      () => {
-        // Probe/scan failed (or bailed via cancelled()) — release the marker
-        // so a later ensure() retries cleanly.
-        this.deps.unpin(path);
-        if (flights.get(path) === token) flights.delete(path);
-      },
-    );
+        },
+      );
   }
 
   /** Toggle-off hook: drop one kind's cache and cancel its in-flight work.
