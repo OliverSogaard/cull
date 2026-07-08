@@ -8,8 +8,8 @@ type FullState =
 export type ImageState = {
   thumb: { url: string; dims: ImageDims } | undefined;
   /** The NAVIGATION tier. Since Phase 3 this is the 1620×1080 PRVW preview
-   *  (the 32 MP JPEG moved to the zoom tier below); on a legacy backend it is
-   *  still the full. The stage name stays "full" — it means "nav tier ready". */
+   *  (the 32 MP JPEG moved to the zoom tier below). The stage name stays
+   *  "full" — it means "nav tier ready". */
   full: FullState | undefined;
   /** Zoom tier (Phase 3): the 32 MP mdat JPEG, fetched on settle/zoom only. */
   zoomFull?: { status: "loading" } | { status: "ready"; url: string; dims: ImageDims | undefined } | { status: "error"; error: string };

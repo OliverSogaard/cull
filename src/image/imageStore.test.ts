@@ -20,8 +20,6 @@ import { invoke } from "@tauri-apps/api/core";
 // ── Mock @tauri-apps/api/core before importing imageStore ──────────────────
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-import { resetNavCommandForTests } from "../utils/bundle";
-
 // ── Mock URL.createObjectURL / URL.revokeObjectURL ─────────────────────────
 let urlCounter = 0;
 const liveUrls = new Set<string>();
@@ -33,9 +31,6 @@ beforeEach(() => {
   // Fully reset the shared invoke mock between tests so a deferred
   // mockImplementation from one test cannot leak into the next.
   vi.mocked(invoke).mockReset();
-  // A test that exercised the legacy read_bundle fallback must not leak the
-  // flipped routing into the next test.
-  resetNavCommandForTests();
   urlCounter = 0;
   liveUrls.clear();
   globalThis.URL.createObjectURL = vi.fn((_blob: Blob) => {
@@ -70,8 +65,8 @@ function makeThumbnailBuf(w: number, h: number): ArrayBuffer {
   return buf;
 }
 
-/** Build a minimal ArrayBuffer that fetchNav parses (legacy bundle shape —
- *  no orientation/hint fields, exactly what an old read_bundle returns). */
+/** Build a minimal ArrayBuffer that fetchNav parses: a nav frame carrying no
+ *  orientation/hint fields, so they parse as null (backend-scan fallback). */
 function makeBundleBuf(): ArrayBuffer {
   const header = JSON.stringify({ meta: null, previewLen: 3 });
   const headerBytes = new TextEncoder().encode(header);
@@ -938,31 +933,6 @@ describe("imageStore — Phase 3 zoom tier", () => {
     expect(fullresCalls).toHaveLength(1);
     expect(fullresCalls[0]).toMatchObject({ fullOffset: 1000, fullLen: 5000, orientation: 6 });
   });
-
-  it("legacy backend: unknown read_preview flips to read_bundle once; zoom lane no-ops", async () => {
-    const cmds: unknown[] = [];
-    vi.mocked(invoke).mockImplementation((cmd: unknown) => {
-      cmds.push(cmd);
-      if (cmd === "read_preview")
-        return Promise.reject(new Error("Command read_preview not found"));
-      if (cmd === "read_bundle") return Promise.resolve(makeBundleBuf());
-      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(800, 600));
-      return Promise.resolve(undefined);
-    });
-    const Store = await getStoreClass();
-    const store = new Store();
-    const path = "/z/legacy.cr3";
-    store.reset([path]);
-
-    store.registerWantFull(path);
-    await vi.waitUntil(() => store.snapshot(path).stage === "full", { timeout: 2000 });
-    expect(store.isLegacyNav()).toBe(true);
-
-    // The zoom tier doesn't exist on a legacy backend — request must no-op.
-    store.requestZoomFull(path);
-    await flush();
-    expect(cmds.filter((c) => c === "read_fullres")).toHaveLength(0);
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1282,7 +1252,7 @@ describe("thumb-tier stability across nav-preview landings (8-away flash)", () =
     const { invoke } = await import("@tauri-apps/api/core");
     vi.mocked(invoke)
       .mockResolvedValueOnce(makeThumbnailBuf(800, 600)) // thumb
-      .mockResolvedValueOnce(makeBundleBuf()); // nav preview (legacy shape)
+      .mockResolvedValueOnce(makeBundleBuf()); // nav preview (no hints)
     const { thumbDisplayUrl } = await import("./useThumb");
 
     const store = await getStore();

@@ -18,8 +18,7 @@ export function DevHud() {
   return (
     <div className="cull-devhud" aria-hidden>
       <div className="cull-devhud__row cull-devhud__row--head">
-        nav avg {stats.navMsAvg}ms · {stats.legacyNav ? "LEGACY full-nav" : "preview-nav"} · ~
-        {stats.decodedMB}MB decoded
+        nav avg {stats.navMsAvg}ms · ~{stats.decodedMB}MB decoded
       </div>
       <div className="cull-devhud__row">
         lanes&nbsp; prvw {stats.lanes.preview} · zoom {stats.lanes.zoom} · thumb {stats.lanes.thumb} · bg{" "}
@@ -46,7 +45,6 @@ export function DevHud() {
       {stats.navTimings.map((t, i) => (
         <div className="cull-devhud__row cull-devhud__row--dim" key={i}>
           {t.ms}ms&nbsp;{t.name}
-          {t.legacy ? " (legacy)" : ""}
         </div>
       ))}
       {/* Zoom-tier (full) fetch times — on a local drive ≈ the raw-IPC

@@ -305,7 +305,7 @@ export const PhotoPane = memo(function PhotoPane({
   // aligned with the base by construction, so it can appear/disappear with
   // zero visible shift.
   const hiResT = hiResTransform(rect, zoomNative, originX, originY, zoomZ);
-  const hiResSrc = img.full?.url ?? (imageStore.isLegacyNav() ? img.url : undefined);
+  const hiResSrc = img.full?.url;
   // True while the hi-res layer's pixels are actually decoded + in place
   // (HiResLayer reports both ways) — drives the zoom loading ring below.
   const [hiResReady, setHiResReady] = useState(false);

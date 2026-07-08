@@ -173,8 +173,8 @@ export class OverlayService {
 
 /** The app-wide service, wired to the imageStore and the worker-backed
  *  compute. `stage === "full"` means "nav tier ready" — since Phase 3 that IS
- *  the 1620×1080 PRVW preview (on a legacy backend, the full: same as today),
- *  so masks + histogram source from the preview and never trigger a read. */
+ *  the 1620×1080 PRVW preview, so masks + histogram source from the preview
+ *  and never trigger a read. */
 export const overlayService = new OverlayService({
   compute: computeOverlay,
   sourceUrl: (path) => {

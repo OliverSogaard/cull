@@ -187,9 +187,6 @@ export class ImageStore {
   /** path → NATIVE full-res display dims (sensor pixels, orientation-swapped)
    *  for the hi-res layer's transform math. Same lifetime as fullHints. */
   private nativeDims = new Map<string, ImageDims>();
-  /** True once a nav read was served by the legacy `read_bundle` (old
-   *  backend): the nav blob IS the full, and there is no separate zoom tier. */
-  private navLegacy = false;
   // ── Mid tier (Phase 8: display-adaptive ≤2560px settled fit view) ───────
   /** path → mid state. Windowed like the zoom tier (fullKeep per side) —
    *  mid blobs are ~1 MB, but their decoded rasters (~17 MB) are the budget. */
@@ -237,7 +234,7 @@ export class ImageStore {
   /** Last cursor travel direction: biases prefetch + the pool band 2:1. */
   private lastDir: 1 | -1 = 1;
   // ── Dev HUD stats (cheap counters; read via debugStats) ─────────────────
-  private navTimings: { name: string; ms: number; legacy: boolean }[] = [];
+  private navTimings: { name: string; ms: number }[] = [];
   /** Zoom-tier (full) fetch timings — on a fast local drive this is ≈ the raw
    *  IPC transfer cost of the ~10 MB full, i.e. the Phase 2 Windows
    *  benchmark readout. */
@@ -1115,21 +1112,18 @@ export class ImageStore {
         URL.revokeObjectURL(result.previewUrl);
         return;
       }
-      this.noteNavTiming(path, ms, result.legacy);
-      this.navLegacy = result.legacy;
-      if (!result.legacy) {
-        // Zoom-tier plumbing from the preview header: the exact-range hint +
-        // orientation (echoed to read_fullres), and the NATIVE display dims
-        // (sensor pixels, swapped for the rotating orientations) that the
-        // hi-res layer's transform math needs.
-        const orientation = result.orientation ?? 1;
-        this.fullHints.set(path, { offset: result.fullOffset, len: result.fullLen, orientation });
-        const pw = result.meta?.pixelWidth;
-        const ph = result.meta?.pixelHeight;
-        if (pw && ph) {
-          const swap = orientation === 6 || orientation === 8;
-          this.nativeDims.set(path, swap ? { w: ph, h: pw } : { w: pw, h: ph });
-        }
+      this.noteNavTiming(path, ms);
+      // Zoom-tier plumbing from the preview header: the exact-range hint +
+      // orientation (echoed to read_fullres), and the NATIVE display dims
+      // (sensor pixels, swapped for the rotating orientations) that the
+      // hi-res layer's transform math needs.
+      const orientation = result.orientation ?? 1;
+      this.fullHints.set(path, { offset: result.fullOffset, len: result.fullLen, orientation });
+      const pw = result.meta?.pixelWidth;
+      const ph = result.meta?.pixelHeight;
+      if (pw && ph) {
+        const swap = orientation === 6 || orientation === 8;
+        this.nativeDims.set(path, swap ? { w: ph, h: pw } : { w: pw, h: ph });
       }
       // If there was already a ready full-res (race), revoke the old one — REVOKE SITE 3
       const existing = this.fulls.get(path);
@@ -1221,11 +1215,10 @@ export class ImageStore {
 
   /**
    * Warm/fetch the zoom full-res for `path` (App calls this from the settle
-   * timer and on zoom engage). No-op on a legacy backend — there the nav blob
-   * IS the full and the hi-res layer reuses it directly.
+   * timer and on zoom engage).
    */
   requestZoomFull(path: string): void {
-    if (!path || this.navLegacy) return;
+    if (!path) return;
     const existing = this.zoomFulls.get(path);
     if (existing?.status === "ready" || existing?.status === "loading") return;
     if (this.requestedZoom.has(path) || this.zoomInFlightPaths.has(path)) return;
@@ -1245,12 +1238,6 @@ export class ImageStore {
     }
     if (!this.zoomQueue.includes(path)) this.zoomQueue.push(path);
     this.pumpZoom();
-  }
-
-  /** True when nav reads are served by the legacy `read_bundle` (the nav blob
-   *  is already the 32 MP full; no separate zoom tier exists). */
-  isLegacyNav(): boolean {
-    return this.navLegacy;
   }
 
   private pumpZoom(): void {
@@ -1405,7 +1392,7 @@ export class ImageStore {
   }
 
   private requestMid(path: string): void {
-    if (!path || this.navLegacy || this.midUnsupported) return;
+    if (!path || this.midUnsupported) return;
     const existing = this.mids.get(path);
     if (existing?.status === "ready" || existing?.status === "loading") return;
     if (this.requestedMid.has(path) || this.midInFlightPaths.has(path)) return;
@@ -1564,7 +1551,7 @@ export class ImageStore {
    * session; failures are best-effort quiet (read_mid covers on-demand).
    */
   private pumpMidSweep(): void {
-    if (this.folderTrouble || this.navLegacy || this.midUnsupported) return;
+    if (this.folderTrouble || this.midUnsupported) return;
     if (!this.profile.concurrentRestore) return; // network profile — local only
     if (!this.bgStarted || !this.midEngaged) return;
     // Disk budget (review F1): past ~the tier cap's worth of entries, more
@@ -1770,10 +1757,10 @@ export class ImageStore {
   // ── Dev HUD (Phase 3) ────────────────────────────────────────────────────
 
   /** Ring buffer of the last nav fetch timings (newest first). */
-  private noteNavTiming(path: string, ms: number, legacy: boolean): void {
+  private noteNavTiming(path: string, ms: number): void {
     this.counts.navLoads++;
     const name = path.slice(path.lastIndexOf("/") + 1).slice(path.lastIndexOf("\\") + 1);
-    this.navTimings.unshift({ name, ms: Math.round(ms), legacy });
+    this.navTimings.unshift({ name, ms: Math.round(ms) });
     if (this.navTimings.length > 20) this.navTimings.pop();
   }
 
@@ -1791,7 +1778,7 @@ export class ImageStore {
    * dims ×4 B/px; thumbs ≈ 0.08 MB); the webview's decoded cache is opaque.
    */
   debugStats(): {
-    navTimings: { name: string; ms: number; legacy: boolean }[];
+    navTimings: { name: string; ms: number }[];
     zoomTimings: { name: string; ms: number }[];
     pool: { previews: number; fulls: number };
     navMsAvg: number;
@@ -1816,7 +1803,6 @@ export class ImageStore {
       sweepLeft: number;
     };
     decodedMB: number;
-    legacyNav: boolean;
   } {
     const previews = [...this.fulls.values()].filter((s) => s?.status === "ready").length;
     const zooms = [...this.zoomFulls.entries()].filter(([, s]) => s?.status === "ready");
@@ -1863,13 +1849,7 @@ export class ImageStore {
             ? Math.max(0, this.paths.length - this.midSweepDone.size)
             : 0,
       },
-      decodedMB: Math.round(
-        (this.navLegacy ? previews * 130 : previews * 7) +
-          zoomMB +
-          mids * 17 +
-          this.thumbs.size * 0.08,
-      ),
-      legacyNav: this.navLegacy,
+      decodedMB: Math.round(previews * 7 + zoomMB + mids * 17 + this.thumbs.size * 0.08),
     };
   }
 }

@@ -20,13 +20,12 @@ function logBlobIntegrity(tier: string, bytes: Uint8Array): void {
 }
 
 /**
- * Parse the binary frame shared by the navigation-tier commands.
+ * Parse the binary frame returned by `read_preview`, the navigation-tier read.
  *
  * Wire format: `u32 LE` header length, that many bytes of JSON, then
  * `previewLen` bytes of JPEG. One IPC, no base64 — we slice the `ArrayBuffer`
- * directly and wrap the JPEG in a Blob URL. `read_preview` (Phase 2+) adds
- * `orientation` + the zoom tier's exact-range hint to the header; the legacy
- * `read_bundle` header lacks them, so they parse as null.
+ * directly and wrap the JPEG in a Blob URL. `read_preview` supplies
+ * `orientation` + the zoom tier's exact-range hint in the header.
  */
 type NavHeader = {
   meta: ImageMetadata | null;
@@ -39,66 +38,33 @@ type NavHeader = {
 export type NavResult = {
   previewUrl: string;
   meta: ImageMetadata | null;
-  /** EXIF orientation, echoed back to `read_fullres` (null on legacy). */
+  /** EXIF orientation, echoed back to `read_fullres`. */
   orientation: number | null;
   /** Exact byte range of the full-res mdat JPEG (null = backend will scan). */
   fullOffset: number | null;
   fullLen: number | null;
-  /** True when served by the legacy `read_bundle` (old backend): the blob is
-   *  the 32 MP full, not the PRVW, and there is no separate zoom tier. */
-  legacy: boolean;
 };
 
-/** Which command serves navigation reads. Flips to the legacy `read_bundle`
- *  ONCE, on the first unknown-command error (Phase 2/3 shipped out of order
- *  — old backend, new frontend); never per-call error matching after that. */
-let navCommand: "read_preview" | "read_bundle" = "read_preview";
-
-/** Test-only: restore the native-first routing between tests. */
-export function resetNavCommandForTests(): void {
-  navCommand = "read_preview";
-}
-
-const isUnknownCommand = (e: unknown): boolean =>
-  /not found|unknown command|no handler/i.test(String(e));
-
-/** Navigation-tier read: PRVW preview + metadata + zoom hint (or the legacy
- *  full-res bundle on an old backend). `gen` is the imageStore session
- *  generation — the backend cancels superseded chunked reads against it. */
+/** Navigation-tier read: PRVW preview + metadata + zoom hint. `gen` is the
+ *  imageStore session generation — the backend cancels superseded chunked
+ *  reads against it. */
 export async function fetchNav(path: string, gen: number): Promise<NavResult> {
-  for (;;) {
-    const legacy = navCommand === "read_bundle";
-    try {
-      const buf = await invoke<ArrayBuffer>(
-        navCommand,
-        legacy ? { path } : { path, gen },
-      );
-      const view = new DataView(buf);
-      const headerLen = view.getUint32(0, true);
-      const header = JSON.parse(
-        new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
-      ) as NavHeader;
-      const previewBytes = new Uint8Array(buf, 4 + headerLen, header.previewLen);
-      logBlobIntegrity("preview", previewBytes);
-      const previewUrl = URL.createObjectURL(
-        new Blob([previewBytes], { type: "image/jpeg" }),
-      );
-      return {
-        previewUrl,
-        meta: header.meta,
-        orientation: header.orientation ?? null,
-        fullOffset: header.fullOffset ?? null,
-        fullLen: header.fullLen ?? null,
-        legacy,
-      };
-    } catch (e) {
-      if (!legacy && isUnknownCommand(e)) {
-        navCommand = "read_bundle";
-        continue;
-      }
-      throw e;
-    }
-  }
+  const buf = await invoke<ArrayBuffer>("read_preview", { path, gen });
+  const view = new DataView(buf);
+  const headerLen = view.getUint32(0, true);
+  const header = JSON.parse(
+    new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
+  ) as NavHeader;
+  const previewBytes = new Uint8Array(buf, 4 + headerLen, header.previewLen);
+  logBlobIntegrity("preview", previewBytes);
+  const previewUrl = URL.createObjectURL(new Blob([previewBytes], { type: "image/jpeg" }));
+  return {
+    previewUrl,
+    meta: header.meta,
+    orientation: header.orientation ?? null,
+    fullOffset: header.fullOffset ?? null,
+    fullLen: header.fullLen ?? null,
+  };
 }
 
 /** Zoom-tier read: the full-res mdat JPEG via the exact-range hint (backend
