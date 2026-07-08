@@ -202,7 +202,7 @@ pub(crate) fn read_ratings(cr3_path: &str) -> (Option<String>, Option<u8>) {
 /// star value doesn't, leaving a phantom "LrC 1★" (the live bug this fixes).
 /// A flag-mode favorite's user star (any 1–5★, `cull:fav="flag"`) still reads
 /// back in full. Reached only through [`read_ratings`]'s bulk analyze pass —
-/// the per-navigation sidecar read was deleted from `read_bundle` (one NAS
+/// the per-navigation sidecar read was removed from the nav path (one NAS
 /// round-trip saved per nav).
 fn parse_lrc_rating(content: &str) -> Option<u8> {
     if cull_owned_fav_star(content) {

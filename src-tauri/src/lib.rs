@@ -6,7 +6,7 @@
 //! |---------------|---------------------------------------------------------|
 //! | [`cr3`]       | Pure-Rust CR3 parser: preview + EXIF + thumbnail bytes. |
 //! | [`meta`]      | [`meta::ImageMetadata`] for the UI + `From<cr3::Cr3Meta>`. |
-//! | [`bundle`]    | `read_bundle` / `read_preview` / `read_fullres` / `read_mid` / `generate_mid` + `extract_thumbnail` Tauri commands. |
+//! | [`bundle`]    | `read_preview` / `read_fullres` / `read_mid` / `generate_mid` + `extract_thumbnail` Tauri commands. |
 //! | [`io_gate`]   | Read-permit backstop (IoGate), session gen + mtime table (SessionGate), `begin_session` / `set_io_profile`. |
 //! | [`midtier`]   | Phase 8 mid-tier generation: decode → SIMD resize ≤2560 → q80 encode + the MidGen concurrency gate. |
 //! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
@@ -201,7 +201,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             analyze::analyze_quality,
-            bundle::read_bundle,
             bundle::read_preview,
             bundle::read_fullres,
             bundle::read_mid,

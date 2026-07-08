@@ -1,5 +1,5 @@
-//! Per-image reads: navigation preview, zoom full-res, legacy bundle, and the
-//! tiny embedded thumbnail.
+//! Per-image reads: navigation preview, zoom full-res, and the tiny embedded
+//! thumbnail.
 //!
 //! ## Invariant
 //!
@@ -15,9 +15,7 @@
 //! (global backstop), the tier's timeout (backend-owned; detach + ignore on
 //! expiry), and a `spawn_blocking` so slow NAS reads never stall the async
 //! runtime. `read_preview`/`read_fullres` additionally carry the session
-//! generation for chunked-read cancellation. `read_bundle` keeps its original
-//! wire format and callers — it is the legacy navigation path until Phase 3
-//! flips the frontend to the preview tier.
+//! generation for chunked-read cancellation.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -114,56 +112,7 @@ async fn gated_read(
     gated(gate, tier, label, work).await.map(Response::new)
 }
 
-// ── Legacy bundle (full-res as the navigation tier; dies in Phase 3) ────────
-
-/// Binary frame returned by [`read_bundle`]: a small JSON header (metadata +
-/// the preview length), then the preview JPEG bytes.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BundleHeader {
-    meta: ImageMetadata,
-    preview_len: u32,
-}
-
-/// Read full-res preview + metadata for one CR3 in a SINGLE file open.
-/// Wire format and behavior unchanged from before Phase 2 (the frontend still
-/// navigates on this until Phase 3); now rides the gate + timeout like every
-/// other read.
-#[tauri::command]
-pub(crate) async fn read_bundle(
-    path: String,
-    gate: State<'_, Arc<IoGate>>,
-) -> Result<Response, String> {
-    let label = format!("read_bundle({path})");
-    gated_read(&gate, Tier::Full, label, move || {
-        let start = Instant::now();
-        let b = cr3::read_bundle(&path).map_err(|e| format!("cr3 bundle: {e}"))?;
-        let mut meta = ImageMetadata::from(b.meta);
-        // Length came from the open handle inside read_bundle — no extra stat
-        // round-trip (the NAS read path's per-file round-trips dominate latency).
-        meta.file_size = Some(b.file_size);
-        // lrc_rating stays None here on purpose: the analyze pass already
-        // returns every sidecar's LrC stars in bulk (scan.rs lrc_ratings), and
-        // re-opening the sidecar per navigation cost one NAS round-trip
-        // (~37-74 ms) on every read. The frontend seeds + carries the value.
-        let header = BundleHeader {
-            meta,
-            preview_len: b.preview.len() as u32,
-        };
-        let header_json = serde_json::to_vec(&header).map_err(|e| format!("bundle header: {e}"))?;
-        dlog!(
-            "[cull] read_bundle({}): orient={} preview={}B in {:?}",
-            path,
-            b.orientation,
-            b.preview.len(),
-            start.elapsed()
-        );
-        Ok(frame(header_json, &b.preview))
-    })
-    .await
-}
-
-// ── Navigation tier (Phase 2; frontend switches to it in Phase 3) ───────────
+// ── Navigation tier ─────────────────────────────────────────────────────────
 
 /// Header for [`read_preview`]: full metadata, the orientation (echoed back to
 /// `read_fullres` so the zoom tier skips the moov re-parse), and the exact

@@ -15,14 +15,16 @@
 //!     PRVW → 1620×1080 preview JPEG (16-byte sub-header, then JPEG)
 //!   mdat → full-res embedded JPEG (≈32 MP), then RAW sensor data (CRAW)
 //!
-//! Because ftyp + moov + the preview uuid all sit before mdat, and the full-res
-//! JPEG is the very first thing inside mdat, a single large read from offset 0
-//! captures the full-res preview and all metadata at once — `read_bundle` exploits
-//! this so each cull step is ONE open + (usually) ONE read, the difference between
-//! snappy and sluggish on a high-latency NAS. The 160×120 THMB is NOT part of that
-//! read: filmstrip thumbnails are fetched separately by `read_thumbnail` (a small
-//! moov-head read on its own bounded pool). Orientation is applied by splicing an
-//! EXIF tag into the JPEGs (no decode/re-encode).
+//! Because ftyp + moov + the preview uuid all sit before mdat, a single ~2 MiB
+//! head read from offset 0 captures the PRVW preview and all metadata at once —
+//! `read_preview_bundle` exploits this so each navigation step is ONE open +
+//! (usually) ONE read, the difference between snappy and sluggish on a
+//! high-latency NAS. The 32 MP full-res JPEG (the first thing inside mdat) is
+//! read separately on zoom, via its exact moov range (`read_fullres_at`). The
+//! 160×120 THMB is NOT part of either read: filmstrip thumbnails are fetched
+//! separately by `read_thumbnail` (a small moov-head read on its own bounded
+//! pool). Orientation is applied by splicing an EXIF tag into the JPEGs (no
+//! decode/re-encode).
 //!
 //! INVARIANT: read-only. Never writes to the CR3.
 
@@ -612,52 +614,6 @@ fn read_fullres_from(f: &mut File, buf: &mut Vec<u8>, flen: usize) -> std::io::R
     preview_jpeg(buf).ok_or_else(|| io_err("no embedded JPEG"))
 }
 
-/// Everything one CR3 open yields for the main view: the full-res preview and
-/// EXIF/AF metadata, parsed from a single bounded read. (Filmstrip thumbnails are
-/// fetched separately via `read_thumbnail` through their own bounded pool, so they
-/// don't ride the 12 MB bundle read.)
-pub struct Bundle {
-    pub preview: Vec<u8>, // full-res (or PRVW fallback) JPEG, EXIF-oriented
-    pub meta: Cr3Meta,
-    pub orientation: u32,
-    /// CR3 byte length — obtained from the already-open handle during the read,
-    /// so the IPC handler doesn't need a second `std::fs::metadata` stat (an extra
-    /// NAS round-trip per full read).
-    pub file_size: u64,
-}
-
-/// Read preview + metadata from ONE file open and (usually) ONE read. On the
-/// high-latency NAS this app culls from, per-file round-trips dominate, so
-/// collapsing the old opens + ~dozen seeks into a single large read is the
-/// headline win. The head almost always holds ftyp, moov (giving metadata) and
-/// the full-res JPEG at the start of mdat; the JPEG reader grows the buffer only
-/// in the rare case it spills past the head. INVARIANT: read-only.
-pub fn read_bundle(path: &str) -> std::io::Result<Bundle> {
-    const HEAD: usize = 12 << 20; // ftyp + moov + preview uuid + most full-res JPEGs
-                                  // Bound on how far we'll grow the buffer hunting for moov: a malformed file
-                                  // with no moov box must not be read in its entirety into RAM (OOM/DoS). moov
-                                  // sits near the front of any real CR3, so 64 MiB is generous.
-    const MOOV_SCAN_CAP: usize = 64 << 20;
-    let (mut buf, mut f, flen) = read_head(path, HEAD)?;
-
-    // Ensure the (small) moov box is fully buffered before parsing it.
-    while moov_range(&buf).is_none()
-        && buf.len() < MOOV_SCAN_CAP
-        && grow(&mut f, &mut buf, 4 << 20, flen)?
-    {}
-
-    let meta = metadata_from_prefix(&buf);
-    let orient = meta.orientation; // parsed once in metadata_from_prefix; reuse it
-    let preview = with_exif_orientation(read_fullres_from(&mut f, &mut buf, flen)?, orient);
-
-    Ok(Bundle {
-        preview,
-        meta,
-        orientation: orient,
-        file_size: flen as u64,
-    })
-}
-
 /// Everything one ~2 MiB head read yields for the NAVIGATION tier (Phase 2):
 /// the 1620×1080 PRVW preview, full metadata, and the exact-range hint for the
 /// zoom tier's mdat JPEG — all from ONE open and (usually) ONE read.
@@ -806,10 +762,10 @@ pub fn locate_fullres(
     Ok((hint, orientation))
 }
 
-/// Legacy scan fallback for the zoom tier: the pre-hint head+grow mdat scan,
-/// kept as the validation net for any future body that lays out mdat
-/// differently. Rare path — no chunked cancellation (it rides read_bundle's
-/// proven machinery unchanged). Returns the file's own EXIF orientation too:
+/// Scan fallback for the zoom tier: the pre-hint head+grow mdat scan, kept as
+/// the validation net for any future body that lays out mdat differently. Rare
+/// path — no chunked cancellation (it rides the same head+grow full-res read
+/// machinery, `read_fullres_from`). Returns the file's own EXIF orientation too:
 /// the moov is already in the head buffer, and a hintless caller has no echo
 /// to splice — stamping orientation 1 on a rotated frame would poison the
 /// cached blob with unrotated pixels (the portrait-zoom bug from the macOS
@@ -1154,49 +1110,6 @@ mod tests {
         assert_eq!(twice.len(), single.len(), "old EXIF stripped, not stacked");
     }
 
-    // Validates the full bundle against a real CR3. Gated on an env var so it only
-    // runs when pointed at a file: `CULL_TEST_CR3=path cargo test`.
-    #[test]
-    fn bundle_extracts_preview_thumbnail_and_metadata() {
-        let Ok(path) = std::env::var("CULL_TEST_CR3") else {
-            eprintln!("skip: set CULL_TEST_CR3 to a .CR3 path to run this test");
-            return;
-        };
-        let b = read_bundle(&path).expect("read_bundle failed");
-        assert_eq!(&b.preview[..2], &[0xFF, 0xD8], "preview missing SOI");
-        assert_eq!(
-            &b.preview[b.preview.len() - 2..],
-            &[0xFF, 0xD9],
-            "preview missing EOI"
-        );
-        let img = image::load_from_memory(&b.preview).expect("preview decode failed");
-        // Thumbnail is now a separate read (its own pool), not part of the bundle.
-        let tn = read_thumbnail(&path).expect("read_thumbnail failed");
-        let (thumb, torient) = (tn.jpeg, tn.orientation);
-        eprintln!(
-            "preview {}x{}, {} B, orient {}; thumb {} B; camera {:?}",
-            img.width(),
-            img.height(),
-            b.preview.len(),
-            b.orientation,
-            thumb.len(),
-            b.meta.camera,
-        );
-        // Sensor frame is landscape regardless of how the shot was framed.
-        assert!(
-            img.width() >= 6000 && img.height() >= 4000,
-            "not full resolution: {}x{}",
-            img.width(),
-            img.height()
-        );
-        // The spliced tag must match the CR3's CMT1 orientation.
-        if matches!(b.orientation, 3 | 6 | 8) {
-            assert_eq!(exif_orientation_of(&b.preview), b.orientation as u8);
-        }
-        assert_eq!(torient, b.orientation, "thumb/preview orientation agree");
-        assert!(thumb.starts_with(&[0xFF, 0xD8]), "thumb missing SOI");
-    }
-
     /// SubSecTimeOriginal is an ASCII fraction of a second with camera-defined
     /// digit count; burst grouping needs milliseconds. Trailing spaces are the
     /// EXIF padding convention.
@@ -1255,92 +1168,6 @@ mod tests {
             display_dims(7, Some(6000), Some(4000)),
             (Some(6000), Some(4000))
         );
-    }
-
-    // Exercises read_bundle over every .CR3 in a directory, validating each and
-    // printing a table — useful for confirming the single-read assumption holds
-    // across a real shoot. Gated: `CULL_TEST_CR3_DIR=path cargo test -- --nocapture`.
-    #[test]
-    fn bundle_over_sample_dir() {
-        let Ok(dir) = std::env::var("CULL_TEST_CR3_DIR") else {
-            eprintln!("skip: set CULL_TEST_CR3_DIR to a folder of .CR3 files");
-            return;
-        };
-        let mut paths: Vec<_> = std::fs::read_dir(&dir)
-            .expect("read dir")
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cr3")))
-            .collect();
-        paths.sort();
-        assert!(!paths.is_empty(), "no CR3 files in {dir}");
-
-        eprintln!(
-            "{:<16} {:>5} {:>6} {:>6} {:>8} {:>7}",
-            "file", "orient", "MP", "thmbKB", "prevKB", "fit1read"
-        );
-        for p in &paths {
-            let ps = p.to_string_lossy().to_string();
-            let b = read_bundle(&ps).unwrap_or_else(|e| panic!("read_bundle({ps}): {e}"));
-
-            // Preview is a valid JPEG at full sensor resolution.
-            assert_eq!(&b.preview[..2], &[0xFF, 0xD8], "{ps}: preview SOI");
-            assert_eq!(
-                &b.preview[b.preview.len() - 2..],
-                &[0xFF, 0xD9],
-                "{ps}: preview EOI"
-            );
-            let img =
-                image::load_from_memory(&b.preview).unwrap_or_else(|e| panic!("{ps}: decode {e}"));
-            assert!(
-                img.width() >= 6000 && img.height() >= 4000,
-                "{ps}: {}x{}",
-                img.width(),
-                img.height()
-            );
-
-            // The thumbnail (separate read) is a real, EXIF-oriented JPEG.
-            let tn = read_thumbnail(&ps).unwrap_or_else(|e| panic!("{ps}: thumb {e}"));
-            let (thumb, torient) = (tn.jpeg, tn.orientation);
-            assert!(
-                thumb.starts_with(&[0xFF, 0xD8]),
-                "{ps}: thumbnail missing/!JPEG"
-            );
-            if matches!(b.orientation, 3 | 6 | 8) {
-                assert_eq!(
-                    exif_orientation_of(&b.preview),
-                    b.orientation as u8,
-                    "{ps}: preview orient"
-                );
-                assert_eq!(
-                    exif_orientation_of(&thumb),
-                    torient as u8,
-                    "{ps}: thumb orient"
-                );
-            }
-
-            // Did the full-res JPEG fit inside the 12 MiB head (no grow)? It does
-            // if preview bytes + the small moov/preview-uuid prefix stay under it.
-            let fit = b.preview.len() + (2 << 20) <= (12 << 20);
-            eprintln!(
-                "{:<16} {:>5} {:>5.1} {:>6} {:>8} {:>7}",
-                p.file_name().unwrap().to_string_lossy(),
-                b.orientation,
-                (img.width() as f64 * img.height() as f64) / 1.0e6,
-                thumb.len() / 1024,
-                b.preview.len() / 1024,
-                if fit { "yes" } else { "GREW" },
-            );
-            // Print EXIF extras to eyeball against known values.
-            eprintln!(
-                "    exif {:?}x{:?}  eV={:?}  wb={:?}  drive={:?}",
-                b.meta.pixel_width,
-                b.meta.pixel_height,
-                b.meta.exposure_bias,
-                b.meta.white_balance,
-                b.meta.drive_mode,
-            );
-        }
     }
 
     // Edge contract: a CR3-shaped file with NO preview uuid (other bodies /

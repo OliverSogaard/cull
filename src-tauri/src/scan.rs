@@ -185,7 +185,7 @@ pub(crate) struct AnalyzeResult {
 /// the benchmark), this collapses ~10 min of metadata reads into seconds.
 ///
 /// Exact EXIF (precise time, lens, GPS, AF point) is still read lazily per
-/// image during culling via [`crate::bundle::read_bundle`].
+/// image during culling via [`crate::bundle::read_preview`].
 /// When the frontend passes `concurrent_restore = true` (storage mode = local),
 /// sidecar reads run on this many threads. 4 is enough to saturate a local
 /// SSD's queue depth without thrashing; the NAS path stays sequential.
