@@ -72,6 +72,35 @@ fn walk_folder(root: &Path, ignore: Option<&str>) -> ScanResult {
     ScanResult { paths, ignored }
 }
 
+/// True for CULL's own crash-orphaned atomic-write temp shape,
+/// `"<base>.xmp.<seq>.tmp"` (seq = one or more ASCII digits). Deliberately
+/// strict — magic suffix + a numeric sequence + an `.xmp` head — so another
+/// tool's `*.tmp` (or a user file that merely ends `.tmp`) is never swept.
+fn is_orphan_xmp_temp(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".tmp") else {
+        return false;
+    };
+    let Some((head, seq)) = stem.rsplit_once('.') else {
+        return false;
+    };
+    head.ends_with(".xmp") && !seq.is_empty() && seq.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Order indices by capture time (`epoch` ms); a missing time sorts LAST, and
+/// equal times (or two missing times) tiebreak on path. Pure so the ordering
+/// contract is unit-testable without touching the filesystem. `epoch` and
+/// `paths` are parallel, one entry per input index.
+fn order_by_capture(epoch: &[Option<i64>], paths: &[String]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..epoch.len()).collect();
+    order.sort_by(|&a, &b| match (epoch[a], epoch[b]) {
+        (Some(ea), Some(eb)) => ea.cmp(&eb).then_with(|| paths[a].cmp(&paths[b])),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => paths[a].cmp(&paths[b]),
+    });
+    order
+}
+
 /// Scan a folder recursively for `.CR3` files, sorted lexicographically, plus
 /// a count of ignored non-CR3 files (see [`ScanResult`]).
 ///
@@ -217,20 +246,13 @@ fn analyze_folder_sync(
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            // Sweep crash-orphaned atomic-write temps ("<base>.xmp.<seq>.tmp") left
-            // behind if the process died between temp-create and rename. Match only
-            // CULL's exact shape so another tool's *.tmp is never touched. Best-effort.
+            // Sweep crash-orphaned atomic-write temps left behind if the process
+            // died between temp-create and rename (see [`is_orphan_xmp_temp`]).
+            // Best-effort.
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if let Some(stem) = name.strip_suffix(".tmp") {
-                    if let Some((head, seq)) = stem.rsplit_once('.') {
-                        if head.ends_with(".xmp")
-                            && !seq.is_empty()
-                            && seq.bytes().all(|b| b.is_ascii_digit())
-                        {
-                            let _ = std::fs::remove_file(&path);
-                            continue;
-                        }
-                    }
+                if is_orphan_xmp_temp(name) {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
                 }
             }
             if path
@@ -401,13 +423,7 @@ fn analyze_folder_sync(
     }
 
     // Sort by capture time (mtime); missing times sort last, tiebreak on path.
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| match (epoch[a], epoch[b]) {
-        (Some(ea), Some(eb)) => ea.cmp(&eb).then_with(|| paths[a].cmp(&paths[b])),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => paths[a].cmp(&paths[b]),
-    });
+    let order = order_by_capture(&epoch, &paths);
 
     let _ = window.emit(
         "analyze-progress",
@@ -477,5 +493,46 @@ mod tests {
         assert_eq!(r.paths.len(), 1);
         assert_eq!(r.ignored, 0);
         let _ = fs::remove_dir_all(&work);
+    }
+
+    /// order_by_capture: earlier mtime first, exact-tie breaks on path, and any
+    /// missing time sinks to the end (two missing ones tiebreak on path too).
+    #[test]
+    fn order_by_capture_sorts_by_mtime_then_path_missing_last() {
+        // Indices:      0        1        2       3       4
+        let paths: Vec<String> = ["d", "b", "a", "c", "e"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let epoch = vec![Some(200), Some(100), None, Some(100), None];
+        // Expected: mtime 100 group first (idx 1 "b" before idx 3 "c"), then
+        // mtime 200 (idx 0), then the missing-time group by path (idx 2 "a"
+        // before idx 4 "e").
+        assert_eq!(order_by_capture(&epoch, &paths), vec![1, 3, 0, 2, 4]);
+    }
+
+    /// order_by_capture: an all-missing set degrades to a pure path sort.
+    #[test]
+    fn order_by_capture_all_missing_is_path_order() {
+        let paths: Vec<String> = ["z", "m", "a"].iter().map(|s| s.to_string()).collect();
+        let epoch = vec![None, None, None];
+        assert_eq!(order_by_capture(&epoch, &paths), vec![2, 1, 0]);
+    }
+
+    /// is_orphan_xmp_temp: only CULL's exact "<base>.xmp.<seq>.tmp" shape is
+    /// swept — decoys (other tools' temps, non-numeric seq, no .xmp head, a
+    /// user's genuine .tmp) are all left alone.
+    #[test]
+    fn orphan_temp_matches_only_cull_shape() {
+        assert!(is_orphan_xmp_temp("IMG_0001.xmp.0.tmp"));
+        assert!(is_orphan_xmp_temp("IMG_0001.xmp.42.tmp"));
+        // Decoys:
+        assert!(!is_orphan_xmp_temp("IMG_0001.xmp.tmp")); // no numeric seq segment
+        assert!(!is_orphan_xmp_temp("IMG_0001.xmp.a.tmp")); // non-numeric seq
+        assert!(!is_orphan_xmp_temp("IMG_0001.xmp.7.bak")); // wrong suffix
+        assert!(!is_orphan_xmp_temp("IMG_0001.cr3.7.tmp")); // head not .xmp
+        assert!(!is_orphan_xmp_temp("notes.tmp")); // a user's own temp
+        assert!(!is_orphan_xmp_temp("IMG_0001.xmp")); // the real sidecar
+        assert!(!is_orphan_xmp_temp("IMG_0001.xmp..tmp")); // empty seq
     }
 }
