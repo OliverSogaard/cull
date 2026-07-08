@@ -1,4 +1,4 @@
-<img src="app-icon.png" width="96" alt="CULL app icon" align="right">
+<img src="docs/media/app-icon.png" width="96" alt="CULL app icon" align="right">
 
 # CULL
 

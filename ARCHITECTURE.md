@@ -339,6 +339,32 @@ copy-keeps destination, open-last-folder-on-launch) are simple knobs —
 the dialog UI is a stack of label / help / control rows and one row per
 setting.
 
+## Content Security Policy
+
+Production ships a real CSP (`app.security.csp` in `tauri.conf.json`); it is
+NOT `null`. The policy is blob-aware because CULL's image tiers ARE blob URLs
+— every thumb / preview / zoom-full / mid frame is handed to the webview as a
+`blob:` object URL, and the composition masks + histogram render the same way:
+
+```
+default-src 'self';
+img-src    'self' blob: data:;
+media-src  'self' blob:;
+font-src   'self';                      /* the two self-hosted woff2 (offline app) */
+style-src  'self' 'unsafe-inline';      /* React inline styles + index.html <style> */
+script-src 'self';
+worker-src 'self' blob:;                /* the overlay mask worker (Vite-emitted file; blob: covers the ESM fallback) */
+connect-src 'self' ipc: http://ipc.localhost;   /* Tauri IPC */
+object-src 'none'; base-uri 'self';
+```
+
+Fonts are self-hosted (`src/assets/fonts/*.woff2`, latin subset, one variable
+file per family) rather than fetched from Google at every launch — an offline
+desktop app must not depend on the network to render text. `'unsafe-inline'`
+stays on `style-src` only (React writes inline styles; there is no inline
+script). If a future feature needs a new origin, widen the specific directive
+— never fall back to `null`.
+
 ## Modules
 
 The frontend follows a strict layering — no circular deps:
