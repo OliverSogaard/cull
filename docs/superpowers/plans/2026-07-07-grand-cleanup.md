@@ -727,3 +727,108 @@ needed the fallback — cold folder open, scrub through it, zoom engage/release
 (loupe), a compare pair, grid, folder switch mid-session, and close/reopen the
 same folder (the tier-cache instant-paint hit path). Standing push approval
 applies AFTER this passes — nothing pushed yet.
+
+---
+
+## Phase 6 — DONE 2026-07-13 (awaiting Gate 6 — LIVE)
+
+**Commits:** `755fe53` (6.1 Batch A), `34279a8` (6.2 Batch B).
+
+### What landed
+
+`src/app/` created; ten hooks extracted from App.tsx as verbatim moves, deps
+as parameters, war-story comments traveling with their code. App.tsx:
+**4,617 → 4,140 (Batch A) → 3,245 lines**; App is now composition + the
+zoom/keymap/held-scrub clusters (Phases 7/9) + JSX.
+
+Batch A (`755fe53`):
+- `useSmartDerivations` — ratedIds + the useSmartCulling call + the whole
+  burst/similar/verdict/favorites-cap memo chain. Returns the plan's full
+  set; `ratedIds`/`keepEligibleMap` are returned but not destructured in App
+  (no external consumers).
+- `useImageStoreWiring` — profile derivation + setProfile/needPxProvider/
+  stage-ResizeObserver/DPR-rearm/metaSink/cursor effects + handleGridViewport.
+- `useFolderTrouble` — trouble-chip state + store sink + hidden-reset +
+  `retryUnreachableFolders`. (The plan listed the two sink effects under both
+  the wiring hook and this one; they live here, with the state they set.)
+- `useRatingPersistence` — feedback flash (+ FEEDBACK_MS), savingCount/
+  failedWrites/savingRef/failedCountRef, the per-path serial write queue
+  (persistRating + WRITE_RETRY_DELAYS), retryFailed, unmount timer cleanup.
+- `useQuitGuard` — quitGuard/destroyedRef/quitShownAtRef + close-request
+  registration + auto-close-after-flush (350 ms floor comment intact).
+- `useDragAndDrop` — isDragOver + phase/openFoldersByPaths ref mirrors + the
+  once-registered drop listener.
+- `useUndoRedo` — stacks + recordAction/applyChanges/undo/redo.
+
+Batch B (`34279a8`):
+- `useSessionLifecycle` — recents writers, openFoldersByPaths (NFC war story
+  verbatim), pickFolder, launch auto-open, rated/done debounce, beginCulling
+  (go-straight-to-STAGED note verbatim), resetSession, leaveToHome.
+  EMPTY_METADATA + openBusyRef/analyzingRef/sessionRecentsKeyRef moved in
+  (hook-exclusive).
+- `useSiteNavigation` — snapToFilter/reviveChallenger/buildNavEntry
+  (internal) + goToSite/goBack/cycleChallenger.
+- `useDecideCallbacks` — applyRating/unrateCurrent + challengerLoses/
+  KeptBoth/Wins. **The sync-flush ordering comments and the
+  setState-then-`dropZoomFullsExcept` sequencing moved byte-for-byte** —
+  each decide still drops zoom fulls only after its last setState.
+
+### Effect-order accounting
+
+Each hook is called at its cluster's original position, so global effect
+order is preserved, with two knowing exceptions (both order-independent
+listener registrations): useQuitGuard's close-request + auto-close effects
+now register at the state cluster's position (early) instead of their old
+mid-file spots, and useUndoRedo (zero effects) is called early so
+resetSession's dep array can legally reference the stack refs (param objects
+evaluate at render time — TS2448 caught the late-call version).
+
+### Deviations from the plan text
+
+1. **Save/quit state split** — the plan grouped savingCount/failedWrites
+   under useQuitGuard, but persistRating (useRatingPersistence) is their
+   only writer and retryFailed needs both → circular hook dependency.
+   Resolution: useRatingPersistence owns the counts + retryFailed;
+   useQuitGuard consumes them read-only. Behavior identical.
+2. **Dep arrays**: copied verbatim, then identity-stable params (refs,
+   setState setters) appended only where exhaustive-deps requires — inert at
+   runtime since those identities never change. The three compare decides
+   keep their original arrays under their existing eslint-disable (the
+   deliberate currentIndex omission is untouched).
+3. `metadata` state declaration moved above the useSmartDerivations call
+   (it's a param); declaration order of useState calls is behavior-neutral.
+4. Stayed in App per "do not force": compare-pair pin effect, zoom pin+fetch
+   effect, grid-range-clear effect (the plan assigned none of them to a hook).
+5. resetSession's "(Refs are stable; declared further down…)" parenthetical
+   dropped — no longer true; the stacks arrive as hook returns above it.
+
+### Line-count honesty
+
+The plan's "under ~2,000 after this phase" doesn't fall out of its own task
+list: the ten listed clusters total ~1,400 lines, and the rest of App.tsx is
+the keymap/zoom/held-scrub clusters (~800, Phases 7/9) plus ~1,900 lines of
+JSX + bottom-of-file helper components that no Phase 6 task touches. Every
+cluster the plan names is extracted; 3,245 is the floor this phase's scope
+reaches.
+
+### Gate results (all green)
+
+- `pnpm test` 441 passed (baseline unchanged — extraction only)
+- `tsc --noEmit` + `tsc -p tsconfig.tests.json` clean
+- `pnpm lint` (eslint) + `pnpm lint:css` (stylelint) clean; prettier clean
+  over App.tsx + all ten hooks
+- `cargo test` 109 passed; `clippy --all-targets -- -D warnings` clean;
+  `cargo fmt --check` clean (Rust untouched this phase)
+- Bundle diff sanity: `pnpm build` → index-*.js 383.53 kB (117.39 kB gzip) —
+  hash moved, size unmoved from the Phase 5 ballpark.
+
+**Gate 6 asks (LIVE — the dev app hot-reloads).** Both batches are in, so one
+lap covers them: open folders (picker, drag-drop, a recents click, and the
+launch auto-open if enabled), begin culling on a real folder (sort + rating
+restore + resume-at-first-unrated), rate through a burst (feedback flash +
+save pill), rate-while-zoomed carry, undo/redo incl. a compare compound
+action, a compare session (Enter/Backspace/K/F + auto-exit on last unrated),
+grid multi-select rate, finish dialog open, quit guard (close mid-save →
+auto-close after flush), Esc chain back to home, folder-trouble chip if the
+NAS is handy, and a second folder open after leave-to-home (session teardown).
+Standing push approval applies AFTER this passes — nothing pushed yet.
