@@ -16,7 +16,6 @@ import { Check, Star, X as XIcon } from "lucide-react";
 import type {
   AnalyzeProgress,
   AnalyzeResult,
-  Feedback,
   FileOpResult,
   ScanResult,
   Filter,
@@ -26,11 +25,9 @@ import type {
   NavSite,
   Phase,
   Rating,
-  UndoAction,
 } from "./types";
 import "./App.css";
 
-import { mergeMeta } from "./utils/mergeMeta";
 import { CompareStrip } from "./components/CompareStrip";
 import { CompareView } from "./components/CompareView";
 import { ExifRail } from "./components/ExifRail";
@@ -41,13 +38,7 @@ import { verdictGlyph } from "./components/verdictGlyph";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
-import { useSmartCulling } from "./smart/useSmartCulling";
 import { useChipsTooltipVisibility } from "./hooks/useChipsTooltipVisibility";
-import { groupBursts } from "./smart/groupBursts";
-import { groupSimilar } from "./smart/groupSimilar";
-import { buildBurstInputs, buildSimilarInputs } from "./smart/burstInputs";
-import { capFavorites } from "./smart/capFavorites";
-import { deriveVerdict, keepEligible, type Suggestion } from "./smart/deriveVerdict";
 import { WindowControls } from "./components/WindowControls";
 import { DevHud } from "./components/DevHud";
 import { PhotoPane } from "./components/pane/PhotoPane";
@@ -56,8 +47,15 @@ import { zoomTransition } from "./components/pane/zoomTransition";
 import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
-import { PERFORMANCE_PROFILES, normalizeRejectedSubfolder } from "./types/settings";
-import { runFolderRetry, type TroubleState } from "./image/folderRetry";
+import { useDragAndDrop } from "./app/useDragAndDrop";
+import { useFolderTrouble } from "./app/useFolderTrouble";
+import { useImageStoreWiring } from "./app/useImageStoreWiring";
+import { useQuitGuard } from "./app/useQuitGuard";
+import { useRatingPersistence } from "./app/useRatingPersistence";
+import { useSmartDerivations } from "./app/useSmartDerivations";
+import { useUndoRedo } from "./app/useUndoRedo";
+
+import { normalizeRejectedSubfolder } from "./types/settings";
 import { imageStore } from "./image/imageStore";
 import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
@@ -75,17 +73,9 @@ import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
 import { scrubSpeedForHeldMs, type ScrubSpeed } from "./utils/scrubAccel";
 
-// Read concurrency, previewKeep, hi-res zoom warm-up, background-fill rate, and
-// concurrent XMP restore all live in PERFORMANCE_PROFILES, switched by the
-// storage-mode setting and pushed into the imageStore via `setProfile`.
-// Memory bounds for 10k-folder sessions are owned by the imageStore: full-res
-// blobs (~5–6 MB each) are kept only within `previewKeep` of the cursor and
-// revoked outside it, while thumbnails persist for the session under a 15k-entry
-// safety LRU. See src/image/imageStore.ts and ARCHITECTURE.md "Read pipeline".
-const FEEDBACK_MS = 320;
-// Rating-write retry schedule (ms before each retry). A rating that still fails
-// after the last attempt is surfaced as "unsaved" rather than silently dropped.
-const WRITE_RETRY_DELAYS = [400, 1500, 4000];
+// Read concurrency, previewKeep, and the store profile wiring live in
+// app/useImageStoreWiring; the rating-write retry schedule and feedback-flash
+// timing live in app/useRatingPersistence (grand cleanup Phase 6).
 const PAN_STEP = 2; // % per arrow press while zoomed
 const PAN_LIMIT = 40; // max % offset from the AF point
 // Hold-to-navigate cadence. We ignore the OS key auto-repeat (long initial delay,
@@ -212,32 +202,26 @@ export default function App() {
   const [settings, setSettings] = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // EXIF metadata per path. Fed by the imageStore's metadata sink (full-res
+  // bundle reads return camera/lens/AF/pixel-dims) and seeded with LrC stars
+  // from the analyze pass. Pixel URLs + display dims now live in the store
+  // (consumed via useImage); this map holds only the descriptive metadata.
+  const [metadata, setMetadata] = useState<Record<string, ImageMetadata>>({});
+
   // ── Smart culling (advisory) ──────────────────────────────────────────────
-  // The driver owns the chunked, gen-guarded background pass; scores accumulate
-  // keyed by Img.id. ALL cross-frame derivation is pure TS below — bursts and
-  // verdicts re-derive instantly on settings changes and self-correct as chunks
-  // land. Nothing here writes anything, ever (advisory-only invariant).
-  // Rated frames need no suggestion: the pass dispatches unrated-only, so it
-  // starts from where the user has reached (see useSmartCulling).
-  const ratedIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const [id, r] of Object.entries(ratings)) if (r) ids.add(Number(id));
-    return ids;
-  }, [ratings]);
+  // The driver + the pure cross-frame derivation chain (bursts, similars,
+  // verdicts, favorites cap) live in app/useSmartDerivations — advisory-only,
+  // nothing in there writes anything, ever.
   const {
-    scores: qualityScores,
-    analyzing: qualityAnalyzing,
-    progress: qualityProgress,
+    suggestions,
+    burstCtx,
+    similarCtx,
+    liveSuggestionCount,
+    qualityScores,
+    qualityAnalyzing,
+    qualityProgress,
     startAnalysis,
-  } = useSmartCulling({
-    enabled: settings.smartCulling,
-    autoStart: settings.smartCullingOnOpen,
-    ml: settings.deepAnalysis,
-    active: phase === "culling",
-    images,
-    ratedIds,
-    storageMode: settings.storageMode,
-  });
+  } = useSmartDerivations({ images, ratings, metadata, settings, phase });
 
   // Recent sessions list rendered on the home screen. One entry per folder
   // SET, written once a session ENTERS CULLING (staging alone leaves no trace,
@@ -298,114 +282,48 @@ export default function App() {
     navStackRef.current = navStack;
   }, [navStack]);
 
-  // EXIF metadata per path. Fed by the imageStore's metadata sink (full-res
-  // bundle reads return camera/lens/AF/pixel-dims) and seeded with LrC stars
-  // from the analyze pass. Pixel URLs + display dims now live in the store
-  // (consumed via useImage); this map holds only the descriptive metadata.
-  const [metadata, setMetadata] = useState<Record<string, ImageMetadata>>({});
-
-  // Bursts are a standing fact about the shoot, NOT a smart-culling feature:
-  // grouping inputs come from the EXIF metadata every frame's thumbnail
-  // already delivered, upgraded in place by scores (which add the mtime
-  // fallback and the sharpness that determines a winner) when the pass runs.
-  const burstData = useMemo(
-    () => buildBurstInputs(images, qualityScores, metadata),
-    [images, qualityScores, metadata],
-  );
-  // Winner candidacy is SMART CULLING's call: a member must clear the active
-  // keep threshold to be pickable, and with the feature off nothing wins —
-  // burst detection/boxes stay factual, the "best frame" is advisory. Shared
-  // between burstCtx and similarCtx so it's computed exactly once.
-  const keepEligibleMap = useMemo(() => {
-    const eligible: Record<number, boolean> = {};
-    if (settings.smartCulling) {
-      for (const [idStr, sc] of Object.entries(qualityScores)) {
-        eligible[Number(idStr)] = keepEligible(sc, settings.smartCullingConfidence);
-      }
-    }
-    return eligible;
-  }, [qualityScores, settings.smartCulling, settings.smartCullingConfidence]);
-  const burstCtx = useMemo(
-    () => groupBursts(images, burstData.inputs, burstData.sharp, keepEligibleMap),
-    [images, burstData, keepEligibleMap],
-  );
-  // Similar sets are ALSO a standing fact about the shoot, like bursts: the
-  // pHash tier rides every frame's thumbnail (buildSimilarInputs), so groups
-  // render with smart culling off too. `qualityScores` here contributes ONLY
-  // the embedding-tier upgrade (adjacent frames the pHash tier missed, ML
-  // builds only) — never the pHash tier itself (groupSimilar ignores
-  // `ImageScore.phash`; see groupSimilar.ts). Winner selection is still smart
-  // culling's call: with the pass off there's no `sharp`/`eligible` data, so
-  // pickWinner structurally finds no winner — no special-casing needed here.
-  const similarData = useMemo(
-    () => buildSimilarInputs(images, qualityScores, metadata),
-    [images, qualityScores, metadata],
-  );
-  const similarCtx = useMemo(
-    () =>
-      groupSimilar(images, similarData, qualityScores, burstCtx, burstData.sharp, keepEligibleMap),
-    [images, similarData, qualityScores, burstCtx, burstData.sharp, keepEligibleMap],
-  );
-  // Only frames with an emitted verdict land in the map — the badge/filter
-  // predicate is a simple presence check. Session-capped favorites (spec 3c)
-  // overlay a "favorite" verdict onto the top-N standout-aesthetic keeps.
-  const suggestions = useMemo(() => {
-    if (!settings.smartCulling) return {};
-    const out: Record<number, Suggestion> = {};
-    for (const [idStr, s] of Object.entries(qualityScores)) {
-      const id = Number(idStr);
-      const sug = deriveVerdict(
-        s,
-        burstCtx.get(id),
-        similarCtx.get(id),
-        settings.smartCullingConfidence,
-      );
-      if (sug.verdict) out[id] = sug;
-    }
-    for (const id of capFavorites(qualityScores, out, settings.smartCullingConfidence)) {
-      out[id] = {
-        ...out[id],
-        verdict: "favorite",
-        reasons: ["standout aesthetic", ...out[id].reasons],
-      };
-    }
-    return out;
-  }, [qualityScores, burstCtx, similarCtx, settings.smartCulling, settings.smartCullingConfidence]);
-
-  // Live suggestion count for the Smart tab label: suggestions on still-
-  // unrated frames only (rating one drops it, matching the filter's predicate).
-  const liveSuggestionCount = useMemo(() => {
-    let n = 0;
-    for (const idStr of Object.keys(suggestions)) {
-      if (!ratings[Number(idStr)]) n++;
-    }
-    return n;
-  }, [suggestions, ratings]);
-
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const feedbackTimer = useRef<number | null>(null);
-
   // Grid container — shared between GridView (for layout/scroll) and the cols-
   // computing ResizeObserver (defined after visibleIndices, below, so it can
   // also re-run when the grid gains cells — see there).
   const gridContainerRef = useRef<HTMLDivElement>(null);
 
-  // Rating-write durability. Every rating writes an .xmp sidecar; we count writes
-  // in flight (savingCount) and remember any that exhausted their retries
-  // (failedWrites: path → the rating that didn't land) so we can show them and
-  // block a quit that would lose work.
-  const [savingCount, setSavingCount] = useState(0);
-  // path → the rating that didn't land. `null` = an unrate (clear) that failed,
-  // so a stuck unrate is surfaced and guarded just like a stuck rating.
-  const [failedWrites, setFailedWrites] = useState<Record<string, Rating | null>>({});
-  const [quitGuard, setQuitGuard] = useState(false); // close requested while unsafe
-  // Mirrors of the above for the (once-registered) close-request handler, which
-  // would otherwise capture stale values.
-  const savingRef = useRef(0);
-  const failedCountRef = useRef(0);
-  const destroyedRef = useRef(false); // window.destroy() must fire at most once
-  const quitShownAtRef = useRef(0); // when the quit guard was shown (min-visible floor)
-  const failedCount = Object.keys(failedWrites).length;
+  // Rating-write durability (savingCount / failed-write tracking / the serial
+  // per-path write queue) lives in app/useRatingPersistence; the quit guard
+  // that refuses to lose those writes lives in app/useQuitGuard.
+  const {
+    feedback,
+    setFeedback,
+    flashFeedback,
+    persistRating,
+    retryFailed,
+    savingCount,
+    failedCount,
+    savingRef,
+    failedCountRef,
+  } = useRatingPersistence();
+  const { quitGuard, setQuitGuard, destroyedRef } = useQuitGuard({
+    savingCount,
+    failedCount,
+    savingRef,
+    failedCountRef,
+  });
+
+  // ── Undo / redo of rating actions ────────────────────────────────────────
+  // Stacks + recordAction/undo/redo live in app/useUndoRedo (no effects, so
+  // its position here carries no ordering weight). Refs because the stacks
+  // themselves don't drive any render — only the rating writes they replay do.
+  const { undoStack, redoStack, recordAction, undo, redo } = useUndoRedo({
+    images,
+    compareMode,
+    persistRating,
+    setRatings,
+    setCompareMode,
+    setGridVisible,
+    setChampionIndex,
+    setChallengerIndex,
+    setCurrentIndex,
+    setNavStack,
+  });
 
   const [isZooming, setIsZooming] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<1 | 2>(1); // 1 = 1:1, 2 = 2:1 (Shift+Space)
@@ -486,10 +404,6 @@ export default function App() {
   // static rectangles didn't add anything thirds + the image itself can't.
   const [compositionVisible, setCompositionVisible] = useState(false);
 
-  // Latched by the store when several paths reach terminal read-failure (NAS
-  // unmounted / sleep-wake): shows the non-blocking "folder unreachable" chip.
-  // Full retry-flow state (checking / still / recovered) lives in folderRetry.ts.
-  const [folderTrouble, setFolderTrouble] = useState<TroubleState>("hidden");
   // OS memory pressure, forwarded by the Rust side. warn = caches shrunk;
   // critical = zoom rasters dropped + zoom released. The response exists so
   // the WebContent process sheds BEFORE jetsam kills it (the proven gray-
@@ -765,98 +679,30 @@ export default function App() {
 
   // ── Image loading via imageStore ──────────────────────────────────────────
   // All pixel loading (thumbs + full-res previews), the bounded-concurrency NAS
-  // read pool, the windowed full-res cache, and blob-URL lifecycle now live in
-  // `imageStore` (driven below + consumed by `useImage` in each view). App only
-  // feeds it the storage profile, the cursor, the grid viewport, and a metadata
-  // sink — and tells it when the folder / session changes.
-  // `?? local` is belt-and-suspenders: useSettings now validates storageMode, but
-  // a future bug or out-of-range value must never make this undefined (the store
-  // would then read .previewKeep/.previewConcurrency off undefined and crash).
-  const profile = PERFORMANCE_PROFILES[settings.storageMode] ?? PERFORMANCE_PROFILES.local;
+  // read pool, the windowed full-res cache, and blob-URL lifecycle live in
+  // `imageStore` (driven by app/useImageStoreWiring + consumed by `useImage` in
+  // each view). App only feeds it the storage profile, the cursor, the grid
+  // viewport, and a metadata sink — and tells it when the folder / session
+  // changes.
+  const { profile, handleGridViewport } = useImageStoreWiring({
+    storageMode: settings.storageMode,
+    phase,
+    compareMode,
+    gridVisible,
+    currentIndex,
+    challengerIndex,
+    scrubbing,
+    stageRef,
+    setMetadata,
+  });
 
-  // Storage-mode profile → store concurrency caps + keep-window sizes.
-  useEffect(() => {
-    imageStore.setProfile(profile);
-  }, [profile]);
-
-  // Display-adaptive mid tier (Phase 8). The store owns the tier choice; App
-  // supplies the measurement and the re-evaluation triggers:
-  // 1) the FRESH needPx provider — stage rect height × devicePixelRatio,
-  //    measured at CALL time, never cached at mount. (The stage div itself is
-  //    never transformed — zoom scales the layers inside it — so measuring it
-  //    is safe even while zoomed, unlike the img-rect measure below.)
-  useEffect(() => {
-    imageStore.setNeedPxProvider(() => {
-      const el = stageRef.current;
-      if (!el) return null;
-      const h = el.getBoundingClientRect().height;
-      return h >= 1 ? h * window.devicePixelRatio : null;
-    });
-    return () => imageStore.setNeedPxProvider(undefined);
-  }, []);
-  // 2) stage resizes (strip/rail toggles, window resize) re-run the choice.
-  //    Deps re-attach when the loupe stage (re)mounts — compare/grid render
-  //    different bodies, so stageRef points elsewhere or nowhere there.
-  useEffect(() => {
-    if (phase !== "culling" || compareMode || gridVisible) return;
-    const el = stageRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => imageStore.reevaluateMid());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [phase, compareMode, gridVisible]);
-  // 3) DPR flips (window dragged 4K ↔ 1440p) — tier choice flips without a
-  //    restart. matchMedia('(resolution: Xdppx)') fires ONCE when the DPR
-  //    leaves the armed value, so the handler re-arms at the new DPR.
-  useEffect(() => {
-    let mql: MediaQueryList | null = null;
-    const onChange = () => {
-      imageStore.reevaluateMid();
-      arm();
-    };
-    const arm = () => {
-      mql?.removeEventListener("change", onChange);
-      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-      mql.addEventListener("change", onChange);
-    };
-    arm();
-    return () => mql?.removeEventListener("change", onChange);
-  }, []);
-
-  // EXIF metadata sink: ImageMetadata rides three wire paths (thumb decode,
-  // preview read, full-res bundle read). Each delivery replaces the per-path
-  // entry (a pre-seeded lrc-only entry must still gain its EXIF), EXCEPT two
-  // fields that must be carried forward from the previous entry whenever the
-  // incoming delivery lacks them — see mergeMeta for why (lrcRating: the
-  // bundle no longer reads the sidecar per navigation; phash: only the thumb
-  // path ever computes it, so a later preview/full read with phash: null
-  // must not wipe the standing near-duplicate signal Similar groups chain on).
-  useEffect(() => {
-    imageStore.setMetaSink((path, meta) => {
-      setMetadata((m) => ({ ...m, [path]: mergeMeta(m[path], meta) }));
-    });
-    return () => imageStore.setMetaSink(undefined);
-  }, []);
-
-  // Cursor → drives the store's full-res keep-window + thumb/bg prioritisation
-  // (nearest-first). Follows the challenger in compare, the cursor otherwise.
-  useEffect(() => {
-    imageStore.setCursor(compareMode ? challengerIndex : currentIndex, scrubbing);
-  }, [currentIndex, compareMode, challengerIndex, scrubbing]);
-
-  // Folder-trouble chip: the store latches once when several paths go
-  // terminal; any new path-set (re-open / append → reset) clears it.
-  useEffect(() => {
-    // Mid-probe ("checking"/"still") the retry flow owns the chip — the sink
-    // re-latches from anywhere else, including over a brief "reconnected".
-    imageStore.setTroubleSink(() =>
-      setFolderTrouble((s) => (s === "checking" || s === "still" ? s : "latched")),
-    );
-    return () => imageStore.setTroubleSink(undefined);
-  }, []);
-  useEffect(() => {
-    setFolderTrouble("hidden");
-  }, [images]);
+  // Folder-trouble chip + retry flow (NAS unmounted / sleep-wake) live in
+  // app/useFolderTrouble.
+  const { folderTrouble, retryUnreachableFolders } = useFolderTrouble({
+    images,
+    imagesRef,
+    rejectedSubfolder: settings.rejectedSubfolder,
+  });
 
   // Pin the compare pair's fulls for the whole compare session. The cursor
   // follows the CHALLENGER, so without the pin the champion — far from the
@@ -891,46 +737,6 @@ export default function App() {
     imageStore.requestZoomFull(p);
     return () => imageStore.unpinFull(p);
   }, [isZooming, compareMode, currentIndex, images]);
-
-  // Folder-trouble retry: re-run the scan as a reachability probe on every
-  // source folder, then re-arm the store's queues IN PLACE — same session,
-  // same cursor, no phase change — so a NAS reconnect self-heals without
-  // restarting the app. Still unreachable → the chip re-latches.
-  const folderRetryRunning = useRef(false);
-  const retryUnreachableFolders = useCallback(async () => {
-    // The chip disables itself while checking, but a double-click can land
-    // before the "checking" render — hard-guard reentry.
-    if (folderRetryRunning.current) return;
-    folderRetryRunning.current = true;
-    const seen = new Set<string>();
-    const folders: string[] = [];
-    for (const im of imagesRef.current) {
-      if (!seen.has(im.srcFolder)) {
-        seen.add(im.srcFolder);
-        folders.push(im.srcFolder);
-      }
-    }
-    try {
-      await runFolderRetry({
-        folders,
-        probe: (f) =>
-          invoke<ScanResult>("scan_folder", {
-            path: f,
-            ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
-          }),
-        setState: setFolderTrouble,
-        rearm: () => imageStore.rearm(),
-      });
-    } finally {
-      folderRetryRunning.current = false;
-    }
-  }, [settings.rejectedSubfolder]);
-
-  // Grid viewport range → store background-fill prioritisation (visible cells
-  // first). Wired to GridView's onViewportChange.
-  const handleGridViewport = useCallback((first: number, last: number) => {
-    imageStore.setGridRange(first, last);
-  }, []);
 
   // The recents key of the entry THIS session last wrote. A session's folder
   // set can grow (drop-append while staged), which changes its key — tracking
@@ -1318,8 +1124,7 @@ export default function App() {
     // Drop the undo/redo history with the session it belonged to. The stacks hold
     // imgIds + paths from THIS in-memory cull; the next-opened folder restarts
     // imgIds at 0, so a stray Ctrl+Z would otherwise replay a stale action against
-    // a re-used imgId and durably write the WRONG folder's sidecar. (Refs are
-    // stable; declared further down but only read when this callback runs.)
+    // a re-used imgId and durably write the WRONG folder's sidecar.
     undoStack.current = [];
     redoStack.current = [];
     setCompareMode(false);
@@ -1350,7 +1155,9 @@ export default function App() {
     resetZoom();
     setFeedback(null);
     setPhase("start");
-  }, [resetZoom]);
+    // undoStack/redoStack (refs) and setFeedback (setter) are identity-stable
+    // hook returns — listed only to satisfy exhaustive-deps.
+  }, [resetZoom, undoStack, redoStack, setFeedback]);
 
   // Leaving to home: refresh the session's recents entry with its final
   // counts, then discard the in-memory session and return to the start screen.
@@ -1633,287 +1440,9 @@ export default function App() {
     [visibleIndices, positionInFilter],
   );
 
-  const flashFeedback = useCallback((rating: Rating, imageId: number) => {
-    setFeedback({ rating, imageId, ts: Date.now() });
-    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
-    feedbackTimer.current = window.setTimeout(() => setFeedback(null), FEEDBACK_MS);
-  }, []);
-
-  // Durably write a rating's .xmp sidecar. Retries on failure (NAS blips happen),
-  // and if every attempt fails the path is recorded in failedWrites so the UI can
-  // flag it and the quit guard can refuse to lose it. The backend write is
-  // idempotent, so retries (and a later rating superseding this one) are safe.
-  // `rating === null` clears the rating (unrate) via clear_xmp_rating; otherwise
-  // it writes the rating. Both go through the same retry + failure tracking.
-  // Per-path serial write queue: each new persistRating chains after the prior
-  // write to the SAME path, so an Undo immediately after a rate can never lose
-  // the race with the original write (which used to fire-and-forget). Different
-  // paths still run in parallel (subject to backend bounds).
-  const writeQueue = useRef<Map<string, Promise<unknown>>>(new Map());
-  // Monotonic per-path write sequence. A write only owns the failed/saved verdict
-  // for a path while it's still the LATEST write to that path — otherwise an
-  // older write that exhausts its retries AFTER a newer write already succeeded
-  // would re-stamp a phantom "unsaved" failure (and falsely block quit).
-  const writeSeq = useRef<Map<string, number>>(new Map());
-
-  const persistRating = useCallback((path: string, rating: Rating | null) => {
-    const seq = (writeSeq.current.get(path) ?? 0) + 1;
-    writeSeq.current.set(path, seq);
-    const isLatest = () => writeSeq.current.get(path) === seq;
-
-    // A fresh write/clear for this path supersedes any earlier failure.
-    setFailedWrites((f) => {
-      if (!(path in f)) return f;
-      const next = { ...f };
-      delete next[path];
-      failedCountRef.current = Object.keys(next).length;
-      return next;
-    });
-    setSavingCount((c) => c + 1);
-    savingRef.current += 1; // synchronous: the close guard reads this, not lagged state
-    const cmd = rating === null ? "clear_xmp_rating" : "write_xmp_rating";
-    const args = rating === null ? { path } : { path, rating };
-
-    // tryWrite returns a promise that resolves on success, rejects only after
-    // every retry slot has been exhausted — so the queue holds the next write
-    // until ALL retries of this one have finished.
-    const tryWrite = (n: number): Promise<unknown> =>
-      invoke(cmd, args).catch((e) => {
-        if (n < WRITE_RETRY_DELAYS.length) {
-          return new Promise((resolve, reject) =>
-            window.setTimeout(() => tryWrite(n + 1).then(resolve, reject), WRITE_RETRY_DELAYS[n]),
-          );
-        }
-        throw e;
-      });
-
-    const prev = writeQueue.current.get(path) ?? Promise.resolve();
-    const next = prev
-      .then(
-        () => tryWrite(0),
-        () => tryWrite(0),
-      )
-      .finally(() => {
-        if (writeQueue.current.get(path) === next) writeQueue.current.delete(path);
-      });
-    writeQueue.current.set(path, next);
-
-    next.then(
-      () => {
-        setSavingCount((c) => c - 1);
-        savingRef.current -= 1;
-      },
-      (e) => {
-        setSavingCount((c) => c - 1);
-        savingRef.current -= 1;
-        // Only the latest write to this path may stamp a failure; a superseded
-        // older write failing must not resurrect an "unsaved" flag the newer
-        // (successful) write already cleared.
-        if (isLatest()) {
-          console.error(`${cmd} failed permanently`, path, e);
-          setFailedWrites((f) => {
-            const next = { ...f, [path]: rating };
-            failedCountRef.current = Object.keys(next).length;
-            return next;
-          });
-        }
-      },
-    );
-  }, []);
-
-  // Re-attempt every rating that exhausted its retries (triggered from the unsaved
-  // indicator or the quit guard).
-  const retryFailed = useCallback(() => {
-    Object.entries(failedWrites).forEach(([path, rating]) => persistRating(path, rating));
-  }, [failedWrites, persistRating]);
-
-  // savingRef / failedCountRef are maintained SYNCHRONOUSLY inside persistRating
-  // (above) rather than via a passive effect, so the once-registered close handler
-  // can never read a stale zero in the commit-lag window right after a rating
-  // keystroke — which would otherwise let the window close with a write in flight.
-
-  // Quit guard: never let the window close while a rating is still saving or has
-  // failed to save. Registered once; reads live state via refs. "cancel and warn"
-  // = cancel the CLOSE, never the write.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void getCurrentWindow()
-      .onCloseRequested((event) => {
-        if (savingRef.current > 0 || failedCountRef.current > 0) {
-          event.preventDefault();
-          quitShownAtRef.current = performance.now();
-          setQuitGuard(true);
-        }
-      })
-      .then((u) => {
-        unlisten = u;
-      });
-    return () => unlisten?.();
-  }, []);
-
   // ── Drag-and-drop: drop folders anywhere to open them ────────────────────
-  // Hover the window with folders → render the champagne dashed overlay on
-  // the home screen (the home content dims behind it). Drop → every dropped
-  // folder is scanned and staged together. Drops are ignored while the cull
-  // view is active (replacing the staged set mid-cull would lose state).
-  // openFoldersByPaths is captured fresh each render; we mirror it into a ref
-  // so the once-registered drag-drop listener uses the latest closure without
-  // unsubscribing and re-subscribing on every render (which would race with
-  // active drag events).
-  const [isDragOver, setIsDragOver] = useState(false);
-  const phaseRef = useRef(phase);
-  useEffect(() => {
-    phaseRef.current = phase;
-  }, [phase]);
-  const openFoldersByPathsRef = useRef(openFoldersByPaths);
-  useEffect(() => {
-    openFoldersByPathsRef.current = openFoldersByPaths;
-  }, [openFoldersByPaths]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void getCurrentWindow()
-      .onDragDropEvent((event) => {
-        const p = event.payload;
-        // Only react when the user is on a chrome screen (start/loading/etc).
-        // During an active cull we ignore drop events outright so a stray drop
-        // can't kill the in-progress session.
-        // Ignore drops while a cull is active OR a scan/analyze is in flight —
-        // appending then would race the in-flight staging / begin-culling.
-        if (
-          phaseRef.current === "culling" ||
-          phaseRef.current === "loading" ||
-          phaseRef.current === "analyzing"
-        ) {
-          if (p.type === "enter" || p.type === "over") setIsDragOver(false);
-          return;
-        }
-        if (p.type === "enter" || p.type === "over") {
-          setIsDragOver(true);
-        } else if (p.type === "leave") {
-          setIsDragOver(false);
-        } else if (p.type === "drop") {
-          setIsDragOver(false);
-          const dropped = (p.paths ?? []).filter(
-            (path): path is string => typeof path === "string" && path.length > 0,
-          );
-          if (dropped.length > 0) {
-            // Best-effort: stage every dropped folder in one batch; if a path
-            // is a file (not a folder), Rust's scan_folder will error and we'll
-            // surface that as a scan error via the regular failure path.
-            void openFoldersByPathsRef.current(dropped);
-          }
-        }
-      })
-      .then((u) => {
-        unlisten = u;
-      });
-    return () => unlisten?.();
-  }, []);
-
-  // Once a guarded close has flushed everything, finish closing automatically.
-  // destroyedRef makes destroy() fire at most once (a stray re-trigger during the
-  // async teardown would otherwise reject); .catch swallows the unhandled rejection.
-  useEffect(() => {
-    if (!(quitGuard && savingCount === 0 && failedCount === 0 && !destroyedRef.current)) return;
-    // Keep the guard on screen a beat even if the write finished in the same tick
-    // it appeared — otherwise destroy() fires on the overlay's first painted frame
-    // and the user never sees the "saving…" panel.
-    const elapsed = performance.now() - quitShownAtRef.current;
-    const t = window.setTimeout(
-      () => {
-        if (destroyedRef.current) return;
-        destroyedRef.current = true;
-        getCurrentWindow()
-          .destroy()
-          .catch(() => {});
-      },
-      Math.max(0, 350 - elapsed),
-    );
-    return () => window.clearTimeout(t);
-  }, [quitGuard, savingCount, failedCount]);
-
-  // ── Undo / redo of rating actions ────────────────────────────────────────
-  // Each action is a list of per-image changes so compound actions (champion
-  // wins/loses) revert atomically. Refs because the stacks themselves don't
-  // drive any render — only the rating writes they replay do.
-  const undoStack = useRef<UndoAction[]>([]);
-  const redoStack = useRef<UndoAction[]>([]);
-  const HISTORY_LIMIT = 100;
-
-  const recordAction = useCallback((action: UndoAction) => {
-    if (action.changes.length === 0) return;
-    undoStack.current.push(action);
-    if (undoStack.current.length > HISTORY_LIMIT) undoStack.current.shift();
-    redoStack.current = []; // a new action invalidates the redo branch
-  }, []);
-
-  // Apply a list of {id → rating} changes to state + durable XMP in one shot.
-  const applyChanges = useCallback(
-    (changes: { imgId: number; path: string; rating: Rating | undefined }[]) => {
-      setRatings((prev) => {
-        const next = { ...prev };
-        for (const c of changes) {
-          if (c.rating === undefined) delete next[c.imgId];
-          else next[c.imgId] = c.rating;
-        }
-        return next;
-      });
-      for (const c of changes) persistRating(c.path, c.rating ?? null);
-    },
-    [persistRating],
-  );
-
-  const undo = useCallback(() => {
-    const action = undoStack.current.pop();
-    if (!action) return;
-    applyChanges(action.changes.map((c) => ({ imgId: c.imgId, path: c.path, rating: c.before })));
-    // Restore the compare cursor for compound actions so Ctrl+Z lands you in the
-    // SAME pair you were judging (champion/challenger), not stranded somewhere else.
-    if (action.cursorBefore) {
-      setCompareMode(action.cursorBefore.compareMode);
-      // Sites are mutually exclusive — when undo restores compare-mode, peel
-      // grid so we don't end up rendering compare with grid lingering behind.
-      if (action.cursorBefore.compareMode) setGridVisible(false);
-      setChampionIndex(action.cursorBefore.championIndex);
-      setChallengerIndex(action.cursorBefore.challengerIndex);
-      setCurrentIndex(action.cursorBefore.currentIndex);
-      // Restore the nav back-stack snapshot too, so ESC after this undo pops the
-      // entry the user actually came from (the action's auto-exit may have popped
-      // it, leaving the live stack out of sync with the restored compare view).
-      if (action.cursorBefore.navStack) setNavStack(action.cursorBefore.navStack);
-    } else if (!compareMode) {
-      // For a compound (compare) action, changes[0] is the OLD champion that got
-      // rejected; the frame the user actually cares about is the crowned/kept
-      // one — the LAST change. (Identical to changes[0] for single-change actions.)
-      const landId = action.changes[action.changes.length - 1].imgId;
-      const idx = images.findIndex((im) => im.id === landId);
-      if (idx !== -1) setCurrentIndex(idx);
-    }
-    redoStack.current.push(action);
-  }, [applyChanges, compareMode, images]);
-
-  const redo = useCallback(() => {
-    const action = redoStack.current.pop();
-    if (!action) return;
-    applyChanges(action.changes.map((c) => ({ imgId: c.imgId, path: c.path, rating: c.after })));
-    // Compound compare actions snapshot where the crown LANDS (cursorAfter) so a
-    // redo re-crowns the NEW champion instead of leaving the old (now-rejected)
-    // one in the compare pane. Single-frame rates have no cursorAfter: land on the
-    // crowned/kept frame (last change) in the loupe, as before.
-    if (action.cursorAfter) {
-      setCompareMode(action.cursorAfter.compareMode);
-      if (action.cursorAfter.compareMode) setGridVisible(false);
-      setChampionIndex(action.cursorAfter.championIndex);
-      setChallengerIndex(action.cursorAfter.challengerIndex);
-      setCurrentIndex(action.cursorAfter.currentIndex);
-    } else if (!compareMode) {
-      const landId = action.changes[action.changes.length - 1].imgId;
-      const idx = images.findIndex((im) => im.id === landId);
-      if (idx !== -1) setCurrentIndex(idx);
-    }
-    undoStack.current.push(action);
-  }, [applyChanges, compareMode, images]);
+  // The overlay flag + once-registered drop listener live in app/useDragAndDrop.
+  const { isDragOver } = useDragAndDrop({ phase, openFoldersByPaths });
 
   const applyRating = useCallback(
     (rating: Rating) => {
@@ -3335,12 +2864,6 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
     };
   }, []);
 
