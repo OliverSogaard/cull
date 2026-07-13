@@ -11,18 +11,14 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
 import { Check, Star, X as XIcon } from "lucide-react";
 import type {
   AnalyzeProgress,
-  AnalyzeResult,
   FileOpResult,
-  ScanResult,
   Filter,
   Img,
   ImageMetadata,
   NavEntry,
-  NavSite,
   Phase,
   Rating,
 } from "./types";
@@ -47,11 +43,14 @@ import { zoomTransition } from "./components/pane/zoomTransition";
 import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
+import { useDecideCallbacks } from "./app/useDecideCallbacks";
 import { useDragAndDrop } from "./app/useDragAndDrop";
 import { useFolderTrouble } from "./app/useFolderTrouble";
 import { useImageStoreWiring } from "./app/useImageStoreWiring";
 import { useQuitGuard } from "./app/useQuitGuard";
 import { useRatingPersistence } from "./app/useRatingPersistence";
+import { useSessionLifecycle } from "./app/useSessionLifecycle";
+import { useSiteNavigation } from "./app/useSiteNavigation";
 import { useSmartDerivations } from "./app/useSmartDerivations";
 import { useUndoRedo } from "./app/useUndoRedo";
 
@@ -67,7 +66,6 @@ import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
-import { snapToFilter as snapToFilterPure } from "./utils/snap";
 import { pickSmartEmptyState } from "./utils/smartEmptyState";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
@@ -96,34 +94,6 @@ const NAV_HOLD_DELAY_MS = 280;
 // sizerSrc (the aspect-carrying transparent SVG) moved to utils/sizer.ts —
 // rendered by PhotoPane (which also owns the unzoom re-measure discipline).
 
-/**
- * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
- * before the per-image bundle read fills in real EXIF — kept centralized (and
- * frozen) so adding a metadata field only touches one place, not every seed.
- */
-const EMPTY_METADATA: ImageMetadata = Object.freeze({
-  capturedAt: null,
-  subSecMs: null,
-  camera: null,
-  lens: null,
-  focalLengthMm: null,
-  aperture: null,
-  shutterSeconds: null,
-  iso: null,
-  gpsLat: null,
-  gpsLon: null,
-  afXPct: null,
-  afYPct: null,
-  exposureBias: null,
-  whiteBalance: null,
-  driveMode: null,
-  pixelWidth: null,
-  pixelHeight: null,
-  fileSize: null,
-  lrcRating: null,
-  phash: null,
-});
-
 export default function App() {
   const [phase, setPhase] = useState<Phase>("start");
   const [folder, setFolder] = useState<string | null>(null);
@@ -139,11 +109,6 @@ export default function App() {
   useEffect(() => {
     imagesRef.current = images;
   }, [images]);
-  // Serialises folder opens: a scan already in flight makes any second open
-  // (drag-drop, recents, mount auto-open) a no-op until it settles.
-  const openBusyRef = useRef(false);
-  // Guards begin-culling against a double-click firing two analyze passes.
-  const analyzingRef = useRef(false);
   // Capture-time order from analyze_folder — preserved so sort modes can return.
   const [currentIndex, setCurrentIndex] = useState(0);
   const [ratings, setRatings] = useState<Record<number, Rating>>({});
@@ -738,339 +703,53 @@ export default function App() {
     return () => imageStore.unpinFull(p);
   }, [isZooming, compareMode, currentIndex, images]);
 
-  // The recents key of the entry THIS session last wrote. A session's folder
-  // set can grow (drop-append while staged), which changes its key — tracking
-  // the previous key lets the writer replace the stale entry instead of
-  // leaving both "[A]" and "[A, B]" rows behind.
-  const sessionRecentsKeyRef = useRef<string | null>(null);
-
-  // Replace this session's recents entry (removing the previous-keyed row if
-  // the folder set changed since the last write) and remember the new key.
-  const commitSessionRecent = useCallback(
-    (paths: string[], count: number, rated: number) => {
-      if (paths.length === 0) return;
-      const key = recentKey(paths);
-      const prevKey = sessionRecentsKeyRef.current;
-      if (prevKey && prevKey !== key) removeEntry(prevKey);
-      pushRecent({
-        paths,
-        count,
-        rated,
-        lastOpened: new Date().toISOString(),
-        done: count > 0 && rated === count,
-      });
-      sessionRecentsKeyRef.current = key;
-    },
-    [pushRecent, removeEntry],
-  );
-
-  // Write this session's single combined recents entry: all source folders in
-  // first-staged order, with combined count/rated across the whole set.
-  const writeSessionRecent = useCallback(
-    (imgs: Img[], ratingsMap: Record<number, Rating>) => {
-      if (imgs.length === 0) return;
-      const paths: string[] = [];
-      const seen = new Set<string>();
-      let rated = 0;
-      for (const im of imgs) {
-        if (!seen.has(im.srcFolder)) {
-          seen.add(im.srcFolder);
-          paths.push(im.srcFolder);
-        }
-        if (ratingsMap[im.id]) rated += 1;
-      }
-      commitSessionRecent(paths, imgs.length, rated);
-    },
-    [commitSessionRecent],
-  );
-
-  /**
-   * Scan known folder paths and stage their CR3s, appended in order. Same
-   * logic as `pickFolder` minus the OS picker — used by `pickFolder` after the
-   * user picks, by drag-drop, by recents clicks (which pass `fromRecentKey` so
-   * the session replaces that entry instead of duplicating it), and by the
-   * launch-time "open last folder" effect.
-   */
-  const openFoldersByPaths = useCallback(
-    async (picked: string[], opts?: { fromRecentKey?: string }) => {
-      // One scan at a time. A second open launched while one is in flight
-      // (drag-drop, recents, mount auto-open) would race the append and the
-      // begin-culling snapshot — serialise every caller through this gate.
-      if (openBusyRef.current) return;
-      // NFC-normalize at the single folder-path entry point: macOS file APIs
-      // can hand back decomposed Unicode (NFD: "ø" = "o" + combining stroke),
-      // which would fork recents keys / cache keys / lastDir comparisons for
-      // Danish folder names. Everything downstream sees one canonical form.
-      const folders = picked
-        .filter((p) => typeof p === "string" && p.length > 0)
-        .map((p) => p.normalize("NFC"));
-      if (folders.length === 0) return;
-      openBusyRef.current = true;
-      setPickerBusy(true);
-      setScanFailures(null);
-      setAnalyzeError(null);
-      // A recents click re-opens a saved session: seed the session key so the
-      // staged set's write-back REPLACES that entry rather than duplicating it.
-      if (opts?.fromRecentKey) sessionRecentsKeyRef.current = opts.fromRecentKey;
-      let totalAdded = 0;
-      let totalIgnored = 0;
-      const okFolders: string[] = [];
-      const failures: ScanFailure[] = [];
-      try {
-        setPhase("loading");
-        for (const folderPath of folders) {
-          // Per-folder label so the loading screen tracks the batch as it scans.
-          setPendingFolder(folderPath);
-          try {
-            const scan = await invoke<ScanResult>("scan_folder", {
-              path: folderPath,
-              ignoreSubdir: normalizeRejectedSubfolder(settings.rejectedSubfolder),
-            });
-            const paths = scan.paths.map((p) => p.normalize("NFC"));
-            totalIgnored += scan.ignored;
-
-            // Persist the last-used dir only AFTER a successful scan, so a folder
-            // that fails to open never becomes the picker default / auto-open target.
-            localStorage.setItem("cull:lastDir", folderPath);
-
-            // APPEND, never replace. Read the prior set from imagesRef and update it
-            // synchronously alongside setImages, so dedupe + ids are computed against
-            // the freshest set even if two opens land back-to-back. An empty folder
-            // appends nothing rather than wiping the set.
-            const prev = imagesRef.current;
-            const existing = new Set(prev.map((im) => im.path));
-            const additions = paths.filter((p) => !existing.has(p));
-            const startId = prev.length;
-            const appended = additions.map((p, i) => ({
-              id: startId + i,
-              path: p,
-              filename: basename(p),
-              srcFolder: folderPath,
-            }));
-            if (appended.length > 0) {
-              imagesRef.current = [...prev, ...appended];
-              setImages(imagesRef.current);
-            }
-            totalAdded += additions.length;
-            okFolders.push(folderPath);
-          } catch (e) {
-            const msg = String(e);
-            // Evict a single-folder entry only when its folder is definitively
-            // gone (deleted / not a directory). A transient NAS/SMB blip must
-            // NOT drop a valid, frequently-used folder — the backend tags
-            // permanent vs transient.
-            const permanent = /not found|not a directory/i.test(msg);
-            if (permanent) removeEntry(recentKey([folderPath]));
-            failures.push({ path: folderPath, msg, permanent });
-          }
-        }
-
-        if (okFolders.length > 0) {
-          setLastAdded(totalAdded);
-          setLastIgnored(totalIgnored);
-          setLastBatchFolders(okFolders);
-          // `folder` keeps its "most recently opened" meaning — it labels the
-          // loading fallback and seeds the finish dialog's default subfolder.
-          setFolder(okFolders[okFolders.length - 1]);
-        }
-
-        if (opts?.fromRecentKey) {
-          if (failures.some((f) => !f.permanent)) {
-            // Part of the saved set failed transiently — keep its entry intact
-            // so the user can retry the FULL set later. Whatever did load
-            // writes a fresh entry under its own (different) key below.
-            sessionRecentsKeyRef.current = null;
-          } else if (okFolders.length === 0 && imagesRef.current.length === 0) {
-            // Every folder of the saved set is permanently gone — the entry
-            // can never open anything again.
-            removeEntry(opts.fromRecentKey);
-            sessionRecentsKeyRef.current = null;
-          }
-        }
-
-        // Recents are NOT written at stage time — only beginCulling (and the
-        // in-cull refreshes) record a session, so a mis-pick abandoned with
-        // Esc leaves no trace and a re-opened recent that's Esc'd keeps its
-        // original entry untouched. One exception: a re-opened recent whose
-        // folders scanned fine but are now EMPTY can never reach culling, so
-        // its existing entry is updated in place to a 0 count here instead of
-        // advertising a stale total forever. Gated on the seeded key having
-        // survived the failure handling above, so a partially-failed re-open
-        // never spawns a fresh count-0 entry for a set that was never culled.
-        if (
-          sessionRecentsKeyRef.current === opts?.fromRecentKey &&
-          opts?.fromRecentKey &&
-          imagesRef.current.length === 0 &&
-          okFolders.length > 0
-        ) {
-          commitSessionRecent(okFolders, 0, 0);
-        }
-
-        if (failures.length > 0) {
-          setScanFailures(failures);
-        }
-
-        // Go straight to STAGED after the (sub-millisecond) scans — don't block
-        // on preview decode. The current image preloads in the background so
-        // "begin culling" is still instant by the time the user clicks it. A
-        // successful scan that found nothing still lands on staged so the
-        // "+0 · no new CR3 files" feedback is visible; only a batch where
-        // every folder failed (and nothing was already staged) returns home.
-        setPhase(imagesRef.current.length > 0 || okFolders.length > 0 ? "staged" : "start");
-      } finally {
-        setPendingFolder(null);
-        setPickerBusy(false);
-        openBusyRef.current = false;
-      }
-    },
-    [commitSessionRecent, removeEntry, settings.rejectedSubfolder],
-  );
-
-  const pickFolder = useCallback(async () => {
-    if (pickerBusy) return; // a second click can't queue another dialog
-    setPickerBusy(true);
-    try {
-      // Open straight into the last-used folder. On a machine with mapped
-      // network drives, letting the picker build its default view (Quick
-      // Access / Network) makes it enumerate the NAS before it can even
-      // paint — pointing at a concrete path skips that.
-      const lastDir = localStorage.getItem("cull:lastDir") ?? undefined;
-      const picked = await open({ directory: true, multiple: true, defaultPath: lastDir });
-      if (!picked) return; // cancelled — stay put
-      // The multiple:true overload types the result as string[] | null, but
-      // normalize defensively in case a platform dialog hands back a string.
-      const folders = Array.isArray(picked) ? picked : [picked];
-      // Hand off to the shared open-by-paths. (It also flips pickerBusy on/off,
-      // which is fine — setState is idempotent.)
-      await openFoldersByPaths(folders);
-    } finally {
-      setPickerBusy(false);
-    }
-  }, [pickerBusy, openFoldersByPaths]);
-
-  // Launch-time auto-open: if the user prefers it and a last folder is
-  // remembered, skip the home screen and load it straight away. Runs once on
-  // app mount; intentionally NOT triggered every time settings.openLastFolderOnLaunch
-  // flips, since that would re-open the folder mid-cull.
-
-  useEffect(() => {
-    if (!settings.openLastFolderOnLaunch) return;
-    const lastDir = localStorage.getItem("cull:lastDir");
-    if (!lastDir) return;
-    // Reopen the full last SESSION when the last-used dir belongs to one —
-    // restoring just lastDir out of a multi-folder session would fork a
-    // subset entry in recents. (recentFolders is loaded synchronously from
-    // localStorage, so the mount-time value is complete.)
-    const session = recentFolders.find((r) => r.paths.includes(lastDir));
-    if (session) {
-      void openFoldersByPaths(session.paths, { fromRecentKey: recentKey(session.paths) });
-    } else {
-      void openFoldersByPaths([lastDir]);
-    }
-    // Intentional empty deps — mount-only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Persist the recents' rated/done counts WHILE culling, not only on the way
-  // back home. leaveToHome already records them, but quitting straight from the
-  // cull view (closing the window) never hit that path — so a later relaunch
-  // showed the stale "327 / 372" from when the folder was opened. Debounced so a
-  // rating burst writes once after it settles; localStorage.setItem is sync, so
-  // whatever's on disk when the window dies is current to within the debounce.
-  useEffect(() => {
-    if (phase !== "culling" || images.length === 0) return;
-    const t = window.setTimeout(() => writeSessionRecent(images, ratings), 600);
-    return () => window.clearTimeout(t);
-  }, [phase, images, ratings, writeSessionRecent]);
-
-  // Begin culling: sort the staged set by capture time, restore ratings, then
-  // enter the cull view (warming the first screenful of previews first).
-  const beginCulling = useCallback(async () => {
-    if (images.length === 0) return;
-    if (analyzingRef.current) return; // ignore a double-click — one analyze pass
-    analyzingRef.current = true;
-    setAnalyzeError(null);
-    setProgress({ done: 0, total: images.length, phase: "reading" });
-    setPhase("analyzing");
-    const unlisten = await listen<AnalyzeProgress>("analyze-progress", (e) =>
-      setProgress(e.payload),
-    );
-    let ok = true;
-    try {
-      const result = await invoke<AnalyzeResult>("analyze_folder", {
-        paths: images.map((im) => im.path),
-        concurrentRestore: profile.concurrentRestore,
-      });
-
-      const sorted = result.order.map((i) => images[i]);
-      // ratings are indexed by the ORIGINAL input order; key them by stable id.
-      const restoredRatings: Record<number, Rating> = {};
-      result.ratings.forEach((r, origIdx) => {
-        if (r) restoredRatings[images[origIdx].id] = r as Rating;
-      });
-
-      // Seed the metadata map with the LrC star ratings from the sidecar pass
-      // we just did. The grid renders before per-image bundles arrive, so this
-      // lets the corner ★ badge appear immediately for any image that already
-      // had an .xmp sidecar. The bundle read later fills in the rest of meta
-      // (camera/lens/EXIF); this seed is the ONLY source of lrcRating — the
-      // metaSink merge carries it forward when bundle meta lands without one.
-      const seededMeta: Record<string, ImageMetadata> = {};
-      const lrcRatings = result.lrcRatings ?? [];
-      lrcRatings.forEach((lrc, origIdx) => {
-        if (lrc != null && lrc > 0) {
-          seededMeta[images[origIdx].path] = { ...EMPTY_METADATA, lrcRating: lrc };
-        }
-      });
-
-      // ids ride along, so the rating map stays valid post-sort.
-      setImages(sorted);
-      setRatings(restoredRatings);
-      setMetadata((prev) => ({ ...seededMeta, ...prev }));
-      // Point the image store at the (sorted) culling set: revoke any prior
-      // full-res blobs, keep thumbs, and kick off background thumb fill in
-      // cursor-outward / grid-viewport order. Same array we just set.
-      imageStore.reset(sorted.map((im) => im.path));
-      // Same-session folder switch: drop overlays computed for the previous
-      // set (resetSession isn't on this path; the store generation just moved).
-      overlayService.reset();
-
-      // Refresh the home-screen recents entry with the restored rated counts
-      // straight off the sidecar pass — so reopening home shows "327 / 372"
-      // immediately, even before the user touches a key.
-      writeSessionRecent(sorted, restoredRatings);
-
-      // Resume where you stopped: land on the first unrated frame in capture
-      // order. All-rated or fresh folder → start at top.
-      const resumeAt = sorted.findIndex((img) => !restoredRatings[img.id]);
-      setCurrentIndex(resumeAt === -1 ? 0 : resumeAt);
-      // defaultFilter applies AFTER resume: if it excludes the resumed frame, the
-      // auto-jump effect re-homes the cursor to the nearest in-filter one — i.e.
-      // defaultFilter intentionally wins over resume-at-first-unrated.
-      setFilter(settings.defaultFilter);
-
-      // Reset overlay state to the user's preferred defaults. T/I/H/P/O can
-      // still toggle these mid-cull; the settings just set the starting point.
-      setThumbsVisible(settings.defaultThumbsVisible);
-      setExifVisible(settings.defaultExifVisible);
-      setClippingVisible(settings.defaultClippingVisible);
-      setPeakingVisible(settings.defaultPeakingVisible);
-      setCompositionVisible(settings.defaultCompositionVisible);
-      // Enter the cull view immediately — no big concurrent warm-up. The bounded
-      // read pool loads the current frame (priority 0) and its prefetch window as
-      // soon as the view mounts, so there's no entry-time read stampede.
-    } catch (e) {
-      // Don't drop the user into an unsorted, ratings-not-restored cull: surface
-      // the error and return to the staged screen so they can retry.
-      ok = false;
-      console.error("analyze_folder failed", e);
-      setAnalyzeError(String(e));
-    } finally {
-      unlisten();
-      analyzingRef.current = false;
-      setPhase(ok ? "culling" : "staged");
-    }
-  }, [images, profile.concurrentRestore, settings, writeSessionRecent]);
+  // ── Session lifecycle ─────────────────────────────────────────────────────
+  // Staging (picker / drag-drop / recents / launch auto-open), begin-culling
+  // (analyze + sort + rating restore), the session's recents write-back, and
+  // session teardown (reset / leave-to-home) live in app/useSessionLifecycle.
+  const { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome } =
+    useSessionLifecycle({
+      images,
+      imagesRef,
+      ratings,
+      settings,
+      phase,
+      pickerBusy,
+      profile,
+      recentFolders,
+      pushRecent,
+      removeEntry,
+      undoStack,
+      redoStack,
+      resetZoom,
+      setFeedback,
+      setImages,
+      setRatings,
+      setMetadata,
+      setCurrentIndex,
+      setFilter,
+      setPhase,
+      setPendingFolder,
+      setPickerBusy,
+      setScanFailures,
+      setAnalyzeError,
+      setLastAdded,
+      setLastIgnored,
+      setLastBatchFolders,
+      setFolder,
+      setProgress,
+      setThumbsVisible,
+      setExifVisible,
+      setClippingVisible,
+      setPeakingVisible,
+      setCompositionVisible,
+      setCompareMode,
+      setGridVisible,
+      setNavStack,
+      setSelectedIndices,
+      setSelectionAnchor,
+      setConfirmHome,
+    });
 
   // Wipe the multi-selection state — called whenever the user leaves the grid
   // context (site switch, ESC, opening another folder). Cleanly decoupled from
@@ -1110,62 +789,6 @@ export default function App() {
   useEffect(() => {
     if (!gridVisible) imageStore.clearGridRange();
   }, [gridVisible]);
-
-  // Esc out of review → discard the in-memory session and return Home.
-  // Successfully-saved ratings live on in the .xmp sidecars, so reopening the
-  // folder restores them (a write that's still failing stays flagged for manual
-  // retry on the home screen — it's not in the sidecar yet).
-  const resetSession = useCallback(() => {
-    // Session end: revoke ALL blob URLs (thumbs + full-res) and clear the store.
-    imageStore.hardReset();
-    setImages([]);
-    setMetadata({});
-    setRatings({});
-    // Drop the undo/redo history with the session it belonged to. The stacks hold
-    // imgIds + paths from THIS in-memory cull; the next-opened folder restarts
-    // imgIds at 0, so a stray Ctrl+Z would otherwise replay a stale action against
-    // a re-used imgId and durably write the WRONG folder's sidecar.
-    undoStack.current = [];
-    redoStack.current = [];
-    setCompareMode(false);
-    setGridVisible(false);
-    setNavStack([]);
-    setCurrentIndex(0);
-    setFilter("all");
-    setSelectedIndices(new Set());
-    setSelectionAnchor(null);
-    setFolder(null);
-    setPendingFolder(null);
-    setScanFailures(null);
-    setAnalyzeError(null);
-    setLastAdded(0);
-    setLastIgnored(0);
-    setLastBatchFolders([]);
-    // The next session is a fresh folder set — it must write a NEW recents
-    // entry, not replace this one's.
-    sessionRecentsKeyRef.current = null;
-    setClippingVisible(false);
-    setPeakingVisible(false);
-    setCompositionVisible(false);
-    setExifVisible(false);
-    // One call drops every overlay cache + request-set (the per-family clears
-    // that used to live here); in-flight probes die on the generation bump
-    // from hardReset() above.
-    overlayService.reset();
-    resetZoom();
-    setFeedback(null);
-    setPhase("start");
-    // undoStack/redoStack (refs) and setFeedback (setter) are identity-stable
-    // hook returns — listed only to satisfy exhaustive-deps.
-  }, [resetZoom, undoStack, redoStack, setFeedback]);
-
-  // Leaving to home: refresh the session's recents entry with its final
-  // counts, then discard the in-memory session and return to the start screen.
-  const leaveToHome = useCallback(() => {
-    writeSessionRecent(images, ratings);
-    setConfirmHome(false);
-    resetSession();
-  }, [images, ratings, resetSession, writeSessionRecent]);
 
   // Open the act-on-cull dialog with fresh results.
   const openActions = useCallback(() => {
@@ -1444,580 +1067,62 @@ export default function App() {
   // The overlay flag + once-registered drop listener live in app/useDragAndDrop.
   const { isDragOver } = useDragAndDrop({ phase, openFoldersByPaths });
 
-  const applyRating = useCallback(
-    (rating: Rating) => {
-      // Selection branch: any non-empty grid selection rates the SELECTED SET
-      // (one undo entry, sidecars in parallel), so the rating always lands on the
-      // tinted cells — never the cursor (which can diverge after a ctrl-toggle).
-      // No auto-advance — the user is acting on a set. Intersect with the active
-      // filter so a rating never hits a selected frame that's filtered out /
-      // off-screen (matches the single-frame branch's pos===-1 guard below).
-      if (gridVisible && selectedIndices.size >= 1) {
-        const visibleSet = new Set(visibleIndices);
-        const changes = Array.from(selectedIndices)
-          .filter((idx) => visibleSet.has(idx))
-          .map((idx) => images[idx])
-          .filter((im): im is Img => Boolean(im))
-          .map((im) => ({
-            imgId: im.id,
-            path: im.path,
-            before: ratings[im.id],
-            after: rating,
-          }))
-          // Skip cells already at this rating — no redundant write, no dead
-          // before===after entry in the action (mirrors unrateCurrent's guard).
-          .filter((c) => c.before !== c.after);
-        if (changes.length === 0) return;
-        recordAction({ changes });
-        setRatings((prev) => {
-          const next = { ...prev };
-          for (const c of changes) next[c.imgId] = c.after;
-          return next;
-        });
-        for (const c of changes) persistRating(c.path, c.after);
-        // Feedback flashes once on the current cell so the user sees confirmation
-        // without N popping circles. (Grid doesn't render the feedback overlay
-        // per-cell anyway — it's a single center burst.)
-        const cur = images[currentIndex];
-        if (cur) flashFeedback(rating, cur.id);
-        return;
-      }
+  // ── Site navigation: loupe / compare / grid ───────────────────────────────
+  // Sites are mutually exclusive — only one renders at a time. The back-stack,
+  // L/C/G switching, ESC pops, compare-pair snapshots, and challenger cycling
+  // live in app/useSiteNavigation.
+  const { goToSite, goBack, cycleChallenger } = useSiteNavigation({
+    images,
+    ratings,
+    visibleIndices,
+    navStack,
+    setNavStack,
+    compareMode,
+    setCompareMode,
+    gridVisible,
+    setGridVisible,
+    currentIndex,
+    setCurrentIndex,
+    championIndex,
+    setChampionIndex,
+    challengerIndex,
+    setChallengerIndex,
+    selectedIndices,
+    clearMultiSelection,
+    findUnrated,
+    nearestUnrated,
+    resetZoom,
+    setConfirmHome,
+  });
 
-      const cur = images[currentIndex];
-      if (!cur) return;
-      const pos = visibleIndices.indexOf(currentIndex);
-      // The cursor can fall outside the active filter (empty filter, or the
-      // last matching frame just rated away). Every site then shows a no-match
-      // screen instead of the photo — loupe's render switches on this exact
-      // predicate — so rating keys must not touch the invisible cursor frame:
-      // rating something you can't see is never right.
-      if (pos === -1) return;
-      const nextTarget =
-        pos !== -1 && pos + 1 < visibleIndices.length ? visibleIndices[pos + 1] : null;
-      const nextImg = nextTarget !== null ? images[nextTarget] : null;
-      // Flash the verdict on the INCOMING frame's id: the full-frame wash is keyed
-      // to the current frame, which the advance below makes nextImg, so keying it to
-      // the outgoing cur.id meant the wash was wiped the instant we advanced.
-      const flashId = (nextImg ?? cur).id;
-
-      // Rate-while-zoomed: the advance CARRIES the zoom (Space is still held).
-      // Pan resets here so the next frame anchors at its own AF point, and the
-      // swap lands at scale with no glide (zoomSwapInstant). The reset effect
-      // consumes the one-shot flag instead of dropping the zoom.
-      const advanceTo = (target: number | null) => {
-        if (target === null) return;
-        if (isZoomingRef.current) {
-          keepZoomOnAdvanceRef.current = true;
-          setZoomSwapInstant(true);
-          setPanOffset({ x: 0, y: 0 });
-        }
-        setCurrentIndex(target);
-        if (isZoomingRef.current) {
-          // Sequential swap: release the outgoing frame's ~130 MB zoom raster
-          // BEFORE the incoming one decodes — a carried advance never holds
-          // two fulls at once (the jetsam-kill class). The prefetched next
-          // full survives (it IS the target). Runs AFTER the last setState:
-          // the store's invalidate forces a SYNC React flush, and flushing
-          // mid-way rendered a half-updated cursor/ratings pair (the
-          // compare-strip crash of 2026-07-07).
-          const targetPath = images[target]?.path;
-          if (targetPath) imageStore.dropZoomFullsExcept([targetPath]);
-        }
-      };
-
-      // Re-pressing the same verdict on an already-rated frame changes nothing on
-      // disk or in state: skip the redundant sidecar write (an fsync round-trip on
-      // the NAS) and the dead before===after undo entry (which would also wipe a
-      // pending redo). Still flash + advance so the keyboard-fast flow is unchanged.
-      if (ratings[cur.id] === rating) {
-        flashFeedback(rating, flashId);
-        advanceTo(nextTarget);
-        return;
-      }
-
-      recordAction({
-        changes: [{ imgId: cur.id, path: cur.path, before: ratings[cur.id], after: rating }],
-      });
-      setRatings((prev) => ({ ...prev, [cur.id]: rating }));
-      flashFeedback(rating, flashId);
-      persistRating(cur.path, rating); // durable write with retry + failure tracking
-
-      advanceTo(nextTarget);
-    },
-    [
+  // The rating decides — single-frame / grid-selection rating and the three
+  // compare decides, with their load-bearing setState-then-dropZoomFullsExcept
+  // sequencing — live in app/useDecideCallbacks.
+  const { applyRating, unrateCurrent, challengerLoses, challengerKeptBoth, challengerWins } =
+    useDecideCallbacks({
+      images,
+      ratings,
+      setRatings,
+      currentIndex,
+      setCurrentIndex,
+      championIndex,
+      setChampionIndex,
+      challengerIndex,
+      setChallengerIndex,
+      visibleIndices,
       gridVisible,
       selectedIndices,
-      images,
-      currentIndex,
-      visibleIndices,
-      ratings,
+      navStackRef,
+      isZoomingRef,
+      keepZoomOnAdvanceRef,
+      setZoomSwapInstant,
+      setPanOffset,
       flashFeedback,
       persistRating,
       recordAction,
-    ],
-  );
-
-  // Unrate (u): clear the current frame's rating and delete the rating data we
-  // wrote. A correction, not a verdict — stay on the frame (don't advance). No-op
-  // if it's already unrated, so we never touch a sidecar for nothing.
-  // In grid with a non-empty selection, clears every selected frame's rating
-  // (skipping already-unrated ones so the undo stack only carries real reverts),
-  // intersected with the active filter so it never touches an off-screen frame.
-  const unrateCurrent = useCallback(() => {
-    if (gridVisible && selectedIndices.size >= 1) {
-      const visibleSet = new Set(visibleIndices);
-      const changes = Array.from(selectedIndices)
-        .filter((idx) => visibleSet.has(idx))
-        .map((idx) => images[idx])
-        .filter((im): im is Img => Boolean(im) && ratings[im.id] !== undefined)
-        .map((im) => ({
-          imgId: im.id,
-          path: im.path,
-          before: ratings[im.id],
-          after: undefined as Rating | undefined,
-        }));
-      if (changes.length === 0) return;
-      recordAction({ changes });
-      setRatings((prev) => {
-        const next = { ...prev };
-        for (const c of changes) delete next[c.imgId];
-        return next;
-      });
-      for (const c of changes) persistRating(c.path, null);
-      return;
-    }
-
-    const cur = images[currentIndex];
-    if (!cur || !ratings[cur.id]) return;
-    // Same off-screen guard as applyRating: with the cursor outside the active
-    // filter the photo isn't displayed (no-match screen), so `u` must not
-    // silently strip a hidden frame's rating.
-    if (visibleIndices.indexOf(currentIndex) === -1) return;
-    recordAction({
-      changes: [{ imgId: cur.id, path: cur.path, before: ratings[cur.id], after: undefined }],
-    });
-    setRatings((prev) => {
-      const next = { ...prev };
-      delete next[cur.id];
-      return next;
-    });
-    persistRating(cur.path, null); // durable clear (delete sidecar / strip rating)
-  }, [
-    gridVisible,
-    selectedIndices,
-    visibleIndices,
-    images,
-    currentIndex,
-    ratings,
-    persistRating,
-    recordAction,
-  ]);
-
-  // ── Site navigation: loupe / compare / grid ───────────────────────────────
-  // Sites are mutually exclusive — only one renders at a time. L/C/G switch
-  // sites and push the previous one onto a back-stack; ESC pops the stack.
-  // Pressing the current site's key is a no-op (you can only leave via another
-  // site key or ESC). Compare entries snapshot the champion/challenger so ESC
-  // back into compare restores the same pair.
-
-  // Snap an image index to the nearest member of the current visible filter,
-  // so a frame the filter no longer admits (e.g. a freshly-kept image while
-  // filtered to UNRATED) doesn't leave loupe/grid with no current cell.
-  // Pure logic + its tests live in utils/snap; this just binds the live deps.
-  const snapToFilter = useCallback(
-    (idx: number): number => snapToFilterPure(idx, visibleIndices, images.length),
-    [images.length, visibleIndices],
-  );
-
-  // Resolve a saved compare snapshot's challenger. If the saved one was rated
-  // since (so it's no longer eligible), advance to the next unrated. Returns
-  // -1 if no unrated remains anywhere (snapshot is unrestorable).
-  const reviveChallenger = useCallback(
-    (champ: number, savedChall: number): number => {
-      if (
-        savedChall >= 0 &&
-        savedChall < images.length &&
-        savedChall !== champ &&
-        !ratings[images[savedChall].id]
-      ) {
-        return savedChall;
-      }
-      return nearestUnrated(champ, ratings, champ);
-    },
-    [images, ratings, nearestUnrated],
-  );
-
-  // Build a NavEntry for the SITE WE'RE LEAVING — compare snapshots its pair
-  // so ESC back can restore it.
-  const buildNavEntry = useCallback(
-    (from: NavSite): NavEntry =>
-      from === "compare"
-        ? { site: "compare", champ: championIndex, chall: challengerIndex }
-        : { site: from },
-    [championIndex, challengerIndex],
-  );
-
-  // L/C/G entry point. Pressing the current site's key is a no-op (you can
-  // only switch by pressing one of the OTHER site keys, or pop with ESC).
-  const goToSite = useCallback(
-    (target: NavSite) => {
-      const current: NavSite = compareMode ? "compare" : gridVisible ? "grid" : "loupe";
-      if (target === current) return;
-
-      // Entering compare needs an eligible challenger; bail (without pushing
-      // a stack entry) if there isn't one, so the back-stack stays meaningful.
-      if (target === "compare") {
-        const champ = currentIndex;
-        if (!images[champ]) return;
-        // Don't pin a rejected frame as champion — goBack's compare-restore
-        // refuses to reseat a reject champion, so allowing it on entry would be
-        // inconsistent (and would re-reject it as a no-op on the next Enter).
-        if (ratings[images[champ].id] === "reject") return;
-        const firstChall = nearestUnrated(champ, ratings, champ);
-        if (firstChall === -1) return;
-        setNavStack((s) => [...s, buildNavEntry(current)]);
-        setChampionIndex(champ);
-        setChallengerIndex(firstChall);
-        setCompareMode(true);
-        setGridVisible(false);
-        resetZoom();
-        return;
-      }
-
-      // Leaving compare → land the cursor on the champion (the latest pick).
-      if (current === "compare") {
-        setCurrentIndex(snapToFilter(championIndex));
-      }
-      setNavStack((s) => [...s, buildNavEntry(current)]);
-      setCompareMode(false);
-      setGridVisible(target === "grid");
-      resetZoom();
-    },
-    [
-      compareMode,
-      gridVisible,
-      currentIndex,
-      championIndex,
-      images,
-      ratings,
-      nearestUnrated,
-      buildNavEntry,
-      snapToFilter,
-      resetZoom,
-    ],
-  );
-
-  // ESC. Pop one nav entry and navigate back. Empty stack at loupe → home
-  // confirm (the only "site above loupe" is leaving the cull entirely). Empty
-  // stack at compare/grid (shouldn't normally happen, but defends against
-  // edge cases) falls back to loupe.
-  const goBack = useCallback(
-    (landIndex?: number) => {
-      // ESC in grid with a multi-selection clears the selection first, instead
-      // of popping the nav stack. The user almost certainly wants "deselect"
-      // before "go back", so we make the cheap intent succeed first.
-      if (gridVisible && selectedIndices.size > 0) {
-        clearMultiSelection();
-        return;
-      }
-      // When leaving compare, land on the caller's explicit index if provided (e.g.
-      // the freshly-crowned champion), else the current champion. The closure's
-      // championIndex alone can be stale (the just-rejected frame) on auto-exit.
-      const compareLanding = () =>
-        setCurrentIndex(snapToFilter(landIndex != null ? landIndex : championIndex));
-      if (navStack.length === 0) {
-        if (compareMode || gridVisible) {
-          if (compareMode) compareLanding();
-          setCompareMode(false);
-          setGridVisible(false);
-          resetZoom();
-        } else {
-          setConfirmHome(true);
-        }
-        return;
-      }
-
-      const entry = navStack[navStack.length - 1];
-      setNavStack((s) => s.slice(0, -1));
-
-      // Leaving compare? Land on the explicit/champion landing.
-      if (compareMode) compareLanding();
-
-      if (entry.site === "compare") {
-        // Only restore the saved pair if its champion is still a sensible keeper.
-        // If it was rejected since the entry was saved (lost a later compare, or was
-        // re-rated/undone), don't reseat a reject in the champion slot — fall through
-        // to loupe at the latest champion.
-        const champImg = images[entry.champ];
-        const champValid = champImg && ratings[champImg.id] !== "reject";
-        const chall = champValid ? reviveChallenger(entry.champ, entry.chall) : -1;
-        if (chall === -1) {
-          // Saved compare is unrestorable (champion no longer a keeper, or no
-          // unrated challenger remains) — fall through to loupe at the latest champion.
-          setCompareMode(false);
-          setGridVisible(false);
-        } else {
-          setChampionIndex(entry.champ);
-          setChallengerIndex(chall);
-          setCompareMode(true);
-          setGridVisible(false);
-        }
-      } else {
-        setCompareMode(false);
-        setGridVisible(entry.site === "grid");
-      }
-      resetZoom();
-    },
-    [
-      navStack,
-      compareMode,
-      gridVisible,
-      championIndex,
-      snapToFilter,
-      reviveChallenger,
-      selectedIndices,
-      clearMultiSelection,
-      images,
-      ratings,
-      resetZoom,
-    ],
-  );
-
-  // ← / → → move the challenger to the next/previous unrated frame (champion skipped).
-  const cycleChallenger = useCallback(
-    (dir: 1 | -1, step = 1): boolean => {
-      // Walk up to `step` unrated frames in ONE call: accelerated scrub can't
-      // loop the single-step version — it reads this render's challengerIndex,
-      // so repeated calls in one tick recompute the same target.
-      let cur = challengerIndex;
-      let landed = -1;
-      for (let k = 0; k < step; k++) {
-        const next = findUnrated(cur, dir, ratings, championIndex);
-        if (next === -1) break;
-        landed = next;
-        cur = next;
-      }
-      if (landed !== -1) {
-        setChallengerIndex(landed);
-        return true;
-      }
-      return false; // no more unrated in this direction
-    },
-    [challengerIndex, championIndex, ratings, findUnrated],
-  );
-
-  // Backspace → challenger loses (Reject); champion stays; advance to next unrated.
-  const challengerLoses = useCallback(() => {
-    const challImg = images[challengerIndex];
-    if (!challImg) return;
-    const next: Record<number, Rating> = { ...ratings, [challImg.id]: "reject" };
-    const nextChallenger = nearestUnrated(challengerIndex, next, championIndex);
-    const exiting = nextChallenger === -1;
-    recordAction({
-      changes: [
-        { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "reject" },
-      ],
-      cursorBefore: {
-        compareMode: true,
-        championIndex,
-        challengerIndex,
-        currentIndex,
-        navStack: [...navStackRef.current],
-      },
-      // Champion is unchanged; redo just lands on the next challenger (or leaves
-      // compare on the last-frame auto-exit, landing on the champion).
-      cursorAfter: exiting
-        ? { compareMode: false, championIndex, challengerIndex, currentIndex: championIndex }
-        : { compareMode: true, championIndex, challengerIndex: nextChallenger, currentIndex },
-    });
-    flashFeedback("reject", challImg.id);
-    persistRating(challImg.path, "reject");
-    setRatings(next);
-    // Zoomed decide: the challenger pane's content swaps under the live
-    // transform — land it at scale, no drift. Champion pane is untouched
-    // (shared pan kept), so its view can't jump.
-    if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
-    if (exiting) {
-      // No more candidates — pop back to whichever site we came from, landing on
-      // the (unchanged) champion. ESC after this lands further up the stack.
-      goBack(championIndex);
-    } else {
-      setChallengerIndex(nextChallenger);
-    }
-    // Sequential swap: drop every zoom full outside the surviving pair BEFORE
-    // the new challenger's decodes (holding both pairs at once is the proven
-    // jetsam kill). AFTER the last setState on purpose: the store's invalidate
-    // forces a SYNC React flush, and flushing between setRatings and
-    // setChallengerIndex rendered a half-updated strip (the 2026-07-07 crash).
-    // Runs on UNZOOMED decides too since the pane unification: PhotoPane's
-    // settle policy keeps both panes' fulls resident even unzoomed, so
-    // without the drop each decide accumulated the outgoing challenger's.
-    if (!exiting) {
-      const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
-        (x): x is string => Boolean(x),
-      );
-      imageStore.dropZoomFullsExcept(keep);
-    }
-    // currentIndex deliberately omitted: compare mode never updates it (known
-    // cursor divergence, see setCursor note) — the frozen value is intended.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    challengerIndex,
-    championIndex,
-    images,
-    ratings,
-    flashFeedback,
-    persistRating,
-    nearestUnrated,
-    goBack,
-    recordAction,
-  ]);
-
-  // K → keep both: challenger becomes Keep (F → Favorite); champion is
-  // untouched and stays champion; advance to the next unrated. The verb the
-  // tournament lacked — comparing two good frames no longer forces a loser.
-  const challengerKeptBoth = useCallback(
-    (asFavorite: boolean) => {
-      const challImg = images[challengerIndex];
-      if (!challImg) return;
-      const verdict: Rating = asFavorite ? "favorite" : "keep";
-      const next: Record<number, Rating> = { ...ratings, [challImg.id]: verdict };
-      const nextChallenger = nearestUnrated(challengerIndex, next, championIndex);
-      const exiting = nextChallenger === -1;
-      recordAction({
-        changes: [
-          { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: verdict },
-        ],
-        cursorBefore: {
-          compareMode: true,
-          championIndex,
-          challengerIndex,
-          currentIndex,
-          navStack: [...navStackRef.current],
-        },
-        // Champion is unchanged; redo lands on the next challenger (or leaves
-        // compare on the last-frame auto-exit, landing on the champion).
-        cursorAfter: exiting
-          ? { compareMode: false, championIndex, challengerIndex, currentIndex: championIndex }
-          : { compareMode: true, championIndex, challengerIndex: nextChallenger, currentIndex },
-      });
-      flashFeedback(verdict, challImg.id);
-      persistRating(challImg.path, verdict);
-      setRatings(next);
-      // Same zoomed-decide handling as challengerLoses: champion untouched.
-      if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
-      if (exiting) {
-        // No more candidates — pop back to whichever site we came from, landing
-        // on the (unchanged) champion, exactly like challengerLoses' exit.
-        goBack(championIndex);
-      } else {
-        setChallengerIndex(nextChallenger);
-      }
-      // Outgoing challenger's full dropped AFTER the last setState (see
-      // challengerLoses for the sync-flush ordering rationale; unzoomed too
-      // since the pane unification keeps fulls resident).
-      if (!exiting) {
-        const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
-          (x): x is string => Boolean(x),
-        );
-        imageStore.dropZoomFullsExcept(keep);
-      }
-    },
-    // currentIndex deliberately omitted: compare mode never updates it (known
-    // cursor divergence, see setCursor note) — the frozen value is intended.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      challengerIndex,
-      championIndex,
-      images,
-      ratings,
-      flashFeedback,
-      persistRating,
       nearestUnrated,
       goBack,
-      recordAction,
-    ],
-  );
-
-  // Enter → challenger wins: promoted to Champion (Keep); old champion → Reject.
-  const challengerWins = useCallback(() => {
-    const champImg = images[championIndex];
-    const challImg = images[challengerIndex];
-    if (!champImg || !challImg) return;
-    const next: Record<number, Rating> = {
-      ...ratings,
-      [champImg.id]: "reject",
-      [challImg.id]: "keep",
-    };
-    const newChamp = challengerIndex;
-    const nextChallenger = nearestUnrated(newChamp, next, newChamp);
-    const exiting = nextChallenger === -1;
-    recordAction({
-      changes: [
-        { imgId: champImg.id, path: champImg.path, before: ratings[champImg.id], after: "reject" },
-        { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "keep" },
-      ],
-      cursorBefore: {
-        compareMode: true,
-        championIndex,
-        challengerIndex,
-        currentIndex,
-        navStack: [...navStackRef.current],
-      },
-      // Where the crown lands, so a redo re-crowns the new champion (not the
-      // just-rejected old one). On the last-frame auto-exit we leave compare.
-      cursorAfter: exiting
-        ? { compareMode: false, championIndex: newChamp, challengerIndex, currentIndex: newChamp }
-        : {
-            compareMode: true,
-            championIndex: newChamp,
-            challengerIndex: nextChallenger,
-            currentIndex,
-          },
     });
-    flashFeedback("keep", challImg.id);
-    persistRating(champImg.path, "reject"); // dethroned
-    persistRating(challImg.path, "keep"); // crowned
-    setRatings(next);
-    // Zoomed decide with a NEW champion: both panes re-anchor at the new
-    // champion's AF point (shared pan resets), landing at scale instantly.
-    if (isZoomingRef.current && !exiting) {
-      setZoomSwapInstant(true);
-      setPanOffset({ x: 0, y: 0 });
-    }
-    setChampionIndex(newChamp);
-    if (exiting) {
-      // Crowned the last unrated frame — pop back to where the user came from,
-      // landing on the new keeper. Pass newChamp explicitly: goBack's own closure
-      // still holds the OLD (just-rejected) champion. (Auto-exit, like ESC.)
-      goBack(newChamp);
-    } else {
-      setChallengerIndex(nextChallenger);
-    }
-    // Sequential swap: the old champion's full goes NOW (the new champion IS
-    // the old challenger, so its full is already resident, no refetch). AFTER
-    // the last setState (see challengerLoses for the sync-flush rationale;
-    // unzoomed too since the pane unification keeps fulls resident).
-    if (!exiting) {
-      const keep = [images[newChamp]?.path, images[nextChallenger]?.path].filter((x): x is string =>
-        Boolean(x),
-      );
-      imageStore.dropZoomFullsExcept(keep);
-    }
-    // currentIndex deliberately omitted: compare mode never updates it (known
-    // cursor divergence, see setCursor note) — the frozen value is intended.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    championIndex,
-    challengerIndex,
-    images,
-    ratings,
-    flashFeedback,
-    persistRating,
-    nearestUnrated,
-    goBack,
-    recordAction,
-  ]);
 
   // Held-arrow navigation. The OS key-repeat is uneven and starts with a ~0.4s
   // delay, which made the first second of a hold feel jumpy. Instead we step once
