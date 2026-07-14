@@ -8,26 +8,29 @@
  *  - per-path subscriber notification
  *  - blob-URL lifecycle (every createObjectURL has exactly one revokeObjectURL)
  *
- * Blob-URL revoke sites:
+ * Blob-URL revoke sites (windowed eviction — sites 2, 10, 12 — is the one
+ * TierLane.evictAround loop in tierLane.ts; each lane's protection predicate
+ * is injected at its construction below):
  *  1. enforceThumbLru — when the LRU cap evicts an old thumb entry
- *  2. evictFullAround — when a full-res entry leaves the windowed cache
+ *  2. navLane.evictAround — when a full-res entry leaves the windowed cache
  *     (2b. evictFull — test-only direct eviction of one path)
- *  3. loadFull — when a full-res entry is REPLACED by a fresher one (no double-keep)
+ *  3. fetchNavInto — when a full-res entry is REPLACED by a fresher one (no double-keep)
  *  4. hardReset — revokes ALL thumb + full blob URLs (folder change / session end)
  *  5. reset(paths) — revokes full-res for all tracked paths; thumbs are kept
- *  6. loadThumbInto — stale-generation arrival: revoke the just-created thumb
+ *  6. fetchThumbInto — stale-generation arrival: revoke the just-created thumb
  *     blob when the session changed while the read was in flight
- *  7. loadFull — stale-generation arrival: revoke the just-created preview blob
- *  8–10. zoom tier (reset/hardReset, loadZoomFull stale/replace, evictZoomAround)
- *  11–12. mid tier (Phase 8): reset/hardReset + loadMid stale/replace (11),
- *     evictMidAround window eviction (12)
+ *  7. fetchNavInto — stale-generation arrival: revoke the just-created preview blob
+ *  8–10. zoom tier (reset/hardReset, fetchZoomInto stale/replace, zoomLane.evictAround)
+ *  11–12. mid tier (Phase 8): reset/hardReset + fetchMidInto stale/replace (11),
+ *     midLane.evictAround window eviction (12)
  *
- * Concurrency-correctness invariants:
+ * Concurrency-correctness invariants (mechanics enforced by TierLane.run —
+ * see tierLane.ts):
  *  - Every in-flight counter decrement is generation-scoped: a load whose
  *    generation has been superseded by reset()/hardReset() does NOT touch the
  *    current-session counters (otherwise late decrements drive them negative,
  *    permanently defeating the concurrency cap).
- *  - At most ONE in-flight loadFull per path (tracked in `fullInFlightPaths`),
+ *  - At most ONE in-flight nav read per path (tracked in `fullInFlightPaths`),
  *    so an evict-then-re-request mid-flight cannot start a duplicate NAS fetch
  *    or revoke a url that is still referenced by a live snapshot.
  */
@@ -48,6 +51,7 @@ import { PERFORMANCE_PROFILES } from "../types/settings";
 import { DecodePool } from "./decodePool";
 import type { PoolEntry, PoolImage } from "./decodePool";
 import { DevStats } from "./devStats";
+import { RefCountMap, TierLane } from "./tierLane";
 import {
   backoffMs,
   FolderTroubleLatch,
@@ -85,9 +89,6 @@ export type ImageStoreOptions = {
   poolImageFactory?: () => PoolImage;
 };
 
-/** Which in-flight counter a thumb load services. */
-type ThumbLane = "thumb" | "bg";
-
 // ── ImageStore ─────────────────────────────────────────────────────────────
 
 export class ImageStore {
@@ -105,21 +106,21 @@ export class ImageStore {
   // ── Request tracking (prevent duplicate fetches) ───────────────────────
   private requestedThumb = new Set<string>();
   private requestedFull = new Set<string>();
-  /** Paths whose loadFull is in flight RIGHT NOW (single-flight fulls). */
+  /** Paths whose nav read is in flight RIGHT NOW (single-flight fulls). */
   private fullInFlightPaths = new Set<string>();
-  /** path → number of mounted consumers wanting full-res. A refcount (not a bare
-   *  Set) so two consumers wanting the same path don't lose eviction-protection
-   *  when only one unmounts. `has(p)` ⟺ count > 0 (entries are deleted at 0). */
-  private wantFull = new Map<string, number>();
+  /** path → number of mounted consumers wanting full-res (RefCountMap: two
+   *  consumers wanting the same path don't lose eviction-protection when only
+   *  one unmounts). */
+  private wantFull = new RefCountMap();
   /** path → number of mounted consumers DISPLAYING this path (every useImage
    *  caller — loupe, compare panes, grid/strip cells). Protects the path's
    *  thumb blob from LRU revocation while a live <img> may be showing it
    *  (the direct `thumbUrl()` readers all sit inside such a consumer). */
-  private displayRefs = new Map<string, number>();
+  private displayRefs = new RefCountMap();
   /** path → pin count. A pinned path's full is NEVER evicted: compare pins its
    *  pair for the session, App pins the zoomed frame, the histogram probe pins
    *  during its decode. Refcounted like wantFull. */
-  private pinnedFulls = new Map<string, number>();
+  private pinnedFulls = new RefCountMap();
   /** Per-path per-tier failure state (capped backoff; see TierError). */
   private thumbErrors = new Map<string, TierError>();
   private fullErrors = new Map<string, TierError>();
@@ -136,14 +137,12 @@ export class ImageStore {
   /** path → zoom full-res state. Tiny windowed cache (profile.fullKeep per
    *  side; pins override) — full blobs are ~10 MB each. */
   private zoomFulls = new Map<string, ImageState["zoomFull"]>();
-  private zoomQueue: string[] = [];
   private requestedZoom = new Set<string>();
   private zoomInFlightPaths = new Set<string>();
-  private zoomInFlight = 0;
   private zoomErrors = new Map<string, TierError>();
   /** Zoom requests deferred until the nav read delivers the path's hint —
    *  fetching without it loses the exact range AND the orientation echo
-   *  (the portrait-zoom-on-arrival bug). loadFull's completion re-issues. */
+   *  (the portrait-zoom-on-arrival bug). fetchNavInto's completion re-issues. */
   private pendingZoom = new Set<string>();
   /** path → exact-range hint + orientation from the preview header. Derived
    *  from immutable file content — survives reset(), cleared on hardReset. */
@@ -158,10 +157,8 @@ export class ImageStore {
   /** path → mid state. Windowed like the zoom tier (fullKeep per side) —
    *  mid blobs are ~1 MB, but their decoded rasters (~17 MB) are the budget. */
   private mids = new Map<string, ImageState["mid"]>();
-  private midQueue: string[] = [];
   private requestedMid = new Set<string>();
   private midInFlightPaths = new Set<string>();
-  private midInFlight = 0;
   private midErrors = new Map<string, TierError>();
   /** Paths whose `read_mid` answered the quiet-miss sentinel (network
    *  profile / generation pending) — NOT failures. Cleared by the re-probe
@@ -174,7 +171,7 @@ export class ImageStore {
   private midReprobed = new Set<string>();
   /** Mid requests deferred until the nav read delivers the path's hint —
    *  mirror of pendingZoom (a hintless local generation would pay a 12 MiB
-   *  scan instead of two exact-range reads). loadFull's completion re-issues. */
+   *  scan instead of two exact-range reads). fetchNavInto's completion re-issues. */
   private pendingMid = new Set<string>();
   /** Latched once `read_mid` is rejected as an unknown command (Phase-8
    *  frontend on an older backend): the tier stays dormant for the session. */
@@ -219,17 +216,6 @@ export class ImageStore {
   private lastDir: 1 | -1 = 1;
   // ── Dev HUD stats (timing rings + cheap counters; see devStats.ts) ──────
   private readonly stats = new DevStats();
-  // ── Concurrency counters ───────────────────────────────────────────────
-  private thumbInFlight = 0;
-  private fullInFlight = 0;
-  private bgInFlight = 0;
-  // ── Queues ─────────────────────────────────────────────────────────────
-  /** On-demand thumb requests (highest priority) */
-  private thumbQueue: string[] = [];
-  /** On-demand full-res requests */
-  private fullQueue: string[] = [];
-  /** Background-fill book-order queue */
-  private bgQueue: string[] = [];
   /** The background thumbnail sweep is deferred until the first full-res read
    *  lands, so on cull entry the one full the user is waiting on isn't starved
    *  behind an N-image thumbnail stampede through the shared blocking-read pool. */
@@ -262,6 +248,161 @@ export class ImageStore {
   // ── Tunables ─────────────────────────────────────────────────────────────
   private readonly thumbLruCap: number;
 
+  // ── Lanes (Phase 8): pump/load/evict quad mechanics live in tierLane.ts ──
+  // Each lane injects its cap, ready-check, load interior, and completion
+  // pumps; the request markers / in-flight sets / error maps are the store's
+  // own collections (other subsystems read them), shared into the lane.
+
+  /** On-demand thumb lane (highest priority). Shares request markers + error
+   *  map with the bg lane below — one thumb fetch pipeline, two schedulers. */
+  private readonly thumbLane: TierLane = new TierLane({
+    cap: () => this.profile.thumbConcurrency,
+    generation: () => this.generation,
+    isReady: (p) => this.thumbs.has(p),
+    fetch: (p, gen) => this.fetchThumbInto(p, gen),
+    afterSettle: () => {
+      this.thumbLane.pump();
+      this.bgLane.pump();
+      this.midSweep.pump();
+    },
+    requested: this.requestedThumb,
+    errors: this.thumbErrors,
+  });
+
+  /** Background-fill book-order lane. Same fetch pipeline as thumbLane; only
+   *  the scheduling policy differs: grid-first / nearest-cursor argmin pick
+   *  (pickBg) and full deference to the on-demand lanes (canStart). */
+  private readonly bgLane: TierLane = new TierLane({
+    cap: () => this.profile.backgroundFillConcurrency,
+    generation: () => this.generation,
+    isReady: (p) => this.thumbs.has(p),
+    fetch: (p, gen) => this.fetchThumbInto(p, gen),
+    afterSettle: () => {
+      this.thumbLane.pump();
+      this.bgLane.pump();
+      this.midSweep.pump();
+    },
+    // Folder unreachable — every new read would hang/fail for its full
+    // timeout (the retry affordance re-arms everything). On-demand thumbs +
+    // on-demand full take priority — don't start new bg work if there are
+    // higher-priority items queued, or while a wanted full is actively
+    // READING (in flight): that keeps the bg lane from refilling its slots
+    // and starving the full the user is staring at.
+    canStart: () =>
+      !this.trouble.isTroubled &&
+      this.thumbLane.queue.length === 0 &&
+      this.navLane.queue.length === 0 &&
+      this.fullInFlightPaths.size === 0,
+    pick: () => this.pickBg(),
+    requested: this.requestedThumb,
+    errors: this.thumbErrors,
+  });
+
+  /** Nav-preview lane (the on-demand + prefetch full-res reads). */
+  private readonly navLane: TierLane<ImageState["full"]> = new TierLane({
+    cap: () => this.profile.previewConcurrency,
+    generation: () => this.generation,
+    isReady: (p) => this.fulls.get(p)?.status === "ready",
+    markLoading: (p) => {
+      this.fulls.set(p, { status: "loading" });
+      this.invalidate(p);
+    },
+    fetch: (p, gen) => this.fetchNavInto(p, gen),
+    afterSettle: () => {
+      // First full-res has landed (or errored) — NOW start the deferred
+      // background thumbnail sweep AND neighbour prefetch, so neither raced
+      // the first full read (the cause of the minute-long first paint).
+      if (!this.bgStarted) {
+        this.bgStarted = true;
+        this.scheduleBgFill(this.generation);
+        this.prefetchFullsAround(this.cursor);
+      }
+      this.navLane.pump();
+      // finishing the last on-demand full must wake the bg sweep — and the
+      // mid sweep, which idles while any on-demand lane has work.
+      this.bgLane.pump();
+      this.midSweep.pump();
+    },
+    requested: this.requestedFull,
+    inFlightPaths: this.fullInFlightPaths,
+    errors: this.fullErrors,
+    // Windowed eviction — REVOKE SITE 2. Protection (wantFull, pins,
+    // in-flight, keep window) lives in isProtected — e.g. in compare the
+    // cursor follows the challenger, so without the champion's wantFull/pin
+    // it would be evicted + re-fetched on every challenger step.
+    cache: this.fulls,
+    isEvictionProtected: (p, center) => this.isProtected(p, "full", center),
+    onEvict: (p) => {
+      this.stats.counts.previewEvicts++;
+      this.invalidate(p);
+    },
+  });
+
+  /** Zoom-tier lane (the ~10 MB settle/zoom full-res reads). */
+  private readonly zoomLane: TierLane<ImageState["zoomFull"]> = new TierLane({
+    cap: () => this.profile.fullConcurrency,
+    generation: () => this.generation,
+    isReady: (p) => this.zoomFulls.get(p)?.status === "ready",
+    markLoading: (p) => {
+      this.zoomFulls.set(p, { status: "loading" });
+      this.invalidate(p);
+    },
+    fetch: (p, gen) => this.fetchZoomInto(p, gen),
+    afterSettle: () => {
+      this.zoomLane.pump();
+      this.midSweep.pump();
+    },
+    requested: this.requestedZoom,
+    inFlightPaths: this.zoomInFlightPaths,
+    errors: this.zoomErrors,
+    // Windowed eviction — REVOKE SITE 10. Pins (zoomed frame, compare pair,
+    // histogram probe) are protected; full blobs are ~10 MB each so the
+    // window stays small (fullKeep).
+    cache: this.zoomFulls,
+    isEvictionProtected: (p, center) => {
+      if (this.pinnedFulls.has(p)) return true;
+      const idx = this.indexOf(p);
+      return idx !== -1 && Math.abs(idx - center) <= this.profile.fullKeep;
+    },
+    onEvict: (p) => {
+      this.stats.counts.zoomEvicts++;
+      this.invalidate(p);
+    },
+  });
+
+  /** Mid-tier lane (the display-adaptive ≤2560px settled fit view). */
+  private readonly midLane: TierLane<ImageState["mid"]> = new TierLane({
+    cap: () => this.profile.midGenConcurrency,
+    generation: () => this.generation,
+    isReady: (p) => this.mids.get(p)?.status === "ready",
+    markLoading: (p) => {
+      this.mids.set(p, { status: "loading" });
+      this.invalidate(p);
+    },
+    fetch: (p, gen) => this.fetchMidInto(p, gen),
+    afterSettle: () => {
+      this.midLane.pump();
+      this.midSweep.pump();
+    },
+    requested: this.requestedMid,
+    inFlightPaths: this.midInFlightPaths,
+    errors: this.midErrors,
+    // Windowed eviction — REVOKE SITE 12. Mid blobs are ~1 MB and share the
+    // zoom tier's settled-frame cadence, so they share its window too;
+    // displayRefs additionally protect any mounted consumer's frame (the
+    // presenter may still be showing its decoded raster).
+    cache: this.mids,
+    isEvictionProtected: (p, center) => {
+      if (this.displayRefs.has(p)) return true;
+      const idx = this.indexOf(p);
+      return idx !== -1 && Math.abs(idx - center) <= this.profile.fullKeep;
+    },
+    onEvict: (p) => {
+      this.stats.counts.midEvicts++;
+      this.invalidate(p);
+    },
+  });
+
   constructor(opts: ImageStoreOptions = {}) {
     this.thumbLruCap = opts.thumbLruCap ?? THUMB_LRU_CAP;
     const poolFactory =
@@ -282,17 +423,17 @@ export class ImageStore {
     });
     // Apply the new (possibly smaller) keep windows now — don't wait for the
     // next cursor move to free blobs that are suddenly outside the window.
-    this.evictFullAround(this.cursor);
-    this.evictZoomAround(this.cursor);
-    this.evictMidAround(this.cursor);
+    this.navLane.evictAround(this.cursor);
+    this.zoomLane.evictAround(this.cursor);
+    this.midLane.evictAround(this.cursor);
     // Re-aim the pool under the new caps/radii (a network→local flip may
     // shrink it; eviction above may have dropped blobs it referenced).
     this.refreshPool();
-    this.pumpThumbs();
-    this.pumpFull();
-    this.pumpBg();
-    this.pumpZoom();
-    this.pumpMid();
+    this.thumbLane.pump();
+    this.navLane.pump();
+    this.bgLane.pump();
+    this.zoomLane.pump();
+    this.midLane.pump();
     this.midSweep.pump();
   }
 
@@ -365,7 +506,7 @@ export class ImageStore {
    *  zoom fulls (the heavy ~10 MB reads) or nav previews are in flight — the
    *  quality pass waits these out between chunks instead of reading privates. */
   isBusyLoading(): boolean {
-    return this.zoomInFlight > 0 || this.fullInFlightPaths.size > 0;
+    return this.zoomLane.inFlight > 0 || this.fullInFlightPaths.size > 0;
   }
 
   /**
@@ -388,18 +529,16 @@ export class ImageStore {
     // within ~one 2 MiB chunk instead of finishing multi-MB transfers.
     this.pushBackend("begin_session", { gen });
 
-    // Cancel queued work
-    this.thumbQueue = [];
-    this.fullQueue = [];
-    this.bgQueue = [];
-    this.zoomQueue = [];
+    // Cancel queued work: every lane drops its queue, request markers,
+    // in-flight markers, counter, and error map (TierLane.reset — counter
+    // zeroing is safe because run()'s decrement is generation-scoped).
+    this.thumbLane.reset();
+    this.bgLane.reset();
+    this.navLane.reset();
+    this.zoomLane.reset();
+    this.midLane.reset();
     this.wantFull.clear();
-    this.requestedFull.clear();
-    this.requestedZoom.clear();
     this.pendingZoom.clear();
-    this.zoomInFlightPaths.clear();
-    this.zoomInFlight = 0;
-    this.zoomErrors.clear();
     // Revoke all zoom full-res blob URLs — REVOKE SITE 8 (they are the
     // heaviest blobs in the app; a folder switch must drop them at once).
     for (const [, state] of this.zoomFulls) {
@@ -413,12 +552,7 @@ export class ImageStore {
       if (state?.status === "ready") URL.revokeObjectURL(state.url);
     }
     this.mids.clear();
-    this.midQueue = [];
-    this.requestedMid.clear();
     this.pendingMid.clear();
-    this.midInFlightPaths.clear();
-    this.midInFlight = 0;
-    this.midErrors.clear();
     this.midUncached.clear();
     this.midReprobed.clear();
     this.midSweep.reset();
@@ -428,21 +562,13 @@ export class ImageStore {
     // their paths in requestedThumb they'd be excluded from bg-fill forever
     // (permanent shimmer). Clear it so the new session can re-schedule them.
     this.requestedThumb.clear();
-    // Folder revisit re-arms every failed tier (terminal included) — an
+    // Folder revisit re-arms every failed tier (terminal included; the
+    // per-lane error maps were cleared by the lane resets above) — an
     // unmounted NAS that reconnected gets a clean slate. pathDims survives
     // (it's a session-lifetime cache, like thumbs; hardReset clears it).
     // displayRefs/pinnedFulls are component-lifetime, not generation-scoped:
     // mounted consumers unregister on their own unmount.
-    this.thumbErrors.clear();
-    this.fullErrors.clear();
     this.trouble.reset();
-
-    // zero in-flight counters. Late decrements from superseded loads are
-    // now gen-scoped (they no-op), so zeroing here can't be driven negative.
-    this.thumbInFlight = 0;
-    this.fullInFlight = 0;
-    this.bgInFlight = 0;
-    this.fullInFlightPaths.clear();
 
     // Revoke all full-res blob URLs — REVOKE SITE 5
     for (const [, state] of this.fulls) {
@@ -474,23 +600,23 @@ export class ImageStore {
     // DON'T start the background thumbnail sweep yet. On cull entry the loupe is
     // about to request the first full-res; an N-image thumbnail stampede through
     // the shared blocking-read pool would starve that one read (→ minute-long
-    // first paint). The sweep is kicked once the first full lands (loadFull's
-    // finally). Fallback: if no full is requested within 2s (e.g. grid-first),
+    // first paint). The sweep is kicked once the first full lands (the nav
+    // lane's afterSettle). Fallback: if no full is requested within 2s (e.g. grid-first),
     // start it anyway so off-screen thumbs still fill. gen-scoped.
     this.bgStarted = false;
     setTimeout(() => {
       // Fallback for an entry that never requests a full (e.g. grid-first): start
       // the sweep so off-screen thumbs still fill — but NOT while a full is mid-read
       // (a slow first full would otherwise get the stampede the deferral prevents;
-      // its own loadFull-finally starts the sweep when it lands).
+      // its own nav-lane afterSettle starts the sweep when it lands).
       if (this.generation === gen && !this.bgStarted && this.fullInFlightPaths.size === 0) {
         this.bgStarted = true;
         this.scheduleBgFill(gen);
       }
     }, 2000);
     // Re-pump the on-demand lanes so visible thumbs + the first full load now.
-    this.pumpThumbs();
-    this.pumpFull();
+    this.thumbLane.pump();
+    this.navLane.pump();
   }
 
   /**
@@ -501,19 +627,13 @@ export class ImageStore {
     this.generation++;
     this.pushBackend("begin_session", { gen: this.generation });
 
-    this.thumbQueue = [];
-    this.fullQueue = [];
-    this.bgQueue = [];
-    this.zoomQueue = [];
+    this.thumbLane.reset();
+    this.bgLane.reset();
+    this.navLane.reset();
+    this.zoomLane.reset();
+    this.midLane.reset();
     this.wantFull.clear();
-    this.requestedThumb.clear();
-    this.requestedFull.clear();
-    this.requestedZoom.clear();
     this.pendingZoom.clear();
-    this.fullInFlightPaths.clear();
-    this.zoomInFlightPaths.clear();
-    this.zoomInFlight = 0;
-    this.zoomErrors.clear();
     for (const [, state] of this.zoomFulls) {
       if (state?.status === "ready") URL.revokeObjectURL(state.url); // REVOKE SITE 8
     }
@@ -522,12 +642,7 @@ export class ImageStore {
       if (state?.status === "ready") URL.revokeObjectURL(state.url); // REVOKE SITE 11
     }
     this.mids.clear();
-    this.midQueue = [];
-    this.requestedMid.clear();
     this.pendingMid.clear();
-    this.midInFlightPaths.clear();
-    this.midInFlight = 0;
-    this.midErrors.clear();
     this.midUncached.clear();
     this.midReprobed.clear();
     this.midSweep.reset();
@@ -535,14 +650,8 @@ export class ImageStore {
     this.nativeDims.clear();
     this.stats.clearTimings();
     this.pool?.clear();
-    this.thumbErrors.clear();
-    this.fullErrors.clear();
     this.trouble.reset();
     this.pathDims.clear();
-    // gen-scoped finally blocks make zeroing safe (no negative drift).
-    this.thumbInFlight = 0;
-    this.fullInFlight = 0;
-    this.bgInFlight = 0;
 
     // Revoke all full-res blob URLs — REVOKE SITE 4a
     for (const [, state] of this.fulls) {
@@ -575,12 +684,12 @@ export class ImageStore {
     this.midSweep.noteCursorMove();
     // Eviction is cursor-driven — recenter the keep-windows on the cursor
     // even when no new load just landed (parking on a frame recenters).
-    this.evictFullAround(index);
-    this.evictZoomAround(index);
-    this.evictMidAround(index);
+    this.navLane.evictAround(index);
+    this.zoomLane.evictAround(index);
+    this.midLane.evictAround(index);
     // bg priority needs no re-sort: pickBg() reads the live cursor at pump time.
-    this.pumpBg();
-    this.pumpFull();
+    this.bgLane.pump();
+    this.navLane.pump();
     // Warm neighbours' full-res once the cursor SETTLES — so a single tap to an
     // adjacent frame is already decoded. Never mid-scrub: a scrub flies past
     // frames it never lands on, and prefetching each would flood the NAS.
@@ -608,7 +717,7 @@ export class ImageStore {
     // Grid view never zooms — release the pool's decoded zoom fulls
     // (~130 MB each); the previews stay warm for the return to loupe.
     this.pool?.retain("full", [], 0);
-    this.pumpBg();
+    this.bgLane.pump();
   }
 
   /** Clear the grid viewport so bg-fill prioritizes purely by cursor distance. */
@@ -616,7 +725,7 @@ export class ImageStore {
     this.gridStart = -1;
     this.gridEnd = -1;
     this.refreshPool(); // back in loupe — re-warm the band (incl. zoom fulls)
-    this.pumpBg();
+    this.bgLane.pump();
   }
 
   private rebuildPathIndex(): void {
@@ -647,8 +756,8 @@ export class ImageStore {
     let best = -1;
     let bestG = 2;
     let bestD = Infinity;
-    for (let k = 0; k < this.bgQueue.length; k++) {
-      const p = this.bgQueue[k];
+    for (let k = 0; k < this.bgLane.queue.length; k++) {
+      const p = this.bgLane.queue[k];
       if (inCooldown(this.thumbErrors.get(p), now)) continue;
       const i = this.indexOf(p);
       const g = i >= gridStart && i <= gridEnd ? 0 : 1;
@@ -665,7 +774,7 @@ export class ImageStore {
 
   registerWantFull(path: string): void {
     if (!path) return;
-    this.wantFull.set(path, (this.wantFull.get(path) ?? 0) + 1);
+    this.wantFull.inc(path);
     if (!this.requestedFull.has(path)) {
       // Failed earlier? Respect the backoff instead of hammering: the
       // scheduled retry (or the manual retry affordance) re-queues. Terminal
@@ -677,18 +786,18 @@ export class ImageStore {
         }
         return;
       }
-      this.fullQueue.unshift(path); // high priority: front of queue
-      this.pumpFull();
+      this.navLane.queue.unshift(path); // high priority: front of queue
+      this.navLane.pump();
       return;
     }
     // already requested. If it's still queued (not yet in flight), promote
     // it to the FRONT so a landed-on frame preempts queued prefetch fulls.
     if (!this.fullInFlightPaths.has(path)) {
-      const qi = this.fullQueue.indexOf(path);
+      const qi = this.navLane.queue.indexOf(path);
       if (qi > 0) {
-        this.fullQueue.splice(qi, 1);
-        this.fullQueue.unshift(path);
-        this.pumpFull();
+        this.navLane.queue.splice(qi, 1);
+        this.navLane.queue.unshift(path);
+        this.navLane.pump();
       }
     }
     // If already in flight, nothing to do.
@@ -696,40 +805,31 @@ export class ImageStore {
 
   unregisterWantFull(path: string): void {
     if (!path) return;
-    const n = this.wantFull.get(path);
-    if (n === undefined) return;
-    if (n <= 1) this.wantFull.delete(path);
-    else this.wantFull.set(path, n - 1);
+    this.wantFull.dec(path);
   }
 
   /** A mounted consumer is displaying this path (any tier). Protects the
    *  path's THUMB blob from LRU revocation while a live <img> may show it. */
   registerDisplay(path: string): void {
     if (!path) return;
-    this.displayRefs.set(path, (this.displayRefs.get(path) ?? 0) + 1);
+    this.displayRefs.inc(path);
   }
 
   unregisterDisplay(path: string): void {
     if (!path) return;
-    const n = this.displayRefs.get(path);
-    if (n === undefined) return;
-    if (n <= 1) this.displayRefs.delete(path);
-    else this.displayRefs.set(path, n - 1);
+    this.displayRefs.dec(path);
   }
 
   /** Pin a path's full against eviction (compare pair for the session, the
    *  zoomed frame, the histogram probe mid-decode). Refcounted. */
   pinFull(path: string): void {
     if (!path) return;
-    this.pinnedFulls.set(path, (this.pinnedFulls.get(path) ?? 0) + 1);
+    this.pinnedFulls.inc(path);
   }
 
   unpinFull(path: string): void {
     if (!path) return;
-    const n = this.pinnedFulls.get(path);
-    if (n === undefined) return;
-    if (n <= 1) this.pinnedFulls.delete(path);
-    else this.pinnedFulls.set(path, n - 1);
+    this.pinnedFulls.dec(path);
   }
 
   /**
@@ -756,20 +856,20 @@ export class ImageStore {
     }
     if (!this.thumbs.has(path)) {
       this.requestedThumb.delete(path);
-      if (!this.thumbQueue.includes(path)) this.thumbQueue.unshift(path);
+      if (!this.thumbLane.queue.includes(path)) this.thumbLane.queue.unshift(path);
     }
     if (
       this.wantFull.has(path) &&
       !this.requestedFull.has(path) &&
       !this.fullInFlightPaths.has(path) &&
       this.fulls.get(path)?.status !== "ready" &&
-      !this.fullQueue.includes(path)
+      !this.navLane.queue.includes(path)
     ) {
-      this.fullQueue.unshift(path);
+      this.navLane.queue.unshift(path);
     }
     this.invalidate(path);
-    this.pumpThumbs();
-    this.pumpFull();
+    this.thumbLane.pump();
+    this.navLane.pump();
   }
 
   /** App registers this to surface the non-blocking "folder unreachable —
@@ -797,13 +897,13 @@ export class ImageStore {
         this.fulls.get(p)?.status !== "ready" &&
         !this.requestedFull.has(p) &&
         !this.fullInFlightPaths.has(p) &&
-        !this.fullQueue.includes(p)
+        !this.navLane.queue.includes(p)
       ) {
-        this.fullQueue.unshift(p);
+        this.navLane.queue.unshift(p);
       }
     }
-    this.pumpThumbs();
-    this.pumpFull();
+    this.thumbLane.pump();
+    this.navLane.pump();
     // Failed thumbs dropped their request markers — rebuild the sweep queue.
     this.scheduleBgFill(this.generation);
   }
@@ -815,8 +915,8 @@ export class ImageStore {
     // bgQueue on failure) picks it up when the backoff expires, and the cell
     // is notified via invalidate when the thumb finally lands.
     if (inCooldown(this.thumbErrors.get(path), Date.now())) return;
-    this.thumbQueue.push(path);
-    this.pumpThumbs();
+    this.thumbLane.queue.push(path);
+    this.thumbLane.pump();
   }
 
   /** The thumb blob URL for a path if loaded, regardless of full-res state. */
@@ -897,25 +997,14 @@ export class ImageStore {
     this.subs.get(path)?.forEach((cb) => cb());
   }
 
-  // ── Thumb pump ─────────────────────────────────────────────────────────
-
-  private pumpThumbs(): void {
-    while (this.thumbInFlight < this.profile.thumbConcurrency && this.thumbQueue.length > 0) {
-      const path = this.thumbQueue.shift()!;
-      if (this.requestedThumb.has(path) || this.thumbs.has(path)) continue;
-      this.requestedThumb.add(path);
-      this.thumbInFlight++;
-      void this.loadThumbInto("thumb", path);
-    }
-  }
+  // ── Thumb lane interior (pump mechanics live in tierLane.ts) ──────────
 
   /**
-   * Shared thumb loader for both the on-demand lane and the background-fill
-   * lane. Differs only in which in-flight counter it touches, kept in the
-   * `lane` parameter so the concurrency logic lives in exactly one place.
+   * Shared thumb-load interior for both the on-demand lane and the
+   * background-fill lane — the two TierLane instances own their counters, so
+   * the fetch pipeline lives in exactly one place with no lane parameter.
    */
-  private async loadThumbInto(lane: ThumbLane, path: string): Promise<void> {
-    const gen = this.generation;
+  private async fetchThumbInto(path: string, gen: number): Promise<void> {
     try {
       const result = await fetchThumbnail(path);
       if (this.generation !== gen) {
@@ -949,21 +1038,11 @@ export class ImageStore {
         const te = this.noteTierError(this.thumbErrors, path, msg);
         this.requestedThumb.delete(path);
         if (te.attempts < MAX_TIER_ATTEMPTS && !this.trouble.isTroubled) {
-          if (!this.bgQueue.includes(path)) this.bgQueue.push(path);
+          if (!this.bgLane.queue.includes(path)) this.bgLane.queue.push(path);
           setTimeout(() => {
-            if (this.generation === gen && !this.trouble.isTroubled) this.pumpBg();
+            if (this.generation === gen && !this.trouble.isTroubled) this.bgLane.pump();
           }, backoffMs(te.attempts));
         }
-      }
-    } finally {
-      // gen-scoped decrement. A superseded load must NOT touch the current
-      // session's counters (reset/hardReset already zeroed them).
-      if (this.generation === gen) {
-        if (lane === "thumb") this.thumbInFlight--;
-        else this.bgInFlight--;
-        this.pumpThumbs();
-        this.pumpBg();
-        this.midSweep.pump();
       }
     }
   }
@@ -1030,33 +1109,11 @@ export class ImageStore {
     }
   }
 
-  // ── Full-res pump ───────────────────────────────────────────────────────
+  // ── Nav-preview lane interior ──────────────────────────────────────────
 
-  private pumpFull(): void {
-    while (this.fullInFlight < this.profile.previewConcurrency && this.fullQueue.length > 0) {
-      const path = this.fullQueue.shift()!;
-      // single-flight per path — never start a second loadFull while one is
-      // already in flight for this path (the guard lives here, before the
-      // counter is touched, so accounting stays perfectly balanced).
-      if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) {
-        continue;
-      }
-      // Already have a ready full — don't re-fetch.
-      const prev = this.fulls.get(path);
-      if (prev?.status === "ready") continue;
-      this.requestedFull.add(path);
-      this.fullInFlightPaths.add(path);
-      this.fulls.set(path, { status: "loading" });
-      this.invalidate(path);
-      this.fullInFlight++;
-      void this.loadFull(path);
-    }
-  }
-
-  private async loadFull(path: string): Promise<void> {
-    // `pumpFull` has already added `path` to `fullInFlightPaths` and
-    // guarantees this is the only in-flight loadFull for it.
-    const gen = this.generation;
+  private async fetchNavInto(path: string, gen: number): Promise<void> {
+    // The nav lane's pump has already added `path` to `fullInFlightPaths`
+    // and guarantees this is the only in-flight nav read for it.
     try {
       const t0 = performance.now();
       const result = await fetchNav(path, gen);
@@ -1100,7 +1157,7 @@ export class ImageStore {
       this.invalidate(path);
       // also recenter the keep-window on the CURSOR (not just-loaded), so
       // eviction tracks where the user is, not where the last load happened.
-      this.evictFullAround(this.cursor);
+      this.navLane.evictAround(this.cursor);
       // A preview that landed inside the warm band starts decoding now.
       this.refreshPool();
     } catch (e) {
@@ -1108,7 +1165,7 @@ export class ImageStore {
       const msg = e instanceof Error ? e.message : String(e);
       this.fulls.set(path, { status: "error", error: msg });
       // Phase 1 retry model (P6): clear the request marker so the path CAN
-      // re-queue (before this, an errored full was skipped by pumpFull
+      // re-queue (before this, an errored full was skipped by the nav pump
       // forever), record capped backoff, and auto-retry while it's still
       // wanted. Terminal after MAX_TIER_ATTEMPTS → retry()/revisit only.
       // A deferred zoom want dies with the failed nav read (its retry path
@@ -1120,52 +1177,44 @@ export class ImageStore {
       const te = this.noteTierError(this.fullErrors, path, msg);
       this.scheduleFullRetry(path, te, gen);
       this.invalidate(path);
-    } finally {
-      // clear in-flight marker regardless of generation (it's path-keyed
-      // and must not leak even for a superseded load).
-      this.fullInFlightPaths.delete(path);
-      // gen-scoped counter decrement + pumps.
-      if (this.generation === gen) {
-        this.fullInFlight--;
-        // First full-res has landed (or errored) — NOW start the deferred
-        // background thumbnail sweep AND neighbour prefetch, so neither raced the
-        // first full read (the cause of the minute-long first paint).
-        if (!this.bgStarted) {
-          this.bgStarted = true;
-          this.scheduleBgFill(gen);
-          this.prefetchFullsAround(this.cursor);
-        }
-        this.pumpFull();
-        // finishing the last on-demand full must wake the bg sweep — and the
-        // mid sweep, which idles while any on-demand lane has work.
-        this.pumpBg();
-        this.midSweep.pump();
-      }
-    }
-  }
-
-  /**
-   * Evict full-res entries that are far from `centerIndex`, keeping at most
-   * `previewKeep` on each side. Revokes their blob URLs. — REVOKE SITE 2.
-   * Cursor-driven: callable from setCursor and after a load. Protection
-   * (wantFull, pins, in-flight, keep window) lives in isProtected — e.g. in
-   * compare the cursor follows the challenger, so without the champion's
-   * wantFull/pin it would be evicted + re-fetched on every challenger step.
-   */
-  private evictFullAround(centerIndex: number): void {
-    if (centerIndex < 0) return;
-    for (const [p, state] of this.fulls) {
-      if (state?.status !== "ready") continue;
-      if (this.isProtected(p, "full", centerIndex)) continue;
-      URL.revokeObjectURL(state.url);
-      this.fulls.delete(p);
-      this.requestedFull.delete(p);
-      this.stats.counts.previewEvicts++;
-      this.invalidate(p);
     }
   }
 
   // ── Zoom tier (Phase 3): full-res on settle/zoom only ───────────────────
+
+  /** Exact-range hint + orientation for the zoom/mid reads, from the nav
+   *  preview's header if it has landed (all-null → the backend self-derives
+   *  orientation from the file's own moov — never assume 1). */
+  private hintArgs(path: string): {
+    fullOffset: number | null;
+    fullLen: number | null;
+    orientation: number | null;
+  } {
+    const hint = this.fullHints.get(path);
+    return {
+      fullOffset: hint?.offset ?? null,
+      fullLen: hint?.len ?? null,
+      orientation: hint?.orientation ?? null,
+    };
+  }
+
+  /** Defer a zoom/mid want until the nav read delivers the path's hint —
+   *  fetching without it loses the exact range AND, worse, the orientation
+   *  echo (the portrait-zoom-on-arrival bug). fetchNavInto's completion
+   *  re-issues the deferred request. */
+  private deferUntilHint(path: string, pending: Set<string>): boolean {
+    if (
+      !this.fullHints.has(path) &&
+      (this.fullInFlightPaths.has(path) ||
+        this.requestedFull.has(path) ||
+        this.navLane.queue.includes(path) ||
+        this.wantFull.has(path))
+    ) {
+      pending.add(path);
+      return true;
+    }
+    return false;
+  }
 
   /**
    * Warm/fetch the zoom full-res for `path` (App calls this from the settle
@@ -1178,48 +1227,16 @@ export class ImageStore {
     if (this.requestedZoom.has(path) || this.zoomInFlightPaths.has(path)) return;
     if (inCooldown(this.zoomErrors.get(path), Date.now())) return;
     // No hint yet and the nav read that delivers it is still underway (zoom
-    // engaged immediately on arrival)? DEFER — a hintless fetch loses the
-    // exact range and, worse, the orientation echo. loadFull re-issues.
-    if (
-      !this.fullHints.has(path) &&
-      (this.fullInFlightPaths.has(path) ||
-        this.requestedFull.has(path) ||
-        this.fullQueue.includes(path) ||
-        this.wantFull.has(path))
-    ) {
-      this.pendingZoom.add(path);
-      return;
-    }
-    if (!this.zoomQueue.includes(path)) this.zoomQueue.push(path);
-    this.pumpZoom();
+    // engaged immediately on arrival)? DEFER (deferUntilHint).
+    if (this.deferUntilHint(path, this.pendingZoom)) return;
+    if (!this.zoomLane.queue.includes(path)) this.zoomLane.queue.push(path);
+    this.zoomLane.pump();
   }
 
-  private pumpZoom(): void {
-    while (this.zoomInFlight < this.profile.fullConcurrency && this.zoomQueue.length > 0) {
-      const path = this.zoomQueue.shift()!;
-      const prev = this.zoomFulls.get(path);
-      if (prev?.status === "ready") continue;
-      if (this.requestedZoom.has(path) || this.zoomInFlightPaths.has(path)) continue;
-      this.requestedZoom.add(path);
-      this.zoomInFlightPaths.add(path);
-      this.zoomFulls.set(path, { status: "loading" });
-      this.invalidate(path);
-      this.zoomInFlight++;
-      void this.loadZoomFull(path);
-    }
-  }
-
-  private async loadZoomFull(path: string): Promise<void> {
-    const gen = this.generation;
-    const hint = this.fullHints.get(path);
+  private async fetchZoomInto(path: string, gen: number): Promise<void> {
     try {
       const t0 = performance.now();
-      const result = await fetchFullres(path, gen, {
-        fullOffset: hint?.offset ?? null,
-        fullLen: hint?.len ?? null,
-        // null → the backend derives orientation from the file's own moov.
-        orientation: hint?.orientation ?? null,
-      });
+      const result = await fetchFullres(path, gen, this.hintArgs(path));
       if (this.generation !== gen) {
         URL.revokeObjectURL(result.url); // REVOKE SITE 9 (stale session)
         return;
@@ -1235,7 +1252,7 @@ export class ImageStore {
       this.stats.counts.zoomLoads++;
       this.stats.noteZoomTiming(path, performance.now() - t0);
       this.invalidate(path);
-      this.evictZoomAround(this.cursor);
+      this.zoomLane.evictAround(this.cursor);
       // Warm the landed full so zoom stays sharp across hi-res remounts.
       this.refreshPool();
       // Phase 8: the backend's opportunistic generator is (likely) producing
@@ -1257,32 +1274,6 @@ export class ImageStore {
         this.noteTierError(this.zoomErrors, path, msg);
       }
       this.invalidate(path);
-    } finally {
-      this.zoomInFlightPaths.delete(path);
-      if (this.generation === gen) {
-        this.zoomInFlight--;
-        this.pumpZoom();
-        this.midSweep.pump();
-      }
-    }
-  }
-
-  /** Evict zoom fulls outside the (tiny) fullKeep window — REVOKE SITE 10.
-   *  Pins (zoomed frame, compare pair, histogram probe) and in-flight reads
-   *  are protected; full blobs are ~10 MB each so the window stays small. */
-  private evictZoomAround(centerIndex: number): void {
-    if (centerIndex < 0) return;
-    const keep = this.profile.fullKeep;
-    for (const [p, state] of this.zoomFulls) {
-      if (state?.status !== "ready") continue;
-      if (this.pinnedFulls.has(p) || this.zoomInFlightPaths.has(p)) continue;
-      const idx = this.indexOf(p);
-      if (idx !== -1 && Math.abs(idx - centerIndex) <= keep) continue;
-      URL.revokeObjectURL(state.url);
-      this.zoomFulls.delete(p);
-      this.requestedZoom.delete(p);
-      this.stats.counts.zoomEvicts++;
-      this.invalidate(p);
     }
   }
 
@@ -1297,8 +1288,8 @@ export class ImageStore {
         if (!this.wantFull.has(path)) return; // nobody's looking — re-register retries
         if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) return;
         if (this.fulls.get(path)?.status === "ready") return;
-        if (!this.fullQueue.includes(path)) this.fullQueue.unshift(path);
-        this.pumpFull();
+        if (!this.navLane.queue.includes(path)) this.navLane.queue.unshift(path);
+        this.navLane.pump();
       },
       Math.max(0, te.nextRetryAt - Date.now()),
     );
@@ -1355,46 +1346,15 @@ export class ImageStore {
     if (this.midUncached.has(path)) return;
     if (inCooldown(this.midErrors.get(path), Date.now())) return;
     // No hint yet and the nav read that delivers it is underway? Defer —
-    // mirror of pendingZoom (loadFull's completion re-issues).
-    if (
-      !this.fullHints.has(path) &&
-      (this.fullInFlightPaths.has(path) ||
-        this.requestedFull.has(path) ||
-        this.fullQueue.includes(path) ||
-        this.wantFull.has(path))
-    ) {
-      this.pendingMid.add(path);
-      return;
-    }
-    if (!this.midQueue.includes(path)) this.midQueue.push(path);
-    this.pumpMid();
+    // mirror of pendingZoom (deferUntilHint).
+    if (this.deferUntilHint(path, this.pendingMid)) return;
+    if (!this.midLane.queue.includes(path)) this.midLane.queue.push(path);
+    this.midLane.pump();
   }
 
-  private pumpMid(): void {
-    while (this.midInFlight < this.profile.midGenConcurrency && this.midQueue.length > 0) {
-      const path = this.midQueue.shift()!;
-      const prev = this.mids.get(path);
-      if (prev?.status === "ready") continue;
-      if (this.requestedMid.has(path) || this.midInFlightPaths.has(path)) continue;
-      this.requestedMid.add(path);
-      this.midInFlightPaths.add(path);
-      this.mids.set(path, { status: "loading" });
-      this.invalidate(path);
-      this.midInFlight++;
-      void this.loadMid(path);
-    }
-  }
-
-  private async loadMid(path: string): Promise<void> {
-    const gen = this.generation;
-    const hint = this.fullHints.get(path);
+  private async fetchMidInto(path: string, gen: number): Promise<void> {
     try {
-      const result = await fetchMid(path, gen, {
-        fullOffset: hint?.offset ?? null,
-        fullLen: hint?.len ?? null,
-        // null → the backend self-derives orientation from moov (never 1).
-        orientation: hint?.orientation ?? null,
-      });
+      const result = await fetchMid(path, gen, this.hintArgs(path));
       if (this.generation !== gen) {
         URL.revokeObjectURL(result.url); // REVOKE SITE 11 (stale session)
         return;
@@ -1406,7 +1366,7 @@ export class ImageStore {
       this.midUncached.delete(path);
       this.stats.counts.midLoads++;
       this.invalidate(path);
-      this.evictMidAround(this.cursor);
+      this.midLane.evictAround(this.cursor);
     } catch (e) {
       if (this.generation !== gen) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -1432,13 +1392,6 @@ export class ImageStore {
         this.noteTierError(this.midErrors, path, msg);
       }
       this.invalidate(path);
-    } finally {
-      this.midInFlightPaths.delete(path);
-      if (this.generation === gen) {
-        this.midInFlight--;
-        this.pumpMid();
-        this.midSweep.pump();
-      }
     }
   }
 
@@ -1457,26 +1410,6 @@ export class ImageStore {
     }, MID_REPROBE_MS);
   }
 
-  /** Evict mids outside the fullKeep window — REVOKE SITE 12. Mid blobs are
-   *  ~1 MB and share the zoom tier's settled-frame cadence, so they share its
-   *  window too. displayRefs additionally protect any mounted consumer's
-   *  frame (the presenter may still be showing its decoded raster). */
-  private evictMidAround(centerIndex: number): void {
-    if (centerIndex < 0) return;
-    const keep = this.profile.fullKeep;
-    for (const [p, state] of this.mids) {
-      if (state?.status !== "ready") continue;
-      if (this.midInFlightPaths.has(p) || this.displayRefs.has(p)) continue;
-      const idx = this.indexOf(p);
-      if (idx !== -1 && Math.abs(idx - centerIndex) <= keep) continue;
-      URL.revokeObjectURL(state.url);
-      this.mids.delete(p);
-      this.requestedMid.delete(p);
-      this.stats.counts.midEvicts++;
-      this.invalidate(p);
-    }
-  }
-
   // ── Mid-tier idle sweep (Phase 8, LOCAL profile only) ────────────────────
 
   /** True while every on-demand lane is empty AND idle — the sweep's gate
@@ -1484,10 +1417,10 @@ export class ImageStore {
    *  thumb sweep is background, not on-demand, and doesn't pause it). */
   private onDemandIdle(): boolean {
     return (
-      this.thumbQueue.length === 0 &&
-      this.fullQueue.length === 0 &&
-      this.zoomQueue.length === 0 &&
-      this.midQueue.length === 0 &&
+      this.thumbLane.queue.length === 0 &&
+      this.navLane.queue.length === 0 &&
+      this.zoomLane.queue.length === 0 &&
+      this.midLane.queue.length === 0 &&
       this.fullInFlightPaths.size === 0 &&
       this.zoomInFlightPaths.size === 0 &&
       this.midInFlightPaths.size === 0
@@ -1496,7 +1429,7 @@ export class ImageStore {
 
   /**
    * Evict a single path's full-res entry (direct, not window-based). Test-only
-   * today — production eviction goes through {@link evictFullAround} — but kept
+   * today — production eviction goes through navLane.evictAround — but kept
    * because it's the one place the "evict-then-re-request mid-flight doesn't
    * double-fetch" dedup invariant is exercised end-to-end.
    */
@@ -1506,7 +1439,7 @@ export class ImageStore {
       URL.revokeObjectURL(state.url); // REVOKE SITE 2b (test-only direct eviction)
     }
     this.fulls.delete(path);
-    // do NOT drop requestedFull while a loadFull is still in flight for
+    // do NOT drop requestedFull while a nav read is still in flight for
     // this path, or a re-request would start a duplicate fetch.
     if (!this.fullInFlightPaths.has(path)) {
       this.requestedFull.delete(path);
@@ -1548,12 +1481,12 @@ export class ImageStore {
         // A neighbour that failed recently retries on ITS schedule, not on
         // every cursor settle (prefetch must never hammer a sick NAS).
         if (inCooldown(this.fullErrors.get(path), now)) continue;
-        if (this.fullQueue.includes(path)) continue;
-        this.fullQueue.push(path);
+        if (this.navLane.queue.includes(path)) continue;
+        this.navLane.queue.push(path);
         enqueued = true;
       }
     }
-    if (enqueued) this.pumpFull();
+    if (enqueued) this.navLane.pump();
   }
 
   /**
@@ -1597,34 +1530,10 @@ export class ImageStore {
     if (this.generation !== gen) return;
     // The queue is UNORDERED — pickBg() finds the grid-viewport-first /
     // nearest-cursor candidate by argmin at pump time, against the live cursor.
-    this.bgQueue = this.paths.filter((p) => !this.thumbs.has(p) && !this.requestedThumb.has(p));
-    this.pumpBg();
-  }
-
-  private pumpBg(): void {
-    // Folder unreachable — every new read would hang/fail for its full
-    // timeout. The retry affordance (re-scan → reset) re-arms everything.
-    if (this.trouble.isTroubled) return;
-    const cap = this.profile.backgroundFillConcurrency;
-    while (
-      this.bgInFlight < cap &&
-      // On-demand thumbs + on-demand full take priority — don't start new bg
-      // work if there are higher-priority items queued, or while a wanted full
-      // is actively READING (in flight). The latter keeps the bg lane from
-      // refilling its slots and starving the full the user is staring at.
-      this.thumbQueue.length === 0 &&
-      this.fullQueue.length === 0 &&
-      this.fullInFlightPaths.size === 0 &&
-      this.bgQueue.length > 0
-    ) {
-      const k = this.pickBg();
-      if (k === -1) break; // every remaining candidate is cooling down
-      const path = this.bgQueue.splice(k, 1)[0];
-      if (this.thumbs.has(path) || this.requestedThumb.has(path)) continue;
-      this.requestedThumb.add(path);
-      this.bgInFlight++;
-      void this.loadThumbInto("bg", path);
-    }
+    this.bgLane.queue = this.paths.filter(
+      (p) => !this.thumbs.has(p) && !this.requestedThumb.has(p),
+    );
+    this.bgLane.pump();
   }
 
   // ── Dev HUD (Phase 3; data + ring buffers live in devStats.ts) ──────────
@@ -1676,10 +1585,10 @@ export class ImageStore {
       pool: this.pool?.counts() ?? { previews: 0, fulls: 0 },
       navMsAvg: this.stats.navMsAvg(),
       lanes: {
-        preview: `${this.fullInFlight}/${this.profile.previewConcurrency} q${this.fullQueue.length}`,
-        zoom: `${this.zoomInFlight}/${this.profile.fullConcurrency} q${this.zoomQueue.length}`,
-        thumb: `${this.thumbInFlight}/${this.profile.thumbConcurrency} q${this.thumbQueue.length}`,
-        bg: `${this.bgInFlight}/${this.profile.backgroundFillConcurrency} q${this.bgQueue.length}`,
+        preview: `${this.navLane.inFlight}/${this.profile.previewConcurrency} q${this.navLane.queue.length}`,
+        zoom: `${this.zoomLane.inFlight}/${this.profile.fullConcurrency} q${this.zoomLane.queue.length}`,
+        thumb: `${this.thumbLane.inFlight}/${this.profile.thumbConcurrency} q${this.thumbLane.queue.length}`,
+        bg: `${this.bgLane.inFlight}/${this.profile.backgroundFillConcurrency} q${this.bgLane.queue.length}`,
       },
       caches: {
         previews,
@@ -1696,7 +1605,7 @@ export class ImageStore {
           const v = this.needPxProvider?.() ?? null;
           return v === null ? null : Math.round(v);
         })(),
-        lane: `${this.midInFlight}/${this.profile.midGenConcurrency} q${this.midQueue.length}`,
+        lane: `${this.midLane.inFlight}/${this.profile.midGenConcurrency} q${this.midLane.queue.length}`,
         cached: mids,
         sweepLeft:
           this.profile.concurrentRestore && this.midEngaged
