@@ -48,6 +48,14 @@ import { PERFORMANCE_PROFILES } from "../types/settings";
 import { DecodePool } from "./decodePool";
 import type { PoolEntry, PoolImage } from "./decodePool";
 import { DevStats } from "./devStats";
+import {
+  backoffMs,
+  FolderTroubleLatch,
+  inCooldown,
+  MAX_TIER_ATTEMPTS,
+  recordTierError,
+  type TierError,
+} from "./tierErrors";
 import { MidSweep } from "./midSweep";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
 import type { ImageDims } from "../utils/bundle";
@@ -63,37 +71,10 @@ const THUMB_LRU_CAP = 15000;
 /** Placeholder dims used before real dimensions are known. */
 const UNKNOWN_DIMS: ImageDims = { w: 1, h: 1 };
 
-// ── Tier error model (Phase 1) ─────────────────────────────────────────────
-// Per-path per-tier transient-failure state with capped exponential backoff.
-// attempts 1..MAX retry automatically (1s, 2s, 4s… capped); at MAX the tier is
-// TERMINAL: no auto-retry until the folder is revisited (reset clears these)
-// or the user hits the error panel's retry affordance (retry()).
-
-/** Per-tier failure record. */
-type TierError = { attempts: number; lastError: string; nextRetryAt: number };
-
-/** First-retry delay; doubles per attempt. */
-const RETRY_BASE_MS = 1000;
-/** Backoff ceiling. */
-const RETRY_CAP_MS = 30_000;
-/** Failed attempts before a tier goes terminal. */
-const MAX_TIER_ATTEMPTS = 4;
-/** Distinct terminal-failed paths that trip the folder-unreachable affordance
- *  (NAS unmounted / sleep-wake) — past this the store stops hammering and App
- *  surfaces a non-blocking "folder unreachable — retry" chip. */
-const FOLDER_TROUBLE_THRESHOLD = 4;
-
-const backoffMs = (attempts: number): number =>
-  Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** (attempts - 1));
-
 /** Delay before re-probing `read_mid` after a quiet miss (Phase 8): the
  *  opportunistic generator needs ~300–400 ms of CPU after its zoom read
  *  returns, plus slack for the MidGen queue. */
 const MID_REPROBE_MS = 1500;
-
-/** True while the tier must NOT be auto-requested (cooling down or terminal). */
-const inCooldown = (te: TierError | undefined, now: number): boolean =>
-  te !== undefined && (te.attempts >= MAX_TIER_ATTEMPTS || now < te.nextRetryAt);
 
 /** Constructor options (test-only knobs kept minimal). */
 export type ImageStoreOptions = {
@@ -142,12 +123,8 @@ export class ImageStore {
   /** Per-path per-tier failure state (capped backoff; see TierError). */
   private thumbErrors = new Map<string, TierError>();
   private fullErrors = new Map<string, TierError>();
-  /** Paths whose thumb or full reached MAX_TIER_ATTEMPTS this session. */
-  private terminalPaths = new Set<string>();
-  /** Latched when terminalPaths crosses FOLDER_TROUBLE_THRESHOLD: stop all
-   *  auto-retries + bg sweep until the user retries (App re-runs the scan →
-   *  reset() clears this) or retry()/reset re-arms. */
-  private folderTrouble = false;
+  /** Terminal-path tracking + the folder-unreachable latch (tierErrors.ts). */
+  private readonly trouble = new FolderTroubleLatch();
   /** App-registered callback fired once when folderTrouble latches. */
   private troubleSink: (() => void) | undefined;
   /** Session-lifetime dims cache: orientation-adjusted display dims, fed by
@@ -212,7 +189,7 @@ export class ImageStore {
   // scheduler lives in midSweep.ts; the store injects its gates + touchpoints.
   private readonly midSweep = new MidSweep({
     canSweep: () =>
-      !this.folderTrouble &&
+      !this.trouble.isTroubled &&
       !this.midUnsupported &&
       this.profile.concurrentRestore && // network profile — local only
       this.bgStarted &&
@@ -458,8 +435,7 @@ export class ImageStore {
     // mounted consumers unregister on their own unmount.
     this.thumbErrors.clear();
     this.fullErrors.clear();
-    this.terminalPaths.clear();
-    this.folderTrouble = false;
+    this.trouble.reset();
 
     // zero in-flight counters. Late decrements from superseded loads are
     // now gen-scoped (they no-op), so zeroing here can't be driven negative.
@@ -561,8 +537,7 @@ export class ImageStore {
     this.pool?.clear();
     this.thumbErrors.clear();
     this.fullErrors.clear();
-    this.terminalPaths.clear();
-    this.folderTrouble = false;
+    this.trouble.reset();
     this.pathDims.clear();
     // gen-scoped finally blocks make zeroing safe (no negative drift).
     this.thumbInFlight = 0;
@@ -770,7 +745,7 @@ export class ImageStore {
     this.midErrors.delete(path);
     this.midUncached.delete(path);
     this.midReprobed.delete(path);
-    this.terminalPaths.delete(path);
+    this.trouble.clearPath(path);
     if (this.fulls.get(path)?.status === "error") {
       this.fulls.delete(path);
       this.requestedFull.delete(path);
@@ -816,8 +791,7 @@ export class ImageStore {
     this.midErrors.clear();
     this.midUncached.clear();
     this.midReprobed.clear();
-    this.terminalPaths.clear();
-    this.folderTrouble = false;
+    this.trouble.reset();
     for (const p of this.wantFull.keys()) {
       if (
         this.fulls.get(p)?.status !== "ready" &&
@@ -972,12 +946,12 @@ export class ImageStore {
       // after MAX_TIER_ATTEMPTS. Only act for the current generation.
       if (this.generation === gen) {
         const msg = e instanceof Error ? e.message : String(e);
-        const te = this.recordTierError(this.thumbErrors, path, msg);
+        const te = this.noteTierError(this.thumbErrors, path, msg);
         this.requestedThumb.delete(path);
-        if (te.attempts < MAX_TIER_ATTEMPTS && !this.folderTrouble) {
+        if (te.attempts < MAX_TIER_ATTEMPTS && !this.trouble.isTroubled) {
           if (!this.bgQueue.includes(path)) this.bgQueue.push(path);
           setTimeout(() => {
-            if (this.generation === gen && !this.folderTrouble) this.pumpBg();
+            if (this.generation === gen && !this.trouble.isTroubled) this.pumpBg();
           }, backoffMs(te.attempts));
         }
       }
@@ -1013,25 +987,16 @@ export class ImageStore {
     return idx !== -1 && Math.abs(idx - centerIndex) <= this.profile.previewKeep;
   }
 
-  /** Record a failed read for one tier; latches folder-trouble at threshold. */
-  private recordTierError(map: Map<string, TierError>, path: string, msg: string): TierError {
-    const attempts = (map.get(path)?.attempts ?? 0) + 1;
-    const te: TierError = {
-      attempts,
-      lastError: msg,
-      nextRetryAt: Date.now() + backoffMs(attempts),
-    };
-    map.set(path, te);
+  /** Record a failed read for one tier; latches folder-trouble at threshold
+   *  (model + latch live in tierErrors.ts — this wires the counter + sink). */
+  private noteTierError(map: Map<string, TierError>, path: string, msg: string): TierError {
+    const te = recordTierError(map, path, msg);
     this.stats.counts.errors++;
-    if (attempts >= MAX_TIER_ATTEMPTS) {
-      this.terminalPaths.add(path);
-      if (!this.folderTrouble && this.terminalPaths.size >= FOLDER_TROUBLE_THRESHOLD) {
-        // Several distinct paths went terminal — the folder itself is almost
-        // certainly unreachable (NAS unmount / sleep-wake). Stop hammering;
-        // App surfaces the retry affordance, whose re-scan reset()s us clean.
-        this.folderTrouble = true;
-        this.troubleSink?.();
-      }
+    if (te.attempts >= MAX_TIER_ATTEMPTS && this.trouble.noteTerminal(path)) {
+      // Several distinct paths went terminal — the folder itself is almost
+      // certainly unreachable (NAS unmount / sleep-wake). Stop hammering;
+      // App surfaces the retry affordance, whose re-scan reset()s us clean.
+      this.troubleSink?.();
     }
     return te;
   }
@@ -1152,7 +1117,7 @@ export class ImageStore {
       this.pendingZoom.delete(path);
       this.pendingMid.delete(path);
       this.requestedFull.delete(path);
-      const te = this.recordTierError(this.fullErrors, path, msg);
+      const te = this.noteTierError(this.fullErrors, path, msg);
       this.scheduleFullRetry(path, te, gen);
       this.invalidate(path);
     } finally {
@@ -1289,7 +1254,7 @@ export class ImageStore {
         this.zoomFulls.delete(path);
       } else {
         this.zoomFulls.set(path, { status: "error", error: msg });
-        this.recordTierError(this.zoomErrors, path, msg);
+        this.noteTierError(this.zoomErrors, path, msg);
       }
       this.invalidate(path);
     } finally {
@@ -1325,10 +1290,10 @@ export class ImageStore {
    *  Gen-scoped; every guard re-checks at fire time, so stacked timers from
    *  register/unregister churn are harmless no-ops. */
   private scheduleFullRetry(path: string, te: TierError, gen: number): void {
-    if (te.attempts >= MAX_TIER_ATTEMPTS || this.folderTrouble) return;
+    if (te.attempts >= MAX_TIER_ATTEMPTS || this.trouble.isTroubled) return;
     setTimeout(
       () => {
-        if (this.generation !== gen || this.folderTrouble) return;
+        if (this.generation !== gen || this.trouble.isTroubled) return;
         if (!this.wantFull.has(path)) return; // nobody's looking — re-register retries
         if (this.requestedFull.has(path) || this.fullInFlightPaths.has(path)) return;
         if (this.fulls.get(path)?.status === "ready") return;
@@ -1464,7 +1429,7 @@ export class ImageStore {
         // Phase-8 frontend on an older backend: the tier stays dormant.
         this.midUnsupported = true;
       } else {
-        this.recordTierError(this.midErrors, path, msg);
+        this.noteTierError(this.midErrors, path, msg);
       }
       this.invalidate(path);
     } finally {
@@ -1639,7 +1604,7 @@ export class ImageStore {
   private pumpBg(): void {
     // Folder unreachable — every new read would hang/fail for its full
     // timeout. The retry affordance (re-scan → reset) re-arms everything.
-    if (this.folderTrouble) return;
+    if (this.trouble.isTroubled) return;
     const cap = this.profile.backgroundFillConcurrency;
     while (
       this.bgInFlight < cap &&
