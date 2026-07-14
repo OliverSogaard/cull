@@ -49,6 +49,7 @@ import { useDragAndDrop } from "./app/useDragAndDrop";
 import { useFolderTrouble } from "./app/useFolderTrouble";
 import { useHeldRepeat } from "./app/useHeldRepeat";
 import { useImageStoreWiring } from "./app/useImageStoreWiring";
+import { useOverlayKind } from "./app/useOverlayKind";
 import { usePaneZoom } from "./app/usePaneZoom";
 import { useQuitGuard } from "./app/useQuitGuard";
 import { useRatingPersistence } from "./app/useRatingPersistence";
@@ -835,71 +836,24 @@ export default function App() {
     if (nextPath) imageStore.requestZoomFull(nextPath);
   }, [phase, compareMode, isZooming, cur.stage, positionInFilter, visibleIndices, images]);
 
-  // Ensure clip masks exist for the on-screen image(s) while clipping is on;
-  // toggling off drops the kind's cache + request-set in the service (clipping
-  // does not persist). Skipped mid-scrub: the overlays are hidden then, and
-  // computing a mask per flown-past warm frame would churn the LRU + worker
-  // for nothing — the release re-fires this via the scrubbing dep. The service
-  // bails per path until its PREVIEW lands; the .stage deps re-fire it then.
-  // (Mask/histogram pixel work itself lives in overlayService/overlayCompute —
-  // worker-first with an inline fallback, generation-guarded. Phase 6.)
-  useEffect(() => {
-    if (!clippingVisible) {
-      overlayService.clearKind("clip");
-      return;
-    }
-    if (scrubbing) return;
-    if (compareMode) {
-      if (images[championIndex]) overlayService.ensure("clip", images[championIndex].path);
-      if (images[challengerIndex]) overlayService.ensure("clip", images[challengerIndex].path);
-    } else if (images[currentIndex]) {
-      overlayService.ensure("clip", images[currentIndex].path);
-    }
-  }, [
-    clippingVisible,
+  // Clip + peak mask upkeep for the on-screen image(s) — exact twins, one
+  // parameterized effect in app/useOverlayKind (which carries the scrub-skip
+  // and preview-retry reasoning). The histogram effect below stays separate:
+  // it's the single-view-only variant.
+  const overlayParams = {
     scrubbing,
     compareMode,
     championIndex,
     challengerIndex,
     currentIndex,
     images,
-    // .stage drives the compute-once-the-preview-lands retry; cur.* is the
-    // LOUPE subscription, champShot/chalShot the COMPARE pair; the off-mode
-    // subscription is pinned to "" (stable), so its dep is inert.
-    cur.stage,
-    champShot.stage,
-    chalShot.stage,
-    // every async commit re-runs this so ensure() re-touches the on-screen
-    // paths' LRU recency — see the subscription comment above.
+    curStage: cur.stage,
+    champStage: champShot.stage,
+    chalStage: chalShot.stage,
     overlayVersion,
-  ]);
-
-  // Mirror of the clipping effect: ensure peaking masks exist while P is on.
-  useEffect(() => {
-    if (!peakingVisible) {
-      overlayService.clearKind("peak");
-      return;
-    }
-    if (scrubbing) return;
-    if (compareMode) {
-      if (images[championIndex]) overlayService.ensure("peak", images[championIndex].path);
-      if (images[challengerIndex]) overlayService.ensure("peak", images[challengerIndex].path);
-    } else if (images[currentIndex]) {
-      overlayService.ensure("peak", images[currentIndex].path);
-    }
-  }, [
-    peakingVisible,
-    scrubbing,
-    compareMode,
-    championIndex,
-    challengerIndex,
-    currentIndex,
-    images,
-    cur.stage,
-    champShot.stage,
-    chalShot.stage,
-    overlayVersion, // re-touch on-screen LRU recency per landing (see above)
-  ]);
+  };
+  useOverlayKind("clip", clippingVisible, overlayParams);
+  useOverlayKind("peak", peakingVisible, overlayParams);
 
   // RGB histogram for the on-screen image while the EXIF overlay is open; the
   // kind drops when it closes. Single view ONLY — the compare rail renders no
