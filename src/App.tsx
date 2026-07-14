@@ -47,6 +47,7 @@ import { useCullKeymap } from "./app/useCullKeymap";
 import { useDecideCallbacks } from "./app/useDecideCallbacks";
 import { useDragAndDrop } from "./app/useDragAndDrop";
 import { useFolderTrouble } from "./app/useFolderTrouble";
+import { useHeldRepeat } from "./app/useHeldRepeat";
 import { useImageStoreWiring } from "./app/useImageStoreWiring";
 import { usePaneZoom } from "./app/usePaneZoom";
 import { useQuitGuard } from "./app/useQuitGuard";
@@ -71,20 +72,21 @@ import { modGlyph } from "./utils/platform";
 import { pickSmartEmptyState } from "./utils/smartEmptyState";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
-import { scrubSpeedForHeldMs, type ScrubSpeed } from "./utils/scrubAccel";
+import type { ScrubSpeed } from "./utils/scrubAccel";
 
 // Read concurrency, previewKeep, and the store profile wiring live in
 // app/useImageStoreWiring; the rating-write retry schedule and feedback-flash
 // timing live in app/useRatingPersistence (grand cleanup Phase 6).
-// Hold-to-navigate cadence. We ignore the OS key auto-repeat (long initial delay,
-// uneven rate) and drive stepping ourselves from a rAF loop while the arrow is
-// held — one step per this interval, frame-aligned so it never steps faster than
-// the display paints (no stutter; self-throttles on a slow frame). ~33ms ≈ 30
-// images/s, the fastest that still feels smooth.
+// Hold-to-navigate cadence (the repeat loop itself lives in app/useHeldRepeat).
+// We ignore the OS key auto-repeat (long initial delay, uneven rate) and drive
+// stepping ourselves from a rAF loop while the arrow is held — one step per
+// this interval, frame-aligned so it never steps faster than the display
+// paints (no stutter; self-throttles on a slow frame). ~33ms ≈ 30 images/s,
+// the fastest that still feels smooth.
 const NAV_REPEAT_MS = 33;
-// Staged scrub acceleration (1x → 3x @2s → 10x @5s) now lives in
-// utils/scrubAccel.ts, shared by this loupe/compare horizontal hold AND the
-// grid's vertical hold below — see scrubSpeedForHeldMs.
+// Staged scrub acceleration (1x → 3x @2s → 10x @5s) lives in
+// utils/scrubAccel.ts, shared by the loupe/compare horizontal hold AND the
+// grid's vertical hold — see scrubSpeedForHeldMs.
 
 // After the immediate first step on hold-start, wait this long before the
 // auto-repeat kicks in — so a quick tap moves exactly one image, while a
@@ -993,175 +995,55 @@ export default function App() {
       goBack,
     });
 
-  // Held-arrow navigation. The OS key-repeat is uneven and starts with a ~0.4s
-  // delay, which made the first second of a hold feel jumpy. Instead we step once
-  // on the initial press and then drive a steady rAF loop while the key is held.
-  // navStep dispatches to the right action for the current mode; navStepRef keeps
-  // the loop calling the LATEST closure (fresh currentIndex / challenger) each tick.
+  // Held-arrow navigation — the hold-delay → rAF-paced repeat engine lives in
+  // app/useHeldRepeat (immediate first step, staged 1×/3×/10× accel, ONE step
+  // call per tick with step=speed). navStep dispatches to the right action for
+  // the current mode; the hook reads the LATEST closure (fresh currentIndex /
+  // challenger) each tick.
   const navStep = useCallback(
     (dir: 1 | -1, step = 1): boolean =>
       compareMode ? cycleChallenger(dir, step) : advance(dir, step),
     [compareMode, advance, cycleChallenger],
   );
-  const navStepRef = useRef(navStep);
-  useEffect(() => {
-    navStepRef.current = navStep;
-  }, [navStep]);
 
-  const heldDirRef = useRef<0 | 1 | -1>(0);
-  const navRafRef = useRef<number | null>(null);
-  const lastStepTsRef = useRef(0);
-  const holdStartTsRef = useRef(0);
-  const scrubbingRef = useRef(false);
-  // Staged acceleration (1× → 3× → 10× by hold time) — state only for the
-  // indicators (scrub bar + footer chip); the loop reads the ref.
+  // Staged-acceleration indicator state (strip scrub bar + footer chip + the
+  // grid's right-edge speed badge) — ONE shared pair for both hold systems,
+  // fed by change-only signals from each instance.
   const [scrubSpeed, setScrubSpeed] = useState<ScrubSpeed>(1);
-  const scrubSpeedRef = useRef<ScrubSpeed>(1);
-
-  const stopHold = useCallback(() => {
-    heldDirRef.current = 0;
-    if (navRafRef.current != null) {
-      cancelAnimationFrame(navRafRef.current);
-      navRafRef.current = null;
-    }
-    if (scrubbingRef.current) {
-      scrubbingRef.current = false;
-      setScrubbing(false); // settle → full-res snaps back for the landed frame
-    }
-    if (scrubSpeedRef.current !== 1) {
-      scrubSpeedRef.current = 1;
-      setScrubSpeed(1);
-    }
+  const onScrubChange = useCallback((active: boolean, speed: ScrubSpeed) => {
+    setScrubbing(active); // settle → full-res snaps back for the landed frame
+    setScrubSpeed(speed);
   }, []);
 
-  const startHold = useCallback((dir: 1 | -1) => {
-    if (heldDirRef.current === dir) return; // already scrubbing this way
-    if (navRafRef.current != null) cancelAnimationFrame(navRafRef.current);
-    heldDirRef.current = dir;
-    navStepRef.current(dir); // immediate first step — no OS initial-repeat delay
-    holdStartTsRef.current = performance.now();
-    lastStepTsRef.current = holdStartTsRef.current;
-    let repeating = false; // false until the initial hold delay elapses
-    const loop = (ts: number) => {
-      if (heldDirRef.current === 0) return;
-      // First repeat waits NAV_HOLD_DELAY_MS after hold-start (so a tap = 1 step);
-      // once repeating, each subsequent step waits NAV_REPEAT_MS.
-      const due = repeating
-        ? ts - lastStepTsRef.current >= NAV_REPEAT_MS
-        : ts - holdStartTsRef.current >= NAV_HOLD_DELAY_MS;
-      if (due) {
-        repeating = true;
-        lastStepTsRef.current = ts;
-        // Staged acceleration: the longer the hold, the more frames per tick
-        // (1× → 3× → 10×). Multi-steps stop at a boundary mid-tick.
-        const held = ts - holdStartTsRef.current;
-        const speed = scrubSpeedForHeldMs(held);
-        if (speed !== scrubSpeedRef.current) {
-          scrubSpeedRef.current = speed;
-          setScrubSpeed(speed);
-        }
-        // ONE call with step=speed: advance/cycleChallenger read this render's
-        // position, so calling them repeatedly within a tick would recompute
-        // the same target `speed` times and move a single frame (the "50× that
-        // scrubbed at 1×" bug). Both walk `step` frames internally instead.
-        const moved = navStepRef.current(heldDirRef.current, speed);
-        // Blur only while actually moving. At a boundary (nothing to move to) keep
-        // the current frame full-res — no point blurring when we aren't going
-        // anywhere. Toggle only on change to avoid per-step re-renders.
-        if (moved !== scrubbingRef.current) {
-          scrubbingRef.current = moved;
-          setScrubbing(moved);
-        }
-      }
-      navRafRef.current = requestAnimationFrame(loop);
-    };
-    navRafRef.current = requestAnimationFrame(loop);
-  }, []);
+  // Loupe/compare horizontal hold. The grid's vertical hold below gets its
+  // OWN instance — the two systems are mutually exclusive by mode (grid vs.
+  // loupe/compare), and separate instances mean one loop's cleanup can never
+  // stomp the other's.
+  const {
+    start: startHold,
+    stop: stopHold,
+    heldDirRef,
+    scrubbingRef,
+  } = useHeldRepeat({
+    onStep: navStep,
+    holdDelayMs: NAV_HOLD_DELAY_MS,
+    repeatMs: NAV_REPEAT_MS,
+    onScrubChange,
+  });
 
-  // Held ArrowUp/ArrowDown in the grid: the SAME staged acceleration as the
-  // loupe/compare horizontal hold above (via scrubSpeedForHeldMs), but
-  // stepping `gridCols * speed` rows per repeat tick instead of frames.
-  // Separate ref/loop from heldDirRef/startHold — the two hold systems are
-  // mutually exclusive by mode (grid vs. loupe/compare) but keeping them
-  // distinct avoids any risk of one loop's cleanup stomping the other's.
-  // advanceRef/gridColsRef mirror navStepRef: the loop must read the LATEST
-  // advance + gridCols each tick, not the ones closed over at hold-start,
-  // since `advance`'s identity (and possibly gridCols, on a mid-hold resize)
-  // changes every step.
-  const advanceRef = useRef(advance);
-  useEffect(() => {
-    advanceRef.current = advance;
-  }, [advance]);
-  const gridColsRef = useRef(gridCols);
-  useEffect(() => {
-    gridColsRef.current = gridCols;
-  }, [gridCols]);
-
-  const heldGridVertDirRef = useRef<0 | 1 | -1>(0);
-  const gridVertRafRef = useRef<number | null>(null);
-  const gridVertLastStepTsRef = useRef(0);
-  const gridVertHoldStartTsRef = useRef(0);
-
-  const stopGridVertHold = useCallback(() => {
-    heldGridVertDirRef.current = 0;
-    if (gridVertRafRef.current != null) {
-      cancelAnimationFrame(gridVertRafRef.current);
-      gridVertRafRef.current = null;
-    }
-    // Same settle as stopHold: drop the shared scrubbing/scrubSpeed state so
-    // the footer chip + strip scrub bar's grid counterparts (footer chip and
-    // the grid's right-edge speed badge) clear together. One shared pair of
-    // indicators for both hold systems — see the state's declaration comment.
-    if (scrubbingRef.current) {
-      scrubbingRef.current = false;
-      setScrubbing(false);
-    }
-    if (scrubSpeedRef.current !== 1) {
-      scrubSpeedRef.current = 1;
-      setScrubSpeed(1);
-    }
-  }, []);
-
-  const startGridVertHold = useCallback((dir: 1 | -1) => {
-    if (heldGridVertDirRef.current === dir) return; // already scrubbing this way
-    if (gridVertRafRef.current != null) cancelAnimationFrame(gridVertRafRef.current);
-    heldGridVertDirRef.current = dir;
-    advanceRef.current(dir, gridColsRef.current); // immediate first row-jump
-    gridVertHoldStartTsRef.current = performance.now();
-    gridVertLastStepTsRef.current = gridVertHoldStartTsRef.current;
-    let repeating = false;
-    const loop = (ts: number) => {
-      if (heldGridVertDirRef.current === 0) return;
-      const due = repeating
-        ? ts - gridVertLastStepTsRef.current >= NAV_REPEAT_MS
-        : ts - gridVertHoldStartTsRef.current >= NAV_HOLD_DELAY_MS;
-      if (due) {
-        repeating = true;
-        gridVertLastStepTsRef.current = ts;
-        const held = ts - gridVertHoldStartTsRef.current;
-        const speed = scrubSpeedForHeldMs(held);
-        // Same shared scrubSpeed state the loupe/compare hold drives — this is
-        // what the footer chip AND the grid's own right-edge speed badge read.
-        if (speed !== scrubSpeedRef.current) {
-          scrubSpeedRef.current = speed;
-          setScrubSpeed(speed);
-        }
-        // ONE call with step = gridCols * speed — same one-call rule as the
-        // horizontal hold above (see its comment): N single-row calls would
-        // all read the same render-frozen position and go nowhere.
-        const moved = advanceRef.current(heldGridVertDirRef.current, gridColsRef.current * speed);
-        // Same shared "scrubbing" flag the loupe hold flips (see startHold) —
-        // only true once actually moving, so parking at the top/bottom edge
-        // doesn't flash the footer's "Scrubbing" chip for nothing.
-        if (moved !== scrubbingRef.current) {
-          scrubbingRef.current = moved;
-          setScrubbing(moved);
-        }
-      }
-      gridVertRafRef.current = requestAnimationFrame(loop);
-    };
-    gridVertRafRef.current = requestAnimationFrame(loop);
-  }, []);
+  // Held ArrowUp/ArrowDown in the grid: the SAME staged acceleration, but
+  // stepping `gridCols * speed` ROWS per repeat tick instead of frames —
+  // the one-call-per-tick rule matters doubly here (see scrubAccel.ts).
+  const {
+    start: startGridVertHold,
+    stop: stopGridVertHold,
+    heldDirRef: heldGridVertDirRef,
+  } = useHeldRepeat({
+    onStep: (dir, speed) => advance(dir, gridCols * speed),
+    holdDelayMs: NAV_HOLD_DELAY_MS,
+    repeatMs: NAV_REPEAT_MS,
+    onScrubChange,
+  });
 
   // A grid-exit that doesn't go through a keydown (e.g. a footer/mouse
   // navigation) must still stop the loop — mirrors the clearMultiSelection
@@ -1213,8 +1095,8 @@ export default function App() {
       if (heldDirRef.current !== 0 || scrubbingRef.current) stopHold();
       setCurrentIndex(index);
     },
-    // isZoomingRef is an identity-stable hook return — listed for exhaustive-deps.
-    [stopHold, isZoomingRef],
+    // The refs are identity-stable hook returns — listed for exhaustive-deps.
+    [stopHold, isZoomingRef, heldDirRef, scrubbingRef],
   );
   const pickChallengerFromStrip = useCallback(
     (index: number) => {
@@ -1222,8 +1104,8 @@ export default function App() {
       if (heldDirRef.current !== 0 || scrubbingRef.current) stopHold();
       setChallengerIndex(index);
     },
-    // isZoomingRef: same stable-ref listing as pickFromStrip above.
-    [stopHold, isZoomingRef],
+    // Same stable-ref listing as pickFromStrip above.
+    [stopHold, isZoomingRef, heldDirRef, scrubbingRef],
   );
 
   // Grid cell click — stable identity so GridView/GridCell memoization holds and
@@ -1283,6 +1165,8 @@ export default function App() {
       clearMultiSelection,
       goToSite,
       stopGridVertHold,
+      // Identity-stable hook return — listed for exhaustive-deps.
+      heldGridVertDirRef,
     ],
   );
 

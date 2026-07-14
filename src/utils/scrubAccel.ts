@@ -9,7 +9,7 @@
  * step = speed. Calling it `speed` times in a row re-reads the same
  * render-frozen position each time and moves a single frame/row total, not
  * `speed` of them (the "50× hold that only scrubbed at 1×" bug). See
- * App.tsx's startHold / startGridVertHold for the one-call usage.
+ * app/useHeldRepeat.ts for the one-call usage.
  */
 export const SCRUB_STAGE2_AT_MS = 2000;
 export const SCRUB_STAGE3_AT_MS = 5000;
