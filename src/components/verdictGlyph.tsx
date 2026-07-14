@@ -6,17 +6,23 @@ import type { Suggestion } from "../smart/deriveVerdict";
 /**
  * The verdict glyph (✓ / ✕ / ★) as a Lucide SVG icon — intrinsically centered,
  * unlike Unicode glyphs whose metrics drift across system fonts on Windows.
- * Shared by the grid and filmstrip cells (which pass size 12 / 9). `null` for
- * unrated. Stroke is per-glyph (keep/reject 3, favorite 2.6), not size-based.
+ * Shared by the grid and filmstrip cells (which pass size 12 / 9), the status
+ * pill, and RatingDot. `null` for unrated. Default stroke is per-glyph
+ * (keep/reject 3, favorite 2.6), not size-based; RatingDot's larger chip
+ * passes a uniform `strokeWidth` tuned to its size instead.
  */
-export function verdictGlyph(rating: Rating | undefined, size: number): ReactNode {
+export function verdictGlyph(
+  rating: Rating | undefined,
+  size: number,
+  strokeWidth?: number,
+): ReactNode {
   switch (rating) {
     case "keep":
-      return <Check size={size} color="#0a0a0c" strokeWidth={3} />;
+      return <Check size={size} color="#0a0a0c" strokeWidth={strokeWidth ?? 3} />;
     case "reject":
-      return <XIcon size={size} color="#0a0a0c" strokeWidth={3} />;
+      return <XIcon size={size} color="#0a0a0c" strokeWidth={strokeWidth ?? 3} />;
     case "favorite":
-      return <Star size={size} color="#0a0a0c" strokeWidth={2.6} fill="#0a0a0c" />;
+      return <Star size={size} color="#0a0a0c" strokeWidth={strokeWidth ?? 2.6} fill="#0a0a0c" />;
     default:
       return null;
   }

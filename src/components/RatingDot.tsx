@@ -1,16 +1,11 @@
-import { Check, Star, X as XIcon } from "lucide-react";
 import type { Rating } from "../types";
 import { RATING_COLOR } from "../utils/ratingColor";
+import { verdictGlyph } from "./verdictGlyph";
 
 /**
- * A single rating chip — coloured circle with a centered glyph (✓ / ✕ / ★).
- *
- * The glyph is rendered as a Lucide SVG icon (not a Unicode character) because
- * Unicode glyphs like ★ ✓ ✕ have inconsistent baselines / visual centerlines
- * across system fonts on Windows vs. macOS, which broke `flex; center; center`
- * centering for the star in particular. SVG icons are intrinsically centered.
- *
- * Rendered in the compare panes.
+ * A single rating chip — coloured circle with a centered glyph (✓ / ✕ / ★),
+ * rendered by the shared verdictGlyph (Lucide SVG — see its note on why not
+ * Unicode). Rendered in the compare panes.
  */
 export function RatingDot({ rating }: { rating: Rating }) {
   const dim = 18;
@@ -26,13 +21,7 @@ export function RatingDot({ rating }: { rating: Rating }) {
       aria-label={label}
       style={{ width: dim, height: dim, backgroundColor: RATING_COLOR[rating] }}
     >
-      {rating === "keep" ? (
-        <Check size={glyphSize} color="#0a0a0c" strokeWidth={stroke} />
-      ) : rating === "reject" ? (
-        <XIcon size={glyphSize} color="#0a0a0c" strokeWidth={stroke} />
-      ) : (
-        <Star size={glyphSize} color="#0a0a0c" strokeWidth={stroke} fill="#0a0a0c" />
-      )}
+      {verdictGlyph(rating, glyphSize, stroke)}
     </div>
   );
 }
