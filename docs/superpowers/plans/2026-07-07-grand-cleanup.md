@@ -999,3 +999,100 @@ mid-load (gen cancellation — no ghost images), close/reopen the same folder
 8927-class paint check, and a long-session memory watch (Activity Monitor
 on WebContent while arrowing/zooming through a big shoot). Standing push
 approval applies AFTER this passes — nothing pushed yet.
+
+---
+
+## Phase 9 — DONE 2026-07-14 (awaiting Gate 9 — LIVE)
+
+**Commits:** `7a0b1d1` (9.1a engine, TDD), `6171d6d` (9.1b App swap),
+`500dc5a` (9.2a useArmedConfirm), `cf902bd` (9.2b RatingDot fold),
+`1117fc8` (9.2c useOverlayKind), `2a6bc8d` (9.2d VerdictDot).
+App.tsx: **2,663 → 2,501 lines.**
+
+### 9.1 `useHeldRepeat`
+
+TDD, tests first (the repo has no React test renderer, so the hook follows
+the midSweep/analysisDriver pattern: a pure `createHeldRepeat` engine with
+injectable rAF/caf/now — "fake rAF/timers" per the plan — plus a thin React
+shell). 12 tests pin the plan's invariant list before the swap: immediate
+first step at speed 1, hold-delay before the first repeat, repeatMs pacing,
+speed escalation via scrubSpeedForHeldMs, ONE onStep per due tick with
+step=speed (the "50× at 1×" bug), scrubbing flips only on moved-change,
+speed escalates even while parked at a boundary, cancel-on-stop, tap =
+one step + ZERO scrub-state calls (the pickFromStrip per-click-setState
+stutter), same-dir restart no-op, direction change cancels the old loop,
+speed/timing reset between holds. All 12 red (module missing) → green on
+the engine's first run; the App swap then passed the full suite first run.
+
+The swap (`6171d6d`): both clusters become two hook instances; step
+divergence stays at the call sites (`onStep: navStep` vs
+`(dir, speed) => advance(dir, gridCols * speed)`); the
+navStepRef/advanceRef/gridColsRef mirrors are replaced by the hook's
+internal latest-closure refs (same useEffect timing); scrub indicator state
+stays App-owned behind one shared change-only `onScrubChange`. The keymap
+wiring is UNTOUCHED — the hook returns ref-shaped `heldDirRef`/
+`scrubbingRef` objects that satisfy the same `RefObject` params, and
+start/stop are stable identities like the old `useCallback([])` pair. The
+three stop effects (grid-exit, blur, settings-open) moved not a byte.
+
+Deviations / honesty:
+1. **Scrub-state guards are per-instance now, not shared.** The old code
+   deduped setState through two module-shared refs; each hook instance
+   tracks its own last-signalled (active, speed). Strictly safer (an idle
+   instance's stop can no longer clobber an active sibling's indicators —
+   today's callers always stop both together, so outcomes are identical),
+   and same-value setStates React-bail anyway.
+2. Within a tick the old code fired setScrubSpeed before the step and
+   setScrubbing after; the hook signals (active, speed) as a pair at both
+   points, change-gated. Both land in the same rAF batch — render-identical.
+3. Hook-returned refs are listed in pickFromStrip/pickChallengerFromStrip/
+   handleGridPick dep arrays (exhaustive-deps can't prove hook-return
+   stability — the Phase 7 isZoomingRef precedent). Identity-stable, so
+   memoization is unaffected.
+4. NAV_HOLD_DELAY_MS/NAV_REPEAT_MS stay App.tsx constants passed as opts
+   (per the plan's signature); scrubAccel.ts's pointer comment now names
+   app/useHeldRepeat.ts.
+
+### 9.2 Micro-dedupes (all four, none skipped)
+
+- **useArmedConfirm** (`src/hooks/`, next to useFocusTrap): the plan said
+  "three armed-confirm copies" — there are TWO (FinishDialog MoveRejectsRow,
+  SettingsDialog ResetRow); the plan's third line range was the JSX half of
+  MoveRejectsRow. Both now `useArmedConfirm()` (4 s default). No unit tests
+  possible without a renderer — verbatim dedupe, suite-covered call sites.
+- **RatingDot → verdictGlyph(rating, size, strokeWidth?)**: defaults keep
+  the per-glyph 3/3/2.6; RatingDot passes its uniform 2.6 — SVG output
+  byte-identical (same color/fill/stroke).
+- **useOverlayKind** (`src/app/`): clip/peak twins folded; dep arrays
+  identical plus change-stable `kind`/`enabled`; the scrub-skip and
+  preview-retry war stories travel with the effect; histogram stays in App
+  (single-view-only). `Stage` isn't exported by image/stage.ts — the hook
+  derives `Resolved["stage"]` rather than widening that module's surface.
+- **VerdictDot**: solid-else-ghost dot slot shared by GridCell/ThumbCell
+  (prefix + size props). Landed in its OWN file — the react-refresh lint
+  (rightly) refuses component + helper exports in one module, so it sits in
+  `components/VerdictDot.tsx` importing the verdictGlyph helpers.
+
+### Gate results (all green)
+
+487 TS (475 at phase start; +12 hook tests) / 109 Rust; tsc ×2, eslint,
+stylelint, clippy, `cargo fmt --check`, prettier on touched files
+(GridView/FinishDialog/SettingsDialog carry pre-existing printWidth drift —
+verified dirty at HEAD too, left alone per the Phase 2 precedent). Bundle
+385.39 kB (118.46 kB gzip) — unchanged ballpark, slightly smaller raw.
+
+**Gate 9 asks (LIVE — the dev app hot-reloads).** The scrub lap, per the
+plan: loupe hold-scrub L/R with taps mixed in (tap = exactly one step, no
+blur flash), park at the first/last frame and at a filter edge mid-hold
+(no Scrubbing chip while parked, speed badge still escalates), compare-mode
+hold-scrub through candidates, grid vertical hold to 10× across a filter
+boundary, tap-vs-hold in the grid (no 2–3 cell overshoot on release),
+Alt+Tab away mid-hold (no stuck loop; zoom exits), Ctrl+, mid-hold
+(settings opens, cursor freezes), strip-click mid-scrub (immediate landing,
+sharp), scrub sharpness on settle (neighborhood snaps SHARP). Ride-along
+glances: move-rejects "Sure?" arms and self-disarms after 4 s (and fires),
+settings Reset likewise; compare-pane rating chips (✓/✕/★) and the footer
+status pill look unchanged; ghost dots + committed dots in grid AND strip
+(solid supersedes ghost in place, hover tooltip still explains); clip (J) /
+peak (P) overlays in loupe and compare, off mid-scrub, back on settle.
+Standing push approval applies AFTER this passes — nothing pushed yet.
