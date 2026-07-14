@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { FileOpResult, Settings } from "../types";
 import { normalizeRejectedSubfolder } from "../types/settings";
+import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { isReservedFolderName, joinPath, sanitizeFolderName, truncatePathDisplay } from "../utils/path";
 
@@ -442,17 +443,10 @@ function MoveRejectsRow({
   settings: Settings;
   onMoveRejects: (dest: "subfolder" | "trash") => void;
 }) {
-  const [armed, setArmed] = useState(false);
+  const [armed, setArmed] = useArmedConfirm();
   // Where rejects go: the in-source subfolder (default, reversible in place)
   // or the OS Trash (recoverable from the Bin; CULL never hard-deletes).
   const [dest, setDest] = useState<"subfolder" | "trash">("subfolder");
-
-  // Auto-disarm so a confirmed-then-walked-away dialog doesn't sit primed.
-  useEffect(() => {
-    if (!armed) return;
-    const t = window.setTimeout(() => setArmed(false), 4000);
-    return () => window.clearTimeout(t);
-  }, [armed]);
 
   const disabled =
     !folder ||

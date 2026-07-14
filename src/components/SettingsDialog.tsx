@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Filter, Settings, SmartLevel, StorageMode, ThumbsPosition } from "../types";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import { LEVEL_THRESHOLD } from "../smart/deriveVerdict";
+import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { sanitizeFolderName } from "../utils/path";
 import { modGlyph } from "../utils/platform";
@@ -554,13 +555,7 @@ function ThumbCacheRow() {
  * message with primary "Yes, reset". Auto-disarms after 4 s (and Esc / clicking
  * outside closes the dialog), so no explicit Cancel button is needed. */
 function ResetRow({ onReset }: { onReset: () => void }) {
-  const [armed, setArmed] = useState(false);
-
-  useEffect(() => {
-    if (!armed) return;
-    const t = window.setTimeout(() => setArmed(false), 4000);
-    return () => window.clearTimeout(t);
-  }, [armed]);
+  const [armed, setArmed] = useArmedConfirm();
 
   return (
     <div className="cull-settings__row">
