@@ -908,3 +908,94 @@ no glide, then glides return), mouse-drag pan + cursor-anchored engage +
 drag continuing across a carried advance, thumb/rail toggle while zoomed,
 memory-pressure critical → auto-unzoom if reproducible. Standing push
 approval applies AFTER this passes — nothing pushed yet.
+
+---
+
+## Phase 8 — DONE 2026-07-14 (awaiting Gate 8 — LIVE, the big one)
+
+**Commits:** `4b97f10` (8.1a devStats), `3906326` (8.1b midSweep),
+`1e0a406` (8.1c tierErrors), `57a4923` (8.2a lane-parity net),
+`2a14da2` (8.2b TierLane collapse).
+
+### 8.1 Low-risk splits (each suites-green before the next)
+
+- **devStats.ts** — timing ring buffers + counters; `debugStats()` stays the
+  store's aggregator over live lane state. The fragile basename double-slice
+  is fixed by reusing the existing both-separator `utils/path.basename`
+  (strictly better than the plan's new `basenameOf`); mixed-separator test
+  added. 441→445 TS.
+- **midSweep.ts** — the idle-sweep scheduler verbatim (done-set, quiet
+  window, one-shot timer, gen-scoped completion), gates + touchpoints
+  injected; budget is a test-only constructor knob. 7 standalone tests.
+  445→452.
+- **tierErrors.ts** — TierError/backoffMs/inCooldown/recordTierError as pure
+  logic + `FolderTroubleLatch` (latch-once threshold semantics). The store
+  keeps a thin `noteTierError` wrapper (counter + sink); `scheduleFullRetry`
+  stayed in the store — it's queue plumbing, not error model. 452→460.
+
+### 8.2 The collapse
+
+**The net came first** (`57a4923`): 15 parameterized tests pinning current
+behavior across all four lanes — single-flight dedup, gen-scoped stale
+completion (state leak + blob revoke + cap integrity), error→cooldown→
+retry() re-arm, and windowed eviction per protection class (wantFull / pin /
+displayRef). Pinned to the network profile's caps (4/4/2/1). 460→475.
+
+**Then the collapse** (`2a14da2`): `TierLane` owns the quad mechanics once —
+pump admission/dedup, counter, gen-scoped `run()` (unconditional
+`inFlightPaths.delete`, gen-scoped decrement + afterSettle), the one
+`evictAround` loop (sites 2/10/12), `reset()`. Five instances (thumb, bg,
+nav, zoom, mid); the bg lane's argmin pick + on-demand-deference policy is
+injected (`pickBg`/`canStart`), so scheduling policy stayed store-side.
+`RefCountMap` replaced the three refcount trios; `deferUntilHint` unified
+the pendingZoom/pendingMid twins; `hintArgs` dedups ×3 (midSweep routes
+through it). Load interiors moved verbatim minus their old finally blocks
+(now TierLane.run) and lost the dead `lane` parameter (each lane owns its
+counter). **All 475 tests passed on the FIRST run after the collapse.**
+
+### Invariant accounting (plan's byte-for-byte list)
+
+- gen-scoped `inFlight--`: TierLane.run, one copy, same guard text.
+- single-flight per path: pump's requested/inFlightPaths check, one copy.
+- on-demand preempts bg: bgLane `canStart` reproduces pumpBg's gates
+  verbatim (trouble, thumb/nav queues empty, no nav in flight).
+- `isProtected` stays THE one predicate: navLane's eviction closure calls
+  it; zoom/mid closures keep their own (pin/displayRef + fullKeep) exactly
+  as their old loops had — no new copies of isProtected.
+- Revoke-site catalogue updated in the header; all 12 sites accounted, the
+  three windowed ones pointing at tierLane.evictAround.
+
+### Deviations / honesty
+
+1. Store collections (request markers, in-flight sets, error maps) are
+   SHARED into the lanes rather than lane-owned — retry/rearm/isProtected/
+   deferUntilHint/isBusyLoading read them by name, and sharing kept the
+   diff surface (and risk) minimal. Queues + counters DID move into the
+   lanes (they get reassigned; two owners would desync).
+2. The plan's "~900 expected" for imageStore.ts doesn't fall out of its own
+   task list: **1,857 → 1,618** (plus 604 lines of new focused modules:
+   devStats 65, midSweep 156+tests, tierErrors 90+tests, tierLane 179).
+   What remains in the store is the tier-specific interiors, request APIs,
+   reset/eviction wiring, pool, prefetch, and debugStats — none of which
+   any Phase 8 task moves. The duplication is gone; the store is smaller
+   by every measure that was actually specified.
+3. `enforceThumbLru` stays bespoke (LRU ≠ windowed eviction — different
+   victim selection, justLoaded guard).
+
+### Gate results (all green)
+
+475 TS (441 at phase start) / 109 Rust; tsc ×2, eslint, stylelint, clippy
+`-D warnings`, fmt, prettier (touched files; 6 pre-existing drift files in
+src/image left alone per the Phase 2 precedent). Bundle 386.27 kB
+(118.42 kB gzip) — unchanged ballpark.
+
+**Gate 8 asks (LIVE — the big one, per the plan).** Cold folder open on
+local AND network profile (watch first-paint + book-order fill politeness),
+fast scrub through a cold region (thumb-only, zero fetches mid-scrub —
+DevHud lanes readout), settle → zoom full arrives sharp, mid tier on the 4K
+display + a DPR flip (drag to the 1440p screen and back), folder switch
+mid-load (gen cancellation — no ghost images), close/reopen the same folder
+(tier-cache instant paint), memory-pressure shed if reproducible,
+8927-class paint check, and a long-session memory watch (Activity Monitor
+on WebContent while arrowing/zooming through a big shoot). Standing push
+approval applies AFTER this passes — nothing pushed yet.
