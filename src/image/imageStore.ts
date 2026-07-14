@@ -47,6 +47,7 @@ import { clampProfileForPressure, type PressureLevel } from "./pressureProfile";
 import { PERFORMANCE_PROFILES } from "../types/settings";
 import { DecodePool } from "./decodePool";
 import type { PoolEntry, PoolImage } from "./decodePool";
+import { DevStats } from "./devStats";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
 import type { ImageDims } from "../utils/bundle";
 import type { ImageMetadata } from "../types";
@@ -233,23 +234,8 @@ export class ImageStore {
   private readonly pool: DecodePool | null;
   /** Last cursor travel direction: biases prefetch + the pool band 2:1. */
   private lastDir: 1 | -1 = 1;
-  // ── Dev HUD stats (cheap counters; read via debugStats) ─────────────────
-  private navTimings: { name: string; ms: number }[] = [];
-  /** Zoom-tier (full) fetch timings — on a fast local drive this is ≈ the raw
-   *  IPC transfer cost of the ~10 MB full, i.e. the Phase 2 Windows
-   *  benchmark readout. */
-  private zoomTimings: { name: string; ms: number }[] = [];
-  private counts = {
-    navLoads: 0,
-    zoomLoads: 0,
-    thumbLoads: 0,
-    midLoads: 0,
-    midGens: 0,
-    previewEvicts: 0,
-    zoomEvicts: 0,
-    midEvicts: 0,
-    errors: 0,
-  };
+  // ── Dev HUD stats (timing rings + cheap counters; see devStats.ts) ──────
+  private readonly stats = new DevStats();
   // ── Concurrency counters ───────────────────────────────────────────────
   private thumbInFlight = 0;
   private fullInFlight = 0;
@@ -362,7 +348,7 @@ export class ImageStore {
       URL.revokeObjectURL(state.url);
       this.zoomFulls.delete(p);
       this.requestedZoom.delete(p);
-      this.counts.zoomEvicts++;
+      this.stats.counts.zoomEvicts++;
       this.invalidate(p);
     }
     this.refreshPool();
@@ -567,8 +553,7 @@ export class ImageStore {
     this.midSweepInFlight = 0;
     this.fullHints.clear();
     this.nativeDims.clear();
-    this.navTimings = [];
-    this.zoomTimings = [];
+    this.stats.clearTimings();
     this.pool?.clear();
     this.thumbErrors.clear();
     this.fullErrors.clear();
@@ -972,7 +957,7 @@ export class ImageStore {
       // Cr3Meta, so the EXIF rail / status-bar MP populate when the THUMB
       // lands — the bg sweep guarantees that for every frame eventually.
       if (result.meta) this.metaSink?.(path, result.meta);
-      this.counts.thumbLoads++;
+      this.stats.counts.thumbLoads++;
       this.thumbErrors.delete(path);
       this.enforceThumbLru(path);
       this.invalidate(path);
@@ -1033,7 +1018,7 @@ export class ImageStore {
       nextRetryAt: Date.now() + backoffMs(attempts),
     };
     map.set(path, te);
-    this.counts.errors++;
+    this.stats.counts.errors++;
     if (attempts >= MAX_TIER_ATTEMPTS) {
       this.terminalPaths.add(path);
       if (!this.folderTrouble && this.terminalPaths.size >= FOLDER_TROUBLE_THRESHOLD) {
@@ -1112,7 +1097,7 @@ export class ImageStore {
         URL.revokeObjectURL(result.previewUrl);
         return;
       }
-      this.noteNavTiming(path, ms);
+      this.stats.noteNavTiming(path, ms);
       // Zoom-tier plumbing from the preview header: the exact-range hint +
       // orientation (echoed to read_fullres), and the NATIVE display dims
       // (sensor pixels, swapped for the rotating orientations) that the
@@ -1206,7 +1191,7 @@ export class ImageStore {
       URL.revokeObjectURL(state.url);
       this.fulls.delete(p);
       this.requestedFull.delete(p);
-      this.counts.previewEvicts++;
+      this.stats.counts.previewEvicts++;
       this.invalidate(p);
     }
   }
@@ -1278,8 +1263,8 @@ export class ImageStore {
         dims: this.nativeDims.get(path),
       });
       this.zoomErrors.delete(path);
-      this.counts.zoomLoads++;
-      this.noteZoomTiming(path, performance.now() - t0);
+      this.stats.counts.zoomLoads++;
+      this.stats.noteZoomTiming(path, performance.now() - t0);
       this.invalidate(path);
       this.evictZoomAround(this.cursor);
       // Warm the landed full so zoom stays sharp across hi-res remounts.
@@ -1327,7 +1312,7 @@ export class ImageStore {
       URL.revokeObjectURL(state.url);
       this.zoomFulls.delete(p);
       this.requestedZoom.delete(p);
-      this.counts.zoomEvicts++;
+      this.stats.counts.zoomEvicts++;
       this.invalidate(p);
     }
   }
@@ -1450,7 +1435,7 @@ export class ImageStore {
       this.mids.set(path, { status: "ready", url: result.url });
       this.midErrors.delete(path);
       this.midUncached.delete(path);
-      this.counts.midLoads++;
+      this.stats.counts.midLoads++;
       this.invalidate(path);
       this.evictMidAround(this.cursor);
     } catch (e) {
@@ -1518,7 +1503,7 @@ export class ImageStore {
       URL.revokeObjectURL(state.url);
       this.mids.delete(p);
       this.requestedMid.delete(p);
-      this.counts.midEvicts++;
+      this.stats.counts.midEvicts++;
       this.invalidate(p);
     }
   }
@@ -1610,7 +1595,7 @@ export class ImageStore {
         fullLen: hint?.len ?? null,
         orientation: hint?.orientation ?? null,
       });
-      if (this.generation === gen && ok) this.counts.midGens++;
+      if (this.generation === gen && ok) this.stats.counts.midGens++;
     } catch {
       // Best-effort: attempted once; on-demand read_mid still covers it.
     } finally {
@@ -1754,22 +1739,7 @@ export class ImageStore {
     }
   }
 
-  // ── Dev HUD (Phase 3) ────────────────────────────────────────────────────
-
-  /** Ring buffer of the last nav fetch timings (newest first). */
-  private noteNavTiming(path: string, ms: number): void {
-    this.counts.navLoads++;
-    const name = path.slice(path.lastIndexOf("/") + 1).slice(path.lastIndexOf("\\") + 1);
-    this.navTimings.unshift({ name, ms: Math.round(ms) });
-    if (this.navTimings.length > 20) this.navTimings.pop();
-  }
-
-  /** Ring buffer of the last zoom-tier (full) fetch timings (newest first). */
-  private noteZoomTiming(path: string, ms: number): void {
-    const name = path.slice(path.lastIndexOf("/") + 1).slice(path.lastIndexOf("\\") + 1);
-    this.zoomTimings.unshift({ name, ms: Math.round(ms) });
-    if (this.zoomTimings.length > 20) this.zoomTimings.pop();
-  }
+  // ── Dev HUD (Phase 3; data + ring buffers live in devStats.ts) ──────────
 
   /**
    * Snapshot for the dev HUD — every profile-tuning claim cites these
@@ -1812,15 +1782,11 @@ export class ImageStore {
       const d = this.nativeDims.get(p);
       zoomMB += d ? (d.w * d.h * 4) / 1_048_576 : 130;
     }
-    const navMsAvg =
-      this.navTimings.length === 0
-        ? 0
-        : Math.round(this.navTimings.reduce((a, t) => a + t.ms, 0) / this.navTimings.length);
     return {
-      navTimings: this.navTimings.slice(0, 8),
-      zoomTimings: this.zoomTimings.slice(0, 5),
+      navTimings: this.stats.navTimings.slice(0, 8),
+      zoomTimings: this.stats.zoomTimings.slice(0, 5),
       pool: this.pool?.counts() ?? { previews: 0, fulls: 0 },
-      navMsAvg,
+      navMsAvg: this.stats.navMsAvg(),
       lanes: {
         preview: `${this.fullInFlight}/${this.profile.previewConcurrency} q${this.fullQueue.length}`,
         zoom: `${this.zoomInFlight}/${this.profile.fullConcurrency} q${this.zoomQueue.length}`,
@@ -1833,7 +1799,7 @@ export class ImageStore {
         thumbs: this.thumbs.size,
         dims: this.pathDims.size,
       },
-      counts: { ...this.counts },
+      counts: { ...this.stats.counts },
       // The needPx readout is the manual matrix's instrument: it shows the
       // LIVE display demand and which side of the hysteresis band it sits on.
       mid: {
