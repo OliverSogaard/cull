@@ -48,6 +48,7 @@ import { PERFORMANCE_PROFILES } from "../types/settings";
 import { DecodePool } from "./decodePool";
 import type { PoolEntry, PoolImage } from "./decodePool";
 import { DevStats } from "./devStats";
+import { MidSweep } from "./midSweep";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
 import type { ImageDims } from "../utils/bundle";
 import type { ImageMetadata } from "../types";
@@ -89,18 +90,6 @@ const backoffMs = (attempts: number): number =>
  *  opportunistic generator needs ~300–400 ms of CPU after its zoom read
  *  returns, plus slack for the MidGen queue. */
 const MID_REPROBE_MS = 1500;
-
-/** The idle sweep waits for this much cursor quiet before (re)starting —
- *  warm-region navigation and scrubbing issue zero reads, so the on-demand
- *  queues alone can't tell "user active" from "user parked" (review F3). */
-const MID_SWEEP_QUIET_MS = 1500;
-
-/** Sweep budget: the mid tier's disk cap (4 GiB, low-water 90%) over a
- *  realistic ~1.05 MB q80 entry ≈ 3,500 entries — sweeping past it would
- *  LRU-evict the user's own working neighbourhood to write far-end mids
- *  (review F1). Nearest-cursor-first ordering makes the budget cover the
- *  frames that matter; on-demand read_mid still serves anything beyond it. */
-const MID_SWEEP_BUDGET = 3400;
 
 /** True while the tier must NOT be auto-requested (cooling down or terminal). */
 const inCooldown = (te: TierError | undefined, now: number): boolean =>
@@ -219,17 +208,34 @@ export class ImageStore {
   /** App-injected provider returning the FRESH needPx (stage rect height ×
    *  devicePixelRatio) — called at each tier request, never cached at mount. */
   private needPxProvider: (() => number | null) | undefined;
-  // Local-profile idle sweep (paused while any on-demand lane has work):
-  /** Paths already attempted this session (success OR failure — best-effort,
-   *  one shot each; on-demand read_mid still covers misses). */
-  private midSweepDone = new Set<string>();
-  private midSweepInFlight = 0;
-  /** Last cursor move (any kind) — the sweep waits out MID_SWEEP_QUIET_MS of
-   *  cursor quiet so warm-region arrowing / scrubbing (which issue no reads)
-   *  don't share the CPU with generation. */
-  private lastCursorMoveAt = 0;
-  /** One-shot re-pump timer for the quiet window (armed at most once). */
-  private midSweepTimerArmed = false;
+  // Local-profile idle sweep (paused while any on-demand lane has work) —
+  // scheduler lives in midSweep.ts; the store injects its gates + touchpoints.
+  private readonly midSweep = new MidSweep({
+    canSweep: () =>
+      !this.folderTrouble &&
+      !this.midUnsupported &&
+      this.profile.concurrentRestore && // network profile — local only
+      this.bgStarted &&
+      this.midEngaged,
+    onDemandIdle: () => this.onDemandIdle(),
+    concurrency: () => this.profile.midGenConcurrency,
+    paths: () => this.paths,
+    cursor: () => this.cursor,
+    isMidReady: (p) => this.mids.get(p)?.status === "ready",
+    hintFor: (p) => {
+      const hint = this.fullHints.get(p);
+      return {
+        fullOffset: hint?.offset ?? null,
+        fullLen: hint?.len ?? null,
+        orientation: hint?.orientation ?? null,
+      };
+    },
+    generation: () => this.generation,
+    generate: (path, gen, hint) => invokeGenerateMid(path, gen, hint),
+    onGenerated: () => {
+      this.stats.counts.midGens++;
+    },
+  });
   /** Decode-ahead warm pool (Phase 5) — null when no DOM (unit tests). */
   private readonly pool: DecodePool | null;
   /** Last cursor travel direction: biases prefetch + the pool band 2:1. */
@@ -310,7 +316,7 @@ export class ImageStore {
     this.pumpBg();
     this.pumpZoom();
     this.pumpMid();
-    this.pumpMidSweep();
+    this.midSweep.pump();
   }
 
   /**
@@ -438,8 +444,7 @@ export class ImageStore {
     this.midErrors.clear();
     this.midUncached.clear();
     this.midReprobed.clear();
-    this.midSweepDone.clear();
-    this.midSweepInFlight = 0;
+    this.midSweep.reset();
     // The pool's decoded refs point at blob URLs this reset revokes.
     this.pool?.clear();
     // old-gen thumb loads bailed without populating `thumbs`; if we keep
@@ -549,8 +554,7 @@ export class ImageStore {
     this.midErrors.clear();
     this.midUncached.clear();
     this.midReprobed.clear();
-    this.midSweepDone.clear();
-    this.midSweepInFlight = 0;
+    this.midSweep.reset();
     this.fullHints.clear();
     this.nativeDims.clear();
     this.stats.clearTimings();
@@ -593,7 +597,7 @@ export class ImageStore {
     if (index > this.cursor) this.lastDir = 1;
     else if (index < this.cursor) this.lastDir = -1;
     this.cursor = index;
-    this.lastCursorMoveAt = Date.now();
+    this.midSweep.noteCursorMove();
     // Eviction is cursor-driven — recenter the keep-windows on the cursor
     // even when no new load just landed (parking on a frame recenters).
     this.evictFullAround(index);
@@ -620,7 +624,7 @@ export class ImageStore {
     // Warm-region navigation issues zero reads, so no load-completion would
     // ever re-pump the sweep once the user parks — poke it here (it bails
     // instantly into the quiet-window timer while the cursor is moving).
-    this.pumpMidSweep();
+    this.midSweep.pump();
   }
 
   setGridRange(start: number, end: number): void {
@@ -985,7 +989,7 @@ export class ImageStore {
         else this.bgInFlight--;
         this.pumpThumbs();
         this.pumpBg();
-        this.pumpMidSweep();
+        this.midSweep.pump();
       }
     }
   }
@@ -1170,7 +1174,7 @@ export class ImageStore {
         // finishing the last on-demand full must wake the bg sweep — and the
         // mid sweep, which idles while any on-demand lane has work.
         this.pumpBg();
-        this.pumpMidSweep();
+        this.midSweep.pump();
       }
     }
   }
@@ -1293,7 +1297,7 @@ export class ImageStore {
       if (this.generation === gen) {
         this.zoomInFlight--;
         this.pumpZoom();
-        this.pumpMidSweep();
+        this.midSweep.pump();
       }
     }
   }
@@ -1361,7 +1365,7 @@ export class ImageStore {
       const path = this.paths[this.cursor];
       if (path) this.requestMid(path);
     }
-    this.pumpMidSweep();
+    this.midSweep.pump();
   }
 
   /**
@@ -1468,7 +1472,7 @@ export class ImageStore {
       if (this.generation === gen) {
         this.midInFlight--;
         this.pumpMid();
-        this.pumpMidSweep();
+        this.midSweep.pump();
       }
     }
   }
@@ -1523,87 +1527,6 @@ export class ImageStore {
       this.zoomInFlightPaths.size === 0 &&
       this.midInFlightPaths.size === 0
     );
-  }
-
-  /**
-   * Pre-generate mids nearest-to-cursor while the session is idle, so every
-   * settled view on a high-DPI display is eventually a cache hit. Gates:
-   * LOCAL profile only (the backend refuses otherwise — generating from a
-   * NAS would fetch fulls solely to generate, the hard rule), display
-   * actually engaged (a 1440p session must not burn CPU + 4 GB of disk on
-   * mids it never shows), first-full window respected (bgStarted), paused
-   * while any on-demand lane has work. Each path is attempted once per
-   * session; failures are best-effort quiet (read_mid covers on-demand).
-   */
-  private pumpMidSweep(): void {
-    if (this.folderTrouble || this.midUnsupported) return;
-    if (!this.profile.concurrentRestore) return; // network profile — local only
-    if (!this.bgStarted || !this.midEngaged) return;
-    // Disk budget (review F1): past ~the tier cap's worth of entries, more
-    // sweeping only LRU-evicts the working neighbourhood's own mids.
-    if (this.midSweepDone.size >= MID_SWEEP_BUDGET) return;
-    // Cursor quiet (review F3): warm-region arrowing and scrubbing issue no
-    // reads, so the on-demand-idle check alone can't see the user — wait out
-    // a quiet window and re-pump from a one-shot timer.
-    if (Date.now() - this.lastCursorMoveAt < MID_SWEEP_QUIET_MS) {
-      this.armMidSweepTimer();
-      return;
-    }
-    while (this.midSweepInFlight < this.profile.midGenConcurrency && this.onDemandIdle()) {
-      const path = this.pickMidSweep();
-      if (!path) return;
-      this.midSweepDone.add(path);
-      this.midSweepInFlight++;
-      void this.sweepMid(path);
-    }
-  }
-
-  /** One-shot quiet-window re-pump (gen-scoped; at most one armed timer). */
-  private armMidSweepTimer(): void {
-    if (this.midSweepTimerArmed) return;
-    this.midSweepTimerArmed = true;
-    const gen = this.generation;
-    setTimeout(() => {
-      this.midSweepTimerArmed = false;
-      if (this.generation === gen) this.pumpMidSweep();
-    }, MID_SWEEP_QUIET_MS);
-  }
-
-  /** Nearest-to-cursor argmin over not-yet-attempted paths (pickBg's style). */
-  private pickMidSweep(): string | null {
-    let best: string | null = null;
-    let bestD = Infinity;
-    for (let i = 0; i < this.paths.length; i++) {
-      const p = this.paths[i];
-      if (this.midSweepDone.has(p)) continue;
-      if (this.mids.get(p)?.status === "ready") continue;
-      const d = Math.abs(i - this.cursor);
-      if (d < bestD) {
-        best = p;
-        bestD = d;
-      }
-    }
-    return best;
-  }
-
-  private async sweepMid(path: string): Promise<void> {
-    const gen = this.generation;
-    const hint = this.fullHints.get(path);
-    try {
-      const ok = await invokeGenerateMid(path, gen, {
-        fullOffset: hint?.offset ?? null,
-        fullLen: hint?.len ?? null,
-        orientation: hint?.orientation ?? null,
-      });
-      if (this.generation === gen && ok) this.stats.counts.midGens++;
-    } catch {
-      // Best-effort: attempted once; on-demand read_mid still covers it.
-    } finally {
-      if (this.generation === gen) {
-        this.midSweepInFlight--;
-        this.pumpMidSweep();
-      }
-    }
   }
 
   /**
@@ -1812,7 +1735,7 @@ export class ImageStore {
         cached: mids,
         sweepLeft:
           this.profile.concurrentRestore && this.midEngaged
-            ? Math.max(0, this.paths.length - this.midSweepDone.size)
+            ? Math.max(0, this.paths.length - this.midSweep.doneSize)
             : 0,
       },
       decodedMB: Math.round(previews * 7 + zoomMB + mids * 17 + this.thumbs.size * 0.08),
