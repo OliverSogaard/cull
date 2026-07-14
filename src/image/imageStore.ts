@@ -1432,6 +1432,7 @@ export class ImageStore {
    * today — production eviction goes through navLane.evictAround — but kept
    * because it's the one place the "evict-then-re-request mid-flight doesn't
    * double-fetch" dedup invariant is exercised end-to-end.
+   * @internal test-only
    */
   evictFull(path: string): void {
     const state = this.fulls.get(path);

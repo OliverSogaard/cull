@@ -30,7 +30,7 @@ import { scrubSpeedForHeldMs, type ScrubSpeed } from "../utils/scrubAccel";
  *    back to (false, 1) on stop so the indicators clear together.
  */
 
-export type HeldDir = 0 | 1 | -1;
+type HeldDir = 0 | 1 | -1;
 
 export type HeldRepeatOpts = {
   /** Perform one nav tick: walk `speed` frames/rows in `dir`. Returns whether

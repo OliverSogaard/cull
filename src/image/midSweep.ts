@@ -22,9 +22,9 @@ export const MID_SWEEP_QUIET_MS = 1500;
  *  LRU-evict the user's own working neighbourhood to write far-end mids
  *  (review F1). Nearest-cursor-first ordering makes the budget cover the
  *  frames that matter; on-demand read_mid still serves anything beyond it. */
-export const MID_SWEEP_BUDGET = 3400;
+const MID_SWEEP_BUDGET = 3400;
 
-export type MidHintArgs = {
+type MidHintArgs = {
   fullOffset: number | null;
   fullLen: number | null;
   orientation: number | null;

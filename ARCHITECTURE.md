@@ -370,16 +370,24 @@ script). If a future feature needs a new origin, widen the specific directive
 The frontend follows a strict layering — no circular deps:
 
 ```
-App.tsx (orchestration + state)
+App.tsx (composition root: state + JSX wiring)
   ↓ imports
+app/         — App's own hooks, one concern each (grand cleanup Phases 6-9):
+               session lifecycle, site navigation, decide callbacks, keymap,
+               pane zoom, held-repeat scrub engine, store wiring, rating
+               persistence, quit guard, undo/redo, smart derivations,
+               drag-and-drop, folder trouble, overlay-kind upkeep
 components/  — presentational; receive callbacks + state via props
   ├─ pane/   — PhotoPane: the one loupe/compare pane recipe (presenter layers, zoom)
   └─ strip/  — PhotoStrip family: film strip, virtualizer, burst boxes
   ↓ imports
-image/       — imageStore (tier lanes, eviction, generations), presenter, decode pool
+image/       — imageStore (TierLane quad mechanics, eviction, generations) +
+               its satellites (midSweep, tierErrors, devStats), presenter,
+               decode pool
 smart/       — burst/similar grouping + verdict derivation (pure TS, no React)
 overlays/    — clipping/peaking mask scans + histogram (inline + worker paths)
-hooks/       — useSettings, useRecents, focus trap
+hooks/       — component-shared hooks: useSettings, useRecents, focus trap,
+               armed confirm
   ↓ imports
 utils/       — pure helpers (format, filter, path, snap, bundle, dlog)
   ↓ imports

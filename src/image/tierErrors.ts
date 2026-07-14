@@ -19,7 +19,7 @@ export const MAX_TIER_ATTEMPTS = 4;
 /** Distinct terminal-failed paths that trip the folder-unreachable affordance
  *  (NAS unmounted / sleep-wake) — past this the store stops hammering and App
  *  surfaces a non-blocking "folder unreachable — retry" chip. */
-export const FOLDER_TROUBLE_THRESHOLD = 4;
+const FOLDER_TROUBLE_THRESHOLD = 4;
 
 export const backoffMs = (attempts: number): number =>
   Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** (attempts - 1));

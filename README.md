@@ -241,13 +241,14 @@ Open with **Ctrl+,** or the gear icon on the home screen.
 ```
 cull/
 ├── src/                        # React + TS frontend
-│   ├── App.tsx                 # orchestration + state machinery
+│   ├── App.tsx                 # composition root: state + JSX wiring
 │   ├── App.css
 │   ├── main.tsx
+│   ├── app/                    # App's own hooks (keymap, zoom, scrub, session, …)
 │   ├── components/             # presentational components
 │   │   ├── pane/               # PhotoPane: the shared loupe/compare pane recipe
 │   │   └── strip/              # PhotoStrip family: film strip + virtualizer
-│   ├── hooks/                  # settings, recents, focus trap
+│   ├── hooks/                  # settings, recents, focus trap, armed confirm
 │   ├── image/                  # imageStore tiers, presenter, decode pool
 │   ├── overlays/               # clipping/peaking masks, histogram (+ worker)
 │   ├── smart/                  # smart culling: bursts, similar, verdicts
