@@ -48,6 +48,7 @@ import { useDecideCallbacks } from "./app/useDecideCallbacks";
 import { useDragAndDrop } from "./app/useDragAndDrop";
 import { useFolderTrouble } from "./app/useFolderTrouble";
 import { useImageStoreWiring } from "./app/useImageStoreWiring";
+import { usePaneZoom } from "./app/usePaneZoom";
 import { useQuitGuard } from "./app/useQuitGuard";
 import { useRatingPersistence } from "./app/useRatingPersistence";
 import { useSessionLifecycle } from "./app/useSessionLifecycle";
@@ -75,7 +76,6 @@ import { scrubSpeedForHeldMs, type ScrubSpeed } from "./utils/scrubAccel";
 // Read concurrency, previewKeep, and the store profile wiring live in
 // app/useImageStoreWiring; the rating-write retry schedule and feedback-flash
 // timing live in app/useRatingPersistence (grand cleanup Phase 6).
-const PAN_LIMIT = 40; // max % offset from the AF point
 // Hold-to-navigate cadence. We ignore the OS key auto-repeat (long initial delay,
 // uneven rate) and drive stepping ourselves from a rAF loop while the arrow is
 // held — one step per this interval, frame-aligned so it never steps faster than
@@ -290,61 +290,10 @@ export default function App() {
     setNavStack,
   });
 
-  const [isZooming, setIsZooming] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState<1 | 2>(1); // 1 = 1:1, 2 = 2:1 (Shift+Space)
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  // Rate-while-zoomed: a rating advance with Space still held CARRIES the zoom
-  // to the next frame (anchored at ITS OWN AF point — pan resets). One-shot
-  // flag set by applyRating right before the cursor moves, consumed by the
-  // index-change reset effect below; every other cursor move still drops zoom.
-  const keepZoomOnAdvanceRef = useRef(false);
-  // True for exactly the carried-zoom swap render(s): the next frame lands AT
-  // scale with transitions off (animating between two frames' origins is
-  // meaningless motion), then glides come back so pan/release keep their feel.
-  const [zoomSwapInstant, setZoomSwapInstant] = useState(false);
-  useEffect(() => {
-    if (!zoomSwapInstant) return;
-    // Two rAFs: the swap commits with transition none, glides return the
-    // frame after. A rapid Enter-burst keeps re-arming it, which is correct —
-    // the whole burst lands instantly.
-    let inner: number | null = null;
-    const outer = requestAnimationFrame(() => {
-      inner = requestAnimationFrame(() => setZoomSwapInstant(false));
-    });
-    return () => {
-      cancelAnimationFrame(outer);
-      if (inner !== null) cancelAnimationFrame(inner);
-    };
-  }, [zoomSwapInstant]);
-  // Live mirror of isZooming so the navigation-reset effect can fire on a cursor
-  // move WITHOUT depending on isZooming (which would make it cancel the very zoom
-  // a Space-press just started).
-  const isZoomingRef = useRef(isZooming);
-  useEffect(() => {
-    isZoomingRef.current = isZooming;
-  }, [isZooming]);
-
-  // Cursor-anchored mouse zoom: press on the photo = zoom at that point,
-  // drag = grab-pan, release = exit. Mirrors Space exactly (hold-based, no
-  // sticky state); rating while held carries the zoom like the keyboard flow.
-  const [mouseZooming, setMouseZooming] = useState(false);
-  const lastMouseRef = useRef({ x: 0, y: 0 });
-  // Mirror for the stable-identity pan() below: while the mouse owns the
-  // zoom, arrow-key pan must stand down — its ±40% clamp would snap a drag
-  // that legitimately sits outside it (mouse pan clamps by origin bounds).
-  const mouseZoomingRef = useRef(false);
-  useEffect(() => {
-    mouseZoomingRef.current = mouseZooming;
-  }, [mouseZooming]);
-  // Live mirror of the render-derived zoomZ (declared after the chrome early
-  // return, so the drag handler below can't close over it) — assigned where
-  // zoomZ is computed each culling render.
-  const zoomZRef = useRef(1);
-
   // Measured rect of the displayed image (relative to the stage), reported up
   // by the loupe's PhotoPane (which owns the measure discipline). Consumed by
-  // the cursor-anchored mouse zoom + the drag-factor mirror below — the
-  // analysis overlays align via CSS, not this rect.
+  // the cursor-anchored mouse zoom + the drag-factor mirror (usePaneZoom) —
+  // the analysis overlays align via CSS, not this rect.
   const stageRef = useRef<HTMLDivElement>(null);
   const [imgRect, setImgRect] = useState<PaneRect | null>(null);
 
@@ -382,59 +331,6 @@ export default function App() {
       return false;
     }
   });
-  const pan = useCallback((dx: number, dy: number) => {
-    // Mouse-drag zoom owns panning while the button is held: this keyboard
-    // clamp (±40%) would visibly snap a drag anchored near an edge.
-    if (mouseZoomingRef.current) return;
-    setPanOffset((o) => ({
-      x: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, o.x + dx)),
-      y: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, o.y + dy)),
-    }));
-  }, []);
-
-  // Exit zoom: drop the scale and re-center. (zoomLevel is intentionally left
-  // as-is — the next Space-press re-sets it.) Centralized so the exit points stay
-  // consistent.
-  const resetZoom = useCallback(() => {
-    setIsZooming(false);
-    setMouseZooming(false); // a mouse-held zoom ends with the zoom, always
-    setPanOffset({ x: 0, y: 0 });
-  }, []);
-
-  // Subscribe to the Rust-side pressure events (see the memPressure state
-  // above for why). Registered once; resetZoom is identity-stable.
-  useEffect(() => {
-    const un = listen<PressureLevel>("memory-pressure", (e) => {
-      const level = e.payload;
-      setMemPressure(level);
-      imageStore.setMemoryPressure(level);
-      if (level === "critical") {
-        // The scaled zoom rasters are the largest live allocations — release
-        // zoom entirely; the chip explains why the view just un-zoomed.
-        resetZoom();
-      }
-    });
-    return () => {
-      void un.then((f) => f());
-    };
-  }, [resetZoom]);
-
-  // Leaving a zoomed frame via a cursor move drops the zoom (the new image
-  // would land scaled to the old pan) — with ONE exception: a rating advance
-  // that set keepZoomOnAdvanceRef carries the zoom to the next frame (pan was
-  // already reset at the rate site, so the new frame anchors at its own AF
-  // point). The flag is one-shot: undo, compare exits, and any other cursor
-  // move still exit zoom. Reads isZoomingRef so it fires on the index change,
-  // never on the Space-press that started the zoom.
-  useEffect(() => {
-    if (!isZoomingRef.current) return;
-    if (keepZoomOnAdvanceRef.current) {
-      keepZoomOnAdvanceRef.current = false;
-      return;
-    }
-    resetZoom();
-  }, [currentIndex, resetZoom]);
-
   const visibleIndices = useMemo(() => {
     // The whole "suggested" family resolves against the live suggestions
     // map: frames with a suggestion that are STILL unrated (rating a frame
@@ -467,6 +363,48 @@ export default function App() {
     () => visibleIndices.indexOf(currentIndex),
     [visibleIndices, currentIndex],
   );
+
+  // ── Zoom choreography ─────────────────────────────────────────────────────
+  // Space/mouse zoom state, keyboard pan, the carried-advance flag, the
+  // two-rAF zoomSwapInstant reset, the index-change reset/carry, and the
+  // cursor-anchored mouse zoom live in app/usePaneZoom. The render-derived
+  // zoomZ/zoomGlide stay in the culling render below (they read the loupe's
+  // useImage result), assigning zoomZRef each render.
+  const {
+    isZooming,
+    setIsZooming,
+    zoomLevel,
+    setZoomLevel,
+    panOffset,
+    setPanOffset,
+    zoomSwapInstant,
+    setZoomSwapInstant,
+    isZoomingRef,
+    keepZoomOnAdvanceRef,
+    mouseZooming,
+    zoomZRef,
+    pan,
+    resetZoom,
+    handleStageMouseDown,
+  } = usePaneZoom({ images, currentIndex, metadata, imgRect, stageRef, positionInFilter });
+
+  // Subscribe to the Rust-side pressure events (see the memPressure state
+  // above for why). Registered once; resetZoom is identity-stable.
+  useEffect(() => {
+    const un = listen<PressureLevel>("memory-pressure", (e) => {
+      const level = e.payload;
+      setMemPressure(level);
+      imageStore.setMemoryPressure(level);
+      if (level === "critical") {
+        // The scaled zoom rasters are the largest live allocations — release
+        // zoom entirely; the chip explains why the view just un-zoomed.
+        resetZoom();
+      }
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [resetZoom]);
 
   // Grid column count from the container width — the keydown handler steps by
   // row using it. Depends on `gridVisible && !compareMode` (entering compare
@@ -571,75 +509,6 @@ export default function App() {
       return fwd !== -1 ? fwd : findUnrated(from, -1, ratingsMap, skip);
     },
     [findUnrated],
-  );
-
-  // Mouse-zoom drag loop + release. Listeners exist only while the button is
-  // held. Deps close over the LIVE imgRect/meta on purpose: a carried rating
-  // advance mid-drag swaps them, the effect re-attaches, and the drag
-  // continues seamlessly on the new frame. zoomZ arrives via its ref mirror
-  // (it is render-derived after the chrome early return).
-  useEffect(() => {
-    if (!mouseZooming) return;
-    const curImg = images[currentIndex];
-    const meta = curImg ? metadata[curImg.path] : undefined;
-    const afX = meta?.afXPct ?? 50;
-    const afY = meta?.afYPct ?? 50;
-    const onMove = (e: MouseEvent) => {
-      const dx = e.clientX - lastMouseRef.current.x;
-      const dy = e.clientY - lastMouseRef.current.y;
-      lastMouseRef.current = { x: e.clientX, y: e.clientY };
-      const rect = imgRect;
-      const z = zoomZRef.current;
-      if (!rect || z <= 1) return;
-      // Grab semantics: content follows the pointer. Moving the origin by d%
-      // shifts the content by d(Z−1)% of the width the other way, so the 1:1
-      // tracking factor is 100 / (Z−1). Pan clamps to origin bounds [0,100]
-      // (NOT the keyboard's ±40%: a corner anchor legitimately exceeds it).
-      setPanOffset((o) => ({
-        x: Math.max(-afX, Math.min(100 - afX, o.x - ((dx / rect.width) * 100) / (z - 1))),
-        y: Math.max(-afY, Math.min(100 - afY, o.y - ((dy / rect.height) * 100) / (z - 1))),
-      }));
-    };
-    const end = () => {
-      setMouseZooming(false);
-      resetZoom();
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", end);
-    window.addEventListener("blur", end);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", end);
-      window.removeEventListener("blur", end);
-    };
-  }, [mouseZooming, imgRect, images, currentIndex, metadata, resetZoom]);
-
-  // Press on the loupe photo: zoom anchored at the cursor (Shift = 2:1).
-  // Only from an un-zoomed state (Space zoom owns the frame otherwise), only
-  // on the photo itself (matte/background clicks stay inert), never on a
-  // button (the preview-failed retry lives inside the stage).
-  const handleStageMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.button !== 0 || isZoomingRef.current) return;
-      if (positionInFilter === -1 || !imgRect) return;
-      if ((e.target as Element).closest("button")) return;
-      const stage = stageRef.current;
-      if (!stage) return;
-      const sr = stage.getBoundingClientRect();
-      const px = ((e.clientX - sr.left - imgRect.left) / imgRect.width) * 100;
-      const py = ((e.clientY - sr.top - imgRect.top) / imgRect.height) * 100;
-      if (px < 0 || px > 100 || py < 0 || py > 100) return;
-      const curImg = images[currentIndex];
-      const meta = curImg ? metadata[curImg.path] : undefined;
-      e.preventDefault();
-      lastMouseRef.current = { x: e.clientX, y: e.clientY };
-      // origin = AF + pan, so this pan puts the origin exactly under the cursor.
-      setPanOffset({ x: px - (meta?.afXPct ?? 50), y: py - (meta?.afYPct ?? 50) });
-      setZoomLevel(e.shiftKey ? 2 : 1);
-      setIsZooming(true);
-      setMouseZooming(true);
-    },
-    [positionInFilter, imgRect, images, currentIndex, metadata],
   );
 
   // ── Image loading via imageStore ──────────────────────────────────────────
@@ -1344,7 +1213,8 @@ export default function App() {
       if (heldDirRef.current !== 0 || scrubbingRef.current) stopHold();
       setCurrentIndex(index);
     },
-    [stopHold],
+    // isZoomingRef is an identity-stable hook return — listed for exhaustive-deps.
+    [stopHold, isZoomingRef],
   );
   const pickChallengerFromStrip = useCallback(
     (index: number) => {
@@ -1352,7 +1222,8 @@ export default function App() {
       if (heldDirRef.current !== 0 || scrubbingRef.current) stopHold();
       setChallengerIndex(index);
     },
-    [stopHold],
+    // isZoomingRef: same stable-ref listing as pickFromStrip above.
+    [stopHold, isZoomingRef],
   );
 
   // Grid cell click — stable identity so GridView/GridCell memoization holds and
