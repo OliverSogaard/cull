@@ -832,3 +832,79 @@ grid multi-select rate, finish dialog open, quit guard (close mid-save →
 auto-close after flush), Esc chain back to home, folder-trouble chip if the
 NAS is handy, and a second folder open after leave-to-home (session teardown).
 Standing push approval applies AFTER this passes — nothing pushed yet.
+
+---
+
+## Phase 7 — DONE 2026-07-14 (awaiting Gate 7 — LIVE)
+
+**Commits:** `e5876ff` (7.1 useCullKeymap), `e52d8e1` (7.2 usePaneZoom).
+App.tsx: **3,245 → 2,792 (7.1) → 2,663 lines.** Both tasks landed; nothing
+was skipped — 7.2's revert option stays open pending its live gate.
+
+### 7.1 `useCullKeymap`
+
+Verbatim move of the chrome-screen shortcuts, the big cull keymap, the
+capture-phase ESC swallow, and the once-bound window listeners. Contract
+held exactly:
+- cullKeyRef once-bind + ref-dispatch — listeners register once, closures
+  rebuild per render; the two `[]` listener effects moved untouched.
+- Modal precedence (settings → quitGuard → confirmHome → actionsOpen →
+  scrub-interrupt → Ctrl combos → Tab/help → Space → ESC → sites) is a
+  byte-for-byte move.
+- The 35-entry dep array copied unaltered under its existing
+  exhaustive-deps disable (deliberate chipsTooltip omission intact); the
+  macOS resumed-repeat Space guard and `e.code` keyup fallback untouched.
+- PAN_STEP moved in (keymap-only); the chrome effect gained only
+  `setSettingsOpen` in deps (stable setter, eslint requirement).
+
+### 7.2 `usePaneZoom`
+
+Verbatim move of the zoom state cluster (isZooming/zoomLevel/panOffset/
+keepZoomOnAdvanceRef/zoomSwapInstant + mirrors + zoomZRef), pan (+PAN_LIMIT),
+resetZoom, the two-rAF zoomSwapInstant reset, the index-change reset/carry,
+the mouse-drag pan loop, and handleStageMouseDown. The decide-side
+setState-then-drop sequencing stayed in useDecideCallbacks (reaches the hook
+only via setPanOffset/setZoomSwapInstant/keepZoomOnAdvanceRef, per plan).
+
+Deviations:
+1. **zoomZ/zoomGlide stay in App's culling render.** They read the loupe's
+   `cur` (useImage), which doesn't exist at any legal call position for the
+   hook (resetZoom feeds useSessionLifecycle far above). App assigns
+   `zoomZRef.current` at the same render spot as before; the derivation text
+   is unchanged. This is the plan's own "don't force" rule applied to two
+   pure derivations.
+2. The memory-pressure listener stays App-owned (the plan never assigned it)
+   but sits below the hook call now so resetZoom is initialized — a mount
+   registration-order shift among independent listeners.
+3. usePaneZoom is called after `positionInFilter` (handleStageMouseDown
+   needs it), so the hook's five effects register after that memo instead of
+   at the old scattered spots; all are self-contained (rAF, ref mirrors,
+   window listeners keyed on mouseZooming) with no cross-effect ordering
+   contract.
+4. pickFromStrip/pickChallengerFromStrip list `isZoomingRef` in deps now
+   (stable hook return, exhaustive-deps requirement) — identity never
+   changes, so their memoization is unaffected.
+
+### Gate results (all green)
+
+441 TS / 109 Rust tests; tsc ×2, eslint, stylelint, prettier, clippy
+`-D warnings`, `cargo fmt --check` all clean. Bundle: 385.96 kB
+(118.12 kB gzip) vs 383.53 kB (117.39 kB) after Phase 6 — +0.7 kB gzip of
+hook-parameter plumbing, within budget.
+
+**Gate 7 asks (LIVE — the dev app hot-reloads).** The 7.1 keymap lap:
+every modal's key swallowing (settings, quit guard, leave-confirm, act-on-cull),
+Space-zoom arm/release, hold Space through a rating (macOS resumed-repeat
+quirk — the phantom keydown must change nothing), ESC from each site opening
+the leave-to-home confirm (Enter=leave, Esc=stay; the site-by-site "Esc
+chain" in the plan's Task 7.1 gate text is stale — Oliver dropped that design,
+and goBack survives only for the compare auto-exit landings),
+Ctrl+Z/Y/E/A, scrub then release the arrow with Shift/Alt held (e.code keyup
+fallback), Tab-hold help, digits 1-4 filter cycling. The 7.2 zoom lap —
+watch for ANY paint artifact; if one shows, say so and 7.2 gets reverted
+(pre-authorized): zoom engage/release glide in loupe AND both compare panes,
+rate-while-zoomed carry (loupe + compare; the swap must land at scale with
+no glide, then glides return), mouse-drag pan + cursor-anchored engage +
+drag continuing across a carried advance, thumb/rail toggle while zoomed,
+memory-pressure critical → auto-unzoom if reproducible. Standing push
+approval applies AFTER this passes — nothing pushed yet.
