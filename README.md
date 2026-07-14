@@ -97,7 +97,7 @@ Then:
 
 ```bash
 pnpm install                # JS deps + Rust crates fetched on first build
-./scripts/fetch-models.sh   # once per clone: pulls the CLIP model (see scripts/ below)
+./scripts/fetch-models.sh   # once per clone: pulls the CLIP + DINOv2 models (see scripts/ below)
 pnpm tauri dev              # dev mode with hot reload
 pnpm tauri build            # release binary in src-tauri/target/release/bundle/
 ```
@@ -159,9 +159,12 @@ fixtures.
 
 ## `scripts/`
 
-- **`fetch-models.sh`** — pulls `clip_vitb32_visual.onnx` (~175 MB, too big
-  for git) from the `models-v1` GitHub release, sha256-pinned with an atomic
-  rename. Run once per clone; release CI runs it before every build.
+- **`fetch-models.sh`** — pulls the large ML models kept out of git
+  (`clip_vitb32_visual.onnx` ~175 MB, `dinov2s.onnx` ~43 MB) from the
+  `models-v1` GitHub release, sha256-pinned with an atomic rename. Run once
+  per clone; release CI runs it before every build. Local ML builds (the
+  default features) need this once — the embedding/aesthetic paths and
+  their corpus smoke tests load these models at runtime.
 - **`export-models.py`** — dev-only ONNX exporter for the smart-culling
   models (never shipped, never needed for a build). Exports from official
   weights and parity-gates every graph against the PyTorch original on real

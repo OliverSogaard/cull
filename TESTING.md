@@ -80,4 +80,7 @@ CULL_TEST_JPEG_DIR=<dir with a few .jpg previews> ./scripts/export-models.py
 
 This is a development tool for regenerating models — it is never part of a
 build or CI run. The build-time model fetch is `scripts/fetch-models.sh`
-(sha256-pinned; see README's `scripts/` section).
+(sha256-pinned; see README's `scripts/` section). Run it once per clone
+before the corpus-gated ML smoke tests: `clip_vitb32_visual.onnx` and
+`dinov2s.onnx` live on the `models-v1` release, not in git, and the
+`embed.rs` tests load them from `src-tauri/models/` at runtime.

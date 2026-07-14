@@ -42,6 +42,7 @@ scripts/__pycache__/
 /Screenshot *.png
 /isolated-desert-landscape-with-cactus.png
 
-# CLIP ViT-B/32 visual tower (~175 MB, over GitHub's 100 MB file limit) --
-# published as a release asset on models-v1, pulled by scripts/fetch-models.sh
+# Large ML models kept out of git — published as release assets on models-v1,
+# pulled (sha256-pinned) by scripts/fetch-models.sh; installers bundle them.
 src-tauri/models/clip_vitb32_visual.onnx
+src-tauri/models/dinov2s.onnx
