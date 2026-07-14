@@ -5,7 +5,7 @@ import type { Suggestion } from "../smart/deriveVerdict";
 import { hasLrcRating } from "../utils/ratingColor";
 import { stripExt } from "../utils/path";
 import { useThumb } from "../image/useThumb";
-import { ghostGlyph, ghostTitle, verdictDotClass, verdictGlyph } from "./verdictGlyph";
+import { VerdictDot } from "./VerdictDot";
 
 type ThumbCellProps = {
   img: Img;
@@ -51,10 +51,6 @@ export const ThumbCell = memo(function ThumbCell({
   const isReject = rating === "reject";
   const cellOpacity = dimmed ? 0.18 : isReject && !isCurrent ? 0.45 : 1;
 
-  // Verdict glyph + colour modifier for the bottom-right chip (shared with GridCell).
-  const dotIcon = verdictGlyph(rating, 9);
-  const dotClass = verdictDotClass(rating, "cull-thumb__dot");
-
   // Outline colour on the active cell. In compare mode the role variant takes
   // over (always champagne); in loupe it's the standard champagne accent.
   const isGhost = roleVariant === "champion-ghost";
@@ -68,12 +64,6 @@ export const ThumbCell = memo(function ThumbCell({
   const outlineColor = (isCurrent || roleVariant) && !isGhost ? "var(--accent)" : "transparent";
 
   const showLrc = hasLrcRating(lrcRating);
-
-  // Ghost suggestion renders ONLY while unrated — a keypress paints the solid
-  // dot and this guard stops rendering it (superseded in place, never stored).
-  // Ghosts are SUGGESTION-driven only (the burst winner's ✓ arrives via its
-  // rail's Burst row); the run itself is outlined by the strip-level box.
-  const ghost = !rating && (suggestion?.verdict ?? null);
 
   return (
     <div
@@ -128,23 +118,9 @@ export const ThumbCell = memo(function ThumbCell({
           )
         )}
       </div>
-      {dotIcon ? (
-        <div className={`cull-thumb__dot ${dotClass}`} aria-hidden>
-          {dotIcon}
-        </div>
-      ) : (
-        ghost && (
-          <div
-            className={`cull-thumb__dot cull-thumb__dot--ghost cull-thumb__dot--ghost-${
-              ghost === "reject" ? "reject" : ghost === "favorite" ? "favorite" : "keep"
-            }`}
-            title={suggestion ? ghostTitle(suggestion) : undefined}
-            aria-hidden
-          >
-            {ghostGlyph(ghost, 9)}
-          </div>
-        )
-      )}
+      {/* Solid committed dot, else ghost suggestion — shared with GridCell
+          (see VerdictDot for the supersede-in-place semantics). */}
+      <VerdictDot rating={rating} suggestion={suggestion} prefix="cull-thumb__dot" size={9} />
     </div>
   );
 });

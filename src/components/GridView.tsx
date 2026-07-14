@@ -7,7 +7,7 @@ import {
   type RefObject,
 } from "react";
 import { Star } from "lucide-react";
-import { ghostGlyph, ghostTitle, verdictDotClass, verdictGlyph } from "./verdictGlyph";
+import { VerdictDot } from "./VerdictDot";
 import type { Img, ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
@@ -459,15 +459,7 @@ const GridCell = memo(function GridCell({
   // Thumbnail + pinned shimmer phase, shared with the strip's ThumbCell.
   const { url, shimmerDelayMs, probeOnLoad } = useThumb(img.path);
   const isReject = rating === "reject";
-  // Verdict glyph + colour modifier for the dot (shared with the strip's ThumbCell).
-  const dotIcon = verdictGlyph(rating, 12);
-  const dotClass = verdictDotClass(rating, "cull-grid__dot");
   const showLrc = hasLrcRating(lrcRating);
-  // Ghost suggestion only while unrated — the committed dot supersedes in
-  // place. Ghosts are suggestion-driven only; the run outline is drawn
-  // at the grid level (segment boxes), not per cell.
-  const ghost =
-    !rating && (suggestion?.verdict ?? null);
   const cellClass = [
     "cull-grid__cell",
     isCurrent ? "is-current" : "",
@@ -535,23 +527,9 @@ const GridCell = memo(function GridCell({
       {/* Multi-select tint sits above the photo but below the rating dot, so
           the dot remains legible. Outline (accent) comes from .is-multi-selected. */}
       {isMultiSelected && <div className="cull-grid__multi-tint" aria-hidden />}
-      {dotIcon ? (
-        <div className={`cull-grid__dot ${dotClass}`} aria-hidden>
-          {dotIcon}
-        </div>
-      ) : (
-        ghost && (
-          <div
-            className={`cull-grid__dot cull-grid__dot--ghost cull-grid__dot--ghost-${
-              ghost === "reject" ? "reject" : ghost === "favorite" ? "favorite" : "keep"
-            }`}
-            title={suggestion ? ghostTitle(suggestion) : undefined}
-            aria-hidden
-          >
-            {ghostGlyph(ghost, 12)}
-          </div>
-        )
-      )}
+      {/* Solid committed dot, else ghost suggestion — shared with the strip's
+          ThumbCell (see VerdictDot for the supersede-in-place semantics). */}
+      <VerdictDot rating={rating} suggestion={suggestion} prefix="cull-grid__dot" size={12} />
     </div>
   );
 });
