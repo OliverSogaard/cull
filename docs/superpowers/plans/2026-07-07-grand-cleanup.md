@@ -1096,3 +1096,88 @@ status pill look unchanged; ghost dots + committed dots in grid AND strip
 (solid supersedes ghost in place, hover tooltip still explains); clip (J) /
 peak (P) overlays in loupe and compare, off mid-scrub, back on settle.
 Standing push approval applies AFTER this passes — nothing pushed yet.
+
+---
+
+## Phase 10 — DONE 2026-07-14 (the cleanup is COMPLETE)
+
+**Commits:** `b0d4434` (10.1 dinov2 offload), `ffbcbdb` (10.2/10.3 sweep +
+docs). Phase 9's live gate was WAIVED by Oliver ("push and continue" —
+finish all 10 phases, then a dedicated bug-hunt on the stable base); its
+scrub lap folds into that hunt.
+
+### 10.1 dinov2 offload (forward-only, per decision 3)
+
+Verified end-to-end, in order: sha256 computed from the tracked file FIRST
+(`bc2bbab7…ba49afb2`); asset uploaded to the existing `models-v1` release
+via gh (size byte-matched); `fetch-models.sh` generalized from the
+CLIP-only script to a pinned-entry loop (same atomic tmp→shasum -c→mv
+pattern, per-file so one bad download can't strand the other); blob
+untracked, local copy moved aside, and a FRESH `./scripts/fetch-models.sh`
+downloaded + verified to the identical hash; corpus `cargo test` with
+`CULL_TEST_CR3_DIR` green (6.6 s vs 0.5 s without corpus — the embed.rs ML
+smoke actually exercised the fetched model). `.gitignore` comment
+rewritten ("kept out of git; fetched from models-v1" — the old
+100-MB-limit rationale was CLIP-specific); README quick-start +
+`scripts/` section and TESTING.md's model-fetch note updated (local ML
+builds run the script once). `release.yml` untouched — it already runs
+the script; `tauri.conf.json`'s `models/*` resource glob bundles whatever
+is on disk, so installers are unaffected. `ocec_s.onnx` (495 KB) and
+`laion_aesthetic.onnx` (2 KB) stay tracked as planned. NO history rewrite:
+the 43 MB blob remains in old commits by design (decision 3).
+
+### 10.2 Parked items — verdicts of record
+
+- `cr3.rs` split into `cr3/{container,exif}.rs` — **SKIP**: well-sectioned,
+  tests co-located, nothing forces it.
+- `pickMidSweep` O(n) rescan — **SKIP**: idle- and local-gated; revisit only
+  if a monster-shoot sweep is ever observed slow.
+- `invalidate` allocation churn on eviction loops — **SKIP**: bounded by
+  cache size; never measured hot.
+- `.cull-photo-frame*` vs `.cull-cmp-*` CSS family unification — **SKIP**:
+  visual risk for pure stylesheet aesthetics; reopen only when a feature
+  touches both families.
+- `stage.ts` `"full"`-means-nav rename — **SKIP with trigger**: rides along
+  the next presenter-touching feature/bug session under that session's
+  live gate; accepted tax documented in ARCHITECTURE until then.
+- `evictFull` — did NOT fall out of Phase 8; marked `@internal test-only`
+  (it pins the evict-then-re-request dedup invariant end-to-end).
+- `cull:recents:v1` migration read — **KEEP**; remove no earlier than 2027.
+- PhotoPane step-4 leftovers — absorbed into Gate 8's live list and passed
+  with it (Oliver gated Phase 8 live before Phase 9 started).
+
+### 10.3 Tool sweep (final, all recorded)
+
+- **knip**: 4 findings after Phases 8/9 (MID_SWEEP_BUDGET, MidHintArgs,
+  FOLDER_TROUBLE_THRESHOLD, HeldDir — all in-module-only) → un-exported →
+  **zero**.
+- **ts-prune**: flags only the `types/index.ts` barrel re-exports and
+  `__fixtures__/testScores` members — known barrel/test-fixture false
+  positives; knip (which resolves both) is the authoritative zero.
+- **depcheck**: flags `stylelint-config-standard` — false positive; it is
+  the `extends` of `.stylelintrc`.
+- **cargo machete**: clean. **cargo audit**: 0 vulnerabilities, the same 17
+  allowed unmaintained-crate warnings pinned in `audit.toml` since Phase 2.
+- **clippy `--all-targets -D warnings`**: clean. **cargo fmt --check**:
+  clean. **prettier**: touched files clean; README/ARCHITECTURE/TESTING
+  markdown carries pre-existing drift (never prettier-formatted — verified
+  dirty pre-edit; Phase 2 precedent).
+
+Docs: README tree gained `src/app/` and the App.tsx line reads "composition
+root"; ARCHITECTURE's frontend module map now lists app/ (the 14 hooks),
+the imageStore satellites (midSweep/tierErrors/devStats), and the shared
+hooks/ additions.
+
+### Final state of record
+
+- Suites: **487 TS / 109 Rust** (351 TS / 95 Rust when the cleanup began;
+  414/103 after Phase 2's baseline count). tsc ×2, eslint, stylelint,
+  clippy -D, fmt all clean; bundle **385.38 kB (118.46 kB gzip)**.
+- `App.tsx` **2,501** lines (4,617 at cleanup start); `imageStore.ts`
+  **1,621** (1,857); `src/app/` carries 14 focused hooks.
+- Version stays **0.1.0** — the bump belongs to the next release decision.
+
+**Gate 10 = Oliver's final review.** Pushed under the session's standing
+"push and continue" say-so. The GRAND CLEANUP is complete; next up per
+Oliver: a dedicated bug-hunt session over the whole app (which also
+absorbs Phase 9's waived scrub lap).
