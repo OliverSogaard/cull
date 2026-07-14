@@ -16,6 +16,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { PERFORMANCE_PROFILES } from "../types/settings";
 
 // ── Mock @tauri-apps/api/core before importing imageStore ──────────────────
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -1305,4 +1306,226 @@ describe("thumb-tier stability across nav-preview landings (8-away flash)", () =
     expect(thumbDisplayUrl(store.snapshot(path))).toBe(store.snapshot(path).thumbUrl);
     unsub();
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lane-parity net (Phase 8 TierLane collapse). These pin CURRENT per-lane
+// behavior BEFORE the four pump/load/evict quads collapse onto TierLane —
+// the refactor must keep every one of these green byte-for-byte in behavior:
+// single-flight dedup, gen-scoped stale completion (counter integrity +
+// stale-blob revoke), error → cooldown → retry() re-arm, and windowed
+// eviction respecting each lane's protection class.
+describe("lane parity net (Phase 8 TierLane collapse)", () => {
+  type Store = Awaited<ReturnType<typeof getStore>>;
+
+  /** read_mid-shaped frame: { midLen, width, height } header + JPEG bytes. */
+  function makeMidLaneBuf(): ArrayBuffer {
+    const header = JSON.stringify({ midLen: 3, width: 2000, height: 1333 });
+    const headerBytes = new TextEncoder().encode(header);
+    const buf = new ArrayBuffer(4 + headerBytes.length + 3);
+    const dv = new DataView(buf);
+    dv.setUint32(0, headerBytes.length, true);
+    new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
+    new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
+    return buf;
+  }
+
+  /** Defer only `cmd`; every other command hangs forever (so e.g. the bg
+   *  thumb sweep can never interleave with the lane under test). The
+   *  returned array doubles as the per-command call counter. */
+  function laneDeferreds(cmd: string): Deferred[] {
+    const deferreds: Deferred[] = [];
+    vi.mocked(invoke).mockImplementation((c: unknown) => {
+      if (c === cmd) {
+        return new Promise<ArrayBuffer>((resolve, reject) => {
+          deferreds.push({ resolve, reject });
+        });
+      }
+      return new Promise(() => {});
+    });
+    return deferreds;
+  }
+
+  type Lane = {
+    name: string;
+    cmd: string;
+    /** On-demand concurrency cap on the NETWORK profile (set per test —
+     *  the local default's caps (12/16) would need unwieldy path counts). */
+    cap: number;
+    buf: () => ArrayBuffer;
+    setup?: (store: Store) => void;
+    drive: (store: Store, path: string) => void;
+    isReady: (store: Store, path: string) => boolean;
+  };
+
+  const LANES: Lane[] = [
+    {
+      name: "thumb",
+      cmd: "extract_thumbnail",
+      cap: 4, // PERFORMANCE_PROFILES.network.thumbConcurrency
+      buf: () => makeThumbnailBuf(800, 600),
+      drive: (s, p) => s.requestThumbFor(p),
+      isReady: (s, p) => s.thumbUrl(p) !== undefined,
+    },
+    {
+      name: "nav preview",
+      cmd: "read_preview",
+      cap: 4, // network .previewConcurrency
+      buf: () => makePreviewBuf(),
+      drive: (s, p) => s.registerWantFull(p),
+      isReady: (s, p) => s.snapshot(p).stage === "full",
+    },
+    {
+      name: "zoom full",
+      cmd: "read_fullres",
+      cap: 2, // network .fullConcurrency
+      buf: () => makeFullresBuf(),
+      drive: (s, p) => s.requestZoomFull(p),
+      isReady: (s, p) => s.snapshot(p).full !== undefined,
+    },
+    {
+      name: "mid",
+      cmd: "read_mid",
+      cap: 1, // network .midGenConcurrency
+      buf: () => makeMidLaneBuf(),
+      setup: (s) => s.setNeedPxProvider(() => 2000), // engage the tier
+      drive: (s, p) => s.maybeRequestMid(p),
+      isReady: (s, p) => s.snapshot(p).mid !== undefined,
+    },
+  ];
+
+  for (const lane of LANES) {
+    it(`${lane.name}: single-flight — re-drives while in flight and after ready never duplicate the fetch`, async () => {
+      const StoreClass = await getStoreClass();
+      const store = new StoreClass();
+      store.setProfile(PERFORMANCE_PROFILES.network);
+      const path = "/net/a.cr3";
+      store.reset([path]);
+      lane.setup?.(store);
+      const deferreds = laneDeferreds(lane.cmd);
+
+      lane.drive(store, path);
+      lane.drive(store, path); // second drive while the first is in flight
+      await flush();
+      expect(deferreds).toHaveLength(1);
+
+      deferreds[0].resolve(lane.buf());
+      await vi.waitUntil(() => lane.isReady(store, path), { timeout: 2000 });
+
+      lane.drive(store, path); // ready — must not re-fetch
+      await flush();
+      expect(deferreds).toHaveLength(1);
+    });
+
+    it(`${lane.name}: stale completion is gen-scoped — no state leak, blob revoked, cap intact in the new session`, async () => {
+      const StoreClass = await getStoreClass();
+      const store = new StoreClass();
+      store.setProfile(PERFORMANCE_PROFILES.network);
+      const oldPaths = Array.from({ length: lane.cap }, (_, i) => `/old/${i}.cr3`);
+      store.reset(oldPaths);
+      lane.setup?.(store);
+      const deferreds = laneDeferreds(lane.cmd);
+
+      for (const p of oldPaths) lane.drive(store, p);
+      await flush();
+      expect(deferreds).toHaveLength(lane.cap); // lane saturated
+
+      store.hardReset(); // generation moves; counters zeroed
+      for (const d of deferreds) d.resolve(lane.buf()); // stale successes land late
+      await flush();
+
+      // Nothing written into the new session; every stale blob revoked.
+      for (const p of oldPaths) expect(lane.isReady(store, p)).toBe(false);
+      expect(liveUrls.size).toBe(0);
+
+      // Counter integrity: the new session still serves EXACTLY `cap`
+      // concurrent fetches (a mis-scoped decrement would shift this).
+      const newPaths = Array.from({ length: lane.cap + 1 }, (_, i) => `/new/${i}.cr3`);
+      store.reset(newPaths);
+      lane.setup?.(store);
+      for (const p of newPaths) lane.drive(store, p);
+      await flush();
+      expect(deferreds).toHaveLength(lane.cap * 2); // +1 stays queued behind the cap
+    });
+
+    it(`${lane.name}: error → cooldown blocks re-drives → retry() re-arms and succeeds`, async () => {
+      const StoreClass = await getStoreClass();
+      const store = new StoreClass();
+      store.setProfile(PERFORMANCE_PROFILES.network);
+      const path = "/net/err.cr3";
+      store.reset([path]);
+      lane.setup?.(store);
+      const deferreds = laneDeferreds(lane.cmd);
+
+      lane.drive(store, path);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      deferreds[0].reject(new Error("boom"));
+      await flush();
+
+      lane.drive(store, path); // inside the 1s backoff — must not fetch
+      await flush();
+      expect(deferreds).toHaveLength(1);
+
+      store.retry(path); // clears the tier error (+ auto-requeues thumb/preview)
+      lane.drive(store, path); // zoom/mid re-drive; thumb/preview no-op dedup
+      await vi.waitUntil(() => deferreds.length === 2, { timeout: 2000 });
+      deferreds[1].resolve(lane.buf());
+      await vi.waitUntil(() => lane.isReady(store, path), { timeout: 2000 });
+    });
+  }
+
+  // Windowed eviction parity for the three cursor-windowed lanes (the thumb
+  // LRU's protection is pinned by the existing displayRef test above). Each
+  // lane's OWN protection class must hold, and releasing it must evict.
+  const WINDOWED: {
+    lane: Lane;
+    protect: (s: Store, p: string) => void;
+    release: (s: Store, p: string) => void;
+  }[] = [
+    {
+      lane: LANES[1], // nav preview — wantFull refcount protects
+      protect: (s, p) => s.registerWantFull(p),
+      release: (s, p) => s.unregisterWantFull(p),
+    },
+    {
+      lane: LANES[2], // zoom — pins protect
+      protect: (s, p) => s.pinFull(p),
+      release: (s, p) => s.unpinFull(p),
+    },
+    {
+      lane: LANES[3], // mid — displayRefs protect
+      protect: (s, p) => s.registerDisplay(p),
+      release: (s, p) => s.unregisterDisplay(p),
+    },
+  ];
+
+  for (const { lane, protect, release } of WINDOWED) {
+    it(`${lane.name}: far-cursor eviction respects the lane's protection class; releasing evicts`, async () => {
+      const StoreClass = await getStoreClass();
+      const store = new StoreClass();
+      store.setProfile(PERFORMANCE_PROFILES.network);
+      const paths = Array.from({ length: 200 }, (_, i) => `/win/${i}.cr3`);
+      store.reset(paths);
+      lane.setup?.(store);
+      const deferreds = laneDeferreds(lane.cmd);
+
+      lane.drive(store, paths[0]);
+      await flush();
+      deferreds[0].resolve(lane.buf());
+      await vi.waitUntil(() => lane.isReady(store, paths[0]), { timeout: 2000 });
+
+      // The nav-preview drive itself holds wantFull — drop the drive's own
+      // ref so protection is exactly what `protect` adds below.
+      if (lane.name === "nav preview") store.unregisterWantFull(paths[0]);
+
+      protect(store, paths[0]);
+      store.setCursor(150); // far outside previewKeep(60) and fullKeep(2)
+      expect(lane.isReady(store, paths[0])).toBe(true); // protected — survives
+
+      release(store, paths[0]);
+      store.setCursor(151);
+      expect(lane.isReady(store, paths[0])).toBe(false); // released — revoked
+    });
+  }
 });
