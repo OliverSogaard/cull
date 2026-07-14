@@ -1,11 +1,4 @@
-import {
-  memo,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Star } from "lucide-react";
 import { VerdictDot } from "./VerdictDot";
 import type { Img, ImageMetadata, Rating } from "../types";
@@ -487,13 +480,7 @@ const GridCell = memo(function GridCell({
           // It does NOT make a fresh mount paint same-frame (the blob fetch is
           // still async) — see ThumbCell's fuller note; visibility is covered
           // by mounting rows in the overscan buffer + same-frame windowing.
-          <img
-            className="cull-grid__img"
-            src={url}
-            alt=""
-            decoding="sync"
-            onLoad={probeOnLoad}
-          />
+          <img className="cull-grid__img" src={url} alt="" decoding="sync" onLoad={probeOnLoad} />
         ) : (
           <div
             className="cull-grid__placeholder"

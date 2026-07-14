@@ -5,7 +5,12 @@ import type { FileOpResult, Settings } from "../types";
 import { normalizeRejectedSubfolder } from "../types/settings";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import { isReservedFolderName, joinPath, sanitizeFolderName, truncatePathDisplay } from "../utils/path";
+import {
+  isReservedFolderName,
+  joinPath,
+  sanitizeFolderName,
+  truncatePathDisplay,
+} from "../utils/path";
 
 /** How long after the last keystroke (or dialog open) before we probe disk. */
 const FOLDER_EXISTS_DEBOUNCE_MS = 250;
@@ -67,8 +72,7 @@ export function FinishDialog({
   onClose: () => void;
 }) {
   const pinnedMode = settings.exportFolder.mode === "pinned";
-  const pinnedRoot =
-    settings.exportFolder.mode === "pinned" ? settings.exportFolder.path : "";
+  const pinnedRoot = settings.exportFolder.mode === "pinned" ? settings.exportFolder.path : "";
   // Default the editable subfolder to <source-basename>-keeps. If the user opens
   // the finish dialog without a folder for some reason we still produce a sane
   // default ("session-keeps") so the input never starts blank.
@@ -164,8 +168,7 @@ export function FinishDialog({
   // pinned-mode subfolder must be non-empty, not a Windows reserved device name,
   // and its pinned root must still exist on disk.
   const subTrimmed = sub.trim();
-  const subInvalid =
-    pinnedMode && (subTrimmed.length === 0 || isReservedFolderName(subTrimmed));
+  const subInvalid = pinnedMode && (subTrimmed.length === 0 || isReservedFolderName(subTrimmed));
   const copyDisabled =
     keptPaths.length === 0 ||
     actionBusy !== null ||
@@ -299,8 +302,8 @@ export function FinishDialog({
                   <div className="cull-finish__folder-exists">
                     <span className="cull-finish__folder-exists-icon">⚠</span>
                     <span>
-                      The pinned export root no longer exists. Re-pick it in{" "}
-                      <b>Settings</b> before copying.
+                      The pinned export root no longer exists. Re-pick it in <b>Settings</b> before
+                      copying.
                     </span>
                   </div>
                 )}
@@ -308,9 +311,8 @@ export function FinishDialog({
                   <div className="cull-finish__folder-exists">
                     <span className="cull-finish__folder-exists-icon">⚠</span>
                     <span>
-                      A folder with this name already exists at your pinned root. Rename
-                      it in the field below, or click <b>Confirm (merge)</b> to copy
-                      into the existing one.
+                      A folder with this name already exists at your pinned root. Rename it in the
+                      field below, or click <b>Confirm (merge)</b> to copy into the existing one.
                     </span>
                   </div>
                 )}
@@ -320,11 +322,11 @@ export function FinishDialog({
                     title={pinnedRoot || "(pinned root not set)"}
                   >
                     {pinnedRoot
-                    ? truncatePathDisplay(
-                        `${pinnedRoot.replace(/[\\/]+$/, "")}${pinnedRoot.includes("\\") ? "\\" : "/"}`,
-                        24,
-                      )
-                    : "(no pinned root) "}
+                      ? truncatePathDisplay(
+                          `${pinnedRoot.replace(/[\\/]+$/, "")}${pinnedRoot.includes("\\") ? "\\" : "/"}`,
+                          24,
+                        )
+                      : "(no pinned root) "}
                   </span>
                   <input
                     className={`cull-finish__dest-sub${subInvalid ? " is-invalid" : ""}${flashing ? " is-flash" : ""}`}
@@ -347,8 +349,8 @@ export function FinishDialog({
                     {actionBusy === "copy"
                       ? "copying…"
                       : folderExists
-                      ? "Confirm (merge)"
-                      : "Copy keeps"}
+                        ? "Confirm (merge)"
+                        : "Copy keeps"}
                   </button>
                 </div>
               </>
@@ -449,11 +451,7 @@ function MoveRejectsRow({
   const [dest, setDest] = useState<"subfolder" | "trash">("subfolder");
 
   const disabled =
-    !folder ||
-    rejectedCount === 0 ||
-    actionBusy !== null ||
-    savingCount > 0 ||
-    failedCount > 0;
+    !folder || rejectedCount === 0 || actionBusy !== null || savingCount > 0 || failedCount > 0;
 
   return (
     <div className="cull-actions__row">
@@ -467,12 +465,16 @@ function MoveRejectsRow({
           </>
         ) : (
           <>
-            Moves the {rejectedCount} rejected CR3s + their XMP sidecars to the{" "}
-            <b>system Trash</b>. Recoverable from the Trash.
+            Moves the {rejectedCount} rejected CR3s + their XMP sidecars to the <b>system Trash</b>.
+            Recoverable from the Trash.
           </>
         )}
       </div>
-      <div className="cull-settings__seg cull-finish__dest-seg" role="group" aria-label="rejects destination">
+      <div
+        className="cull-settings__seg cull-finish__dest-seg"
+        role="group"
+        aria-label="rejects destination"
+      >
         <button
           type="button"
           className={`cull-settings__seg-opt${dest === "subfolder" ? " is-active" : ""}`}
@@ -518,10 +520,7 @@ function MoveRejectsRow({
           >
             Yes, move
           </button>
-          <button
-            className="cull-pick-button"
-            onClick={() => setArmed(false)}
-          >
+          <button className="cull-pick-button" onClick={() => setArmed(false)}>
             Cancel
           </button>
         </div>
@@ -555,4 +554,3 @@ function FileOpResultLine({ verb, result }: { verb: string; result: FileOpResult
     </div>
   );
 }
-

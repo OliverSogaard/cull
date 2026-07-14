@@ -30,8 +30,7 @@ export function SettingsDialog({
     onChange({ ...settings, [key]: value });
 
   const exportMode = settings.exportFolder.mode;
-  const pinnedPath =
-    settings.exportFolder.mode === "pinned" ? settings.exportFolder.path : "";
+  const pinnedPath = settings.exportFolder.mode === "pinned" ? settings.exportFolder.path : "";
 
   const trapRef = useFocusTrap<HTMLDivElement>();
   const [tab, setTab] = useState<TabId>("general");
@@ -75,20 +74,14 @@ export function SettingsDialog({
           <div className="cull-settings__pane">
             {tab === "general" && (
               <>
-                <SettingRow
-                  label="Reopen last folder"
-                  help="Skip the home screen on launch."
-                >
+                <SettingRow label="Reopen last folder" help="Skip the home screen on launch.">
                   <Toggle
                     on={settings.openLastFolderOnLaunch}
                     onChange={(v) => set("openLastFolderOnLaunch", v)}
                     label="Reopen last folder"
                   />
                 </SettingRow>
-                <SettingRow
-                  label="Default filter"
-                  help="Filter selected when a cull starts."
-                >
+                <SettingRow label="Default filter" help="Filter selected when a cull starts.">
                   <SegmentToggle<Filter>
                     value={settings.defaultFilter}
                     options={[
@@ -132,10 +125,7 @@ export function SettingsDialog({
                     />
                   </div>
                 </SettingRow>
-                <SettingRow
-                  label="Thumb strip position"
-                  help="Placement of the thumbnail strip."
-                >
+                <SettingRow label="Thumb strip position" help="Placement of the thumbnail strip.">
                   <SegmentToggle<ThumbsPosition>
                     value={settings.thumbsPosition}
                     options={[
@@ -243,7 +233,8 @@ export function SettingsDialog({
                       { value: "pinned", label: "Pinned root" },
                     ]}
                     onChange={(mode) => {
-                      if (mode === "remember") onChange({ ...settings, exportFolder: { mode: "remember" } });
+                      if (mode === "remember")
+                        onChange({ ...settings, exportFolder: { mode: "remember" } });
                       else if (settings.exportFolder.mode !== "pinned") {
                         // We let the PinnedRoot row pick the folder; meanwhile set
                         // pinned with an empty path so the row appears.
@@ -259,7 +250,9 @@ export function SettingsDialog({
                   >
                     <PinnedRootControl
                       path={pinnedPath}
-                      onPick={(p) => onChange({ ...settings, exportFolder: { mode: "pinned", path: p } })}
+                      onPick={(p) =>
+                        onChange({ ...settings, exportFolder: { mode: "pinned", path: p } })
+                      }
                     />
                   </SettingRow>
                 )}
@@ -414,13 +407,7 @@ function Toggle({
  * Windows (mapped network drives, Quick Access enumeration), so we surface a
  * `opening…` state on the button and ignore further clicks until it resolves.
  */
-function PinnedRootControl({
-  path,
-  onPick,
-}: {
-  path: string;
-  onPick: (next: string) => void;
-}) {
+function PinnedRootControl({ path, onPick }: { path: string; onPick: (next: string) => void }) {
   const [picking, setPicking] = useState(false);
 
   const pick = async () => {
@@ -441,18 +428,10 @@ function PinnedRootControl({
 
   return (
     <div className="cull-settings__pinned-control">
-      <span
-        className="cull-settings__pinned-path"
-        title={path || "(no folder picked)"}
-      >
+      <span className="cull-settings__pinned-path" title={path || "(no folder picked)"}>
         {path || "(no folder picked)"}
       </span>
-      <button
-        type="button"
-        className="cull-pick-button"
-        onClick={pick}
-        disabled={picking}
-      >
+      <button type="button" className="cull-pick-button" onClick={pick} disabled={picking}>
         {picking ? "opening…" : "Change"}
       </button>
     </div>
@@ -508,7 +487,9 @@ function ThumbCacheRow() {
   const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
-    invoke<number>("thumb_cache_size").then(setCacheSize).catch(() => setCacheSize(null));
+    invoke<number>("thumb_cache_size")
+      .then(setCacheSize)
+      .catch(() => setCacheSize(null));
   }, []);
 
   const handleClear = async () => {
@@ -528,22 +509,14 @@ function ThumbCacheRow() {
     }
   };
 
-  const mbLabel =
-    cacheSize !== null
-      ? ` Currently ${Math.round(cacheSize / 1048576)} MB.`
-      : "";
+  const mbLabel = cacheSize !== null ? ` Currently ${Math.round(cacheSize / 1048576)} MB.` : "";
 
   return (
     <SettingRow
       label="Image cache"
       help={`Cached previews for faster re-opens. Safe to clear.${mbLabel}`}
     >
-      <button
-        type="button"
-        className="cull-pick-button"
-        onClick={handleClear}
-        disabled={clearing}
-      >
+      <button type="button" className="cull-pick-button" onClick={handleClear} disabled={clearing}>
         {clearing ? "Clearing…" : "Clear"}
       </button>
     </SettingRow>
@@ -581,11 +554,7 @@ function ResetRow({ onReset }: { onReset: () => void }) {
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            className="cull-settings__reset"
-            onClick={() => setArmed(true)}
-          >
+          <button type="button" className="cull-settings__reset" onClick={() => setArmed(true)}>
             Reset
           </button>
         )}
@@ -593,4 +562,3 @@ function ResetRow({ onReset }: { onReset: () => void }) {
     </div>
   );
 }
-
