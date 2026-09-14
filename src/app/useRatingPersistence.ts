@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Feedback, Rating } from "../types";
+import { isPermanentWriteError } from "../utils/writeFailure";
 
 const FEEDBACK_MS = 320;
 // Rating-write retry schedule (ms before each retry). A rating that still fails
@@ -75,7 +76,9 @@ export function useRatingPersistence() {
     // until ALL retries of this one have finished.
     const tryWrite = (n: number): Promise<unknown> =>
       invoke(cmd, args).catch((e) => {
-        if (n < WRITE_RETRY_DELAYS.length) {
+        // A missing-source refusal is permanent: retrying only delays the
+        // honest "didn't save" by six seconds.
+        if (n < WRITE_RETRY_DELAYS.length && !isPermanentWriteError(e)) {
           return new Promise((resolve, reject) =>
             window.setTimeout(() => tryWrite(n + 1).then(resolve, reject), WRITE_RETRY_DELAYS[n]),
           );
