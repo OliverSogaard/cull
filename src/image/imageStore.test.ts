@@ -1529,3 +1529,45 @@ describe("lane parity net (Phase 8 TierLane collapse)", () => {
     });
   }
 });
+
+describe("forget (frames that left the session after Move rejects)", () => {
+  it("drops gone paths, revokes their blobs, keeps survivors reference-stable and the cursor on its frame", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockImplementation((cmd: unknown) =>
+      cmd === "extract_thumbnail"
+        ? Promise.resolve(makeThumbnailBuf(800, 600))
+        : Promise.resolve(makeBundleBuf()),
+    );
+    const Store = await getStoreClass();
+    const store = new Store();
+    const [a, b, c] = ["/f/a.cr3", "/f/b.cr3", "/f/c.cr3"];
+    store.reset([a, b, c]);
+    for (const p of [a, b, c]) store.requestThumbFor(p);
+    await vi.waitUntil(() => [a, b, c].every((p) => store.snapshot(p).thumbUrl !== undefined), {
+      timeout: 2000,
+    });
+    const bUrl = store.snapshot(b).thumbUrl!;
+    const aSnap = store.snapshot(a);
+    store.setCursor(2); // parked on c
+
+    store.forget(new Set([b]));
+
+    expect(store.snapshot(a)).toBe(aSnap); // survivor untouched
+    expect(liveUrls.has(bUrl)).toBe(false); // gone blob revoked
+    expect(store.snapshot(b).thumbUrl).toBeUndefined();
+    expect(store.debugStats().caches.thumbs).toBe(2);
+    expect(store.debugStats().cursor).toBe(1); // still on c, now index 1
+  });
+
+  it("clamps the cursor when its own frame is gone and ignores unknown paths", async () => {
+    const Store = await getStoreClass();
+    const store = new Store();
+    const [a, b, c] = ["/g/a.cr3", "/g/b.cr3", "/g/c.cr3"];
+    store.reset([a, b, c]);
+    store.setCursor(2);
+    store.forget(new Set([c, "/g/not-in-session.cr3"]));
+    expect(store.debugStats().cursor).toBe(1);
+    store.forget(new Set<string>()); // no-op
+    expect(store.debugStats().cursor).toBe(1);
+  });
+});

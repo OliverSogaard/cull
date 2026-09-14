@@ -620,6 +620,72 @@ export class ImageStore {
   }
 
   /**
+   * Drop paths that left the session (a finished cull moved them to the
+   * rejects subfolder or the Trash) WITHOUT a generation bump: survivors keep
+   * every tier, pin and subscription, and the user's place is preserved by
+   * path (`reset()` would revoke every nav preview and clear `wantFull`, and
+   * the mounted loupe/compare consumers — whose paths did not change — would
+   * never re-register). Gone paths have their blobs revoked and every
+   * per-path record removed. A read still in flight for a gone path lands as
+   * a stray entry that the next cursor-driven eviction sweeps.
+   */
+  forget(gone: ReadonlySet<string>): void {
+    if (gone.size === 0) return;
+    const cursorPath = this.paths[this.cursor];
+    this.paths = this.paths.filter((p) => !gone.has(p));
+    this.rebuildPathIndex();
+    for (const lane of [this.thumbLane, this.bgLane, this.navLane, this.zoomLane, this.midLane]) {
+      lane.queue = lane.queue.filter((p) => !gone.has(p));
+    }
+    for (const p of gone) this.dropPath(p);
+    this.gridStart = -1;
+    this.gridEnd = -1;
+    const at = cursorPath === undefined ? -1 : this.indexOf(cursorPath);
+    const next = at !== -1 ? at : Math.min(this.cursor, Math.max(0, this.paths.length - 1));
+    this.cursor = next; // set first so setCursor's direction bookkeeping sees no move
+    this.setCursor(next); // re-centres the keep-windows, prefetch and the decode pool
+  }
+
+  /** Remove every per-path record for `p` and revoke its blobs. Consumer-owned
+   *  refcounts (wantFull / displayRefs / pinnedFulls) are left alone: the cell
+   *  that displayed a gone path unmounts and decrements on its own. */
+  private dropPath(p: string): void {
+    const t = this.thumbs.get(p);
+    if (t) URL.revokeObjectURL(t.url);
+    this.thumbs.delete(p);
+    const f = this.fulls.get(p);
+    if (f?.status === "ready") URL.revokeObjectURL(f.url);
+    this.fulls.delete(p);
+    const z = this.zoomFulls.get(p);
+    if (z?.status === "ready") URL.revokeObjectURL(z.url);
+    this.zoomFulls.delete(p);
+    const m = this.mids.get(p);
+    if (m?.status === "ready") URL.revokeObjectURL(m.url);
+    this.mids.delete(p);
+    this.states.delete(p);
+    this.snaps.delete(p);
+    for (const set of [
+      this.requestedThumb,
+      this.requestedFull,
+      this.requestedZoom,
+      this.requestedMid,
+      this.pendingZoom,
+      this.pendingMid,
+      this.midUncached,
+      this.midReprobed,
+    ]) {
+      set.delete(p);
+    }
+    for (const map of [this.thumbErrors, this.fullErrors, this.zoomErrors, this.midErrors]) {
+      map.delete(p);
+    }
+    this.fullHints.delete(p);
+    this.nativeDims.delete(p);
+    this.pathDims.delete(p);
+    this.trouble.clearPath(p);
+  }
+
+  /**
    * Hard reset: revokes ALL blob URLs (thumbs + full-res). Called on
    * session end or when switching to a completely new session.
    */
@@ -1571,6 +1637,7 @@ export class ImageStore {
       sweepLeft: number;
     };
     decodedMB: number;
+    cursor: number;
   } {
     const previews = [...this.fulls.values()].filter((s) => s?.status === "ready").length;
     const zooms = [...this.zoomFulls.entries()].filter(([, s]) => s?.status === "ready");
@@ -1614,6 +1681,7 @@ export class ImageStore {
             : 0,
       },
       decodedMB: Math.round(previews * 7 + zoomMB + mids * 17 + this.thumbs.size * 0.08),
+      cursor: this.cursor,
     };
   }
 }
