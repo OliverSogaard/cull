@@ -323,6 +323,17 @@ pub(crate) fn af_crop(
     w: usize,
     h: usize,
 ) -> (Rect, bool) {
+    if w == 0 || h == 0 {
+        return (
+            Rect {
+                x0: 0,
+                y0: 0,
+                x1: 0,
+                y1: 0,
+            },
+            false,
+        );
+    }
     let side = ((AF_CROP_FRAC * w.min(h) as f32) as usize).clamp(1, w.min(h));
     let (cx, cy, valid) = match (af_x_pct, af_y_pct) {
         (Some(xp), Some(yp)) => {
@@ -890,6 +901,18 @@ mod tests {
         assert_eq!(rect.y1 - rect.y0, 120);
         let (rect, _) = af_crop(1, Some(100.0), Some(100.0), 1000, 600);
         assert_eq!((rect.x1, rect.y1), (1000, 600));
+    }
+
+    /// A degenerate decode (0×0) must not panic in the clamp — the crop is
+    /// empty and flagged invalid, and score_one never sees one anyway
+    /// (jpeg_rgb::validate_dims rejects it upstream).
+    #[test]
+    fn af_crop_zero_sized_buffer_does_not_panic() {
+        for (w, h) in [(0, 0), (0, 600), (1000, 0)] {
+            let (rect, valid) = af_crop(1, Some(50.0), Some(50.0), w, h);
+            assert_eq!((rect.x0, rect.y0, rect.x1, rect.y1), (0, 0, 0, 0));
+            assert!(!valid);
+        }
     }
 
     // ── Motion blur ────────────────────────────────────────────────────────
