@@ -79,6 +79,8 @@ export function pruneHistory(
   stack: readonly UndoAction[],
   goneIds: ReadonlySet<number>,
 ): UndoAction[] {
+  // No frame left the session: history is untouched, snapshots included.
+  if (goneIds.size === 0) return stack as UndoAction[];
   const touched = stack.some(
     (a) => a.cursorBefore || a.cursorAfter || a.changes.some((c) => goneIds.has(c.imgId)),
   );

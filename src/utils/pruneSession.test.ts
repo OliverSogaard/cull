@@ -97,4 +97,14 @@ describe("pruneHistory", () => {
     const stack: UndoAction[] = [{ changes: [change(7)] }];
     expect(pruneHistory(stack, new Set([1]))).toBe(stack);
   });
+  it("returns the same array when no frame is gone, even if actions carry cursor snapshots", () => {
+    const stack: UndoAction[] = [
+      {
+        changes: [change(5)],
+        cursorBefore: { compareMode: true, championIndex: 0, challengerIndex: 1, currentIndex: 0 },
+      },
+    ];
+    expect(pruneHistory(stack, new Set<number>())).toBe(stack);
+    expect(stack[0].cursorBefore).toBeDefined();
+  });
 });
