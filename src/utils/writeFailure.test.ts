@@ -3,7 +3,9 @@ import { isPermanentWriteError, MISSING_SOURCE_PREFIX } from "./writeFailure";
 
 describe("isPermanentWriteError", () => {
   it("recognises the backend's missing-source refusal (string or Error)", () => {
-    expect(isPermanentWriteError(`${MISSING_SOURCE_PREFIX} C:\\shoot\\_rejected\\a.cr3`)).toBe(true);
+    expect(isPermanentWriteError(`${MISSING_SOURCE_PREFIX} C:\\shoot\\_rejected\\a.cr3`)).toBe(
+      true,
+    );
     expect(isPermanentWriteError(new Error("source missing: /v/a.cr3 is not a file"))).toBe(true);
   });
 
