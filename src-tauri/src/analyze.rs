@@ -280,7 +280,7 @@ pub(crate) fn clip_pcts(rgb: &[u8]) -> (f32, f32) {
         return (0.0, 0.0);
     }
     let (mut blown, mut crushed) = (0usize, 0usize);
-    for p in rgb.chunks_exact(3) {
+    for p in rgb.as_chunks::<3>().0 {
         if p[0] >= CLIP_HIGH && p[1] >= CLIP_HIGH && p[2] >= CLIP_HIGH {
             blown += 1;
         } else if p[0] <= CLIP_LOW && p[1] <= CLIP_LOW && p[2] <= CLIP_LOW {
