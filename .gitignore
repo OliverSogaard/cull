@@ -7,6 +7,9 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dev-server logs from `pnpm tauri dev` redirects (see TESTING.md)
+.dev-logs/
+
 # Node / Vite
 node_modules
 dist
