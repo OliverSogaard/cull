@@ -8,9 +8,10 @@
 //!   the user picks.
 //!
 //! Both skip rather than overwrite when the destination already has that file
-//! (non-destructive). The `.xmp` sidecar follows its CR3 (best effort). Copy
-//! preserves the source mtime so the export folder's by-capture-time sort still
-//! reflects shoot order — CULL relies on directory mtimes elsewhere for this.
+//! (non-destructive). The `.xmp` sidecar follows its CR3 — a sidecar that
+//! fails to follow is counted in the result. Copy preserves the source mtime
+//! so the export folder's by-capture-time sort still reflects shoot order —
+//! CULL relies on directory mtimes elsewhere for this.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,6 +28,11 @@ pub(crate) struct FileOpResult {
     /// Total errors encountered — may exceed `errors.len()`, which is capped.
     /// The UI shows this so a capped list never reads as "only N failed".
     error_count: u32,
+    /// Source paths no longer at their original location once the batch is
+    /// done: completed moves plus sources already missing on entry. Empty for
+    /// copies. The frontend prunes these frames from the live session so a
+    /// stale cell can never write a sidecar into the folder the photo left.
+    gone: Vec<String>,
 }
 
 /// Unique sequence for atomic-copy temp files (paired with the pid) so two
@@ -55,6 +61,23 @@ fn atomic_copy(src: &Path, dest: &Path) -> std::io::Result<()> {
 /// the IPC response.
 const FILE_OP_ERROR_CAP: usize = 20;
 
+/// Whether a batch op takes the source away (move / trash) or leaves it in
+/// place (copy). Decides what lands in [`FileOpResult::gone`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceFate {
+    Consumed,
+    Retained,
+}
+
+/// Count an error in full and store its message only while the list is under
+/// the cap — the one place the cap rule lives.
+fn note_error(result: &mut FileOpResult, msg: String) {
+    result.error_count += 1;
+    if result.errors.len() < FILE_OP_ERROR_CAP {
+        result.errors.push(msg);
+    }
+}
+
 /// Perform one source→dest operation (rename or copy) and preserve the source's
 /// modification time on the destination. mtime preservation is a best-effort
 /// no-op if the platform refuses; rename keeps mtime naturally.
@@ -75,58 +98,78 @@ fn op_one(
 
 /// Batch-apply an op to a list of CR3 paths, taking each path's `.xmp` sidecar
 /// along for the ride. Skips files whose destination already exists OR whose
-/// source no longer exists (idempotent re-runs). Caps the error list so a
-/// folder full of failures can't balloon the response.
+/// source no longer exists (idempotent re-runs). A sidecar that fails to
+/// follow is counted as an error (the CR3 still counts as completed — it did
+/// move). Caps the stored error list so a folder full of failures can't
+/// balloon the response.
 fn batch_files(
     paths: &[String],
     dest_dir: &Path,
     op: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    fate: SourceFate,
 ) -> FileOpResult {
     let mut result = FileOpResult::default();
     for path in paths {
         let src = Path::new(path);
         let Some(name) = src.file_name() else {
-            result.errors.push(format!("no filename: {path}"));
+            note_error(&mut result, format!("no filename: {path}"));
             continue;
         };
+        // Idempotency: a source already moved on a prior pass is a skip, not an
+        // error — and it is `gone` for a consuming op.
+        if !src.exists() {
+            result.skipped += 1;
+            if fate == SourceFate::Consumed {
+                result.gone.push(path.clone());
+            }
+            continue;
+        }
         let dest = dest_dir.join(name);
-        // Idempotency: if the destination already has it OR the source is gone
-        // (already moved on a prior pass), treat as skipped instead of
-        // erroring. Re-running the action is safe.
-        if dest.exists() || !src.exists() {
+        // Never overwrite: a destination collision leaves the source in place.
+        if dest.exists() {
             result.skipped += 1;
             continue;
         }
         match op_one(src, &dest, &op) {
             Ok(()) => {
-                // Sidecar follows the CR3 (best effort — don't fail the CR3
-                // op on this).
-                let src_xmp = src.with_extension("xmp");
-                if src_xmp.exists() {
-                    if let Some(xmp_name) = src_xmp.file_name() {
-                        let dest_xmp = dest_dir.join(xmp_name);
-                        // Mirror the CR3 collision guard: never overwrite a
-                        // sidecar already present at the destination (a lone
-                        // existing .xmp could carry the user's edits).
-                        if !dest_xmp.exists() {
-                            let _ = op_one(&src_xmp, &dest_xmp, &op);
-                        }
-                    }
-                }
                 result.completed += 1;
-            }
-            Err(e) => {
-                result.error_count += 1;
-                // Cap only the STORED messages (to bound the IPC response) — keep
-                // processing the rest of the batch so a run of early failures
-                // never silently skips the remaining keeps/rejects.
-                if result.errors.len() < FILE_OP_ERROR_CAP {
-                    result.errors.push(format!("{}: {e}", src.display()));
+                if fate == SourceFate::Consumed {
+                    result.gone.push(path.clone());
                 }
+                follow_sidecar(src, dest_dir, &op, &mut result);
             }
+            Err(e) => note_error(&mut result, format!("{}: {e}", src.display())),
         }
     }
     result
+}
+
+/// The `.xmp` sidecar follows its CR3. A sidecar already present at the
+/// destination is never overwritten (a lone existing .xmp could carry the
+/// user's edits); a sidecar that fails to move is an error the batch reports.
+fn follow_sidecar(
+    src: &Path,
+    dest_dir: &Path,
+    op: &impl Fn(&Path, &Path) -> std::io::Result<()>,
+    result: &mut FileOpResult,
+) {
+    let src_xmp = src.with_extension("xmp");
+    if !src_xmp.exists() {
+        return;
+    }
+    let Some(xmp_name) = src_xmp.file_name() else {
+        return;
+    };
+    let dest_xmp = dest_dir.join(xmp_name);
+    if dest_xmp.exists() {
+        return;
+    }
+    if let Err(e) = op_one(&src_xmp, &dest_xmp, op) {
+        note_error(
+            result,
+            format!("{}: sidecar did not follow: {e}", src.display()),
+        );
+    }
 }
 
 /// Cheap existence check the finish dialog uses (pinned mode) to surface the
@@ -158,39 +201,46 @@ pub(crate) async fn move_rejects_to_subfolder(
         }
         let dest = folder_path.join(&subfolder);
         std::fs::create_dir_all(&dest).map_err(|e| format!("create {}: {e}", dest.display()))?;
-        Ok(batch_files(&paths, &dest, |s, d| std::fs::rename(s, d)))
+        Ok(batch_files(
+            &paths,
+            &dest,
+            |s, d| std::fs::rename(s, d),
+            SourceFate::Consumed,
+        ))
     })
     .await
     .map_err(|e| format!("move task failed: {e}"))?
 }
 
 /// Batch-send paths to a trash-like op, the `.xmp` sidecar riding along with
-/// its CR3 (best effort). Mirrors [`batch_files`]' accounting: a missing
-/// source is a skip (idempotent re-runs), errors are counted in full with the
-/// stored list capped. No destination — the op itself owns where files go.
+/// its CR3 — a sidecar that fails to follow is counted in the result. Mirrors
+/// [`batch_files`]' accounting: a missing source is a skip (idempotent
+/// re-runs) and is `gone`, errors are counted in full with the stored list
+/// capped. No destination — the op itself owns where files go.
 fn trash_batch(paths: &[String], trash_op: impl Fn(&Path) -> Result<(), String>) -> FileOpResult {
     let mut result = FileOpResult::default();
     for path in paths {
         let src = Path::new(path);
         if !src.exists() {
             result.skipped += 1;
+            result.gone.push(path.clone());
             continue;
         }
         match trash_op(src) {
             Ok(()) => {
-                // Sidecar follows the CR3 (best effort — never fail the CR3 on it).
+                result.completed += 1;
+                result.gone.push(path.clone());
                 let src_xmp = src.with_extension("xmp");
                 if src_xmp.exists() {
-                    let _ = trash_op(&src_xmp);
-                }
-                result.completed += 1;
-            }
-            Err(e) => {
-                result.error_count += 1;
-                if result.errors.len() < FILE_OP_ERROR_CAP {
-                    result.errors.push(format!("{}: {e}", src.display()));
+                    if let Err(e) = trash_op(&src_xmp) {
+                        note_error(
+                            &mut result,
+                            format!("{}: sidecar did not follow: {e}", src.display()),
+                        );
+                    }
                 }
             }
+            Err(e) => note_error(&mut result, format!("{}: {e}", src.display())),
         }
     }
     result
@@ -220,7 +270,12 @@ pub(crate) async fn copy_keeps_to_export(
             .map_err(|e| format!("create {}: {e}", dest_dir.display()))?;
         // atomic_copy (temp + rename) so a cross-device or interrupted copy can
         // never leave a truncated file at the destination.
-        Ok(batch_files(&paths, &dest_dir, atomic_copy))
+        Ok(batch_files(
+            &paths,
+            &dest_dir,
+            atomic_copy,
+            SourceFate::Retained,
+        ))
     })
     .await
     .map_err(|e| format!("copy task failed: {e}"))?
@@ -252,7 +307,7 @@ mod tests {
         let paths = vec![src.to_string_lossy().to_string()];
 
         // First run: moves the file.
-        let r1 = batch_files(&paths, &dest, |s, d| fs::rename(s, d));
+        let r1 = batch_files(&paths, &dest, |s, d| fs::rename(s, d), SourceFate::Consumed);
         assert_eq!(r1.completed, 1);
         assert_eq!(r1.skipped, 0);
         assert!(r1.errors.is_empty());
@@ -260,7 +315,7 @@ mod tests {
         assert!(dest.join("photo.xmp").exists());
 
         // Second run on the same input: source is gone → skipped, not errored.
-        let r2 = batch_files(&paths, &dest, |s, d| fs::rename(s, d));
+        let r2 = batch_files(&paths, &dest, |s, d| fs::rename(s, d), SourceFate::Consumed);
         assert_eq!(r2.completed, 0);
         assert_eq!(r2.skipped, 1);
         assert!(r2.errors.is_empty());
@@ -278,9 +333,12 @@ mod tests {
         fs::create_dir_all(&dest).unwrap();
         fs::write(dest.join("a.cr3"), b"DEST").unwrap();
 
-        let r = batch_files(&[src.to_string_lossy().to_string()], &dest, |s, d| {
-            fs::copy(s, d).map(|_| ())
-        });
+        let r = batch_files(
+            &[src.to_string_lossy().to_string()],
+            &dest,
+            |s, d| fs::copy(s, d).map(|_| ()),
+            SourceFate::Retained,
+        );
         assert_eq!(r.completed, 0);
         assert_eq!(r.skipped, 1);
         // Destination preserved.
@@ -304,9 +362,12 @@ mod tests {
         // Destination has a lone sidecar (no CR3) carrying user data.
         fs::write(dest.join("b.xmp"), b"USER_EDITS").unwrap();
 
-        let r = batch_files(&[src.to_string_lossy().to_string()], &dest, |s, d| {
-            fs::copy(s, d).map(|_| ())
-        });
+        let r = batch_files(
+            &[src.to_string_lossy().to_string()],
+            &dest,
+            |s, d| fs::copy(s, d).map(|_| ()),
+            SourceFate::Retained,
+        );
         assert_eq!(r.completed, 1, "CR3 copied (no CR3 collision)");
         // The pre-existing sidecar is preserved, not clobbered.
         assert_eq!(fs::read(dest.join("b.xmp")).unwrap(), b"USER_EDITS");
@@ -337,15 +398,24 @@ mod tests {
     fn batch_error_cap() {
         let work = tmp_dir("batch-error-cap");
         // Source paths that don't have filenames (impossible inputs) → all
-        // bucket into the error list quickly so we can verify the cap.
+        // bucket into the error list quickly so we can verify the cap. (An
+        // empty string is the one input `Path::file_name()` reliably reports
+        // as having no filename — a trailing slash alone does not: per the
+        // stdlib docs, `Path::new("/usr/bin/").file_name()` is `Some("bin")`.)
         let bad: Vec<String> = (0..(FILE_OP_ERROR_CAP + 10))
-            .map(|i| format!("/dev/null-{i}/"))
+            .map(|_| String::new())
             .collect();
         let dest = work.join("out");
         fs::create_dir_all(&dest).unwrap();
 
-        let r = batch_files(&bad, &dest, |s, d| fs::copy(s, d).map(|_| ()));
+        let r = batch_files(
+            &bad,
+            &dest,
+            |s, d| fs::copy(s, d).map(|_| ()),
+            SourceFate::Retained,
+        );
         assert!(r.errors.len() <= FILE_OP_ERROR_CAP);
+        assert_eq!(r.error_count as usize, FILE_OP_ERROR_CAP + 10);
 
         let _ = fs::remove_dir_all(&work);
     }
@@ -396,6 +466,130 @@ mod tests {
         assert_eq!(r.completed, 0);
         assert_eq!(r.error_count as usize, FILE_OP_ERROR_CAP + 5);
         assert!(r.errors.len() <= FILE_OP_ERROR_CAP);
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// A sidecar that fails to follow its CR3 is an error the user sees —
+    /// the CR3 still counts as completed (it did move), but the batch can no
+    /// longer report 100 % success with a rating left behind.
+    #[test]
+    fn batch_counts_sidecar_failure() {
+        let work = tmp_dir("batch-xmp-fail");
+        let src = work.join("k.cr3");
+        fs::write(&src, b"cr3").unwrap();
+        fs::write(work.join("k.xmp"), b"<xmp/>").unwrap();
+        let dest = work.join("out");
+        fs::create_dir_all(&dest).unwrap();
+
+        let r = batch_files(
+            &[src.to_string_lossy().to_string()],
+            &dest,
+            |s, d| {
+                if s.extension().is_some_and(|e| e == "xmp") {
+                    Err(std::io::Error::other("xmp boom"))
+                } else {
+                    fs::rename(s, d)
+                }
+            },
+            SourceFate::Consumed,
+        );
+        assert_eq!(r.completed, 1, "the CR3 itself moved");
+        assert_eq!(r.error_count, 1, "the sidecar failure is counted");
+        assert!(r.errors[0].contains("sidecar"), "{}", r.errors[0]);
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// Move: completed sources and sources already missing on entry are
+    /// `gone`; a destination collision leaves the source in place (not gone).
+    #[test]
+    fn batch_move_lists_gone_sources() {
+        let work = tmp_dir("batch-gone");
+        let moved = work.join("m.cr3");
+        let missing = work.join("missing.cr3"); // never created
+        let collides = work.join("c.cr3");
+        fs::write(&moved, b"cr3").unwrap();
+        fs::write(&collides, b"cr3").unwrap();
+        let dest = work.join("_rejected");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("c.cr3"), b"already").unwrap();
+
+        let paths: Vec<String> = [&moved, &missing, &collides]
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        let r = batch_files(&paths, &dest, |s, d| fs::rename(s, d), SourceFate::Consumed);
+        assert_eq!((r.completed, r.skipped, r.error_count), (1, 2, 0));
+        assert_eq!(r.gone, vec![paths[0].clone(), paths[1].clone()]);
+        assert!(
+            collides.exists(),
+            "collision skip leaves the source where it was"
+        );
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// Copy never consumes its source, so nothing is ever `gone`.
+    #[test]
+    fn batch_copy_lists_nothing_gone() {
+        let work = tmp_dir("batch-copy-gone");
+        let src = work.join("a.cr3");
+        fs::write(&src, b"cr3").unwrap();
+        let dest = work.join("out");
+        fs::create_dir_all(&dest).unwrap();
+
+        let r = batch_files(
+            &[src.to_string_lossy().to_string()],
+            &dest,
+            |s, d| fs::copy(s, d).map(|_| ()),
+            SourceFate::Retained,
+        );
+        assert_eq!(r.completed, 1);
+        assert!(r.gone.is_empty());
+        assert!(src.exists());
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// An input with no filename is an error in the COUNT as well as the list
+    /// (the UI shows `errorCount`; the list alone used to read as 0 errors).
+    #[test]
+    fn no_filename_input_counts_as_error() {
+        let work = tmp_dir("batch-nofilename");
+        let dest = work.join("out");
+        fs::create_dir_all(&dest).unwrap();
+        let r = batch_files(
+            &[String::new()],
+            &dest,
+            |s, d| fs::copy(s, d).map(|_| ()),
+            SourceFate::Retained,
+        );
+        assert_eq!(r.error_count, 1);
+        assert_eq!(r.errors.len(), 1);
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// trash_batch: trashed and already-missing sources are `gone`; a sidecar
+    /// that fails to follow is counted.
+    #[test]
+    fn trash_batch_lists_gone_and_counts_sidecar_failure() {
+        let work = tmp_dir("trash-gone");
+        let a = work.join("a.cr3");
+        fs::write(&a, b"cr3").unwrap();
+        fs::write(work.join("a.xmp"), b"<xmp/>").unwrap();
+        let gone_already = work.join("gone.cr3");
+        let paths = vec![
+            a.to_string_lossy().to_string(),
+            gone_already.to_string_lossy().to_string(),
+        ];
+
+        let r = trash_batch(&paths, |p| {
+            if p.extension().is_some_and(|e| e == "xmp") {
+                Err("xmp boom".to_string())
+            } else {
+                fs::remove_file(p).map_err(|e| e.to_string())
+            }
+        });
+        assert_eq!((r.completed, r.skipped, r.error_count), (1, 1, 1));
+        assert_eq!(r.gone, paths);
+        assert!(r.errors[0].contains("sidecar"));
         let _ = fs::remove_dir_all(&work);
     }
 }
