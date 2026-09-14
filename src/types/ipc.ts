@@ -13,6 +13,12 @@ export type FileOpResult = {
    * capped list as "only N failed". Optional for older backends.
    */
   errorCount?: number;
+  /**
+   * Source paths no longer at their original location once the batch is done
+   * (completed moves + sources already missing on entry). Always empty for a
+   * copy. `doMoveRejects` prunes these frames from the live session.
+   */
+  gone: string[];
 };
 
 /**

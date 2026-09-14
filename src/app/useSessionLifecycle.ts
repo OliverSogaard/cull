@@ -29,6 +29,7 @@ import { normalizeRejectedSubfolder, type PerformanceProfile } from "../types/se
 import { basename } from "../utils/path";
 import { imageStore } from "../image/imageStore";
 import { overlayService } from "../overlays/overlayService";
+import { omitIds, pruneGone, pruneHistory } from "../utils/pruneSession";
 
 /**
  * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
@@ -105,6 +106,12 @@ export function useSessionLifecycle({
   setSelectedIndices,
   setSelectionAnchor,
   setConfirmHome,
+  currentIndex,
+  championIndex,
+  challengerIndex,
+  navStack,
+  setChampionIndex,
+  setChallengerIndex,
 }: {
   images: Img[];
   imagesRef: RefObject<Img[]>;
@@ -146,6 +153,12 @@ export function useSessionLifecycle({
   setSelectedIndices: Dispatch<SetStateAction<Set<number>>>;
   setSelectionAnchor: Dispatch<SetStateAction<number | null>>;
   setConfirmHome: Dispatch<SetStateAction<boolean>>;
+  currentIndex: number;
+  championIndex: number;
+  challengerIndex: number;
+  navStack: NavEntry[];
+  setChampionIndex: Dispatch<SetStateAction<number>>;
+  setChallengerIndex: Dispatch<SetStateAction<number>>;
 }) {
   // Serialises folder opens: a scan already in flight makes any second open
   // (drag-drop, recents, mount auto-open) a no-op until it settles.
@@ -520,6 +533,60 @@ export function useSessionLifecycle({
     setCompositionVisible,
   ]);
 
+  // After "Move rejects" (subfolder or Trash): take the moved frames out of
+  // the live session in place. Everything index-based follows the frame, the
+  // undo/redo history loses the moved frames' changes, and the image store
+  // forgets them WITHOUT a generation bump (survivors keep their tiers and
+  // the mounted panes keep their registrations). A stale cell for a moved
+  // photo used to write a real, orphaned sidecar into the old folder.
+  const pruneMoved = useCallback(
+    (gone: readonly string[]) => {
+      const next = pruneGone(
+        { images: imagesRef.current, navStack, currentIndex, championIndex, challengerIndex },
+        gone,
+      );
+      if (!next) return;
+      imagesRef.current = next.images;
+      setImages(next.images);
+      setRatings((prev) => omitIds(prev, next.goneIds));
+      setMetadata((prev) => {
+        const out = { ...prev };
+        for (const p of gone) delete out[p];
+        return out;
+      });
+      setCurrentIndex(next.currentIndex);
+      setChampionIndex(next.championIndex);
+      setChallengerIndex(next.challengerIndex);
+      setNavStack(next.navStack);
+      setSelectedIndices(new Set());
+      setSelectionAnchor(null);
+      undoStack.current = pruneHistory(undoStack.current, next.goneIds);
+      redoStack.current = pruneHistory(redoStack.current, next.goneIds);
+      imageStore.forget(new Set(gone));
+      writeSessionRecent(next.images, omitIds(ratings, next.goneIds));
+    },
+    [
+      imagesRef,
+      navStack,
+      currentIndex,
+      championIndex,
+      challengerIndex,
+      ratings,
+      undoStack,
+      redoStack,
+      writeSessionRecent,
+      setImages,
+      setRatings,
+      setMetadata,
+      setCurrentIndex,
+      setChampionIndex,
+      setChallengerIndex,
+      setNavStack,
+      setSelectedIndices,
+      setSelectionAnchor,
+    ],
+  );
+
   // Esc out of review → discard the in-memory session and return Home.
   // Successfully-saved ratings live on in the .xmp sidecars, so reopening the
   // folder restores them (a write that's still failing stays flagged for manual
@@ -601,5 +668,5 @@ export function useSessionLifecycle({
     resetSession();
   }, [images, ratings, resetSession, writeSessionRecent, setConfirmHome]);
 
-  return { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome };
+  return { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome, pruneMoved };
 }
