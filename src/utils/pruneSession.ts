@@ -14,7 +14,11 @@ export type SessionCursor = {
 };
 
 export type PruneInput = { images: readonly Img[]; navStack: readonly NavEntry[] } & SessionCursor;
-export type PruneOutput = { images: Img[]; navStack: NavEntry[]; goneIds: Set<number> } & SessionCursor;
+export type PruneOutput = {
+  images: Img[];
+  navStack: NavEntry[];
+  goneIds: Set<number>;
+} & SessionCursor;
 
 /** The index in `after` of the frame at `index` in `before`; when that frame
  *  is gone, the first survivor at or after its old position (clamped to the
@@ -53,7 +57,10 @@ export function pruneGone(input: PruneInput, gone: readonly string[]): PruneOutp
 }
 
 /** A copy of `map` without the listed ids (rating map keyed by frame id). */
-export function omitIds<T>(map: Readonly<Record<number, T>>, ids: ReadonlySet<number>): Record<number, T> {
+export function omitIds<T>(
+  map: Readonly<Record<number, T>>,
+  ids: ReadonlySet<number>,
+): Record<number, T> {
   const out: Record<number, T> = {};
   for (const [k, v] of Object.entries(map)) {
     const id = Number(k);
@@ -68,7 +75,10 @@ export function omitIds<T>(map: Readonly<Record<number, T>>, ids: ReadonlySet<nu
  *  compare-cursor snapshots are stripped because their indices are stale —
  *  undo/redo then land by frame id (`useUndoRedo`'s existing fallback).
  *  Returns the same array when nothing is affected. */
-export function pruneHistory(stack: readonly UndoAction[], goneIds: ReadonlySet<number>): UndoAction[] {
+export function pruneHistory(
+  stack: readonly UndoAction[],
+  goneIds: ReadonlySet<number>,
+): UndoAction[] {
   const touched = stack.some(
     (a) => a.cursorBefore || a.cursorAfter || a.changes.some((c) => goneIds.has(c.imgId)),
   );

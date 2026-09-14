@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { Img, NavEntry, UndoAction } from "../types";
 import { omitIds, pruneGone, pruneHistory, remapIndex } from "./pruneSession";
 
-const img = (id: number): Img => ({ id, path: `/s/${id}.cr3`, filename: `${id}.cr3`, srcFolder: "/s" });
+const img = (id: number): Img => ({
+  id,
+  path: `/s/${id}.cr3`,
+  filename: `${id}.cr3`,
+  srcFolder: "/s",
+});
 const five = [0, 1, 2, 3, 4].map(img);
 
 describe("remapIndex", () => {
@@ -46,7 +51,13 @@ describe("pruneGone", () => {
   });
   it("never mutates its input", () => {
     const nav: NavEntry[] = [{ site: "loupe" }];
-    const input = { images: five, navStack: nav, currentIndex: 0, championIndex: 0, challengerIndex: 0 };
+    const input = {
+      images: five,
+      navStack: nav,
+      currentIndex: 0,
+      championIndex: 0,
+      challengerIndex: 0,
+    };
     pruneGone(input, ["/s/0.cr3"]);
     expect(input.images).toHaveLength(5);
     expect(nav).toEqual([{ site: "loupe" }]);
@@ -63,7 +74,12 @@ describe("omitIds", () => {
 });
 
 describe("pruneHistory", () => {
-  const change = (imgId: number) => ({ imgId, path: `/s/${imgId}.cr3`, before: undefined, after: "keep" as const });
+  const change = (imgId: number) => ({
+    imgId,
+    path: `/s/${imgId}.cr3`,
+    before: undefined,
+    after: "keep" as const,
+  });
   it("drops changes for gone frames, drops emptied actions and strips stale cursor snapshots", () => {
     const stack: UndoAction[] = [
       { changes: [change(1)] },
