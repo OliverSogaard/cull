@@ -139,6 +139,12 @@ write that exhausts every retry is recorded in `failedWrites`; the UI shows
 an unsaved indicator and the close handler refuses to quit. Retry is one
 click from the indicator or the quit guard.
 
+A write is refused outright when the CR3 is no longer at its path
+(`xmp::require_source`, error prefix `source missing:`) — after "Move rejects"
+the moved frames are pruned from the session (see "Finishing a cull" below),
+so this only fires for a file deleted outside CULL. The frontend recognises
+the prefix and records the failure without retrying (`utils/writeFailure.ts`).
+
 Writes are atomic at the filesystem level — we write to a temp sibling and
 rename. A unique process-wide sequence number on the temp filename
 (`XMP_TMP_SEQ`) means two overlapping writes to the same sidecar never

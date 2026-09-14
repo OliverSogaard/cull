@@ -70,6 +70,29 @@ fn atomic_write_xmp(xmp_path: &Path, contents: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Refusal prefix for a sidecar write whose CR3 is no longer at its path. The
+/// frontend matches on it (`utils/writeFailure.ts`) to skip its retry
+/// schedule: nothing short of putting the photo back can make the write land.
+pub(crate) const MISSING_SOURCE: &str = "source missing";
+
+/// A sidecar is only ever written next to a CR3 that is actually there.
+///
+/// After "Move rejects" the frontend prunes the moved frames, but a stale
+/// cell, an undo replay or a file deleted outside CULL could still ask — and
+/// used to get a real, orphaned `.xmp` in the old folder plus a "saved"
+/// report (audit 2026-09-13, CRITICAL). A transient stat failure (NAS blip) is
+/// reported as such so the frontend's normal retry schedule still applies.
+fn require_source(cr3: &Path) -> Result<(), String> {
+    match std::fs::metadata(cr3) {
+        Ok(md) if md.is_file() => Ok(()),
+        Ok(_) => Err(format!("{MISSING_SOURCE}: {} is not a file", cr3.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(format!("{MISSING_SOURCE}: {}", cr3.display()))
+        }
+        Err(e) => Err(format!("stat source {}: {e}", cr3.display())),
+    }
+}
+
 /// Set a rating on the CR3's sidecar (creating the sidecar if absent).
 #[tauri::command]
 pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(), String> {
@@ -83,6 +106,7 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
 
 fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
     let cr3 = Path::new(path);
+    require_source(cr3)?;
     let xmp_path = cr3.with_extension("xmp");
 
     let base = match std::fs::read_to_string(&xmp_path) {
@@ -132,6 +156,7 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
 
 fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
     let cr3 = Path::new(path);
+    require_source(cr3)?;
     let xmp_path = cr3.with_extension("xmp");
 
     let existing = match std::fs::read_to_string(&xmp_path) {
@@ -912,6 +937,48 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         assert!(
             !cr3.with_extension("xmp").exists(),
             "CULL-authored sidecar removed on unrate"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Rating a CR3 that is no longer at its path (moved by "Move rejects",
+    /// deleted outside CULL) must refuse — never write an orphan sidecar into
+    /// the old folder and report "saved".
+    #[test]
+    fn write_refuses_when_cr3_is_missing() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-nosrc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("moved.cr3"); // never created
+
+        let err = write_xmp_rating_sync(&cr3.to_string_lossy(), "keep").unwrap_err();
+        assert!(err.starts_with(MISSING_SOURCE), "{err}");
+        assert!(
+            !cr3.with_extension("xmp").exists(),
+            "no orphan sidecar written"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Unrating a missing CR3 refuses too, and leaves whatever sidecar is
+    /// there untouched — ownership can't be verified without the photo.
+    #[test]
+    fn clear_refuses_when_cr3_is_missing_and_leaves_sidecar() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-noclr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("gone.cr3");
+        let xmp = cr3.with_extension("xmp");
+        std::fs::write(&xmp, b"<orphan/>").unwrap();
+
+        let err = clear_xmp_rating_sync(&cr3.to_string_lossy()).unwrap_err();
+        assert!(err.starts_with(MISSING_SOURCE), "{err}");
+        assert_eq!(
+            std::fs::read(&xmp).unwrap(),
+            b"<orphan/>",
+            "sidecar untouched"
         );
 
         let _ = std::fs::remove_dir_all(&work);
