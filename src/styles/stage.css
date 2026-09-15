@@ -160,7 +160,6 @@
   position: absolute;
   inset: 14px;
   border-radius: 1px; /* off-scale */
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
   z-index: 5;
   pointer-events: none;
   animation: cull-flash-pulse 380ms ease-out forwards;
@@ -198,7 +197,6 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
   z-index: 3;
   /* Only spin after 150ms of GENUINE waiting: fast (cached/local) loads
      finish inside the delay and never flash a spinner at all. */
@@ -259,7 +257,6 @@
   height: 100%;
   pointer-events: none;
   image-rendering: pixelated;
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
   z-index: 5;
 }
 
@@ -271,7 +268,6 @@
   width: 100%;
   height: 100%;
   pointer-events: none;
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
   z-index: 6;
 }
 

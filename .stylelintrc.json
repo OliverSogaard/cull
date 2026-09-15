@@ -20,7 +20,7 @@
     "declaration-property-value-keyword-no-deprecated": null,
     "declaration-property-value-disallowed-list": {
       "font-family": ["/Inter/", "/JetBrains/"],
-      "z-index": ["/^[0-9]+$/"]
+      "z-index": ["/^[0-9]{2,}$/"]
     }
   },
   "overrides": [

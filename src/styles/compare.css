@@ -160,7 +160,6 @@
   background: rgba(0, 0, 0, 0.7);
   padding: 1px 4px;
   border-radius: 1px; /* off-scale */
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
   z-index: 2;
   pointer-events: none;
   display: inline-flex;

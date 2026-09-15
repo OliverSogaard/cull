@@ -35,9 +35,8 @@
   --scrim-modal: rgba(8, 8, 10, 0.7);
 
   /* type */
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list, value-keyword-case */
+  /* stylelint-disable-next-line value-keyword-case */
   --font-ui: Inter, -apple-system, system-ui, sans-serif;
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --fs-1: 9px;
   --fs-2: 10px;
