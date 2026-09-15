@@ -622,11 +622,8 @@
 }
 
 .cull-hero__cta-key {
-  font-family: var(--font-mono);
   font-size: var(--fs-3);
   padding: 2px 7px;
-  background: rgba(26, 20, 8, 0.18);
-  border-radius: var(--r-1);
   letter-spacing: 0.05em;
 }
 
@@ -756,25 +753,16 @@
 }
 
 .cull-recent__kbd {
-  font-family: var(--font-mono);
   font-size: var(--fs-3);
   background: var(--surface);
-  padding: 2px 6px;
-  border: 1px solid var(--border);
-  border-radius: 3px; /* off-scale */
-  color: var(--text-2);
   margin: 0 2px;
 }
 
 .cull-hero__how-key {
-  font-family: var(--font-mono);
   font-size: var(--fs-2);
   background: var(--surface);
   padding: 3px 7px;
-  border: 1px solid var(--border);
-  border-radius: 3px; /* off-scale */
   margin-right: 8px;
-  color: var(--text-2);
   letter-spacing: 0.04em;
 }
 

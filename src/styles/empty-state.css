@@ -78,10 +78,6 @@
 .cull-empty-state__hint kbd {
   background: var(--surface);
   padding: 2px 7px;
-  border: 1px solid var(--border);
-  border-radius: 3px; /* off-scale */
-  color: var(--text-2);
-  font-family: inherit;
   margin: 0 2px;
 }
 

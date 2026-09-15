@@ -411,7 +411,7 @@ export function FinishDialog({
           className="cull-quitguard__hint"
           style={{ padding: "0 26px 16px", margin: 0, borderTop: 0 }}
         >
-          <kbd>esc</kbd> to close
+          <kbd className="kbd">esc</kbd> to close
         </div>
       </div>
     </div>

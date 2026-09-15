@@ -289,7 +289,8 @@ export function SettingsDialog({
         </div>
 
         <div className="cull-settings__foot">
-          <kbd>esc</kbd> to close · <kbd>{modGlyph} ,</kbd> to reopen
+          <kbd className="kbd">esc</kbd> to close · <kbd className="kbd">{modGlyph} ,</kbd> to
+          reopen
         </div>
       </div>
     </div>

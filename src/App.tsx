@@ -1348,7 +1348,7 @@ export default function App() {
                   disabled={pickerBusy}
                 >
                   {pickerBusy ? "opening…" : "Open folders"}
-                  <span className="cull-hero__cta-key">{modGlyph} O</span>
+                  <span className="kbd kbd--tint cull-hero__cta-key">{modGlyph} O</span>
                 </button>
                 <span className="cull-hero__drop-hint">or drop folders anywhere</span>
               </div>
@@ -1362,7 +1362,7 @@ export default function App() {
               {scanFailures && <ScanFailureCard failures={scanFailures} />}
               <div className="cull-hero__how">
                 <span>
-                  <span className="cull-hero__how-key">{modGlyph} ,</span>
+                  <span className="kbd cull-hero__how-key">{modGlyph} ,</span>
                   settings
                 </span>
               </div>

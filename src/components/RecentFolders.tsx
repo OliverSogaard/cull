@@ -27,7 +27,7 @@ export function RecentFolders({
       {recents.length === 0 ? (
         <div className="cull-recent__empty">
           No folders yet. Drop some anywhere, or press{" "}
-          <kbd className="cull-recent__kbd">{modGlyph} O</kbd>.
+          <kbd className="kbd cull-recent__kbd">{modGlyph} O</kbd>.
         </div>
       ) : (
         <div className="cull-recent__items">

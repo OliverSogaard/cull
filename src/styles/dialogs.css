@@ -197,12 +197,6 @@
 }
 
 .cull-settings__foot kbd {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  padding: 2px 6px;
-  border-radius: var(--r-1);
-  color: var(--text-2);
-  font-family: inherit;
   margin: 0 4px;
 }
 
@@ -524,16 +518,10 @@
   margin-right: 2px;
 }
 
-/* Small keycap visual. */
+/* Small keycap visual — the hint row is uppercase, the keycap is not. */
 .cull-quitguard__hint kbd {
   display: inline-block;
-  padding: 2px 6px;
   margin: 0 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-1);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-family: inherit;
   font-size: var(--fs-2);
   letter-spacing: 0.04em;
   text-transform: none;

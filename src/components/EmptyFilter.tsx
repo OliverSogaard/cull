@@ -78,7 +78,8 @@ export function EmptyFilter({
             title="Smart culling is turned off"
             hint={
               <>
-                <kbd>{modGlyph} ,</kbd> for Settings · <kbd>1</kbd> for all
+                <kbd className="kbd">{modGlyph} ,</kbd> for Settings · <kbd className="kbd">1</kbd>{" "}
+                for all
               </>
             }
           />
@@ -98,7 +99,8 @@ export function EmptyFilter({
             }
             hint={
               <>
-                fills in as frames are scored · culling comes first · <kbd>1</kbd> for all
+                fills in as frames are scored · culling comes first · <kbd className="kbd">1</kbd>{" "}
+                for all
               </>
             }
           />
@@ -114,7 +116,7 @@ export function EmptyFilter({
             title={<>Analysis done · no suggestions left here ({scoredCount} scored)</>}
             hint={
               <>
-                <kbd>1</kbd> for all
+                <kbd className="kbd">1</kbd> for all
               </>
             }
           />
@@ -127,7 +129,7 @@ export function EmptyFilter({
             title="No frames have been scored yet"
             hint={
               <>
-                <kbd>1</kbd> for all
+                <kbd className="kbd">1</kbd> for all
               </>
             }
           />
@@ -141,7 +143,7 @@ export function EmptyFilter({
             title="No frames have been scored yet"
             hint={
               <>
-                <kbd>4</kbd> to analyze · <kbd>1</kbd> for all
+                <kbd className="kbd">4</kbd> to analyze · <kbd className="kbd">1</kbd> for all
               </>
             }
           />
@@ -168,7 +170,7 @@ export function EmptyFilter({
       }
       hint={
         <>
-          <kbd>1</kbd> for all
+          <kbd className="kbd">1</kbd> for all
         </>
       }
     />
