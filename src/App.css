@@ -169,7 +169,7 @@ body,
   background: var(--bg);
   overflow: hidden;
   color: var(--text);
-  font-family: Inter, -apple-system, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   font-feature-settings: "ss01", "cv11", "cv10";
   -webkit-font-smoothing: antialiased;
@@ -230,7 +230,7 @@ body,
   margin-left: 16px;
   padding: 2px 9px;
   border-radius: 999px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: lowercase;
@@ -361,7 +361,7 @@ body,
 
 .cull-statusbar__filename {
   color: var(--text);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.02em;
   display: inline-flex;
@@ -388,7 +388,7 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -454,7 +454,7 @@ body,
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   cursor: pointer;
@@ -483,7 +483,7 @@ body,
 /* Scrubbing indicator — champagne pulse with an animated arrow prefix.
    Surfaced while a held-arrow scrub is in flight. */
 .cull-statusbar__scrub {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -511,7 +511,7 @@ body,
 /* Staged-scrub speed chip inside the footer's Scrubbing label (×5 / ×50). */
 .cull-statusbar__scrubspeed {
   margin-left: 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.08em;
   color: var(--accent);
@@ -521,7 +521,7 @@ body,
 }
 
 .cull-statusbar__pos {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
@@ -562,7 +562,7 @@ body,
   border: none;
   color: var(--muted);
   padding: 4px 12px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   cursor: pointer;
   letter-spacing: 0.16em;
@@ -667,7 +667,7 @@ body,
 .cull-filter-tab-tooltip button {
   appearance: none;
   padding: 3px 7px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -702,7 +702,7 @@ body,
   border-radius: 3px;
   background: var(--surface-2);
   color: var(--text-2);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -730,7 +730,7 @@ body,
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1021,7 +1021,7 @@ body,
 /* Memory-pressure chip: quiet amber at warn, red at critical. Same top-bar
    voice as the folder-trouble chip; informational only (never a button). */
 .cull-mem-chip {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1057,7 +1057,7 @@ body,
 /* Standing hint at the one gesture that unlocks every other key. Dimmest
    voice in the footer — present, never competing. */
 .cull-statusbar__keyhint {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1072,7 +1072,7 @@ body,
   border: 1px solid var(--accent);
   border-radius: 2px;
   color: var(--accent);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1115,7 +1115,7 @@ body,
   color: var(--text);
   border: 1px solid var(--border);
   padding: 12px 24px;
-  font-family: Inter, -apple-system, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
   letter-spacing: 0.05em;
   cursor: pointer;
@@ -1224,7 +1224,7 @@ body,
 }
 
 .cull-drag-indicator__text {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 14px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1283,7 +1283,7 @@ body,
   color: #1a1408;
   border: none;
   border-radius: 4px;
-  font-family: Inter, -apple-system, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 15px;
   font-weight: 500;
   cursor: pointer;
@@ -1301,7 +1301,7 @@ body,
 }
 
 .cull-hero__cta-key {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   padding: 2px 7px;
   background: rgba(26, 20, 8, 0.18);
@@ -1310,7 +1310,7 @@ body,
 }
 
 .cull-hero__drop-hint {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted);
   letter-spacing: 0.06em;
@@ -1340,7 +1340,7 @@ body,
 }
 
 .cull-recent__label {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -1395,7 +1395,7 @@ body,
 }
 
 .cull-recent__count {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
@@ -1432,7 +1432,7 @@ body,
 }
 
 .cull-recent__kbd {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   background: var(--surface);
   padding: 2px 6px;
@@ -1443,7 +1443,7 @@ body,
 }
 
 .cull-hero__how-key {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   background: var(--surface);
   padding: 3px 7px;
@@ -1487,7 +1487,7 @@ body,
 }
 
 .cull-scanfail__title {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -1528,7 +1528,7 @@ body,
 
 .cull-scanfail__tag {
   flex: none;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1540,7 +1540,7 @@ body,
 
 .cull-scanfail__path,
 .cull-scanfail__detail {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--muted);
   overflow: hidden;
@@ -1562,7 +1562,7 @@ body,
 }
 
 .cull-chrome__status {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -1576,7 +1576,7 @@ body,
 }
 
 .cull-chrome__sub {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted);
   letter-spacing: 0.06em;
@@ -1637,14 +1637,14 @@ body,
 }
 
 .cull-staged__count {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 22px;
   letter-spacing: 0.04em;
   color: var(--text);
 }
 
 .cull-staged__folder {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 8px;
@@ -1653,7 +1653,7 @@ body,
 /* Non-CR3 skip count under the folder line — quiet mono voice, but full
    muted contrast: it explains an absence, which is information, not a hint. */
 .cull-staged__ignored {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted);
   margin-bottom: 8px;
@@ -1669,7 +1669,7 @@ body,
    screen no longer has a dedicated button for it. */
 .cull-staged__hint {
   margin-top: 14px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted);
   letter-spacing: 0.06em;
@@ -1677,14 +1677,14 @@ body,
 
 .cull-statusbar__saving {
   color: var(--muted);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.06em;
 }
 
 .cull-statusbar__unsaved {
   color: var(--bad);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   cursor: pointer;
@@ -1751,7 +1751,7 @@ body,
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid var(--border-soft);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1798,7 +1798,7 @@ body,
 }
 
 .cull-settings__head-meta {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1829,7 +1829,7 @@ body,
   border-radius: 3px;
   text-align: left;
   padding: 8px 10px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1886,7 +1886,7 @@ body,
 .cull-settings__foot {
   padding: 14px 26px;
   border-top: 1px solid var(--border-soft);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.1em;
   color: var(--muted);
@@ -1919,7 +1919,7 @@ body,
 }
 
 .cull-settings__title-meta {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2059,7 +2059,7 @@ body,
 }
 
 .cull-settings__pinned-path {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-2);
   background: var(--bg);
@@ -2129,7 +2129,7 @@ body,
   border-radius: 3px;
   padding: 6px 10px;
   color: var(--text);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0;
   width: 200px;
@@ -2203,7 +2203,7 @@ body,
 }
 
 .cull-settings__reset-msg {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--bad);
   letter-spacing: 0.04em;
@@ -2258,7 +2258,7 @@ body,
 }
 
 .cull-actions__stat-label {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -2266,7 +2266,7 @@ body,
 }
 
 .cull-actions__stat-value {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 24px;
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -2287,7 +2287,7 @@ body,
 }
 
 .cull-actions__stat-sub {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fav);
   letter-spacing: 0.04em;
@@ -2343,7 +2343,7 @@ body,
 }
 
 .cull-actions__result {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: none;
@@ -2416,7 +2416,7 @@ body,
 .cull-finish__dest-edit .cull-finish__dest-sub {
   background: var(--bg);
   border: 1px solid var(--border);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11.5px;
 }
 
@@ -2486,7 +2486,7 @@ body,
 }
 
 .cull-finish__picked-label {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2497,7 +2497,7 @@ body,
 .cull-finish__picked-path {
   flex: 1 1 200px;
   min-width: 0;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--text-2);
   background: var(--bg);
@@ -2519,7 +2519,7 @@ body,
 }
 
 .cull-finish__confirm-msg {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--bad);
   letter-spacing: 0.04em;
@@ -2549,7 +2549,7 @@ body,
 }
 
 .cull-finish__progress-label {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-2);
   letter-spacing: 0.04em;
@@ -2643,7 +2643,7 @@ body,
 }
 
 .cull-empty-state__eyebrow {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -2664,7 +2664,7 @@ body,
 }
 
 .cull-empty-state__hint {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 0.04em;
@@ -2683,7 +2683,7 @@ body,
 /* ── messages ─────────────────────────────────────────────── */
 .cull-message {
   color: var(--muted);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -2699,7 +2699,7 @@ body,
 }
 
 .cull-message__body {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: none;
   letter-spacing: 0;
@@ -2827,7 +2827,7 @@ body,
   bottom: 44px;
   z-index: 80;
   pointer-events: none;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1.5;
   letter-spacing: 0;
@@ -2979,7 +2979,7 @@ body,
   left: 0;
   bottom: 7px;
   transform: translateX(-50%);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.08em;
   color: var(--accent);
@@ -3386,7 +3386,7 @@ body,
   position: relative;
   z-index: 1;
   color: var(--muted);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.04em;
   text-align: left;
@@ -3477,7 +3477,7 @@ body,
   position: absolute;
   left: 8px;
   bottom: 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   color: var(--text);
   background: rgba(0, 0, 0, 0.78);
@@ -3526,7 +3526,7 @@ body,
 }
 
 .cull-help__eyebrow {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -3556,7 +3556,7 @@ body,
 }
 
 .cull-help__group {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -3577,7 +3577,7 @@ body,
 }
 
 .cull-help__key {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   color: var(--text);
   font-size: 11px;
   letter-spacing: 0.04em;
@@ -3700,7 +3700,7 @@ body,
   gap: 6px;
   padding: 5px 14px;
   border-radius: 999px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -3761,7 +3761,7 @@ body,
 }
 
 .cull-thumb__role-badge-text {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 7px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -3806,7 +3806,7 @@ body,
 }
 
 .cull-exif-rail__label {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.28em;
   text-transform: uppercase;
@@ -3830,7 +3830,7 @@ body,
 
 .cull-exif-rail__k {
   color: var(--muted);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.02em;
   flex-shrink: 0;
@@ -3838,7 +3838,7 @@ body,
 
 .cull-exif-rail__v {
   color: var(--text);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -3896,7 +3896,7 @@ body,
 }
 
 .cull-cr-rail__col {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -3919,7 +3919,7 @@ body,
 }
 
 .cull-cr-rail__row .cull-cr-rail__k {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -3927,7 +3927,7 @@ body,
 }
 
 .cull-cr-rail__row .cull-cr-rail__v {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
