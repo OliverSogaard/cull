@@ -1740,7 +1740,7 @@ export default function App() {
           {folderTrouble !== "hidden" && (
             <button
               type="button"
-              className="cull-trouble-chip"
+              className="chip chip--bad cull-trouble-chip"
               data-state={folderTrouble}
               disabled={folderTrouble !== "latched"}
               onClick={() => void retryUnreachableFolders()}
@@ -1766,7 +1766,7 @@ export default function App() {
           {analyzeWarning && (
             <button
               type="button"
-              className="cull-trouble-chip"
+              className="chip chip--bad cull-trouble-chip"
               title={analyzeWarning.detail}
               onClick={() => setAnalyzeWarning(null)}
             >
@@ -1775,7 +1775,7 @@ export default function App() {
           )}
           {memPressure !== "normal" && (
             <span
-              className={`cull-mem-chip${memPressure === "critical" ? " is-critical" : ""}`}
+              className={`chip chip--soft chip--accent cull-mem-chip${memPressure === "critical" ? " is-critical" : ""}`}
               title={
                 memPressure === "critical"
                   ? "system memory critically low. Zoom was released and its caches dropped to keep the app alive"

@@ -38,23 +38,13 @@
 }
 
 /* ── status-bar chips ─────────────────────────────────────────
-   Overlay indicator chips in the status bar. */
+   The zoom indicator is the bar's only chip and has always rendered in
+   accent ink, so the `--zoom` modifier is now just `chip--accent`. */
 .cull-statusbar__chip {
   padding: 1px 8px;
-  border: 1px solid var(--border);
-  border-radius: 3px; /* off-scale */
   background: var(--surface-2);
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
   letter-spacing: 0.16em;
-  text-transform: uppercase;
   white-space: nowrap;
-}
-
-.cull-statusbar__chip--zoom {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 .cull-statusbar__right span.is-active {
@@ -70,13 +60,8 @@
   gap: 6px;
   padding: 3px 9px;
   margin-left: 8px;
-  border-radius: var(--r-pill);
   background: var(--accent-soft);
   color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 

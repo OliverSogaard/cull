@@ -231,7 +231,7 @@ const ComparePanel = memo(function ComparePanel({
       {/* Role chip centered below the photo — champagne filled for champion,
           hollow for challenger. Just the role name; the filename is in the
           status bar / EXIF rail, no need to repeat it here. */}
-      <div className={`cull-cmp-label ${isChampion ? "is-champion" : "is-challenger"}`}>
+      <div className={`chip cull-cmp-label ${isChampion ? "is-champion" : "is-challenger"}`}>
         {isChampion ? "Champion" : "Challenger"}
       </div>
     </div>

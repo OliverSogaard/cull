@@ -101,16 +101,11 @@
 
 /* Role chip below the photo — champion filled, challenger hollow. */
 .cull-cmp-label {
-  position: static;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 5px 14px;
-  border-radius: var(--r-pill);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
   letter-spacing: 0.22em;
-  text-transform: uppercase;
   font-weight: 500;
   flex-shrink: 0;
 }

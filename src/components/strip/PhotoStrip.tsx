@@ -101,7 +101,7 @@ export function PhotoStrip({
           >
             <div className="cull-scrubbar__thumb" />
             {scrubSpeed > 1 && (
-              <div className="cull-scrubbar__speed">{scrubSpeed}×</div>
+              <div className="chip chip--soft chip--accent cull-scrubbar__speed">{scrubSpeed}×</div>
             )}
           </div>
         </div>

@@ -28,7 +28,7 @@ export function SaveStatusPill({
   const text = state === "failed" ? "failed · retry" : "saving…";
   return (
     <span
-      className={`cull-save-status cull-save-status--${state}`}
+      className={`chip cull-save-status cull-save-status--${state}`}
       role={state === "failed" ? "button" : undefined}
       tabIndex={state === "failed" ? 0 : undefined}
       onClick={state === "failed" ? onRetry : undefined}

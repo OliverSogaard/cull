@@ -410,7 +410,7 @@ export const PhotoPane = memo(function PhotoPane({
           the failure is non-blocking. The shimmer-stage hard error panel
           lives in the consumer (it replaces the whole frame). */}
       {img.error && img.stage === "thumb" && (
-        <div className="cull-error-chip" title={img.error}>
+        <div className="chip chip--bad cull-error-chip" title={img.error}>
           <span>read failed</span>
           <button type="button" onClick={() => imageStore.retry(path)}>
             retry
@@ -431,7 +431,7 @@ export const PhotoPane = memo(function PhotoPane({
           clears the error state; the explicit request re-queues the read —
           the zoom effects key on path/zoom, which did not change. */}
       {isZooming && !hiResReady && img.fullError && (
-        <div className="cull-error-chip" title={img.fullError}>
+        <div className="chip chip--bad cull-error-chip" title={img.fullError}>
           <span>full-res failed</span>
           <button
             type="button"

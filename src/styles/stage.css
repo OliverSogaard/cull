@@ -287,13 +287,8 @@
 /* Memory-pressure chip: quiet amber at warn, red at critical. Same top-bar
    voice as the folder-trouble chip; informational only (never a button). */
 .cull-mem-chip {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
   letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--accent);
-  border: 1px solid rgba(212, 175, 106, 0.4);
-  border-radius: 3px; /* off-scale */
+  border-color: rgba(212, 175, 106, 0.4);
   padding: 2px 8px;
   white-space: nowrap;
 }
@@ -433,15 +428,10 @@
 /* Non-blocking "folder unreachable" chip in the top status bar — latched by
    the store when several reads go terminal (NAS unmounted / sleep-wake). */
 .cull-trouble-chip {
-  font: inherit;
-  font-size: var(--fs-2);
+  /* The bar is Inter, not mono — this chip has always inherited that. */
+  font-family: var(--font-ui);
   letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--bad);
   background: transparent;
-  border: 1px solid var(--bad);
-  border-radius: var(--r-pill);
-  padding: 2px 10px;
   margin-left: 10px;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -492,13 +482,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: var(--fs-2);
+  /* Inside the photo frame this chip has always been Inter, not mono. */
+  font-family: var(--font-ui);
   letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--bad);
   background: var(--scrim);
-  border: 1px solid var(--bad);
-  border-radius: var(--r-pill);
   padding: 3px 10px;
 }
 

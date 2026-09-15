@@ -37,7 +37,7 @@ export function ScanFailureCard({ failures }: { failures: readonly ScanFailure[]
             <li key={f.path} className="cull-scanfail__row">
               <div className="cull-scanfail__head">
                 <span className="cull-scanfail__name">{basename(f.path)}</span>
-                <span className="cull-scanfail__tag">{tag}</span>
+                <span className="chip chip--bad cull-scanfail__tag">{tag}</span>
               </div>
               <span className="cull-scanfail__path" title={f.path}>
                 {f.path}

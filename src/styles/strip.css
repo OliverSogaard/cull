@@ -68,13 +68,10 @@
   left: 0;
   bottom: 7px;
   transform: translateX(-50%);
-  font-family: var(--font-mono);
   font-size: var(--fs-1);
   letter-spacing: 0.08em;
-  color: var(--accent);
   background: rgba(8, 8, 10, 0.85);
-  border: 1px solid rgba(212, 175, 106, 0.4);
-  border-radius: 3px; /* off-scale */
+  border-color: rgba(212, 175, 106, 0.4);
   padding: 0 5px;
   line-height: 14px;
   white-space: nowrap;

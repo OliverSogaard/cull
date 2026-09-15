@@ -120,7 +120,7 @@ export const StatusBar = memo(function StatusBar({
           </span>
         )}
         {frame.isZooming && (
-          <span className="cull-statusbar__chip cull-statusbar__chip--zoom">
+          <span className="chip chip--soft chip--accent cull-statusbar__chip">
             zoom {frame.zoomLevel}:1
           </span>
         )}
@@ -128,7 +128,9 @@ export const StatusBar = memo(function StatusBar({
           <span className="cull-statusbar__scrub" aria-label="scrubbing">
             Scrubbing
             {frame.scrubSpeed > 1 && (
-              <span className="cull-statusbar__scrubspeed">{frame.scrubSpeed}×</span>
+              <span className="chip chip--soft chip--accent cull-statusbar__scrubspeed">
+                {frame.scrubSpeed}×
+              </span>
             )}
           </span>
         )}
@@ -186,7 +188,7 @@ export const StatusBar = memo(function StatusBar({
         )}
         {selection.gridVisible && selection.selectedCount >= 1 && (
           <span
-            className="cull-statusbar__multi"
+            className="chip cull-statusbar__multi"
             title="selection · rating keys apply to all selected"
           >
             {selection.selectedCount} selected

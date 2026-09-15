@@ -367,7 +367,7 @@ function Chip({
   return (
     <button
       type="button"
-      className={`cull-settings__chip${on ? " is-on" : ""}`}
+      className={`chip cull-settings__chip${on ? " is-on" : ""}`}
       onClick={() => onChange(!on)}
       aria-pressed={on}
     >

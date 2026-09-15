@@ -277,11 +277,9 @@
   padding: 5px 9px;
   white-space: nowrap;
   border: 1px solid var(--border);
-  border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-2);
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
-  font-family: Inter, sans-serif;
+  font-family: var(--font-ui);
   font-size: var(--fs-3);
   letter-spacing: 0;
   text-transform: none;

@@ -349,7 +349,7 @@ export const GridView = memo(function GridView({
             />
             {scrubSpeed > 1 && (
               <div
-                className="cull-scrubbar__speed cull-grid__scrollbar-speed"
+                className="chip chip--soft chip--accent cull-scrubbar__speed cull-grid__scrollbar-speed"
                 style={{ top: `${(topFrac + heightFrac / 2) * 100}%` }}
               >
                 {scrubSpeed}×

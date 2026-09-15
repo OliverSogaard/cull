@@ -7,9 +7,6 @@
   gap: 6px;
   margin-left: 16px;
   padding: 2px 9px;
-  border-radius: var(--r-pill);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
   letter-spacing: 0.06em;
   text-transform: lowercase;
   color: var(--muted);
@@ -308,12 +305,8 @@
 /* Staged-scrub speed chip inside the footer's Scrubbing label (×5 / ×50). */
 .cull-statusbar__scrubspeed {
   margin-left: 8px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
   letter-spacing: 0.08em;
-  color: var(--accent);
-  border: 1px solid rgba(212, 175, 106, 0.4);
-  border-radius: 3px; /* off-scale */
+  border-color: rgba(212, 175, 106, 0.4);
   padding: 1px 6px;
 }
 
@@ -859,13 +852,9 @@
 
 .cull-scanfail__tag {
   flex: none;
-  font-family: var(--font-mono);
   font-size: var(--fs-1);
   letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--bad);
-  border: 1px solid rgba(200, 127, 127, 0.45);
-  border-radius: var(--r-pill);
+  border-color: rgba(200, 127, 127, 0.45);
   padding: 1px 8px;
 }
 
