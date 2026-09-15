@@ -29,7 +29,7 @@ import { normalizeRejectedSubfolder, type PerformanceProfile } from "../types/se
 import { basename } from "../utils/path";
 import { imageStore } from "../image/imageStore";
 import { overlayService } from "../overlays/overlayService";
-import { omitIds, pruneGone, pruneHistory } from "../utils/pruneSession";
+import { omitIds, pruneGone, pruneHistory, remapNavStack } from "../utils/pruneSession";
 
 /**
  * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
@@ -106,10 +106,6 @@ export function useSessionLifecycle({
   setSelectedIndices,
   setSelectionAnchor,
   setConfirmHome,
-  currentIndex,
-  championIndex,
-  challengerIndex,
-  navStack,
   setChampionIndex,
   setChallengerIndex,
 }: {
@@ -153,10 +149,6 @@ export function useSessionLifecycle({
   setSelectedIndices: Dispatch<SetStateAction<Set<number>>>;
   setSelectionAnchor: Dispatch<SetStateAction<number | null>>;
   setConfirmHome: Dispatch<SetStateAction<boolean>>;
-  currentIndex: number;
-  championIndex: number;
-  challengerIndex: number;
-  navStack: NavEntry[];
   setChampionIndex: Dispatch<SetStateAction<number>>;
   setChallengerIndex: Dispatch<SetStateAction<number>>;
 }) {
@@ -534,47 +526,48 @@ export function useSessionLifecycle({
   ]);
 
   // After "Move rejects" (subfolder or Trash): take the moved frames out of
-  // the live session in place. Everything index-based follows the frame, the
-  // undo/redo history loses the moved frames' changes, and the image store
-  // forgets them WITHOUT a generation bump (survivors keep their tiers and
-  // the mounted panes keep their registrations). A stale cell for a moved
-  // photo used to write a real, orphaned sidecar into the old folder.
+  // the live session in place. Every cursor is remapped through functional
+  // setState from its LIVE value — this runs after an await, and the dialog
+  // can be dismissed mid-move, so closure values may be stale. The undo/redo
+  // history loses the moved frames' changes, and the image store forgets them
+  // WITHOUT a generation bump (survivors keep their tiers and the mounted
+  // panes keep their registrations). A stale cell for a moved photo used to
+  // write a real, orphaned sidecar into the old folder.
   const pruneMoved = useCallback(
     (gone: readonly string[]) => {
-      const next = pruneGone(
-        { images: imagesRef.current, navStack, currentIndex, championIndex, challengerIndex },
-        gone,
-      );
+      const next = pruneGone(imagesRef.current, gone);
       if (!next) return;
-      imagesRef.current = next.images;
-      setImages(next.images);
-      setRatings((prev) => omitIds(prev, next.goneIds));
+      const { images: survivors, goneIds, remap } = next;
+      imagesRef.current = survivors;
+      setImages(survivors);
+      setRatings((prev) => omitIds(prev, goneIds));
       setMetadata((prev) => {
         const out = { ...prev };
         for (const p of gone) delete out[p];
         return out;
       });
-      setCurrentIndex(next.currentIndex);
-      setChampionIndex(next.championIndex);
-      setChallengerIndex(next.challengerIndex);
-      setNavStack(next.navStack);
-      setSelectedIndices(new Set());
+      setCurrentIndex(remap);
+      setChampionIndex(remap);
+      setChallengerIndex(remap);
+      setNavStack((prev) => remapNavStack(prev, remap));
+      setSelectedIndices((s) => (s.size > 0 ? new Set() : s));
       setSelectionAnchor(null);
-      undoStack.current = pruneHistory(undoStack.current, next.goneIds);
-      redoStack.current = pruneHistory(redoStack.current, next.goneIds);
+      undoStack.current = pruneHistory(undoStack.current, goneIds);
+      redoStack.current = pruneHistory(redoStack.current, goneIds);
       imageStore.forget(new Set(gone));
-      writeSessionRecent(next.images, omitIds(ratings, next.goneIds));
+      if (survivors.length === 0) {
+        // Nothing left to compare or grid: the compare branch has no
+        // empty-session guard, and an empty grid is just the "no images" loupe.
+        setCompareMode(false);
+        setGridVisible(false);
+      }
+      // The recents entry is refreshed by the debounced culling effect on the
+      // images/ratings change; no immediate write from a possibly stale closure.
     },
     [
       imagesRef,
-      navStack,
-      currentIndex,
-      championIndex,
-      challengerIndex,
-      ratings,
       undoStack,
       redoStack,
-      writeSessionRecent,
       setImages,
       setRatings,
       setMetadata,
@@ -584,6 +577,8 @@ export function useSessionLifecycle({
       setNavStack,
       setSelectedIndices,
       setSelectionAnchor,
+      setCompareMode,
+      setGridVisible,
     ],
   );
 

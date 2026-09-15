@@ -621,10 +621,6 @@ export default function App() {
       setSelectedIndices,
       setSelectionAnchor,
       setConfirmHome,
-      currentIndex,
-      championIndex,
-      challengerIndex,
-      navStack,
       setChampionIndex,
       setChallengerIndex,
     });

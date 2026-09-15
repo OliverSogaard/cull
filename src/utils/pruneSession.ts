@@ -5,20 +5,20 @@ import type { Img, NavEntry, UndoAction } from "../types";
  * (subfolder or Trash). The backend reports which sources are gone
  * (`FileOpResult.gone`); everything index-based follows the FRAME, not the
  * slot, so the user keeps their place and the undo history stays sound.
+ *
+ * `pruneGone` hands back a `remap` function rather than applying it itself —
+ * the caller (`pruneMoved`) runs after an `await`, so any cursor/nav-stack
+ * value captured in a closure may be stale by the time the result lands.
+ * Applying `remap` through functional setState (`setX((prev) => remap(prev))`)
+ * guarantees every cursor is remapped from its LIVE value, not a snapshot.
  */
 
-export type SessionCursor = {
-  currentIndex: number;
-  championIndex: number;
-  challengerIndex: number;
-};
-
-export type PruneInput = { images: readonly Img[]; navStack: readonly NavEntry[] } & SessionCursor;
 export type PruneOutput = {
   images: Img[];
-  navStack: NavEntry[];
   goneIds: Set<number>;
-} & SessionCursor;
+  /** Old index → new index (same frame, else first survivor at/after, clamped). */
+  remap: (index: number) => number;
+};
 
 /** The index in `after` of the frame at `index` in `before`; when that frame
  *  is gone, the first survivor at or after its old position (clamped to the
@@ -37,23 +37,22 @@ export function remapIndex(before: readonly Img[], after: readonly Img[], index:
 
 /** Remove the frames whose files left the session. `null` when no listed
  *  path is in the set (nothing to do — a copy, or every reject was skipped). */
-export function pruneGone(input: PruneInput, gone: readonly string[]): PruneOutput | null {
+export function pruneGone(images: readonly Img[], gone: readonly string[]): PruneOutput | null {
   const gonePaths = new Set(gone);
-  const goneIds = new Set(input.images.filter((im) => gonePaths.has(im.path)).map((im) => im.id));
+  const goneIds = new Set(images.filter((im) => gonePaths.has(im.path)).map((im) => im.id));
   if (goneIds.size === 0) return null;
-  const images = input.images.filter((im) => !goneIds.has(im.id));
-  const remap = (i: number) => remapIndex(input.images, images, i);
-  const navStack = input.navStack.map((e) =>
+  const survivors = images.filter((im) => !goneIds.has(im.id));
+  return { images: survivors, goneIds, remap: (i) => remapIndex(images, survivors, i) };
+}
+
+/** Compare entries follow their frames; loupe/grid entries are untouched (same object). */
+export function remapNavStack(
+  navStack: readonly NavEntry[],
+  remap: (index: number) => number,
+): NavEntry[] {
+  return navStack.map((e) =>
     e.site === "compare" ? { ...e, champ: remap(e.champ), chall: remap(e.chall) } : e,
   );
-  return {
-    images,
-    navStack,
-    goneIds,
-    currentIndex: remap(input.currentIndex),
-    championIndex: remap(input.championIndex),
-    challengerIndex: remap(input.challengerIndex),
-  };
 }
 
 /** A copy of `map` without the listed ids (rating map keyed by frame id). */

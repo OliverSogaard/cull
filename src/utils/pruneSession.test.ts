@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Img, NavEntry, UndoAction } from "../types";
-import { omitIds, pruneGone, pruneHistory, remapIndex } from "./pruneSession";
+import { omitIds, pruneGone, pruneHistory, remapIndex, remapNavStack } from "./pruneSession";
 
 const img = (id: number): Img => ({
   id,
@@ -28,39 +28,33 @@ describe("remapIndex", () => {
 
 describe("pruneGone", () => {
   it("returns null when no listed path is in the session", () => {
-    expect(
-      pruneGone(
-        { images: five, navStack: [], currentIndex: 0, championIndex: 0, challengerIndex: 0 },
-        ["/elsewhere/x.cr3"],
-      ),
-    ).toBeNull();
+    expect(pruneGone(five, ["/elsewhere/x.cr3"])).toBeNull();
   });
-  it("removes gone frames, remaps every cursor by frame and rewrites compare nav entries", () => {
-    const nav: NavEntry[] = [{ site: "grid" }, { site: "compare", champ: 3, chall: 4 }];
-    const out = pruneGone(
-      { images: five, navStack: nav, currentIndex: 3, championIndex: 3, challengerIndex: 4 },
-      ["/s/1.cr3", "/s/4.cr3"],
-    );
+  it("removes gone frames and returns a remap function keyed by surviving frame", () => {
+    const out = pruneGone(five, ["/s/1.cr3", "/s/4.cr3"]);
     expect(out).not.toBeNull();
     expect(out!.images.map((im) => im.id)).toEqual([0, 2, 3]);
     expect(out!.goneIds).toEqual(new Set([1, 4]));
-    expect(out!.currentIndex).toBe(2); // id 3
-    expect(out!.championIndex).toBe(2);
-    expect(out!.challengerIndex).toBe(2); // id 4 gone → clamped to the last survivor
-    expect(out!.navStack).toEqual([{ site: "grid" }, { site: "compare", champ: 2, chall: 2 }]);
+    expect(out!.remap(3)).toBe(2); // id 3 survives
+    expect(out!.remap(4)).toBe(2); // id 4 gone → clamped to the last survivor
+    expect(out!.remap(1)).toBe(1); // id 1 gone → next survivor id 2
   });
   it("never mutates its input", () => {
-    const nav: NavEntry[] = [{ site: "loupe" }];
-    const input = {
-      images: five,
-      navStack: nav,
-      currentIndex: 0,
-      championIndex: 0,
-      challengerIndex: 0,
-    };
+    const input = [...five];
     pruneGone(input, ["/s/0.cr3"]);
-    expect(input.images).toHaveLength(5);
-    expect(nav).toEqual([{ site: "loupe" }]);
+    expect(input).toHaveLength(5);
+    expect(input).toEqual(five);
+  });
+});
+
+describe("remapNavStack", () => {
+  it("remaps compare entries and leaves other sites untouched (same object)", () => {
+    const grid: NavEntry = { site: "grid" };
+    const nav: NavEntry[] = [grid, { site: "compare", champ: 3, chall: 4 }];
+    const { remap } = pruneGone(five, ["/s/1.cr3", "/s/4.cr3"])!;
+    const out = remapNavStack(nav, remap);
+    expect(out).toEqual([{ site: "grid" }, { site: "compare", champ: 2, chall: 2 }]);
+    expect(out[0]).toBe(grid);
   });
 });
 
