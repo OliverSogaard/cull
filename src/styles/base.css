@@ -1,0 +1,75 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · self-hosted fonts
+   Was Google Fonts over the network at every launch — CULL is an
+   offline desktop app, so the two families ship in-repo (latin subset,
+   variable woff2). Each weight the old @import declared (Inter 400/500/600,
+   JetBrains Mono 400/500) points at its family's one variable file, so the
+   browser's weight matching + synthetic-bold behaviour is unchanged. Vite
+   fingerprints these under dist/assets/ and the CSP allows only 'self' fonts.
+   ──────────────────────────────────────────────────────────── */
+/* stylelint-disable declaration-property-value-disallowed-list */
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/inter.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/inter.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/inter.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/jetbrains-mono.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/jetbrains-mono.woff2") format("woff2");
+}
+/* stylelint-enable declaration-property-value-disallowed-list */
+
+
+html,
+body,
+#root,
+.cull-app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100vh;
+  background: var(--bg);
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-6);
+  font-feature-settings: "ss01", "cv11", "cv10";
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.cull-app {
+  display: flex;
+  flex-direction: column;
+}
+

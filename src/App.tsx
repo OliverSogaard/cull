@@ -21,7 +21,7 @@ import type {
   Phase,
   Rating,
 } from "./types";
-import "./App.css";
+import "./styles/index.css";
 
 import { CompareStrip } from "./components/CompareStrip";
 import { CompareView } from "./components/CompareView";
