@@ -214,7 +214,9 @@ abandoned and the app falls through to LOUPE at the current champion
 instead of reseating a rejected frame.
 
 Undo (`Ctrl+Z`) restores the rating state and the cursor — the compare
-pair or the loupe index — never navigation.
+pair or the loupe index — plus, for a compare-origin action, the nav-stack
+snapshot that action recorded (so ESC afterwards pops the entry you actually
+came from). It never navigates on its own.
 
 ## Hold-to-scrub
 
