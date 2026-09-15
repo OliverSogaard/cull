@@ -17,6 +17,18 @@
     "rule-empty-line-before": null,
     "declaration-block-single-line-max-declarations": null,
     "property-no-vendor-prefix": null,
-    "declaration-property-value-keyword-no-deprecated": null
-  }
+    "declaration-property-value-keyword-no-deprecated": null,
+    "declaration-property-value-disallowed-list": {
+      "font-family": ["/Inter/", "/JetBrains/"],
+      "z-index": ["/^[0-9]+$/"]
+    }
+  },
+  "overrides": [
+    {
+      "files": ["src/styles/tokens.css"],
+      "rules": {
+        "declaration-property-value-disallowed-list": null
+      }
+    }
+  ]
 }
