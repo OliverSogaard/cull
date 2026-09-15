@@ -51,7 +51,7 @@ export function SettingsDialog({
         aria-label="Settings"
         tabIndex={-1}
       >
-        <div className="cull-settings__head">
+        <div className="dialog__head cull-settings__head">
           <span className="cull-settings__head-title">Settings</span>
           <span className="eyebrow">CULL</span>
         </div>
