@@ -1371,7 +1371,7 @@ export default function App() {
 
           {phase === "loading" && (
             <>
-              <div className="cull-spinner" />
+              <div className="spinner" />
               <div className="cull-chrome__status">
                 loading{" "}
                 <span className="cull-chrome__folder">

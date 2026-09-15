@@ -220,12 +220,6 @@
   position: absolute;
   inset: 0;
   margin: auto;
-  width: 42px;
-  height: 42px;
-  border: 3px solid var(--surface-2);
-  border-top-color: var(--accent);
-  border-radius: 9999px;
-  animation: cull-spin 700ms linear infinite;
   box-shadow: 0 2px 18px rgba(0, 0, 0, 0.65);
 }
 

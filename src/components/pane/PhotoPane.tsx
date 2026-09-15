@@ -403,7 +403,7 @@ export const PhotoPane = memo(function PhotoPane({
           on disk), never mid-scrub. The 150ms CSS reveal delay still applies. */}
       {img.stage === "thumb" && !scrubbing && (
         <div className="cull-photo-frame__spinner-wrap" aria-hidden>
-          <div className="cull-loading__spinner" />
+          <div className="spinner spinner--lg cull-loading__spinner" />
         </div>
       )}
       {/* Quiet error chip (choreography "Error" row): the thumb stays up and
@@ -422,7 +422,7 @@ export const PhotoPane = memo(function PhotoPane({
           The 150ms CSS reveal delay keeps cached zooms ring-free. */}
       {isZooming && !hiResReady && !img.fullError && (
         <div className="cull-photo-frame__spinner-wrap" aria-hidden>
-          <div className="cull-loading__spinner" />
+          <div className="spinner spinner--lg cull-loading__spinner" />
         </div>
       )}
       {/* The 32 MP read failed while the user is judging sharpness: say so

@@ -890,21 +890,6 @@
   letter-spacing: 0.06em;
 }
 
-.cull-spinner {
-  width: 36px;
-  height: 36px;
-  border: 2px solid var(--surface-2);
-  border-top-color: var(--accent);
-  border-radius: 9999px;
-  animation: cull-spin 700ms linear infinite;
-}
-
-@keyframes cull-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .cull-progress {
   width: 420px;
   max-width: 60vw;
