@@ -145,6 +145,10 @@ fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
 ///
 /// INVARIANT: only the `{basename}.xmp` sidecar is touched — the CR3 is never
 /// modified.
+///
+/// No sidecar → already unrated → `Ok(())` even if the photo is gone; a
+/// sidecar that exists is only touched when the CR3 is present (ownership
+/// cannot be verified without the photo).
 #[tauri::command]
 pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
     // Spawn-blocking for the same reason as write_xmp_rating: sync fs I/O
@@ -156,15 +160,18 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
 
 fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
     let cr3 = Path::new(path);
-    require_source(cr3)?;
     let xmp_path = cr3.with_extension("xmp");
 
     let existing = match std::fs::read_to_string(&xmp_path) {
         Ok(s) => s,
-        // No sidecar → already unrated. Nothing to do.
+        // No sidecar → already unrated. Nothing to do — even if the CR3 is
+        // also gone, this is a no-op, not a refusal.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(format!("read existing xmp: {e}")),
     };
+    // A sidecar exists — only touch it once the CR3 is confirmed present:
+    // ownership of an orphaned sidecar can't be verified without the photo.
+    require_source(cr3)?;
 
     let authored = authored_by_cull(&existing);
     let stripped = strip_cull_fields(&existing);
@@ -1004,6 +1011,20 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
             "sidecar untouched"
         );
 
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// A frame with no sidecar is already unrated: clearing it is a no-op even
+    /// when the photo itself is gone — never a permanent "unsaved" the user
+    /// cannot retry out of.
+    #[test]
+    fn clear_is_a_no_op_when_cr3_and_sidecar_are_both_missing() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-noop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("gone.cr3"); // neither the CR3 nor gone.xmp exists
+        assert_eq!(clear_xmp_rating_sync(&cr3.to_string_lossy()), Ok(()));
+        assert!(!cr3.with_extension("xmp").exists());
         let _ = std::fs::remove_dir_all(&work);
     }
 }

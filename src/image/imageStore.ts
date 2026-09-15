@@ -643,6 +643,9 @@ export class ImageStore {
     const at = cursorPath === undefined ? -1 : this.indexOf(cursorPath);
     const next = at !== -1 ? at : Math.min(this.cursor, Math.max(0, this.paths.length - 1));
     this.cursor = next; // set first so setCursor's direction bookkeeping sees no move
+    // refreshPool bails on an empty path list — drop the decoded rasters
+    // ourselves so no slot keeps a revoked blob alive (reject-all cull).
+    if (this.paths.length === 0) this.pool?.clear();
     this.setCursor(next); // re-centres the keep-windows, prefetch and the decode pool
   }
 

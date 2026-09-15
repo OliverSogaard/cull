@@ -1570,4 +1570,37 @@ describe("forget (frames that left the session after Move rejects)", () => {
     store.forget(new Set<string>()); // no-op
     expect(store.debugStats().cursor).toBe(1);
   });
+
+  it("clears the decode pool when forget() empties the session (reject-all cull)", async () => {
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
+      if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(60, 40));
+      return Promise.resolve(new ArrayBuffer(0));
+    });
+    const poolImages: { src: string }[] = [];
+    const Store = await getStoreClass();
+    const store = new Store({
+      poolImageFactory: () => {
+        const img = { src: "", decode: () => Promise.resolve() };
+        poolImages.push(img);
+        return img;
+      },
+    });
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    const paths = Array.from({ length: 10 }, (_, i) => `/f/${i}.cr3`);
+    store.reset(paths);
+
+    store.setCursor(4); // ±1 prefetch fetches 3 and 5
+    await vi.waitUntil(() => store.snapshot("/f/5.cr3").stage === "full");
+    await flush();
+    // The landed previews inside the band are being held decoded.
+    expect(poolImages.some((i) => i.src.startsWith("blob:"))).toBe(true);
+
+    // Reject-all: every path leaves the session in one forget() call, so
+    // setCursor's own refreshPool bails early on the now-empty path list —
+    // forget() must drop the pool's decoded rasters itself.
+    store.forget(new Set(paths));
+    expect(poolImages.every((i) => i.src === "")).toBe(true);
+  });
 });

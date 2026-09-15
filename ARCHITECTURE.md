@@ -144,6 +144,7 @@ A write is refused outright when the CR3 is no longer at its path
 the moved frames are pruned from the session (see "Finishing a cull" below),
 so this only fires for a file deleted outside CULL. The frontend recognises
 the prefix and records the failure without retrying (`utils/writeFailure.ts`).
+An unrate with no sidecar to touch stays a no-op regardless.
 
 Writes are atomic at the filesystem level — we write to a temp sibling and
 rename. A unique process-wide sequence number on the temp filename
