@@ -31,6 +31,7 @@ import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { verdictGlyph } from "./components/verdictGlyph";
+import { RecentFolders } from "./components/RecentFolders";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ThumbStrip } from "./components/ThumbStrip";
@@ -40,7 +41,7 @@ import { DevHud } from "./components/DevHud";
 import { PhotoPane } from "./components/pane/PhotoPane";
 import { zoomTransition } from "./components/pane/zoomTransition";
 
-import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
+import { recentKey, useRecents } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
 import { useCullKeymap } from "./app/useCullKeymap";
@@ -68,7 +69,7 @@ import { cycleFilter, topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
 import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
-import { formatFolderSet, formatRelativeTime } from "./utils/format";
+import { formatFolderSet } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
 import { writeLocalStorage } from "./utils/storage";
@@ -2222,90 +2223,6 @@ export default function App() {
         />
       )}
     </main>
-  );
-}
-
-/**
- * Recent-sessions section on the home screen. Renders nothing on a totally
- * fresh launch (empty state replaces the list). Click a row to re-open that
- * session's folder set; rows that don't have a `count` yet hide the count
- * column rather than show a stub `0`.
- *
- * Three columns: folder names (`wedding-d1 + wedding-d2`, overflowing to
- * `+N more` — full paths in the tooltip), count badge (`327 / 372`, plain
- * `421`, or `932 ✓`), and a relative-time stamp.
- */
-function RecentFolders({
-  recents,
-  onPick,
-  pickerBusy,
-}: {
-  recents: RecentEntry[];
-  onPick: (entry: RecentEntry) => void;
-  pickerBusy: boolean;
-}) {
-  return (
-    <div className="cull-recent">
-      <div className="cull-recent__label">Recent</div>
-      {recents.length === 0 ? (
-        <div className="cull-recent__empty">
-          No folders yet. Drop some anywhere, or press{" "}
-          <kbd className="cull-recent__kbd">{modGlyph} O</kbd>.
-        </div>
-      ) : (
-        <div className="cull-recent__items">
-          {recents.map((r) => (
-            <RecentRow key={recentKey(r.paths)} entry={r} onPick={() => !pickerBusy && onPick(r)} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }) {
-  // Folder NAMES, not paths — budgeted at ~52 chars so the count + time
-  // columns still fit at the 620px hero width. The tooltip carries the full
-  // paths (one per line), which also disambiguates duplicate basenames.
-  const display = formatFolderSet(entry.paths, 52);
-  const rel = formatRelativeTime(entry.lastOpened);
-  return (
-    <div
-      className="cull-recent__item"
-      role="button"
-      tabIndex={0}
-      onClick={onPick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onPick();
-        }
-      }}
-      title={entry.paths.join("\n")}
-    >
-      <span className="cull-recent__path">{display}</span>
-      <span className="cull-recent__count">
-        {entry.count > 0 ? (
-          entry.done ? (
-            <>
-              <b>{entry.count}</b>
-              <span className="cull-recent__done" aria-label="finished">
-                {" "}
-                ✓
-              </span>
-            </>
-          ) : entry.rated > 0 ? (
-            <>
-              <b>{entry.rated}</b>
-              <span className="cull-recent__of"> / {entry.count}</span>
-            </>
-          ) : (
-            <b>{entry.count}</b>
-          )
-        ) : null}
-      </span>
-      <span className="cull-recent__time">{rel ?? ""}</span>
-    </div>
   );
 }
 
