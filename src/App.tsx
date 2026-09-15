@@ -25,6 +25,7 @@ import "./App.css";
 
 import { CompareStrip } from "./components/CompareStrip";
 import { CompareView } from "./components/CompareView";
+import { ConfirmHomeDialog } from "./components/ConfirmHomeDialog";
 import { EmptyFilter } from "./components/EmptyFilter";
 import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
@@ -2127,31 +2128,11 @@ export default function App() {
       )}
 
       {confirmHome && (
-        <div className="cull-quitguard">
-          <div className="cull-quitguard__box">
-            <div
-              className={`cull-quitguard__title${failedCount > 0 ? " cull-quitguard__title--warn" : ""}`}
-            >
-              {failedCount > 0
-                ? `⚠ leave with ${failedCount} unsaved rating${failedCount > 1 ? "s" : ""}?`
-                : "leave to home?"}
-            </div>
-            <div className="cull-quitguard__body">
-              {failedCount > 0
-                ? `${failedCount} rating${failedCount > 1 ? "s have" : " has"} not saved to disk yet. Leaving won't lose ${failedCount > 1 ? "them" : "it"}: the unsaved flag stays on the home screen for retrying. Staying to retry first is safer.`
-                : "Ratings are saved in .xmp sidecars. Reopening the folder restores them."}
-            </div>
-            <div className="cull-quitguard__actions">
-              <button className="cull-pick-button cull-pick-button--primary" onClick={leaveToHome}>
-                leave to home
-              </button>
-              <button className="cull-pick-button" onClick={() => setConfirmHome(false)}>
-                stay
-              </button>
-            </div>
-            <div className="cull-quitguard__hint">enter · leave · · · esc · stay</div>
-          </div>
-        </div>
+        <ConfirmHomeDialog
+          failedCount={failedCount}
+          onLeave={leaveToHome}
+          onStay={() => setConfirmHome(false)}
+        />
       )}
 
       {actionsOpen && (
