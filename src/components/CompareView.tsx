@@ -194,10 +194,7 @@ const ComparePanel = memo(function ComparePanel({
   }, [isZooming, path]);
 
   return (
-    <div
-      className={`cull-cmp-panel ${isChampion ? "is-champion" : "is-challenger"}`}
-      ref={panelRef}
-    >
+    <div className="cull-cmp-panel" ref={panelRef}>
       {/* The unified pane (PhotoPane): frame + sizer, the decode-gated
           presenter double-buffer, shimmer/spinner/error, the settle-gated
           post-decode zoom layer (the loupe's mount policy — this is what

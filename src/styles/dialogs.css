@@ -1,9 +1,4 @@
 /* ── settings dialog ──────────────────────────────────────── */
-.cull-settings-overlay {
-  /* The overlay is just the dimmed background — the dialog itself owns its
-     own surface + border. Keep the .dialog scrim's blur and dimming. */
-}
-
 .cull-settings {
   position: relative;
   background: var(--surface);
@@ -20,13 +15,6 @@
 
 .cull-settings__head {
   align-items: baseline;
-}
-
-.cull-settings__head-title {
-  font-size: var(--fs-8);
-  font-weight: 500;
-  color: var(--text);
-  letter-spacing: -0.005em;
 }
 
 /* Two-column body: fixed nav rail left, one scrolling pane right. A stable

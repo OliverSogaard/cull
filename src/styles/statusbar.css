@@ -47,10 +47,6 @@
   white-space: nowrap;
 }
 
-.cull-statusbar__right span.is-active {
-  color: var(--text);
-}
-
 /* "N selected" multi-select counter chip — pinned next to the position
    counter while the grid has a multi-selection. Champagne pill (soft accent
    background, accent text). */
