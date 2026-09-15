@@ -220,7 +220,8 @@ export function useCullKeymap({
 
       // Bare modifier presses (Ctrl/Shift/Alt/Meta alone) carry no cull action —
       // make them a no-op so e.g. tapping Shift mid-scrub doesn't abort the hold.
-      if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta") return true;
+      if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta")
+        return true;
 
       // A held scrub is sustained ONLY by its own arrow key. Any OTHER key (zoom,
       // rating, help, esc, compare, digits…) interrupts it, so nothing keeps
