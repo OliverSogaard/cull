@@ -59,8 +59,15 @@
 }
 
 @keyframes cull-save-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.75); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
 }
 
 /* ── custom window controls (borderless window) ───────────── */
@@ -83,7 +90,9 @@
   border: none;
   color: var(--text-2);
   cursor: pointer;
-  transition: background var(--dur-fast) ease-out, color var(--dur-fast) ease-out;
+  transition:
+    background var(--dur-fast) ease-out,
+    color var(--dur-fast) ease-out;
 }
 
 .cull-winbtn:hover {
@@ -236,7 +245,10 @@
   font-size: var(--fs-2);
   font-weight: 500;
   cursor: pointer;
-  transition: background 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
+  transition:
+    background 150ms ease-out,
+    color 150ms ease-out,
+    border-color 150ms ease-out;
   display: grid;
   place-items: center;
   padding: 0;
@@ -279,8 +291,15 @@
 }
 
 @keyframes cull-scrub-flash {
-  0%, 100% { opacity: 1; transform: translateX(0); }
-  50% { opacity: 0.4; transform: translateX(2px); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  50% {
+    opacity: 0.4;
+    transform: translateX(2px);
+  }
 }
 
 /* Position counter "N / M" — lives on the right cluster.
@@ -346,7 +365,9 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   border-bottom: 1px solid transparent;
-  transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+  transition:
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
 }
 
 /* Instant hover tip for inactive filter tabs. CSS-only (::after + attr) so
@@ -454,7 +475,9 @@
   border: 1px solid var(--border);
   border-radius: 3px; /* off-scale */
   background: var(--surface-2);
-  transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+  transition:
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
 }
 
 .cull-filter-tab-tooltip button:hover:not(.is-active) {
@@ -592,30 +615,17 @@
   margin-bottom: 0;
 }
 
+/* `btn btn--primary btn--cta` carries the fill, the weight and the hero
+   sizing; what is left here is the CTA's own layout and slower fade. */
 .cull-hero__cta {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 22px;
-  background: var(--accent);
-  color: var(--on-accent);
-  border: none;
-  border-radius: var(--r-2);
-  font-family: var(--font-ui);
-  font-size: 15px; /* off-scale */
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 200ms;
-}
-
-.cull-hero__cta:hover:not(:disabled) {
-  background: var(--accent-hover);
+  transition: background 200ms; /* off-scale */
 }
 
 .cull-hero__cta:disabled {
   background: var(--surface-2);
-  color: var(--muted);
-  cursor: default;
 }
 
 .cull-hero__cta-key {
@@ -1016,4 +1026,3 @@
   color: var(--bad-hover);
   text-decoration: underline;
 }
-

@@ -1342,7 +1342,11 @@ export default function App() {
                 Lightroom-compatible XMP sidecars.
               </p>
               <div className="cull-hero__cta-row">
-                <button className="cull-hero__cta" onClick={pickFolder} disabled={pickerBusy}>
+                <button
+                  className="btn btn--primary btn--cta cull-hero__cta"
+                  onClick={pickFolder}
+                  disabled={pickerBusy}
+                >
                   {pickerBusy ? "opening…" : "Open folders"}
                   <span className="cull-hero__cta-key">{modGlyph} O</span>
                 </button>
@@ -1430,18 +1434,11 @@ export default function App() {
               )}
               <div className="cull-staged__actions">
                 {images.length > 0 ? (
-                  <button
-                    className="cull-pick-button cull-pick-button--primary"
-                    onClick={beginCulling}
-                  >
+                  <button className="btn btn--primary" onClick={beginCulling}>
                     begin culling →
                   </button>
                 ) : (
-                  <button
-                    className="cull-pick-button cull-pick-button--primary"
-                    onClick={pickFolder}
-                    disabled={pickerBusy}
-                  >
+                  <button className="btn btn--primary" onClick={pickFolder} disabled={pickerBusy}>
                     {pickerBusy ? "opening…" : "open folders"}
                   </button>
                 )}
@@ -1551,7 +1548,7 @@ export default function App() {
               <pre className="cull-message__body">{cur.error}</pre>
               <button
                 type="button"
-                className="cull-message__retry"
+                className="btn cull-message__retry"
                 onClick={() => current && imageStore.retry(current.path)}
               >
                 retry

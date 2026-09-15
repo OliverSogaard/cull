@@ -30,13 +30,13 @@ export function QuitGuardOverlay({
               write kept failing). Closing now will lose {failedCount > 1 ? "them" : "it"}.
             </div>
             <div className="cull-quitguard__actions">
-              <button className="cull-pick-button cull-pick-button--primary" onClick={retryFailed}>
+              <button className="btn btn--primary" onClick={retryFailed}>
                 retry saving
               </button>
-              <button className="cull-pick-button" onClick={onKeepCulling}>
+              <button className="btn" onClick={onKeepCulling}>
                 keep culling
               </button>
-              <button className="cull-pick-button cull-quitguard__danger" onClick={onCloseAnyway}>
+              <button className="btn cull-quitguard__danger" onClick={onCloseAnyway}>
                 close anyway
               </button>
             </div>
@@ -50,7 +50,7 @@ export function QuitGuardOverlay({
               The app will close on its own the moment your ratings are safely on disk.
             </div>
             <div className="cull-quitguard__actions">
-              <button className="cull-pick-button" onClick={onKeepCulling}>
+              <button className="btn" onClick={onKeepCulling}>
                 keep culling
               </button>
             </div>

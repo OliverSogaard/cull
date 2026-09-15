@@ -24,10 +24,10 @@ export function ConfirmHomeDialog({ failedCount, onLeave, onStay }: Props) {
             : "Ratings are saved in .xmp sidecars. Reopening the folder restores them."}
         </div>
         <div className="cull-quitguard__actions">
-          <button className="cull-pick-button cull-pick-button--primary" onClick={onLeave}>
+          <button className="btn btn--primary" onClick={onLeave}>
             leave to home
           </button>
-          <button className="cull-pick-button" onClick={onStay}>
+          <button className="btn" onClick={onStay}>
             stay
           </button>
         </div>

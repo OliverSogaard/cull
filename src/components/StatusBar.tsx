@@ -382,7 +382,7 @@ export const StatusBar = memo(function StatusBar({
           // and brightens — the one nudge from "culling" to "act on the cull".
           <button
             type="button"
-            className={`cull-statusbar__finish${
+            className={`btn cull-statusbar__finish${
               filter.stats.unrated === 0 && filter.stats.total > 0 ? " is-done" : ""
             }`}
             onClick={session.openActions}

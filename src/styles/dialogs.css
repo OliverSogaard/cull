@@ -137,7 +137,9 @@
   text-transform: uppercase;
   color: var(--muted);
   cursor: pointer;
-  transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
+  transition:
+    color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
 }
 
 .cull-settings__navitem:hover:not(.is-active) {
@@ -183,7 +185,6 @@
   opacity: 0.4;
   pointer-events: none;
 }
-
 
 .cull-settings__foot {
   padding: 14px 26px;
@@ -285,7 +286,10 @@
   letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
 }
 
 .cull-settings__chip:hover:not(.is-on) {
@@ -334,7 +338,9 @@
   border-radius: 50%;
   background: var(--text-2);
   transform: translateY(-50%);
-  transition: transform 150ms, background 150ms;
+  transition:
+    transform 150ms,
+    background 150ms;
 }
 
 .cull-settings__toggle.is-on {
@@ -397,7 +403,9 @@
   letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease;
   white-space: nowrap;
 }
 
@@ -438,7 +446,9 @@
   letter-spacing: 0;
   width: 200px;
   outline: none;
-  transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease;
+  transition:
+    border-color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
 }
 
 .cull-settings__text:focus {
@@ -467,36 +477,37 @@
   }
 }
 
-/* Reset button */
+/* Reset button — a `.btn` in danger ink, two-state (outline → filled).
+   Both hovers restate ink because the base `.btn` hover is equally
+   specific and would otherwise grey it out. */
 .cull-settings__reset {
-  appearance: none;
-  background: transparent;
-  border: 1px solid var(--bad);
-  border-radius: 3px; /* off-scale */
-  padding: 7px 16px;
+  border-color: var(--bad);
+  padding: 7px 16px; /* off-scale */
   color: var(--bad);
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
-  font-family: Inter, sans-serif;
   font-size: var(--fs-4);
   letter-spacing: 0;
-  text-transform: none;
-  cursor: pointer;
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease;
   white-space: nowrap;
 }
 
-.cull-settings__reset:hover {
-  background: rgba(200, 127, 127, 0.1);
+.cull-settings__reset:hover:not(:disabled) {
+  background: var(--bad-a10);
+  border-color: var(--bad);
+  color: var(--bad);
 }
 
 .cull-settings__reset.is-armed {
   background: var(--bad);
-  color: #fff;
+  color: var(--on-bad);
   border-color: var(--bad);
 }
 
 .cull-settings__reset.is-armed:hover {
   background: var(--bad-hover);
+  border-color: var(--bad);
+  color: var(--on-bad);
 }
 
 /* Inline two-step reset confirm: "Sure?" + Yes, reset / Cancel */
@@ -513,11 +524,6 @@
   color: var(--bad);
   letter-spacing: 0.04em;
   margin-right: 2px;
-}
-
-.cull-settings__reset-confirm .cull-pick-button {
-  padding: 6px 12px;
-  font-size: var(--fs-4);
 }
 
 /* Small keycap visual. */
@@ -762,7 +768,10 @@
   /* Wide enough that a long pinned root can never squeeze the name being
      typed into a peephole. */
   min-width: 150px;
-  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+  transition:
+    border-color var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
 }
 
 .cull-finish__dest-sub.is-invalid {
@@ -831,18 +840,6 @@
   margin-right: 2px;
 }
 
-.cull-finish__confirm-yes {
-  background: var(--bad);
-  border-color: var(--bad);
-  color: #fff;
-}
-
-.cull-finish__confirm-yes:hover:not(:disabled) {
-  background: var(--bad-hover);
-  border-color: var(--bad-hover);
-  color: #fff;
-}
-
 /* Move-rejects progress row (label + breathing accent bar).
    The bar is indeterminate because the backend op is
    batched, but a "moving N…" label still gives the user feedback. */
@@ -884,10 +881,20 @@
 }
 
 @keyframes cull-finish-progress-breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
+/* Outline-danger "close anyway". Kept as a surface modifier rather than a
+   `.btn--danger`: it is the only outline-danger button, and its :hover is
+   one specificity step below `.btn:hover:not(:disabled)` — as it was below the
+   old pick-button hover before — so the neutral hover still wins. Folding it
+   would have changed that pixel. */
 .cull-quitguard__danger {
   border-color: var(--bad);
   color: var(--bad);
@@ -896,6 +903,5 @@
 .cull-quitguard__danger:hover {
   background: var(--bad);
   border-color: var(--bad);
-  color: #fff;
+  color: var(--on-bad);
 }
-

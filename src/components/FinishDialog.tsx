@@ -342,7 +342,7 @@ export function FinishDialog({
                     }}
                   />
                   <button
-                    className="cull-pick-button cull-pick-button--primary cull-finish__dest-cta"
+                    className="btn btn--primary cull-finish__dest-cta"
                     disabled={copyDisabled}
                     onClick={commitCopy}
                   >
@@ -357,7 +357,7 @@ export function FinishDialog({
             ) : pickedDestination === null ? (
               // Ask each time, stage 1: a single button that opens the picker.
               <button
-                className="cull-pick-button cull-pick-button--primary"
+                className="btn btn--primary"
                 disabled={
                   keptPaths.length === 0 ||
                   actionBusy !== null ||
@@ -377,14 +377,14 @@ export function FinishDialog({
                   {pickedDestination}
                 </code>
                 <button
-                  className="cull-pick-button"
+                  className="btn"
                   disabled={actionBusy !== null || picking}
                   onClick={pickDestination}
                 >
                   {picking ? "opening…" : "Change"}
                 </button>
                 <button
-                  className="cull-pick-button cull-pick-button--primary"
+                  className="btn btn--primary"
                   disabled={
                     keptPaths.length === 0 ||
                     actionBusy !== null ||
@@ -403,7 +403,7 @@ export function FinishDialog({
         </div>
 
         <div className="cull-quitguard__actions" style={{ padding: "16px 26px" }}>
-          <button className="cull-pick-button" onClick={onClose}>
+          <button className="btn" onClick={onClose}>
             close
           </button>
         </div>
@@ -512,7 +512,7 @@ function MoveRejectsRow({
               : `Sure? This moves ${rejectedCount} files.`}
           </span>
           <button
-            className="cull-pick-button cull-pick-button--primary cull-finish__confirm-yes"
+            className="btn btn--primary btn--danger"
             onClick={() => {
               setArmed(false);
               onMoveRejects(dest);
@@ -520,16 +520,12 @@ function MoveRejectsRow({
           >
             Yes, move
           </button>
-          <button className="cull-pick-button" onClick={() => setArmed(false)}>
+          <button className="btn" onClick={() => setArmed(false)}>
             Cancel
           </button>
         </div>
       ) : (
-        <button
-          className="cull-pick-button cull-pick-button--primary"
-          disabled={disabled}
-          onClick={() => setArmed(true)}
-        >
+        <button className="btn btn--primary" disabled={disabled} onClick={() => setArmed(true)}>
           Move rejects
         </button>
       )}
