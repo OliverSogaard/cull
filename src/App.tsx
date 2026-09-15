@@ -31,12 +31,20 @@ import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
-import { verdictGlyph } from "./components/verdictGlyph";
 import { QuitGuardOverlay } from "./components/QuitGuardOverlay";
 import { RecentFolders } from "./components/RecentFolders";
 import { SaveStatusPill } from "./components/SaveStatusPill";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
 import { SettingsDialog } from "./components/SettingsDialog";
+import {
+  StatusBar,
+  type StatusBarFilter,
+  type StatusBarFrame,
+  type StatusBarOverlays,
+  type StatusBarSave,
+  type StatusBarSelection,
+  type StatusBarSession,
+} from "./components/StatusBar";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { useChipsTooltipVisibility } from "./hooks/useChipsTooltipVisibility";
 import { WindowControls } from "./components/WindowControls";
@@ -68,7 +76,7 @@ import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
 import type { AnalyzeWarning } from "./utils/analyzeWarnings";
 import { passesFilter } from "./utils/filter";
-import { cycleFilter, topOf } from "./utils/filterModes";
+import { topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
 import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
@@ -1609,320 +1617,70 @@ export default function App() {
     </div>
   );
 
-  // Build the bottom status bar JSX once so it renders inside each view's
-  // flex column AFTER the thumb strip (the last row, with a border-top). The
-  // top chrome row above just holds the brand block and window controls, like
-  // a title bar.
+  // The bottom status bar renders inside each view's flex column AFTER the
+  // thumb strip (the last row, with a border-top) — built once here and placed
+  // in all three culling views. Its props are grouped by concern (see
+  // StatusBar); plain object literals, because this sits below the phase early
+  // returns (no useMemo available) and most groups change every render anyway.
   //
-  // Layout (left → right):
-  //   filename · MP  ·  verdict pill (glyph + label)
-  //   overlay cluster (i h p o t — circular toggle chips, on/off state)
-  //   <spacer>
-  //   position N / M  ·  filter tabs (loupe + grid)  ·  finish button
   // In compare mode the status bar's filename follows the CHALLENGER — the frame
   // the user is actively judging — not the current cursor (which would track the
   // champion). Single-view shows the cursor's frame.
   const statusBarImg = compareMode ? images[challengerIndex] : current;
-  const verdictLabel: Record<Rating, string> = {
-    keep: "Keep",
-    reject: "Reject",
-    favorite: "Fav",
+  const statusFrame: StatusBarFrame = {
+    filename: statusBarImg?.filename ?? null,
+    // No verdict pill in compare: two frames are under judgement at once, so
+    // there is no single "current" verdict to print.
+    rating: compareMode ? null : (currentRating ?? null),
+    isZooming,
+    zoomLevel,
+    scrubbing,
+    scrubSpeed,
+    compareMode,
+    comparePos: challengerPos,
+    compareCount: compareCandidates.length,
   };
-  const verdictCls: Record<Rating, string> = {
-    keep: "cull-statusbar__verdict--keep",
-    reject: "cull-statusbar__verdict--reject",
-    favorite: "cull-statusbar__verdict--fav",
+  const statusOverlays: StatusBarOverlays = {
+    visible: !gridVisible,
+    exif: { on: exifVisible, toggle: () => setExifVisible((v) => !v) },
+    clipping: { on: clippingVisible, toggle: () => setClippingVisible((v) => !v) },
+    peaking: { on: peakingVisible, toggle: () => setPeakingVisible((v) => !v) },
+    composition: { on: compositionVisible, toggle: () => setCompositionVisible((v) => !v) },
+    thumbs: { on: thumbsVisible, toggle: () => setThumbsVisible((v) => !v) },
   };
-  const totalKeeps = stats.keeps; // includes favorites
+  const statusSelection: StatusBarSelection = {
+    gridVisible,
+    selectedCount: selectedIndices.size,
+  };
+  const statusSave: StatusBarSave = { savingCount, failedCount, retryFailed };
+  const statusFilter: StatusBarFilter = {
+    filter,
+    setFilter,
+    stats,
+    qualityAnalyzing,
+    qualityProgress,
+    smartCulling: settings.smartCulling,
+    startAnalysis,
+    suggestionCount: liveSuggestionCount,
+    chipsTooltip,
+    positionInFilter,
+    visibleCount: visibleIndices.length,
+  };
+  const statusSession: StatusBarSession = {
+    openActions: () => setActionsOpen(true),
+    actionsOpen,
+    rejectedCount: rejectedPaths.length,
+    keyhint: modGlyph,
+  };
   const bottomStatusBar = (
-    <footer className="cull-statusbar">
-      <div className="cull-statusbar__left">
-        {statusBarImg && (
-          <span className="cull-statusbar__filename">
-            <span className="cull-statusbar__filename-name">{statusBarImg.filename}</span>
-          </span>
-        )}
-        {!compareMode && currentRating && (
-          <span
-            className={`cull-statusbar__verdict ${verdictCls[currentRating]}`}
-            aria-label={verdictLabel[currentRating]}
-          >
-            <span className="cull-statusbar__verdict-glyph" aria-hidden>
-              {verdictGlyph(currentRating, 9)}
-            </span>
-            {verdictLabel[currentRating]}
-          </span>
-        )}
-        {isZooming && (
-          <span className="cull-statusbar__chip cull-statusbar__chip--zoom">
-            zoom {zoomLevel}:1
-          </span>
-        )}
-        {scrubbing && (
-          <span className="cull-statusbar__scrub" aria-label="scrubbing">
-            Scrubbing
-            {scrubSpeed > 1 && <span className="cull-statusbar__scrubspeed">{scrubSpeed}×</span>}
-          </span>
-        )}
-        {/* Overlay cluster — five circular toggle chips. Hidden in grid (those
-            overlays don't apply there). The thumb-strip chip (t) shows in
-            loupe / compare only too. */}
-        {!gridVisible && (
-          <div className="cull-statusbar__overlay-cluster" aria-label="overlays">
-            <button
-              type="button"
-              className={`cull-statusbar__ov${exifVisible ? " is-on" : ""}`}
-              onClick={() => setExifVisible((v) => !v)}
-              title="i · info"
-              aria-pressed={exifVisible}
-            >
-              i
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${clippingVisible ? " is-on" : ""}`}
-              onClick={() => setClippingVisible((v) => !v)}
-              title="h · clipping"
-              aria-pressed={clippingVisible}
-            >
-              h
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${peakingVisible ? " is-on" : ""}`}
-              onClick={() => setPeakingVisible((v) => !v)}
-              title="p · focus peaking"
-              aria-pressed={peakingVisible}
-            >
-              p
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${compositionVisible ? " is-on" : ""}`}
-              onClick={() => setCompositionVisible((v) => !v)}
-              title="o · thirds"
-              aria-pressed={compositionVisible}
-            >
-              o
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${thumbsVisible ? " is-on" : ""}`}
-              onClick={() => setThumbsVisible((v) => !v)}
-              title="t · thumb strip"
-              aria-pressed={thumbsVisible}
-            >
-              t
-            </button>
-          </div>
-        )}
-        {gridVisible && selectedIndices.size >= 1 && (
-          <span
-            className="cull-statusbar__multi"
-            title="selection · rating keys apply to all selected"
-          >
-            {selectedIndices.size} selected
-          </span>
-        )}
-        {failedCount > 0 ? (
-          <span
-            className="cull-statusbar__unsaved"
-            onClick={retryFailed}
-            title="ratings failed to save · click to retry"
-          >
-            ⚠ {failedCount} unsaved · retry
-          </span>
-        ) : (
-          savingCount > 0 && <span className="cull-statusbar__saving">saving {savingCount}…</span>
-        )}
-      </div>
-      <div className="cull-statusbar__spacer" />
-      <div className="cull-statusbar__right">
-        <span className="cull-statusbar__keyhint" aria-hidden>
-          tab · keys
-        </span>
-        <span
-          className="cull-statusbar__pos"
-          title={
-            compareMode
-              ? "challenger position / total candidates"
-              : "current position / filtered total"
-          }
-        >
-          {compareMode ? (
-            <>
-              <b>{Math.max(0, challengerPos + 1)}</b>
-              <span className="of"> / {compareCandidates.length}</span>
-            </>
-          ) : (
-            <>
-              <b>{positionInFilter >= 0 ? positionInFilter + 1 : 0}</b>
-              <span className="of"> / {visibleIndices.length}</span>
-            </>
-          )}
-        </span>
-        {/* Filter tabs disabled in compare. */}
-        {!compareMode && (
-          <div className="cull-filter-tabs" role="tablist" aria-label="filter">
-            <button
-              type="button"
-              className={filter === "all" ? "is-active" : ""}
-              onClick={() => setFilter((f) => cycleFilter(f, "all"))}
-              data-tip={filter === "all" ? undefined : "1 · show all"}
-            >
-              All
-            </button>
-            <button
-              type="button"
-              className={filter === "unrated" ? "is-active" : ""}
-              onClick={() => setFilter((f) => cycleFilter(f, "unrated"))}
-              data-tip={filter === "unrated" ? undefined : "2 · show unrated"}
-            >
-              Unrated
-            </button>
-            <span className="cull-filter-tab-group">
-              <button
-                type="button"
-                className={topOf(filter) === "keeps" ? "is-active" : ""}
-                onClick={() => {
-                  setFilter((f) => cycleFilter(f, "keeps"));
-                  chipsTooltip.pulse();
-                }}
-                // Tip only while INACTIVE (the active tab floats the sub-chip
-                // tooltip in the same spot). data-tip renders instantly via
-                // CSS — the OS title delay made it lose the race against the
-                // neighbouring chip tooltip's fade-out.
-                data-tip={topOf(filter) === "keeps" ? undefined : "3 · show keeps"}
-                {...(topOf(filter) === "keeps" ? chipsTooltip.hoverProps : undefined)}
-              >
-                Keeps
-              </button>
-              {topOf(filter) === "keeps" && (
-                <span
-                  className={`cull-filter-tab-tooltip${chipsTooltip.visible ? " is-on" : ""}`}
-                  {...chipsTooltip.hoverProps}
-                >
-                  <button
-                    type="button"
-                    className={filter === "keeps" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("keeps");
-                      chipsTooltip.pulse();
-                    }}
-                    title="keeps and favorites"
-                  >
-                    all
-                  </button>
-                  <button
-                    type="button"
-                    className={filter === "keepsFavs" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("keepsFavs");
-                      chipsTooltip.pulse();
-                    }}
-                    title="favorites only"
-                  >
-                    ★
-                  </button>
-                </span>
-              )}
-            </span>
-            {/* Always visible — smart culling off just lands on the
-                "disabled" empty screen (see EmptyFilter) instead of a tab
-                that vanishes out from under an active filter. */}
-            <span className="cull-filter-tab-group">
-              <button
-                type="button"
-                className={topOf(filter) === "suggested" ? "is-active" : ""}
-                onClick={() => {
-                  setFilter((f) => cycleFilter(f, "suggested"));
-                  chipsTooltip.pulse();
-                  if (settings.smartCulling) {
-                    startAnalysis(); // no-op unless "analyze on open" is off and unrun
-                  }
-                }}
-                // Same inactive-only instant tip as the Keeps tab above.
-                data-tip={topOf(filter) === "suggested" ? undefined : "4 · show suggestions"}
-                {...(topOf(filter) === "suggested" ? chipsTooltip.hoverProps : undefined)}
-              >
-                {qualityAnalyzing && qualityProgress
-                  ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
-                  : liveSuggestionCount > 0
-                    ? `Smart · ${liveSuggestionCount}`
-                    : "Smart"}
-              </button>
-              {topOf(filter) === "suggested" && (
-                <span
-                  className={`cull-filter-tab-tooltip${chipsTooltip.visible ? " is-on" : ""}`}
-                  {...chipsTooltip.hoverProps}
-                >
-                  <button
-                    type="button"
-                    className={filter === "suggested" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("suggested");
-                      chipsTooltip.pulse();
-                    }}
-                    title="any suggestion"
-                  >
-                    all
-                  </button>
-                  <button
-                    type="button"
-                    className={filter === "suggestedRejects" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("suggestedRejects");
-                      chipsTooltip.pulse();
-                    }}
-                    title="suggested rejects"
-                  >
-                    ✕
-                  </button>
-                  <button
-                    type="button"
-                    className={filter === "suggestedKeeps" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("suggestedKeeps");
-                      chipsTooltip.pulse();
-                    }}
-                    title="suggested keeps"
-                  >
-                    ✓
-                  </button>
-                  <button
-                    type="button"
-                    className={filter === "suggestedFavs" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("suggestedFavs");
-                      chipsTooltip.pulse();
-                    }}
-                    title="suggested favorites"
-                  >
-                    ★
-                  </button>
-                </span>
-              )}
-            </span>
-          </div>
-        )}
-        {(stats.keeps > 0 || rejectedPaths.length > 0) && !actionsOpen && (
-          // The finish moment: once every frame is rated the button announces it
-          // and brightens — the one nudge from "culling" to "act on the cull".
-          <button
-            type="button"
-            className={`cull-statusbar__finish${
-              stats.unrated === 0 && stats.total > 0 ? " is-done" : ""
-            }`}
-            onClick={() => setActionsOpen(true)}
-            title="finish the cull · move rejects / copy keeps"
-          >
-            {stats.unrated === 0 && stats.total > 0
-              ? `All ${stats.total} rated · ${modGlyph}E finish`
-              : `${modGlyph}E · ${totalKeeps} keeps`}
-          </button>
-        )}
-      </div>
-    </footer>
+    <StatusBar
+      frame={statusFrame}
+      overlays={statusOverlays}
+      selection={statusSelection}
+      save={statusSave}
+      filter={statusFilter}
+      session={statusSession}
+    />
   );
 
   // Each strip is built once and reused in the top OR bottom slot (only one of
