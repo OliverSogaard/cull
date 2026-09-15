@@ -258,7 +258,7 @@ export function FinishDialog({
         </div>
 
         {unrated > 0 && (
-          <div className="cull-actions__unrated">
+          <div className="note cull-actions__unrated">
             <span className="cull-actions__unrated-icon">⚠</span>
             <span>
               <b>{unrated} unrated</b> will stay in the source untouched.
@@ -267,9 +267,7 @@ export function FinishDialog({
         )}
 
         {(savingCount > 0 || failedCount > 0) && (
-          <div
-            className={`cull-actions__pending${failedCount > 0 ? " cull-actions__pending--err" : ""}`}
-          >
+          <div className={`note cull-actions__pending${failedCount > 0 ? " note--bad" : ""}`}>
             {failedCount > 0
               ? `⚠ ${failedCount} rating${failedCount > 1 ? "s" : ""} haven't saved · actions disabled until resolved (status bar · retry)`
               : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`}
@@ -299,7 +297,7 @@ export function FinishDialog({
             {pinnedMode ? (
               <>
                 {rootMissing && (
-                  <div className="cull-finish__folder-exists">
+                  <div className="note note--bad cull-finish__folder-exists">
                     <span className="cull-finish__folder-exists-icon">⚠</span>
                     <span>
                       The pinned export root no longer exists. Re-pick it in <b>Settings</b> before
@@ -308,7 +306,7 @@ export function FinishDialog({
                   </div>
                 )}
                 {folderExists && (
-                  <div className="cull-finish__folder-exists">
+                  <div className="note note--bad cull-finish__folder-exists">
                     <span className="cull-finish__folder-exists-icon">⚠</span>
                     <span>
                       A folder with this name already exists at your pinned root. Rename it in the

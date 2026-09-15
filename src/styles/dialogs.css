@@ -510,16 +510,9 @@
 /* Unrated banner — champagne left-border note */
 .cull-actions__unrated {
   margin: 14px 26px 0;
-  padding: 10px 14px;
-  background: rgba(212, 175, 106, 0.07);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--r-1);
-  font-size: 11.5px; /* off-scale */
-  color: var(--text-2);
   display: flex;
   gap: 8px;
   align-items: center;
-  line-height: 1.45;
 }
 
 .cull-actions__unrated-icon {
@@ -567,22 +560,9 @@
 
 .cull-actions__pending {
   margin: 14px 26px 0;
-  padding: 10px 14px;
-  background: rgba(212, 175, 106, 0.07);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--r-1);
-  color: var(--text-2);
-  font-size: 11.5px; /* off-scale */
   letter-spacing: 0;
   text-transform: none;
   text-align: left;
-  line-height: 1.45;
-}
-
-.cull-actions__pending--err {
-  background: rgba(200, 127, 127, 0.08);
-  border-left-color: var(--bad);
-  color: var(--bad);
 }
 
 /* Pinned-mode "folder already exists" banner. Sits between the row-help text
@@ -592,12 +572,8 @@
 .cull-finish__folder-exists {
   margin-top: 6px;
   padding: 8px 12px;
-  background: rgba(200, 127, 127, 0.08);
-  border-left: 3px solid var(--bad);
-  border-radius: var(--r-1);
-  font-size: 11.5px; /* off-scale */
+  /* Alarmed surface, but the copy itself stays quiet — only the ⚠ is red. */
   color: var(--text-2);
-  line-height: 1.45;
   display: flex;
   gap: 6px;
   align-items: flex-start;
