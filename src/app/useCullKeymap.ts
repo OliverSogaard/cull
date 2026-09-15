@@ -46,6 +46,7 @@ export function useCullKeymap({
   selectAllInGrid,
   growGridSelection,
   clearMultiSelection,
+  hasGridSelection,
   heldDirRef,
   startHold,
   stopHold,
@@ -105,6 +106,7 @@ export function useCullKeymap({
   selectAllInGrid: () => void;
   growGridSelection: (deltaCells: number) => void;
   clearMultiSelection: () => void;
+  hasGridSelection: boolean;
   heldDirRef: RefObject<0 | 1 | -1>;
   startHold: (dir: 1 | -1) => void;
   stopHold: () => void;
@@ -199,11 +201,11 @@ export function useCullKeymap({
   }>({ onKey: () => {}, onKeyUp: () => {} });
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const handleModalKeys = (e: KeyboardEvent): boolean => {
       // Chrome shortcuts (settings, open folder, begin culling) are handled by
       // the phase-agnostic effect above. While the settings modal is open,
       // swallow all cull keys here so nothing slips through behind it.
-      if (settingsOpen) return;
+      if (settingsOpen) return true;
       // The quit-guard overlay owns the keyboard while it's up: Esc = keep culling
       // (dismiss), everything else is swallowed so a rating/undo can't be enqueued
       // behind a "we're closing" modal or race the auto-close-after-flush.
@@ -212,13 +214,13 @@ export function useCullKeymap({
           e.preventDefault();
           setQuitGuard(false);
         }
-        return;
+        return true;
       }
-      if (phase !== "culling") return; // chrome screens are button-driven
+      if (phase !== "culling") return true; // chrome screens are button-driven
 
       // Bare modifier presses (Ctrl/Shift/Alt/Meta alone) carry no cull action —
       // make them a no-op so e.g. tapping Shift mid-scrub doesn't abort the hold.
-      if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta") return;
+      if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta") return true;
 
       // A held scrub is sustained ONLY by its own arrow key. Any OTHER key (zoom,
       // rating, help, esc, compare, digits…) interrupts it, so nothing keeps
@@ -241,7 +243,7 @@ export function useCullKeymap({
           e.preventDefault();
           setConfirmHome(false);
         }
-        return;
+        return true;
       }
 
       // Act-on-cull dialog owns the keyboard while it's up: Esc closes; other
@@ -251,173 +253,92 @@ export function useCullKeymap({
           e.preventDefault();
           setActionsOpen(false);
         }
-        return;
+        return true;
       }
 
-      // Undo / redo, works in both single and compare. Compound actions
-      // (challenger wins/loses) revert as one Ctrl+Z.
-      if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) {
-        e.preventDefault();
-        redo();
-        return;
-      }
+      return false;
+    };
 
-      // Ctrl+E → act-on-cull dialog (move rejects / copy keeps).
-      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
-        e.preventDefault();
-        openActions();
-        return;
+    const handleCompareKey = (e: KeyboardEvent): void => {
+      switch (e.key) {
+        // Deciding works WHILE ZOOMED via the memory-budgeted swap: each
+        // action first DROPS every zoom full outside the surviving pair
+        // (dropZoomFullsExcept), so the old and new pairs never coexist —
+        // holding both is what jetsam-killed WebContent (gray window,
+        // 2026-07-07, 2.25 GB lifetimeMax). Under real OS pressure the
+        // caches shed further (memory-pressure event → pressureProfile).
+        case "Enter":
+          e.preventDefault();
+          if (!e.repeat) challengerWins();
+          break;
+        case "Backspace":
+          e.preventDefault();
+          if (!e.repeat) challengerLoses();
+          break;
+        case "k":
+        case "K":
+          // Keep both: challenger keeps, champion stays champion.
+          if (!e.repeat) challengerKeptBoth(false);
+          break;
+        case "f":
+        case "F":
+          // Keep both + star the challenger.
+          if (!e.repeat) challengerKeptBoth(true);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          if (isZooming) pan(PAN_STEP, 0);
+          else if (!e.repeat && heldDirRef.current === 0) startHold(1);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          if (isZooming) pan(-PAN_STEP, 0);
+          else if (!e.repeat && heldDirRef.current === 0) startHold(-1);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          if (isZooming) pan(0, -PAN_STEP);
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          if (isZooming) pan(0, PAN_STEP);
+          break;
+        case "i":
+        case "I":
+          setExifVisible((v) => !v);
+          break;
+        case "h":
+        case "H":
+          setClippingVisible((v) => !v);
+          break;
+        case "p":
+        case "P":
+          setPeakingVisible((v) => !v);
+          break;
+        case "t":
+        case "T":
+          setThumbsVisible((v) => !v);
+          break;
+        case "o":
+        case "O":
+          // Thirds grid — visible on the matte in compare too.
+          setCompositionVisible((v) => !v);
+          break;
+        case "l":
+        case "L":
+          e.preventDefault();
+          goToSite("loupe");
+          break;
+        case "g":
+        case "G":
+          e.preventDefault();
+          goToSite("grid");
+          break;
+        // 'c' in compare is a no-op now — leave via L, G, or ESC.
       }
+    };
 
-      // Ctrl/Cmd+A → select all visible cells (grid only). Swallowed in every
-      // site so the webview's own select-all never fires.
-      if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
-        e.preventDefault();
-        if (gridVisible) selectAllInGrid();
-        return;
-      }
-
-      // Tab (hold) → keyboard help. Available in both single and compare.
-      if (e.key === "Tab") {
-        e.preventDefault();
-        if (!e.repeat) {
-          setHelpVisible(true);
-          setHelpIntro(false);
-        }
-        return;
-      }
-      if (helpVisible) {
-        // Any other key dismisses AND is swallowed — one press closes the
-        // auto-shown intro without also rating a frame. (During a held-Tab
-        // showing this just closes early; Tab-release would have anyway.)
-        // preventDefault too: the dismissing key must not fall through to a
-        // platform default (ESC exiting macOS fullscreen was the live bug).
-        e.preventDefault();
-        setHelpVisible(false);
-        setHelpIntro(false);
-        return;
-      }
-
-      // Drop any other Ctrl/Meta/Alt combination — the explicit Ctrl combos
-      // we support (Z / Y / E) returned above. This stops muscle-memory OS
-      // shortcuts (Ctrl+S save, Ctrl+L address bar, Ctrl+F find, Alt+F menu)
-      // from accidentally cycling sort, switching to loupe, marking favorite,
-      // etc. Shift modifiers still pass through (Shift+Space = 2:1 zoom,
-      // capital letters from Shift+letter still match their lowercase cases).
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      // Space (hold) → 1:1 zoom (Shift+Space → 2:1); arrows pan while zoomed.
-      // Works in single + compare. No-op in grid (there's no loupe image to zoom).
-      if (e.code === "Space") {
-        e.preventDefault();
-        // Arm zoom on a fresh press only — and only when NOT already zoomed.
-        // The already-zoomed guard is what makes rate-while-zoomed safe: after
-        // a rating keypress, macOS resumes the still-held Space's auto-repeat
-        // as a NON-repeat keydown (the quirk that sank the old attempts, see
-        // 7bf33e8) — with zoom carried, that phantom press must change nothing.
-        if (!e.repeat && !gridVisible && !isZoomingRef.current) {
-          setIsZooming(true);
-          setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
-          setPanOffset({ x: 0, y: 0 });
-        }
-        return;
-      }
-
-      // ESC from any site opens the leave-to-home confirm (Enter=leave, Esc=stay).
-      // Stepping back site-by-site felt wrong, so ESC does the same thing wherever
-      // you are. (goBack is still used by the compare auto-exit flows.)
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setConfirmHome(true);
-        return;
-      }
-
-      if (compareMode) {
-        switch (e.key) {
-          // Deciding works WHILE ZOOMED via the memory-budgeted swap: each
-          // action first DROPS every zoom full outside the surviving pair
-          // (dropZoomFullsExcept), so the old and new pairs never coexist —
-          // holding both is what jetsam-killed WebContent (gray window,
-          // 2026-07-07, 2.25 GB lifetimeMax). Under real OS pressure the
-          // caches shed further (memory-pressure event → pressureProfile).
-          case "Enter":
-            e.preventDefault();
-            if (!e.repeat) challengerWins();
-            break;
-          case "Backspace":
-            e.preventDefault();
-            if (!e.repeat) challengerLoses();
-            break;
-          case "k":
-          case "K":
-            // Keep both: challenger keeps, champion stays champion.
-            if (!e.repeat) challengerKeptBoth(false);
-            break;
-          case "f":
-          case "F":
-            // Keep both + star the challenger.
-            if (!e.repeat) challengerKeptBoth(true);
-            break;
-          case "ArrowRight":
-            e.preventDefault();
-            if (isZooming) pan(PAN_STEP, 0);
-            else if (!e.repeat && heldDirRef.current === 0) startHold(1);
-            break;
-          case "ArrowLeft":
-            e.preventDefault();
-            if (isZooming) pan(-PAN_STEP, 0);
-            else if (!e.repeat && heldDirRef.current === 0) startHold(-1);
-            break;
-          case "ArrowUp":
-            e.preventDefault();
-            if (isZooming) pan(0, -PAN_STEP);
-            break;
-          case "ArrowDown":
-            e.preventDefault();
-            if (isZooming) pan(0, PAN_STEP);
-            break;
-          case "i":
-          case "I":
-            setExifVisible((v) => !v);
-            break;
-          case "h":
-          case "H":
-            setClippingVisible((v) => !v);
-            break;
-          case "p":
-          case "P":
-            setPeakingVisible((v) => !v);
-            break;
-          case "t":
-          case "T":
-            setThumbsVisible((v) => !v);
-            break;
-          case "o":
-          case "O":
-            // Thirds grid — visible on the matte in compare too.
-            setCompositionVisible((v) => !v);
-            break;
-          case "l":
-          case "L":
-            e.preventDefault();
-            goToSite("loupe");
-            break;
-          case "g":
-          case "G":
-            e.preventDefault();
-            goToSite("grid");
-            break;
-          // 'c' in compare is a no-op now — leave via L, G, or ESC.
-        }
-        return;
-      }
-
+    const handleSingleModeKey = (e: KeyboardEvent): void => {
       switch (e.key) {
         // Rating works WHILE ZOOMED: the advance carries the zoom to the next
         // frame at its own AF anchor (see applyRating's advanceTo). The old
@@ -558,6 +479,101 @@ export function useCullKeymap({
           break;
       }
     };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (handleModalKeys(e)) return;
+
+      // Undo / redo, works in both single and compare. Compound actions
+      // (challenger wins/loses) revert as one Ctrl+Z.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+
+      // Ctrl+E → act-on-cull dialog (move rejects / copy keeps).
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
+        e.preventDefault();
+        openActions();
+        return;
+      }
+
+      // Ctrl/Cmd+A → select all visible cells (grid only). Swallowed in every
+      // site so the webview's own select-all never fires.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        if (gridVisible) selectAllInGrid();
+        return;
+      }
+
+      // Tab (hold) → keyboard help. Available in both single and compare.
+      if (e.key === "Tab") {
+        e.preventDefault();
+        if (!e.repeat) {
+          setHelpVisible(true);
+          setHelpIntro(false);
+        }
+        return;
+      }
+      if (helpVisible) {
+        // Any other key dismisses AND is swallowed — one press closes the
+        // auto-shown intro without also rating a frame. (During a held-Tab
+        // showing this just closes early; Tab-release would have anyway.)
+        // preventDefault too: the dismissing key must not fall through to a
+        // platform default (ESC exiting macOS fullscreen was the live bug).
+        e.preventDefault();
+        setHelpVisible(false);
+        setHelpIntro(false);
+        return;
+      }
+
+      // Drop any other Ctrl/Meta/Alt combination — the explicit Ctrl combos
+      // we support (Z / Y / E) returned above. This stops muscle-memory OS
+      // shortcuts (Ctrl+S save, Ctrl+L address bar, Ctrl+F find, Alt+F menu)
+      // from accidentally cycling sort, switching to loupe, marking favorite,
+      // etc. Shift modifiers still pass through (Shift+Space = 2:1 zoom,
+      // capital letters from Shift+letter still match their lowercase cases).
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // Space (hold) → 1:1 zoom (Shift+Space → 2:1); arrows pan while zoomed.
+      // Works in single + compare. No-op in grid (there's no loupe image to zoom).
+      if (e.code === "Space") {
+        e.preventDefault();
+        // Arm zoom on a fresh press only — and only when NOT already zoomed.
+        // The already-zoomed guard is what makes rate-while-zoomed safe: after
+        // a rating keypress, macOS resumes the still-held Space's auto-repeat
+        // as a NON-repeat keydown (the quirk that sank the old attempts, see
+        // 7bf33e8) — with zoom carried, that phantom press must change nothing.
+        if (!e.repeat && !gridVisible && !isZoomingRef.current) {
+          setIsZooming(true);
+          setZoomLevel(e.shiftKey ? 2 : 1); // Shift+Space → 2:1, plain Space → 1:1
+          setPanOffset({ x: 0, y: 0 });
+        }
+        return;
+      }
+
+      // ESC clears a grid multi-selection first; otherwise it opens the
+      // leave-to-home confirm from any site (stepping back site-by-site felt
+      // wrong). goBack is still used by the compare auto-exit flows.
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (gridVisible && hasGridSelection) {
+          clearMultiSelection();
+          return;
+        }
+        setConfirmHome(true);
+        return;
+      }
+
+      if (compareMode) handleCompareKey(e);
+      else handleSingleModeKey(e);
+    };
     const onKeyUp = (e: KeyboardEvent) => {
       // Tab (hold) → keyboard help, released to dismiss, in both modes.
       if (e.key === "Tab") {
@@ -622,6 +638,7 @@ export function useCullKeymap({
     challengerKeptBoth,
     resetZoom,
     clearMultiSelection,
+    hasGridSelection,
     growGridSelection,
     selectAllInGrid,
     settings.smartCulling,

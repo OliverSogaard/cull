@@ -4,8 +4,8 @@ import { modGlyph, modName } from "../utils/platform";
 /**
  * Context-aware keyboard reference. The "switch view" group lists only the
  * two OTHER sites — pressing the current site's key is a no-op, so showing
- * it would be misleading. ESC always pops one step back through the site
- * history (or, at LOUPE with empty history, opens the home confirm).
+ * it would be misleading. ESC clears a grid selection if there is one;
+ * otherwise it opens the leave-to-home confirm from any site.
  *
  * Universal bindings (ctrl+z, ctrl+e, tab, esc) live in the bottom "session"
  * group on every page, so the user doesn't have to remember which mode
@@ -19,7 +19,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
       [`${modName}+⇧+z`, "redo"],
       [`${modName}+e`, "finish actions"],
       ["tab (hold)", "this help"],
-      ["esc", "back  (or home at loupe with no history)"],
+      ["esc", "leave to home (clears a grid selection first)"],
     ],
   };
   if (mode === "loupe") {

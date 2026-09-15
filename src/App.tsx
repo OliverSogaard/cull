@@ -1225,6 +1225,7 @@ export default function App() {
     selectAllInGrid,
     growGridSelection,
     clearMultiSelection,
+    hasGridSelection,
     heldDirRef,
     startHold,
     stopHold,
