@@ -16,7 +16,7 @@
 /* Keycap sitting INSIDE a filled accent button: a translucent scrim of the
    button's own ink instead of a surface + border. */
 .kbd--tint {
-  background: rgba(26, 20, 8, 0.18);
+  background: rgba(26, 20, 8, 0.18); /* off-scale */
   border: none;
   color: inherit;
 }

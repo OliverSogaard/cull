@@ -47,7 +47,7 @@
   letter-spacing: -0.005em;
   font-weight: 500;
   color: var(--text);
-  margin-bottom: 12px;
+  margin-bottom: var(--sp-4);
 }
 
 .dialog__title--warn {
@@ -63,7 +63,7 @@
 
 .dialog__actions {
   display: flex;
-  gap: 10px;
+  gap: 10px; /* off-scale */
   justify-content: flex-end;
   flex-wrap: wrap;
 }
@@ -73,7 +73,7 @@
 }
 
 .dialog__hint {
-  margin-top: 16px;
+  margin-top: var(--sp-5);
   padding-top: 14px;
   border-top: 1px solid var(--border-soft);
   font-family: var(--font-mono);

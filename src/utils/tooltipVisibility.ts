@@ -1,7 +1,7 @@
 /**
  * Pure visibility state machine for the filter sub-mode tooltip (the small
  * floating chip row above the active Keeps/Smart tab — see
- * `.cull-filter-tab-tooltip` in App.css). Mirrors the grid's scroll-position
+ * `.cull-filter-tab-tooltip` in styles/chrome.css). Mirrors the grid's scroll-position
  * indicator and the loupe strip's scrub bar: activity shows it immediately,
  * an idle window with no activity AND no hover hides it again. The actual
  * fade is carried by CSS transitions on the `.is-on` class; this only tracks

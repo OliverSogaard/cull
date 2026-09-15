@@ -9,7 +9,7 @@
    ──────────────────────────────────────────────────────────── */
 .chip {
   border-radius: var(--r-pill);
-  padding: var(--sp-0) 10px;
+  padding: var(--sp-0) 10px; /* off-scale */
   font-family: var(--font-mono);
   font-size: var(--fs-2);
   letter-spacing: var(--track-label);
