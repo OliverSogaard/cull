@@ -144,6 +144,13 @@
   color: var(--accent);
 }
 
+/* Layout-bearing tracking: the key column is a fixed 90px track, so the
+   eyebrow's .2em would wrap "LrC rating" (+ the is-diff bullet). Keep the
+   old .06em here rather than in the primitive. */
+.cull-cr-rail__row .cull-cr-rail__k {
+  letter-spacing: 0.06em;
+}
+
 .cull-cr-rail__row.is-diff .cull-cr-rail__k::before {
   content: "•";
   margin-right: 5px;

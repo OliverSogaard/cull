@@ -639,7 +639,7 @@ export class ImageStore {
   }
 
   /** Revoke every READY blob in a tier map and empty it — the one shape both
-   *  resets share (REVOKE SITES 5, 8, 11 and the thumb sweep). */
+   *  resets share (REVOKE SITES 5, 8, 11). */
   private revokeReadyBlobs(map: Map<string, { status: string; url?: string } | undefined>): void {
     for (const [, state] of map) {
       if (state?.status === "ready" && state.url) URL.revokeObjectURL(state.url);
