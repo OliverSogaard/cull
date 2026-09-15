@@ -71,9 +71,10 @@ export function useUndoRedo({
       setChampionIndex(action.cursorBefore.championIndex);
       setChallengerIndex(action.cursorBefore.challengerIndex);
       setCurrentIndex(action.cursorBefore.currentIndex);
-      // Restore the nav back-stack snapshot too, so ESC after this undo pops the
-      // entry the user actually came from (the action's auto-exit may have popped
-      // it, leaving the live stack out of sync with the restored compare view).
+      // Restore the nav back-stack snapshot too, so a later compare auto-exit
+      // (goBack) pops the entry the user actually came from (the action's
+      // auto-exit may have popped it, leaving the live stack out of sync with
+      // the restored compare view).
       if (action.cursorBefore.navStack) setNavStack(action.cursorBefore.navStack);
     } else if (!compareMode) {
       // For a compound (compare) action, changes[0] is the OLD champion that got
