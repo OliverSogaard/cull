@@ -209,14 +209,14 @@ thing that still pops it is `goBack`, called exclusively by the compare
 auto-exit flows: when the last unrated challenger is decided, `goBack`
 returns to the site the user came from, landing on the freshly crowned
 champion. Popping re-validates the saved compare entry — if its champion
-is no longer a keeper (rejected since, or re-rated), the restore is
-abandoned and the app falls through to LOUPE at the current champion
-instead of reseating a rejected frame.
+is no longer a keeper (rejected since — a champion re-rated to keep or
+favorite still restores), the restore is abandoned and the app falls through
+to LOUPE at the current champion instead of reseating a rejected frame.
 
 Undo (`Ctrl+Z`) restores the rating state and the cursor — the compare
 pair or the loupe index — plus, for a compare-origin action, the nav-stack
-snapshot that action recorded (so ESC afterwards pops the entry you actually
-came from). It never navigates on its own.
+snapshot that action recorded (so a later compare auto-exit pops the entry you
+actually came from). It never navigates on its own.
 
 ## Hold-to-scrub
 

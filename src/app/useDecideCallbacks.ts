@@ -330,7 +330,7 @@ export function useDecideCallbacks({
         // No more candidates — pop back to whichever site we came from,
         // landing on the champion (after a win, the freshly crowned keeper).
         // Passed explicitly: goBack's own closure still holds the OLD
-        // champion. ESC after this lands further up the stack. (Like ESC.)
+        // champion. A later compare auto-exit lands further up the stack.
         goBack(nextChampion);
       } else {
         setChallengerIndex(nextChallenger);

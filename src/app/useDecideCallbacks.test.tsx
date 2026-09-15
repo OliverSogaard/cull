@@ -15,7 +15,7 @@ import type { Img, NavEntry, Rating, UndoAction } from "../types";
  *
  * These tests pin the CURRENT order and arguments so the upcoming
  * de-duplication into a single helper is provably behaviour-preserving. Every
- * expectation below is derived from the code as it stands (line numbers cited
+ * expectation below is derived from the code as it stands (symbols cited
  * per test), not from any intended design: if a test fails after a refactor,
  * the refactor changed observable behaviour.
  *
@@ -39,7 +39,7 @@ const img = (id: number): Img => ({
 const FIVE: Img[] = [0, 1, 2, 3, 4].map(img);
 
 /**
- * Faithful port of App.tsx's `nearestUnrated` (App.tsx:516-532): scan forward
+ * Faithful port of App.tsx's `nearestUnrated` helper: scan forward
  * from `from`, then backward; skip `skip` and anything already rated; never
  * wraps; `-1` when nothing is left. It is a PURE QUERY the hook consults, not
  * a side effect, so it deliberately does NOT append to `calls`.
@@ -147,7 +147,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
     return { result, props };
   }
 
-  // ── challengerLoses (useDecideCallbacks.ts:236-300) ────────────────────────
+  // ── challengerLoses ──────────────────────────────────────────────────────
 
   it("challengerLoses: recordAction → flash → persist → setRatings → setChallengerIndex → drop", () => {
     // ratings {0:"keep"}, champion 0, challenger 1 → nearestUnrated picks 2.
@@ -161,7 +161,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerLoses();
     });
 
-    // Lines 242 → 259 → 260 → 261 → 271 → 285.
+    // resolveCompareDecide: recordAction → flashFeedback → persist loop →
+    // setRatings → setChallengerIndex → dropZoomFullsExcept.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -170,21 +171,21 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setChallengerIndex",
       "dropZoomFullsExcept",
     ]);
-    expect(props.flashFeedback).toHaveBeenCalledWith("reject", 1); // line 259
+    expect(props.flashFeedback).toHaveBeenCalledWith("reject", 1); // resolveCompareDecide's flashFeedback call
     expect(props.persistRating).toHaveBeenCalledTimes(1);
-    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "reject"); // line 260
-    // Line 239: the whole next map, by value (not an updater function).
+    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "reject"); // resolveCompareDecide's persist loop
+    // resolveCompareDecide's setRatings(next) call: the whole next map, by value (not an updater function).
     expect(props.setRatings).toHaveBeenCalledWith({ 0: "keep", 1: "reject" });
-    expect(props.setChallengerIndex).toHaveBeenCalledWith(2); // line 271
-    // Lines 282-285: the surviving pair is champion + the NEW challenger.
+    expect(props.setChallengerIndex).toHaveBeenCalledWith(2); // resolveCompareDecide's setChallengerIndex call
+    // the `keep` pair passed to dropZoomFullsExcept: champion + the NEW challenger.
     expect(imageStore.dropZoomFullsExcept).toHaveBeenCalledWith(["/s/0.cr3", "/s/2.cr3"]);
-    // Champion is untouched (line 253 comment).
+    // Champion is untouched (see the `nextChampion !== championIndex` guard's comment).
     expect(props.setChampionIndex).not.toHaveBeenCalled();
     expect(props.goBack).not.toHaveBeenCalled();
   });
 
   it("challengerLoses on the last unrated frame exits via goBack(champion) and drops nothing", () => {
-    // Only frame 1 is unrated; rejecting it leaves nothing for nearestUnrated (line 240 → -1).
+    // Only frame 1 is unrated; rejecting it leaves nothing for challengerLoses's nearestUnrated call (→ -1).
     const { result, props } = setup({
       ratings: { 0: "keep", 2: "keep", 3: "reject", 4: "keep" },
       championIndex: 0,
@@ -195,7 +196,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerLoses();
     });
 
-    // Line 269 replaces line 271, and the line 281 guard skips the drop.
+    // The exiting branch's goBack call replaces setChallengerIndex, and the
+    // `if (!exiting)` guard skips the drop.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -203,7 +205,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setRatings",
       "goBack",
     ]);
-    expect(props.goBack).toHaveBeenCalledWith(0); // line 269: land on the unchanged champion
+    expect(props.goBack).toHaveBeenCalledWith(0); // resolveCompareDecide's exiting-branch goBack call: land on the unchanged champion
     expect(props.setChallengerIndex).not.toHaveBeenCalled();
     expect(imageStore.dropZoomFullsExcept).not.toHaveBeenCalled();
   });
@@ -214,7 +216,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       ratings: { 0: "keep" },
       championIndex: 0,
       challengerIndex: 1,
-      currentIndex: 3, // deliberately diverged: compare never moves the cursor (line 287)
+      currentIndex: 3, // deliberately diverged: compare never moves the cursor (see the
+      // "currentIndex deliberately omitted" dependency-array comment)
       navStack,
     });
 
@@ -222,7 +225,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerLoses();
     });
 
-    // Lines 242-258, verbatim shape.
+    // resolveCompareDecide's recordAction call, verbatim shape.
     const action = props.recordAction.mock.calls[0][0];
     expect(action).toStrictEqual({
       changes: [{ imgId: 1, path: "/s/1.cr3", before: undefined, after: "reject" }],
@@ -240,11 +243,11 @@ describe("compare decides — side-effect order (characterisation)", () => {
         currentIndex: 3,
       },
     });
-    // Line 251 spreads the stack: the snapshot must not alias the live ref.
+    // the `navStack: [...navStackRef.current]` spread: the snapshot must not alias the live ref.
     expect(action.cursorBefore?.navStack).not.toBe(navStack);
   });
 
-  // ── challengerKeptBoth (useDecideCallbacks.ts:305-366) ─────────────────────
+  // ── challengerKeptBoth ───────────────────────────────────────────────────
 
   it("challengerKeptBoth(true) persists favorite for the challenger and leaves the champion alone", () => {
     const { result, props } = setup({
@@ -257,7 +260,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerKeptBoth(true);
     });
 
-    // Lines 313 → 330 → 331 → 332 → 340 → 349 — same spine as challengerLoses.
+    // resolveCompareDecide: recordAction → flashFeedback → persist loop →
+    // setRatings → setChallengerIndex → dropZoomFullsExcept — same spine as challengerLoses.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -266,14 +270,14 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setChallengerIndex",
       "dropZoomFullsExcept",
     ]);
-    expect(props.flashFeedback).toHaveBeenCalledWith("favorite", 1); // line 330
+    expect(props.flashFeedback).toHaveBeenCalledWith("favorite", 1); // resolveCompareDecide's flashFeedback call
     expect(props.persistRating).toHaveBeenCalledTimes(1); // champion never written
-    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "favorite"); // line 331
-    expect(props.setRatings).toHaveBeenCalledWith({ 0: "keep", 1: "favorite" }); // line 310
+    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "favorite"); // resolveCompareDecide's persist loop
+    expect(props.setRatings).toHaveBeenCalledWith({ 0: "keep", 1: "favorite" }); // resolveCompareDecide's setRatings(next) call
     expect(props.setChampionIndex).not.toHaveBeenCalled(); // champion stays champion
     expect(props.setChallengerIndex).toHaveBeenCalledWith(2);
     expect(imageStore.dropZoomFullsExcept).toHaveBeenCalledWith(["/s/0.cr3", "/s/2.cr3"]);
-    // Line 315: the change carries the verdict, not a hardcoded "keep".
+    // challengerKeptBoth builder's changes array: carries the verdict, not a hardcoded "keep".
     expect(props.recordAction.mock.calls[0][0].changes).toStrictEqual([
       { imgId: 1, path: "/s/1.cr3", before: undefined, after: "favorite" },
     ]);
@@ -298,7 +302,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setChallengerIndex",
       "dropZoomFullsExcept",
     ]);
-    expect(props.flashFeedback).toHaveBeenCalledWith("keep", 1); // line 309 verdict
+    expect(props.flashFeedback).toHaveBeenCalledWith("keep", 1); // challengerKeptBoth builder's verdict variable
     expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "keep");
     expect(props.setRatings).toHaveBeenCalledWith({ 0: "keep", 1: "keep" });
   });
@@ -314,7 +318,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerKeptBoth(false);
     });
 
-    // Lines 335-338 + the line 345 guard, mirroring challengerLoses' exit.
+    // resolveCompareDecide's exiting branch (goBack) + the `if (!exiting)`
+    // drop guard, mirroring challengerLoses' exit.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -326,7 +331,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
     expect(imageStore.dropZoomFullsExcept).not.toHaveBeenCalled();
   });
 
-  // ── challengerWins (useDecideCallbacks.ts:369-446) ─────────────────────────
+  // ── challengerWins ───────────────────────────────────────────────────────
 
   it("challengerWins: two changes, persist reject then keep, setChampionIndex before setChallengerIndex", () => {
     const { result, props } = setup({
@@ -339,7 +344,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerWins();
     });
 
-    // Lines 381 → 404 → 405 → 406 → 407 → 414 → 421 → 431.
+    // resolveCompareDecide: recordAction → flashFeedback → persist loop (both
+    // changes) → setRatings → setChampionIndex → setChallengerIndex → dropZoomFullsExcept.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -350,13 +356,13 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setChallengerIndex",
       "dropZoomFullsExcept",
     ]);
-    expect(props.flashFeedback).toHaveBeenCalledWith("keep", 1); // line 404: flashes the WINNER
+    expect(props.flashFeedback).toHaveBeenCalledWith("keep", 1); // resolveCompareDecide's flashFeedback call: flashes the WINNER
     expect(props.persistRating).toHaveBeenNthCalledWith(1, "/s/0.cr3", "reject"); // dethroned
     expect(props.persistRating).toHaveBeenNthCalledWith(2, "/s/1.cr3", "keep"); // crowned
-    expect(props.setRatings).toHaveBeenCalledWith({ 0: "reject", 1: "keep" }); // lines 373-377
-    expect(props.setChampionIndex).toHaveBeenCalledWith(1); // line 414: newChamp === old challenger
-    expect(props.setChallengerIndex).toHaveBeenCalledWith(2); // line 421
-    // Lines 428-431: the surviving pair is the NEW champion + the new challenger.
+    expect(props.setRatings).toHaveBeenCalledWith({ 0: "reject", 1: "keep" }); // challengerWins builder's next map (dethroned champion, crowned challenger)
+    expect(props.setChampionIndex).toHaveBeenCalledWith(1); // resolveCompareDecide's setChampionIndex call: newChamp === old challenger
+    expect(props.setChallengerIndex).toHaveBeenCalledWith(2); // resolveCompareDecide's setChallengerIndex call
+    // the `keep` pair passed to dropZoomFullsExcept: the NEW champion + the new challenger.
     expect(imageStore.dropZoomFullsExcept).toHaveBeenCalledWith(["/s/1.cr3", "/s/2.cr3"]);
   });
 
@@ -373,7 +379,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerWins();
     });
 
-    // Lines 381-403: old champion first, then the challenger.
+    // resolveCompareDecide's recordAction call: old champion first, then the challenger.
     expect(props.recordAction.mock.calls[0][0]).toStrictEqual({
       changes: [
         { imgId: 0, path: "/s/0.cr3", before: "keep", after: "reject" },
@@ -381,14 +387,14 @@ describe("compare decides — side-effect order (characterisation)", () => {
       ],
       cursorBefore: {
         compareMode: true,
-        championIndex: 0, // line 388: the OLD champion
+        championIndex: 0, // resolveCompareDecide's cursorBefore.championIndex: the OLD champion
         challengerIndex: 1,
         currentIndex: 3,
         navStack: [{ site: "loupe" }],
       },
       cursorAfter: {
         compareMode: true,
-        championIndex: 1, // lines 395-402: redo re-crowns newChamp, not the rejected one
+        championIndex: 1, // resolveCompareDecide's cursorAfter.championIndex: redo re-crowns newChamp, not the rejected one
         challengerIndex: 2,
         currentIndex: 3,
       },
@@ -407,8 +413,9 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerWins();
     });
 
-    // Line 414 runs unconditionally — the crown lands even on the auto-exit —
-    // and only then line 419's goBack; the line 427 guard skips the drop.
+    // The `nextChampion !== championIndex` guard runs unconditionally — the
+    // crown lands even on the auto-exit — and only then the exiting branch's
+    // goBack call; the `if (!exiting)` guard skips the drop.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -419,7 +426,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "goBack",
     ]);
     expect(props.setChampionIndex).toHaveBeenCalledWith(1);
-    expect(props.goBack).toHaveBeenCalledWith(1); // line 419: the NEW champion, not the old one
+    expect(props.goBack).toHaveBeenCalledWith(1); // resolveCompareDecide's exiting-branch goBack call: the NEW champion, not the old one
     expect(props.setChallengerIndex).not.toHaveBeenCalled();
     expect(imageStore.dropZoomFullsExcept).not.toHaveBeenCalled();
   });
@@ -429,7 +436,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
   it("a zoomed decide sets zoomSwapInstant on all three, and resets pan only on a win", () => {
     const zoomed = { ratings: { 0: "keep" } as Ratings, championIndex: 0, challengerIndex: 1 };
 
-    // Line 265: challenger pane swaps under the live transform; pan is kept.
+    // resolveCompareDecide's zoomed-decide comment: challenger pane swaps under the live transform; pan is kept.
     const loses = setup({ ...zoomed, isZooming: true });
     act(() => {
       loses.result.current.challengerLoses();
@@ -446,7 +453,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
     expect(loses.props.setZoomSwapInstant).toHaveBeenCalledWith(true);
     expect(loses.props.setPanOffset).not.toHaveBeenCalled();
 
-    // Line 334: same handling, champion untouched.
+    // Same zoomed-decide handling as challengerLoses, champion untouched.
     calls.length = 0;
     const kept = setup({ ...zoomed, isZooming: true });
     act(() => {
@@ -463,7 +470,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
     ]);
     expect(kept.props.setPanOffset).not.toHaveBeenCalled();
 
-    // Lines 410-413: a NEW champion re-anchors both panes, so the shared pan resets.
+    // resolveCompareDecide's resetPan branch: a NEW champion re-anchors both panes, so the shared pan resets.
     calls.length = 0;
     const wins = setup({ ...zoomed, isZooming: true });
     act(() => {
@@ -486,7 +493,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
   });
 
   it("a zoomed decide that exits compare does NOT set zoomSwapInstant", () => {
-    // The `&& !exiting` half of lines 265 / 334 / 410.
+    // The `&& !exiting` half of resolveCompareDecide's `if (isZoomingRef.current && !exiting)` guard.
     const { result, props } = setup({
       ratings: { 0: "keep", 2: "keep", 3: "reject", 4: "keep" },
       championIndex: 0,
@@ -512,7 +519,9 @@ describe("compare decides — side-effect order (characterisation)", () => {
   // ── Guards ────────────────────────────────────────────────────────────────
 
   it("all three decides no-op when the pair indices are out of range", () => {
-    // Lines 238, 308 and 372: a missing Img aborts before any side effect.
+    // Each builder's missing-Img guard (challengerLoses/KeptBoth's
+    // `if (!challImg) return`, challengerWins's `if (!champImg || !challImg) return`)
+    // aborts before any side effect.
     const offEnd = setup({ championIndex: 0, challengerIndex: 99 });
     act(() => {
       offEnd.result.current.challengerLoses();
@@ -521,7 +530,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
     });
     expect(calls).toEqual([]);
 
-    // Line 372 also guards the CHAMPION (challengerLoses/KeptBoth do not).
+    // challengerWins's guard also checks the CHAMPION (challengerLoses/KeptBoth do not).
     const noChamp = setup({ championIndex: 99, challengerIndex: 1 });
     act(() => {
       noChamp.result.current.challengerWins();

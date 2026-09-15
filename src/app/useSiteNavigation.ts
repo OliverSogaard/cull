@@ -153,10 +153,13 @@ export function useSiteNavigation({
     ],
   );
 
-  // ESC. Pop one nav entry and navigate back. Empty stack at loupe → home
-  // confirm (the only "site above loupe" is leaving the cull entirely). Empty
-  // stack at compare/grid (shouldn't normally happen, but defends against
-  // edge cases) falls back to loupe.
+  // ESC no longer calls this: ESC clears a grid multi-selection if one exists,
+  // otherwise opens the leave-to-home confirm from any site. Only the compare
+  // auto-exit flows (last unrated challenger decided) call goBack. Pop one nav
+  // entry and navigate back. Empty stack at loupe → home confirm (the only
+  // "site above loupe" is leaving the cull entirely). Empty stack at
+  // compare/grid (shouldn't normally happen, but defends against edge cases)
+  // falls back to loupe.
   const goBack = useCallback(
     (landIndex?: number) => {
       // ESC in grid with a multi-selection clears the selection first, instead
