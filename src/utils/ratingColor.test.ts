@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { hasLrcRating, RATING_COLOR } from "./ratingColor";
 
-describe("RATING_COLOR", () => {
+describe("RATING_COLOR points at the CSS verdict tokens", () => {
   it("has a colour for every rating value", () => {
-    expect(RATING_COLOR.keep).toMatch(/^#/);
-    expect(RATING_COLOR.reject).toMatch(/^#/);
-    expect(RATING_COLOR.favorite).toMatch(/^#/);
+    expect(RATING_COLOR.keep).toBe("var(--ok)");
+    expect(RATING_COLOR.reject).toBe("var(--bad)");
+    expect(RATING_COLOR.favorite).toBe("var(--fav)");
   });
 });
 
