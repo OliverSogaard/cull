@@ -741,17 +741,10 @@
 
 .cull-finish__progress-bar {
   flex: 1 1 auto;
-  height: 4px;
-  background: var(--surface-2);
-  border-radius: var(--r-1);
-  overflow: hidden;
 }
 
 .cull-finish__progress-fill {
   width: 60%;
-  height: 100%;
-  background: var(--accent);
-  border-radius: var(--r-1);
   animation: cull-finish-progress-breathe 1.8s ease-in-out infinite;
 }
 

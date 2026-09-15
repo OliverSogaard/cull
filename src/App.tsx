@@ -1393,12 +1393,12 @@ export default function App() {
                     ? "sorting…"
                     : "reading capture times…"}
               </div>
-              <div className="cull-progress">
+              <div className="progress cull-progress">
                 {progress.done === 0 ? (
-                  <div className="cull-progress__indeterminate" />
+                  <div className="progress__fill cull-progress__indeterminate" />
                 ) : (
                   <div
-                    className="cull-progress__fill"
+                    className="progress__fill cull-progress__fill"
                     style={{ width: `${(progress.done / progress.total) * 100}%` }}
                   />
                 )}

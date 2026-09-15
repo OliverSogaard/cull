@@ -495,8 +495,8 @@ function MoveRejectsRow({
           <span className="cull-finish__progress-label">
             <b>moving</b> {rejectedCount}…
           </span>
-          <div className="cull-finish__progress-bar">
-            <div className="cull-finish__progress-fill" />
+          <div className="progress cull-finish__progress-bar">
+            <div className="progress__fill cull-finish__progress-fill" />
           </div>
         </div>
       ) : armed ? (
