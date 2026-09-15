@@ -31,6 +31,7 @@ import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { verdictGlyph } from "./components/verdictGlyph";
+import { QuitGuardOverlay } from "./components/QuitGuardOverlay";
 import { RecentFolders } from "./components/RecentFolders";
 import { SaveStatusPill } from "./components/SaveStatusPill";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
@@ -1258,59 +1259,28 @@ export default function App() {
 
   const folderName = folder ? basename(folder) : "";
 
+  // The "close anyway" destroy handler, hoisted so it can be passed down to
+  // QuitGuardOverlay as a prop — owns destroyedRef (window.destroy() must
+  // fire at most once) and getCurrentWindow.
+  const closeAnyway = useCallback(() => {
+    if (destroyedRef.current) return;
+    destroyedRef.current = true;
+    getCurrentWindow()
+      .destroy()
+      .catch(() => {});
+  }, [destroyedRef]);
+
   // Shown (in any phase) when a close was requested while ratings are still
   // saving or have failed. Pending → auto-closes once flushed; failed → requires
   // an explicit choice so work is never silently lost.
   const quitGuardOverlay = quitGuard && (
-    <div className="cull-quitguard">
-      <div className="cull-quitguard__box">
-        {failedCount > 0 ? (
-          <>
-            <div className="cull-quitguard__title cull-quitguard__title--warn">
-              ⚠ {failedCount} rating{failedCount > 1 ? "s" : ""} didn’t save
-            </div>
-            <div className="cull-quitguard__body">
-              {failedCount} {failedCount > 1 ? "ratings are" : "rating is"} not on disk (the sidecar
-              write kept failing). Closing now will lose {failedCount > 1 ? "them" : "it"}.
-            </div>
-            <div className="cull-quitguard__actions">
-              <button className="cull-pick-button cull-pick-button--primary" onClick={retryFailed}>
-                retry saving
-              </button>
-              <button className="cull-pick-button" onClick={() => setQuitGuard(false)}>
-                keep culling
-              </button>
-              <button
-                className="cull-pick-button cull-quitguard__danger"
-                onClick={() => {
-                  if (destroyedRef.current) return;
-                  destroyedRef.current = true;
-                  getCurrentWindow()
-                    .destroy()
-                    .catch(() => {});
-                }}
-              >
-                close anyway
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="cull-quitguard__title">
-              saving {savingCount} rating{savingCount > 1 ? "s" : ""}…
-            </div>
-            <div className="cull-quitguard__body">
-              The app will close on its own the moment your ratings are safely on disk.
-            </div>
-            <div className="cull-quitguard__actions">
-              <button className="cull-pick-button" onClick={() => setQuitGuard(false)}>
-                keep culling
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+    <QuitGuardOverlay
+      failedCount={failedCount}
+      savingCount={savingCount}
+      retryFailed={retryFailed}
+      onKeepCulling={() => setQuitGuard(false)}
+      onCloseAnyway={closeAnyway}
+    />
   );
 
   // ── Chrome phases (start / loading / staged) ───────────────────────────────
