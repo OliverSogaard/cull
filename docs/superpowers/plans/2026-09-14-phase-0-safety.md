@@ -1921,3 +1921,21 @@ EOF
 - [ ] **Step 4:** Verify on disk: `shoot\_rejected\` holds 3 CR3 + 3 XMP; `shoot\` holds 9 CR3 + 1 XMP (the keep); dialog reads "moved 3 · skipped 0".
 - [ ] **Step 5:** Close the dialog; grid shows 9 cells; press Ctrl+Z three times — no new `.xmp` appears in `shoot\` for the moved names; footer counts are 1 keep / 0 rejects.
 - [ ] **Step 6:** Quit; delete `%TEMP%\cull-phase0`. Record the outcome in the implementation note (Task 15 Step 4).
+
+---
+
+## Implementation note (2026-09-14)
+
+Executed on the Windows PC as branch `phase-0-safety`, 21 commits, suites
+green (`pnpm test` 509 tests across 48 files, `cargo test` 121 tests). Every
+task got a fresh-context spec+quality review; Tasks 2, 8 and 9 each took one
+fix round (a wrong doc cross-reference; a `pruneHistory` empty-set guard; an
+empty-session compare exit plus live-cursor functional remap) — all findings
+fixed in place. Live check (Task 16) deferred: the PC was in use during the
+session; the driver `phase0-live.ps1` and a 12-frame scratch copy are
+prepared and the PR's test plan keeps that box unticked. Left for later
+phases: the smart-culling "N frames could not be scored" notice and the
+settings/recents storage-failure notice (§5.1 MEDIUM, last bullet). Extra on
+the way: clippy's two pending `as_chunks` lints (analyze.rs, phash.rs) were
+applied so the CI clippy gate is green; `cargo test` rejects multi-filter
+invocations on cargo 1.98, so per-module gates were run one filter at a time.
