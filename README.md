@@ -188,7 +188,7 @@ Cheat sheet:
 | `space`    | 1:1 zoom (hold)     | 1:1 zoom (hold)      | —                  |
 | `shift+space` | 2:1 zoom         | 2:1 zoom             | —                  |
 | `l` `c` `g` | switch view (current view's key is a no-op) | | |
-| `esc`      | back, or home confirm if no history | | |
+| `esc`      | clear grid selection, else leave to home (confirm) | | |
 | `i`        | exif + histogram    | exif + histogram     | —                  |
 | `h`        | clipping overlay    | clipping overlay     | —                  |
 | `p`        | focus peaking       | focus peaking        | —                  |

@@ -190,35 +190,31 @@ to list, sidecars that exist but failed to read — on `AnalyzeResult`; the
 status bar shows a dismissible chip (`utils/analyzeWarnings.ts`) instead of
 silently sorting those frames last and unrated.
 
-## Site navigation: stack-based ESC
+## Site navigation and ESC
 
 CULL has three "sites" — LOUPE, COMPARE, GRID — and they're mutually
 exclusive. The keyboard maps:
 
 - `l`, `c`, `g` — switch site. Pressing the current site's key is a no-op.
-- `esc` — pop the navigation stack.
+- `esc` — clear a grid multi-selection if one exists; otherwise open the
+  leave-to-home confirm (Enter leaves, Esc stays) from any site.
 
-The stack records *where you came from* on every transition. Compare
-entries snapshot the champion + challenger pair, so ESC back into compare
-resumes the same pair (with the saved challenger validated for still being
-unrated — if you rated it from grid, the stack advances to the next
-unrated).
+An earlier version had ESC pop a navigation stack, one site at a time.
+That was tried and felt wrong, so ESC now always offers to leave (after
+clearing a selection, if there is one).
 
-Empty stack at LOUPE → home confirm. Empty stack at COMPARE / GRID falls
-back to LOUPE (shouldn't normally happen; defends against undo-restored
-states).
+The nav stack (`{site}` or, for compare, `{site: "compare", champ,
+chall}`) is still recorded on every `l`/`c`/`g` transition, but the only
+thing that still pops it is `goBack`, called exclusively by the compare
+auto-exit flows: when the last unrated challenger is decided, `goBack`
+returns to the site the user came from, landing on the freshly crowned
+champion. Popping re-validates the saved compare entry — if its champion
+is no longer a keeper (rejected since, or re-rated), the restore is
+abandoned and the app falls through to LOUPE at the current champion
+instead of reseating a rejected frame.
 
-Why a stack instead of "ESC always returns to LOUPE" or a single-level
-"last site you came from": the stack is the only model that doesn't
-ping-pong on repeated ESCs. `L → C → G → C → ESC ESC ESC` walks
-`G → C(snap) → L → home` — predictable and reversible.
-
-Undo (`Ctrl+Z`) restores the rating state and the cursor (champion +
-challenger for compare actions, current index for loupe actions) but does
-**not** rewind the nav stack — undo is for ratings, not navigation. After
-an undo that restores compare mode, the visible site can briefly diverge
-from the stack's top; `goBack` still works, it just may surprise if you've
-navigated a lot since.
+Undo (`Ctrl+Z`) restores the rating state and the cursor — the compare
+pair or the loupe index — never navigation.
 
 ## Hold-to-scrub
 
