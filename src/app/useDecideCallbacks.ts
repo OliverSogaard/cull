@@ -6,9 +6,31 @@ import { imageStore } from "../image/imageStore";
  * The rating decides, verbatim from App (grand cleanup Phase 6): single-frame
  * / grid-selection rating (applyRating, unrateCurrent) and the three compare
  * decides (challenger loses / kept-both / wins). The setState-then-
- * `dropZoomFullsExcept` sequencing inside each decide is load-bearing — see
- * the sync-flush ordering comments in the bodies; do not "simplify" it.
+ * `dropZoomFullsExcept` sequencing is load-bearing — see the sync-flush
+ * ordering comments on `resolveCompareDecide`; do not "simplify" it.
  */
+
+/**
+ * Everything one compare decide changes. The three decides differ ONLY in
+ * these fields; every side effect, and its order, lives in
+ * {@link useDecideCallbacks}'s `resolveCompareDecide`.
+ */
+type DecideSpec = {
+  /**
+   * Rating writes, in persist order (a win: the dethroned champion first,
+   * then the crowned challenger).
+   */
+  changes: { imgId: number; path: string; before: Rating | undefined; after: Rating }[];
+  /** The challenger's verdict and id — the wash is keyed to the frame that was judged. */
+  flash: { rating: Rating; imgId: number };
+  /** Champion after the decide (unchanged for loses/kept-both; the old challenger for wins). */
+  nextChampion: number;
+  /** Next challenger, or -1 when nothing unrated is left and compare auto-exits. */
+  nextChallenger: number;
+  /** Wins re-anchor both panes at the new champion's AF point. */
+  resetPan: boolean;
+};
+
 export function useDecideCallbacks({
   images,
   ratings,
@@ -232,72 +254,134 @@ export function useDecideCallbacks({
     setRatings,
   ]);
 
+  /**
+   * THE compare-decide sequence — one copy, three callers (challenger loses /
+   * kept-both / wins). A caller only builds a {@link DecideSpec}; every side
+   * effect, and its ORDER, lives here. That order is load-bearing:
+   *
+   * - `recordAction` first, with the pair as it stands (`cursorBefore`) and
+   *   where undo/redo should land (`cursorAfter`), before anything moves.
+   * - `persistRating` per change, in `changes` order, then `setRatings`.
+   * - `dropZoomFullsExcept` LAST, after every setState, and only when we stay
+   *   in compare. Sequential swap: drop every zoom full outside the surviving
+   *   pair BEFORE the new challenger's decodes — holding both pairs at once is
+   *   the proven jetsam kill — but the store's invalidate forces a SYNC React
+   *   flush, and flushing between `setRatings` and `setChallengerIndex`
+   *   rendered a half-updated strip (the compare-strip crash of 2026-07-07).
+   *   Runs on UNZOOMED decides too since the pane unification: PhotoPane's
+   *   settle policy keeps both panes' fulls resident even unzoomed, so without
+   *   the drop each decide accumulated the outgoing challenger's.
+   */
+  const resolveCompareDecide = useCallback(
+    ({ changes, flash, nextChampion, nextChallenger, resetPan }: DecideSpec) => {
+      const exiting = nextChallenger === -1;
+      // The whole next map, by value (not an updater). The caller already
+      // derived this same map to ask `nearestUnrated` what is left.
+      const next: Record<number, Rating> = { ...ratings };
+      for (const c of changes) next[c.imgId] = c.after;
+
+      recordAction({
+        changes,
+        cursorBefore: {
+          compareMode: true,
+          championIndex,
+          challengerIndex,
+          currentIndex,
+          navStack: [...navStackRef.current],
+        },
+        // Where the crown lands, so a redo re-crowns the NEW champion (not a
+        // just-rejected old one); for loses/kept-both `nextChampion` is the
+        // unchanged champion and redo just lands on the next challenger. On
+        // the last-frame auto-exit we leave compare, landing on the champion.
+        cursorAfter: exiting
+          ? {
+              compareMode: false,
+              championIndex: nextChampion,
+              challengerIndex,
+              currentIndex: nextChampion,
+            }
+          : {
+              compareMode: true,
+              championIndex: nextChampion,
+              challengerIndex: nextChallenger,
+              currentIndex,
+            },
+      });
+      flashFeedback(flash.rating, flash.imgId);
+      // Durable writes with retry + failure tracking, in the order the action
+      // records them.
+      for (const c of changes) persistRating(c.path, c.after);
+      setRatings(next);
+      // Zoomed decide: the challenger pane's content swaps under the live
+      // transform — land it at scale, no drift. The champion pane is untouched
+      // (shared pan kept) so its view cannot jump — except with a NEW champion
+      // (`resetPan`), where both panes re-anchor at its AF point.
+      if (isZoomingRef.current && !exiting) {
+        setZoomSwapInstant(true);
+        if (resetPan) setPanOffset({ x: 0, y: 0 });
+      }
+      // Only a win moves the crown. Equivalent to the old unconditional call
+      // in challengerWins and no call at all in the other two: a win's
+      // `nextChampion` is the old challenger, never the champion, and the
+      // other two pass the champion unchanged. The crown still lands on the
+      // auto-exit — goBack below is the exit, not a reason to skip it.
+      if (nextChampion !== championIndex) setChampionIndex(nextChampion);
+      if (exiting) {
+        // No more candidates — pop back to whichever site we came from,
+        // landing on the champion (after a win, the freshly crowned keeper).
+        // Passed explicitly: goBack's own closure still holds the OLD
+        // champion. ESC after this lands further up the stack. (Like ESC.)
+        goBack(nextChampion);
+      } else {
+        setChallengerIndex(nextChallenger);
+      }
+      // AFTER the last setState, on purpose — see the sync-flush note above.
+      // After a win the new champion's full is already resident (it IS the old
+      // challenger), so keeping the pair costs no refetch.
+      if (!exiting) {
+        const keep = [images[nextChampion]?.path, images[nextChallenger]?.path].filter(
+          (x): x is string => Boolean(x),
+        );
+        imageStore.dropZoomFullsExcept(keep);
+      }
+    },
+    // currentIndex deliberately omitted: compare mode never updates it (known
+    // cursor divergence, see setCursor note) — the frozen value is intended.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      championIndex,
+      challengerIndex,
+      images,
+      ratings,
+      navStackRef,
+      isZoomingRef,
+      setRatings,
+      setChampionIndex,
+      setChallengerIndex,
+      setZoomSwapInstant,
+      setPanOffset,
+      flashFeedback,
+      persistRating,
+      recordAction,
+      goBack,
+    ],
+  );
+
   // Backspace → challenger loses (Reject); champion stays; advance to next unrated.
   const challengerLoses = useCallback(() => {
     const challImg = images[challengerIndex];
     if (!challImg) return;
     const next: Record<number, Rating> = { ...ratings, [challImg.id]: "reject" };
-    const nextChallenger = nearestUnrated(challengerIndex, next, championIndex);
-    const exiting = nextChallenger === -1;
-    recordAction({
+    resolveCompareDecide({
       changes: [
         { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "reject" },
       ],
-      cursorBefore: {
-        compareMode: true,
-        championIndex,
-        challengerIndex,
-        currentIndex,
-        navStack: [...navStackRef.current],
-      },
-      // Champion is unchanged; redo just lands on the next challenger (or leaves
-      // compare on the last-frame auto-exit, landing on the champion).
-      cursorAfter: exiting
-        ? { compareMode: false, championIndex, challengerIndex, currentIndex: championIndex }
-        : { compareMode: true, championIndex, challengerIndex: nextChallenger, currentIndex },
+      flash: { rating: "reject", imgId: challImg.id },
+      nextChampion: championIndex,
+      nextChallenger: nearestUnrated(challengerIndex, next, championIndex),
+      resetPan: false,
     });
-    flashFeedback("reject", challImg.id);
-    persistRating(challImg.path, "reject");
-    setRatings(next);
-    // Zoomed decide: the challenger pane's content swaps under the live
-    // transform — land it at scale, no drift. Champion pane is untouched
-    // (shared pan kept), so its view can't jump.
-    if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
-    if (exiting) {
-      // No more candidates — pop back to whichever site we came from, landing on
-      // the (unchanged) champion. ESC after this lands further up the stack.
-      goBack(championIndex);
-    } else {
-      setChallengerIndex(nextChallenger);
-    }
-    // Sequential swap: drop every zoom full outside the surviving pair BEFORE
-    // the new challenger's decodes (holding both pairs at once is the proven
-    // jetsam kill). AFTER the last setState on purpose: the store's invalidate
-    // forces a SYNC React flush, and flushing between setRatings and
-    // setChallengerIndex rendered a half-updated strip (the 2026-07-07 crash).
-    // Runs on UNZOOMED decides too since the pane unification: PhotoPane's
-    // settle policy keeps both panes' fulls resident even unzoomed, so
-    // without the drop each decide accumulated the outgoing challenger's.
-    if (!exiting) {
-      const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
-        (x): x is string => Boolean(x),
-      );
-      imageStore.dropZoomFullsExcept(keep);
-    }
-    // currentIndex deliberately omitted: compare mode never updates it (known
-    // cursor divergence, see setCursor note) — the frozen value is intended.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    challengerIndex,
-    championIndex,
-    images,
-    ratings,
-    flashFeedback,
-    persistRating,
-    nearestUnrated,
-    goBack,
-    recordAction,
-  ]);
+  }, [images, challengerIndex, championIndex, ratings, nearestUnrated, resolveCompareDecide]);
 
   // K → keep both: challenger becomes Keep (F → Favorite); champion is
   // untouched and stays champion; advance to the next unrated. The verb the
@@ -308,61 +392,17 @@ export function useDecideCallbacks({
       if (!challImg) return;
       const verdict: Rating = asFavorite ? "favorite" : "keep";
       const next: Record<number, Rating> = { ...ratings, [challImg.id]: verdict };
-      const nextChallenger = nearestUnrated(challengerIndex, next, championIndex);
-      const exiting = nextChallenger === -1;
-      recordAction({
+      resolveCompareDecide({
         changes: [
           { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: verdict },
         ],
-        cursorBefore: {
-          compareMode: true,
-          championIndex,
-          challengerIndex,
-          currentIndex,
-          navStack: [...navStackRef.current],
-        },
-        // Champion is unchanged; redo lands on the next challenger (or leaves
-        // compare on the last-frame auto-exit, landing on the champion).
-        cursorAfter: exiting
-          ? { compareMode: false, championIndex, challengerIndex, currentIndex: championIndex }
-          : { compareMode: true, championIndex, challengerIndex: nextChallenger, currentIndex },
+        flash: { rating: verdict, imgId: challImg.id },
+        nextChampion: championIndex,
+        nextChallenger: nearestUnrated(challengerIndex, next, championIndex),
+        resetPan: false,
       });
-      flashFeedback(verdict, challImg.id);
-      persistRating(challImg.path, verdict);
-      setRatings(next);
-      // Same zoomed-decide handling as challengerLoses: champion untouched.
-      if (isZoomingRef.current && !exiting) setZoomSwapInstant(true);
-      if (exiting) {
-        // No more candidates — pop back to whichever site we came from, landing
-        // on the (unchanged) champion, exactly like challengerLoses' exit.
-        goBack(championIndex);
-      } else {
-        setChallengerIndex(nextChallenger);
-      }
-      // Outgoing challenger's full dropped AFTER the last setState (see
-      // challengerLoses for the sync-flush ordering rationale; unzoomed too
-      // since the pane unification keeps fulls resident).
-      if (!exiting) {
-        const keep = [images[championIndex]?.path, images[nextChallenger]?.path].filter(
-          (x): x is string => Boolean(x),
-        );
-        imageStore.dropZoomFullsExcept(keep);
-      }
     },
-    // currentIndex deliberately omitted: compare mode never updates it (known
-    // cursor divergence, see setCursor note) — the frozen value is intended.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      challengerIndex,
-      championIndex,
-      images,
-      ratings,
-      flashFeedback,
-      persistRating,
-      nearestUnrated,
-      goBack,
-      recordAction,
-    ],
+    [images, challengerIndex, championIndex, ratings, nearestUnrated, resolveCompareDecide],
   );
 
   // Enter → challenger wins: promoted to Champion (Keep); old champion → Reject.
@@ -370,80 +410,21 @@ export function useDecideCallbacks({
     const champImg = images[championIndex];
     const challImg = images[challengerIndex];
     if (!champImg || !challImg) return;
-    const next: Record<number, Rating> = {
-      ...ratings,
-      [champImg.id]: "reject",
-      [challImg.id]: "keep",
-    };
     const newChamp = challengerIndex;
-    const nextChallenger = nearestUnrated(newChamp, next, newChamp);
-    const exiting = nextChallenger === -1;
-    recordAction({
+    const next: Record<number, Rating> = { ...ratings };
+    next[champImg.id] = "reject";
+    next[challImg.id] = "keep";
+    resolveCompareDecide({
       changes: [
         { imgId: champImg.id, path: champImg.path, before: ratings[champImg.id], after: "reject" },
         { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "keep" },
       ],
-      cursorBefore: {
-        compareMode: true,
-        championIndex,
-        challengerIndex,
-        currentIndex,
-        navStack: [...navStackRef.current],
-      },
-      // Where the crown lands, so a redo re-crowns the new champion (not the
-      // just-rejected old one). On the last-frame auto-exit we leave compare.
-      cursorAfter: exiting
-        ? { compareMode: false, championIndex: newChamp, challengerIndex, currentIndex: newChamp }
-        : {
-            compareMode: true,
-            championIndex: newChamp,
-            challengerIndex: nextChallenger,
-            currentIndex,
-          },
+      flash: { rating: "keep", imgId: challImg.id },
+      nextChampion: newChamp,
+      nextChallenger: nearestUnrated(newChamp, next, newChamp),
+      resetPan: true,
     });
-    flashFeedback("keep", challImg.id);
-    persistRating(champImg.path, "reject"); // dethroned
-    persistRating(challImg.path, "keep"); // crowned
-    setRatings(next);
-    // Zoomed decide with a NEW champion: both panes re-anchor at the new
-    // champion's AF point (shared pan resets), landing at scale instantly.
-    if (isZoomingRef.current && !exiting) {
-      setZoomSwapInstant(true);
-      setPanOffset({ x: 0, y: 0 });
-    }
-    setChampionIndex(newChamp);
-    if (exiting) {
-      // Crowned the last unrated frame — pop back to where the user came from,
-      // landing on the new keeper. Pass newChamp explicitly: goBack's own closure
-      // still holds the OLD (just-rejected) champion. (Auto-exit, like ESC.)
-      goBack(newChamp);
-    } else {
-      setChallengerIndex(nextChallenger);
-    }
-    // Sequential swap: the old champion's full goes NOW (the new champion IS
-    // the old challenger, so its full is already resident, no refetch). AFTER
-    // the last setState (see challengerLoses for the sync-flush rationale;
-    // unzoomed too since the pane unification keeps fulls resident).
-    if (!exiting) {
-      const keep = [images[newChamp]?.path, images[nextChallenger]?.path].filter((x): x is string =>
-        Boolean(x),
-      );
-      imageStore.dropZoomFullsExcept(keep);
-    }
-    // currentIndex deliberately omitted: compare mode never updates it (known
-    // cursor divergence, see setCursor note) — the frozen value is intended.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    championIndex,
-    challengerIndex,
-    images,
-    ratings,
-    flashFeedback,
-    persistRating,
-    nearestUnrated,
-    goBack,
-    recordAction,
-  ]);
+  }, [images, championIndex, challengerIndex, ratings, nearestUnrated, resolveCompareDecide]);
 
   return { applyRating, unrateCurrent, challengerLoses, challengerKeptBoth, challengerWins };
 }
