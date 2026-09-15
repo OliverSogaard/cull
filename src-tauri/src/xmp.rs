@@ -209,11 +209,16 @@ fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
 /// sidecars that stored only `xmp:Rating` with a Cull CreatorTool (keep→0,
 /// reject→-1, favorite→5), so existing culls still resume after the format
 /// change. The star value is the raw `xmp:Rating` (1–5), or `None`.
-pub(crate) fn read_ratings(cr3_path: &str) -> (Option<String>, Option<u8>) {
+///
+/// Absent sidecar → `Ok((None, None))` (unrated). Any other read failure is
+/// an `Err` the analyze pass counts and reports — a sidecar that IS there but
+/// can't be read must not silently become "no rating".
+pub(crate) fn read_ratings(cr3_path: &str) -> Result<(Option<String>, Option<u8>), String> {
     let xmp = Path::new(cr3_path).with_extension("xmp");
     match std::fs::read_to_string(&xmp) {
-        Ok(content) => (classify_xmp(&content), parse_lrc_rating(&content)),
-        Err(_) => (None, None),
+        Ok(content) => Ok((classify_xmp(&content), parse_lrc_rating(&content))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, None)),
+        Err(e) => Err(format!("{}: {e}", xmp.display())),
     }
 }
 
@@ -926,7 +931,7 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
 
         let write = tauri::async_runtime::block_on(write_xmp_rating(p.clone(), "keep".into()));
         assert_eq!(write, Ok(()));
-        assert_eq!(read_ratings(&p).0.as_deref(), Some("keep"));
+        assert_eq!(read_ratings(&p).unwrap().0.as_deref(), Some("keep"));
 
         // Re-rating to the value already on disk takes the no-write skip path.
         let rewrite = tauri::async_runtime::block_on(write_xmp_rating(p.clone(), "keep".into()));
@@ -939,6 +944,24 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
             "CULL-authored sidecar removed on unrate"
         );
 
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// An absent sidecar is "unrated", not an error; a sidecar that exists but
+    /// can't be read (here: a directory wearing the name) is an error the
+    /// analyze pass reports instead of folding into "no rating".
+    #[test]
+    fn read_ratings_distinguishes_absent_from_unreadable() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let absent = work.join("absent.cr3");
+        assert_eq!(read_ratings(&absent.to_string_lossy()), Ok((None, None)));
+
+        let blocked = work.join("blocked.cr3");
+        std::fs::create_dir_all(blocked.with_extension("xmp")).unwrap();
+        let err = read_ratings(&blocked.to_string_lossy()).unwrap_err();
+        assert!(err.contains("blocked.xmp"), "{err}");
         let _ = std::fs::remove_dir_all(&work);
     }
 

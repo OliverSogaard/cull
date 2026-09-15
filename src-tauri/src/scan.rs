@@ -172,6 +172,18 @@ pub(crate) struct AnalyzeResult {
     /// ratings on the grid + EXIF panel. Same sidecar pass as `ratings`, so
     /// it's free to extract here.
     lrc_ratings: Vec<Option<u8>>,
+    /// Parent directories the analyze pass could not list, `"<dir>: <error>"`.
+    /// Every frame in one lost its mtime (sorts last) and its sidecar was
+    /// never discovered (reads back unrated) — the UI surfaces this instead of
+    /// presenting a silently degraded order as if it were complete.
+    unreadable_dirs: Vec<String>,
+    /// Sidecars that exist but could not be read, `"<path>: <error>"`. Capped
+    /// at [`RESTORE_ERROR_CAP`] entries so a folder-wide permissions failure
+    /// can't blow up the IPC payload.
+    restore_errors: Vec<String>,
+    /// Exact number of failed sidecar reads, uncapped — `restore_errors` may
+    /// list fewer.
+    restore_error_count: u32,
 }
 
 /// Order a staged set chronologically and restore ratings.
@@ -190,6 +202,181 @@ pub(crate) struct AnalyzeResult {
 /// sidecar reads run on this many threads. 4 is enough to saturate a local
 /// SSD's queue depth without thrashing; the NAS path stays sequential.
 const RESTORE_WORKERS: usize = 4;
+
+/// Stored restore-error messages are capped (IPC size); the count is exact.
+const RESTORE_ERROR_CAP: usize = 20;
+
+/// What one pass over the distinct parent directories found.
+struct Listing {
+    mtime: HashMap<String, i64>,
+    sizes: HashMap<String, u64>,
+    /// Lowercased `path-without-extension` of every `.xmp` seen.
+    xmp_stems: HashSet<String>,
+    /// Parent directories that could not be listed, as `"<dir>: <error>"`.
+    /// Their frames have no mtime (sort last) and no discovered sidecar (read
+    /// back unrated) — the UI shows a warning chip instead of staying silent.
+    unreadable: Vec<String>,
+}
+
+/// Enumerate each distinct parent dir ONCE (see the fast-path note on
+/// `analyze_folder`). `on_progress(done)` fires once per staged file matched.
+fn list_parents(paths: &[String], on_progress: &mut dyn FnMut(usize)) -> Listing {
+    let want: HashSet<&str> = paths.iter().map(String::as_str).collect();
+    let parents: HashSet<&Path> = paths.iter().filter_map(|p| Path::new(p).parent()).collect();
+    let mut out = Listing {
+        mtime: HashMap::new(),
+        sizes: HashMap::new(),
+        xmp_stems: HashSet::new(),
+        unreadable: Vec::new(),
+    };
+    let mut done = 0usize;
+    for dir in parents {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                out.unreadable.push(format!("{}: {e}", dir.display()));
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Sweep crash-orphaned atomic-write temps left behind if the process
+            // died between temp-create and rename (see [`is_orphan_xmp_temp`]).
+            // Best-effort.
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if is_orphan_xmp_temp(name) {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            }
+            if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("xmp"))
+            {
+                out.xmp_stems
+                    .insert(path.with_extension("").to_string_lossy().to_lowercase());
+                continue;
+            }
+            let Some(pstr) = path.to_str() else { continue };
+            if !want.contains(pstr) {
+                continue;
+            }
+            if let Ok(md) = entry.metadata() {
+                if let Some(since) = md
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                {
+                    // Milliseconds, not whole seconds: Canon burst frames are
+                    // written many-per-second, so second-resolution mtime ties
+                    // a whole burst and falls back to filename order (which a
+                    // 9999→0001 counter wrap reverses). Sub-second mtime keeps
+                    // them in actual write order; the path tiebreak below then
+                    // only fires on a genuine exact-millisecond tie.
+                    out.mtime.insert(pstr.to_string(), since.as_millis() as i64);
+                    // Size rides along for free (Phase 7): the tier cache's
+                    // second validator, from the metadata already in hand.
+                    out.sizes.insert(pstr.to_string(), md.len());
+                }
+            }
+            done += 1;
+            on_progress(done);
+        }
+    }
+    out
+}
+
+/// Ratings restored from the sidecars in `to_read`.
+struct Restore {
+    ratings: Vec<Option<String>>,
+    lrc_ratings: Vec<Option<u8>>,
+    /// Sidecars that exist but could not be read, `"<path>: <error>"`, capped.
+    errors: Vec<String>,
+    error_count: u32,
+}
+
+fn note_restore_error(r: &mut Restore, msg: String) {
+    r.error_count += 1;
+    if r.errors.len() < RESTORE_ERROR_CAP {
+        r.errors.push(msg);
+    }
+}
+
+/// Read the sidecars we KNOW exist — sequentially (NAS default) or on
+/// `RESTORE_WORKERS` threads (`concurrent`, local SSD). `on_progress(done)`
+/// fires after each sidecar (from worker threads on the concurrent path).
+fn restore_ratings(
+    paths: &[String],
+    to_read: &[usize],
+    concurrent: bool,
+    on_progress: &(dyn Fn(usize) + Sync),
+) -> Restore {
+    let n = paths.len();
+    let mut out = Restore {
+        ratings: vec![None; n],
+        lrc_ratings: vec![None; n],
+        errors: Vec::new(),
+        error_count: 0,
+    };
+    type Read = (usize, Result<(Option<String>, Option<u8>), String>);
+    let reads: Vec<Read> = if concurrent && to_read.len() > RESTORE_WORKERS {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let done_counter = AtomicUsize::new(0);
+        let chunk_size = to_read.len().div_ceil(RESTORE_WORKERS);
+        let done_ref = &done_counter;
+        std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(RESTORE_WORKERS);
+            for chunk in to_read.chunks(chunk_size) {
+                handles.push(s.spawn(move || {
+                    let mut part: Vec<Read> = Vec::with_capacity(chunk.len());
+                    for &i in chunk {
+                        part.push((i, read_ratings(&paths[i])));
+                        on_progress(done_ref.fetch_add(1, Ordering::Relaxed) + 1);
+                    }
+                    part
+                }));
+            }
+            let mut all: Vec<Read> = Vec::with_capacity(to_read.len());
+            for h in handles {
+                match h.join() {
+                    Ok(part) => all.extend(part),
+                    // A panicked restore worker must not poison the whole
+                    // analyze: its chunk reads back as unrated — and, unlike
+                    // before, the UI is told (one counted error).
+                    Err(_) => {
+                        dlog!("[cull] analyze_folder: restore worker panicked; its chunk restores as unrated");
+                        // The index is never read on the Err arm of the fold below.
+                        all.push((
+                            usize::MAX,
+                            Err("restore worker panicked; its frames read back unrated".to_string()),
+                        ));
+                    }
+                }
+            }
+            all
+        })
+    } else {
+        to_read
+            .iter()
+            .enumerate()
+            .map(|(idx, &i)| {
+                let r = read_ratings(&paths[i]);
+                on_progress(idx + 1);
+                (i, r)
+            })
+            .collect()
+    };
+    for (i, r) in reads {
+        match r {
+            Ok((rating, lrc)) => {
+                out.ratings[i] = rating;
+                out.lrc_ratings[i] = lrc;
+            }
+            Err(e) => note_restore_error(&mut out, e),
+        }
+    }
+    out
+}
 
 /// `concurrent_restore` is a storage hint forwarded from frontend settings.
 /// `Some(true)` parallelises sidecar reads (fine on local SSD); defaults to
@@ -225,78 +412,28 @@ fn analyze_folder_sync(
             order: vec![],
             ratings: vec![],
             lrc_ratings: vec![],
+            unreadable_dirs: vec![],
+            restore_errors: vec![],
+            restore_error_count: 0,
         });
     }
     let start = Instant::now();
 
     // Enumerate each distinct parent dir ONCE. We also note which .xmp sidecars
     // exist, to avoid probe-opening absent ones (a fresh import has none).
-    let want: HashSet<&str> = paths.iter().map(String::as_str).collect();
-    let parents: HashSet<&Path> = paths.iter().filter_map(|p| Path::new(p).parent()).collect();
-
-    let mut mtime: HashMap<String, i64> = HashMap::new();
-    let mut sizes: HashMap<String, u64> = HashMap::new();
-    let mut xmp_stems: HashSet<String> = HashSet::new(); // lowercased path, no ext
     let step = (n / 100).max(1); // ≤ ~100 progress events
-    let mut done = 0usize;
-
-    for dir in parents {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            // Sweep crash-orphaned atomic-write temps left behind if the process
-            // died between temp-create and rename (see [`is_orphan_xmp_temp`]).
-            // Best-effort.
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if is_orphan_xmp_temp(name) {
-                    let _ = std::fs::remove_file(&path);
-                    continue;
-                }
-            }
-            if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("xmp"))
-            {
-                xmp_stems.insert(path.with_extension("").to_string_lossy().to_lowercase());
-                continue;
-            }
-            let Some(pstr) = path.to_str() else { continue };
-            if !want.contains(pstr) {
-                continue;
-            }
-            if let Ok(md) = entry.metadata() {
-                if let Some(since) = md
-                    .modified()
-                    .ok()
-                    .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
-                {
-                    // Milliseconds, not whole seconds: Canon burst frames are
-                    // written many-per-second, so second-resolution mtime ties
-                    // a whole burst and falls back to filename order (which a
-                    // 9999→0001 counter wrap reverses). Sub-second mtime keeps
-                    // them in actual write order; the path tiebreak below then
-                    // only fires on a genuine exact-millisecond tie.
-                    mtime.insert(pstr.to_string(), since.as_millis() as i64);
-                    // Size rides along for free (Phase 7): the tier cache's
-                    // second validator, from the metadata already in hand.
-                    sizes.insert(pstr.to_string(), md.len());
-                }
-            }
-            done += 1;
-            if done.is_multiple_of(step) || done == n {
-                let _ = window.emit(
-                    "analyze-progress",
-                    AnalyzeProgress {
-                        done,
-                        total: n,
-                        phase: "reading".into(),
-                    },
-                );
-            }
+    let listing = list_parents(&paths, &mut |done| {
+        if done.is_multiple_of(step) || done == n {
+            let _ = window.emit(
+                "analyze-progress",
+                AnalyzeProgress {
+                    done,
+                    total: n,
+                    phase: "reading".into(),
+                },
+            );
         }
-    }
+    });
 
     // Terminal tick: a staged file missing from its parent listing (deleted /
     // moved between scan and analyze) or a parent dir we couldn't read means the
@@ -315,10 +452,13 @@ fn analyze_folder_sync(
     // cache validates its entries against these instead of stat-ing the source
     // per cached hit — zero filesystem round-trips for analyzed files. Sound
     // because CR3s are immutable while culling (the app never writes them).
-    session.note_mtimes(&mtime);
-    session.note_sizes(&sizes);
+    session.note_mtimes(&listing.mtime);
+    session.note_sizes(&listing.sizes);
 
-    let epoch: Vec<Option<i64>> = paths.iter().map(|p| mtime.get(p).copied()).collect();
+    let epoch: Vec<Option<i64>> = paths
+        .iter()
+        .map(|p| listing.mtime.get(p).copied())
+        .collect();
 
     // Restore ratings from the sidecars we KNOW exist. Two paths:
     //
@@ -336,91 +476,26 @@ fn analyze_folder_sync(
                 .with_extension("")
                 .to_string_lossy()
                 .to_lowercase();
-            xmp_stems.contains(&stem)
+            listing.xmp_stems.contains(&stem)
         })
         .collect();
     let total_xmp = to_read.len();
-    let step = (total_xmp / 100).max(1); // ≤ ~100 progress events
-    let mut ratings: Vec<Option<String>> = vec![None; n];
-    // LrC star ratings: same sidecar pass, no extra I/O. Only the indices in
-    // `to_read` have a sidecar to read; the rest stay None.
-    let mut lrc_ratings: Vec<Option<u8>> = vec![None; n];
+    let step_xmp = (total_xmp / 100).max(1); // ≤ ~100 progress events
 
-    if concurrent_restore && to_read.len() > RESTORE_WORKERS {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let done_counter = AtomicUsize::new(0);
-        let chunk_size = to_read.len().div_ceil(RESTORE_WORKERS);
-        let paths_ref = &paths;
-        let window_ref = &window;
-        let done_ref = &done_counter;
-
-        type RestorePart = Vec<(usize, Option<String>, Option<u8>)>;
-        let parts: Vec<RestorePart> = std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(RESTORE_WORKERS);
-            for chunk in to_read.chunks(chunk_size) {
-                handles.push(s.spawn(move || {
-                    let mut out = Vec::with_capacity(chunk.len());
-                    for &i in chunk {
-                        let (rating, lrc) = read_ratings(&paths_ref[i]);
-                        out.push((i, rating, lrc));
-                        let d = done_ref.fetch_add(1, Ordering::Relaxed) + 1;
-                        if d.is_multiple_of(step) || d == total_xmp {
-                            let _ = window_ref.emit(
-                                "analyze-progress",
-                                AnalyzeProgress {
-                                    done: d,
-                                    total: total_xmp,
-                                    phase: "restoring".into(),
-                                },
-                            );
-                        }
-                    }
-                    out
-                }));
-            }
-            handles
-                .into_iter()
-                .map(|h| match h.join() {
-                    Ok(part) => part,
-                    // A panicked restore worker must not poison the whole
-                    // analyze: its chunk simply reads back as unrated, the
-                    // same as if those sidecars were absent. The other
-                    // workers' restores still land.
-                    Err(_) => {
-                        dlog!("[cull] analyze_folder: restore worker panicked; its chunk restores as unrated");
-                        Vec::new()
-                    }
-                })
-                .collect()
-        });
-
-        for part in parts {
-            for (i, r, lrc) in part {
-                ratings[i] = r;
-                lrc_ratings[i] = lrc;
-            }
+    // One emit rule for both restore paths (multiples of `step_xmp`, plus the
+    // final tick) so the bar advances identically regardless of storage mode.
+    let restore = restore_ratings(&paths, &to_read, concurrent_restore, &|done| {
+        if done.is_multiple_of(step_xmp) || done == total_xmp {
+            let _ = window.emit(
+                "analyze-progress",
+                AnalyzeProgress {
+                    done,
+                    total: total_xmp,
+                    phase: "restoring".into(),
+                },
+            );
         }
-    } else {
-        for (idx, &i) in to_read.iter().enumerate() {
-            let (rating, lrc) = read_ratings(&paths[i]);
-            ratings[i] = rating;
-            lrc_ratings[i] = lrc;
-            let done = idx + 1;
-            // Same step boundaries as the concurrent path (multiples of `step`,
-            // plus the final tick) so the bar advances identically regardless of
-            // storage mode.
-            if done.is_multiple_of(step) || done == total_xmp {
-                let _ = window.emit(
-                    "analyze-progress",
-                    AnalyzeProgress {
-                        done,
-                        total: total_xmp,
-                        phase: "restoring".into(),
-                    },
-                );
-            }
-        }
-    }
+    });
 
     // Sort by capture time (mtime); missing times sort last, tiebreak on path.
     let order = order_by_capture(&epoch, &paths);
@@ -440,8 +515,11 @@ fn analyze_folder_sync(
     );
     Ok(AnalyzeResult {
         order,
-        ratings,
-        lrc_ratings,
+        ratings: restore.ratings,
+        lrc_ratings: restore.lrc_ratings,
+        unreadable_dirs: listing.unreadable,
+        restore_errors: restore.errors,
+        restore_error_count: restore.error_count,
     })
 }
 
@@ -534,5 +612,75 @@ mod tests {
         assert!(!is_orphan_xmp_temp("notes.tmp")); // a user's own temp
         assert!(!is_orphan_xmp_temp("IMG_0001.xmp")); // the real sidecar
         assert!(!is_orphan_xmp_temp("IMG_0001.xmp..tmp")); // empty seq
+    }
+
+    /// A parent directory that can't be listed is reported; the other
+    /// parents still list normally.
+    #[test]
+    fn list_parents_reports_unreadable_parent() {
+        let work = tmp_dir("list-unreadable");
+        let real = work.join("real");
+        fs::create_dir_all(&real).unwrap();
+        let b = real.join("b.cr3");
+        fs::write(&b, b"cr3").unwrap();
+        let ghost = work.join("missing-dir").join("a.cr3");
+        let paths = vec![
+            ghost.to_string_lossy().to_string(),
+            b.to_string_lossy().to_string(),
+        ];
+        let mut ticks = 0usize;
+        let listing = list_parents(&paths, &mut |_| ticks += 1);
+        assert_eq!(listing.unreadable.len(), 1, "{:?}", listing.unreadable);
+        assert!(listing.unreadable[0].contains("missing-dir"));
+        assert!(listing.mtime.contains_key(&paths[1]));
+        assert_eq!(ticks, 1);
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// Restore: a readable sidecar restores; an unreadable one (a directory
+    /// wearing the sidecar name) is counted and reported, and the frame reads
+    /// back unrated. Same outcome on both restore paths.
+    #[test]
+    fn restore_reports_unreadable_sidecar_not_absent() {
+        for concurrent in [false, true] {
+            let work = tmp_dir(if concurrent {
+                "restore-conc"
+            } else {
+                "restore-seq"
+            });
+            let a = work.join("a.cr3");
+            let b = work.join("b.cr3");
+            fs::write(&a, b"cr3").unwrap();
+            fs::write(&b, b"cr3").unwrap();
+            fs::create_dir_all(a.with_extension("xmp")).unwrap();
+            fs::write(
+                b.with_extension("xmp"),
+                b"xmpDM:pick=\"1\" xmpDM:good=\"true\"",
+            )
+            .unwrap();
+            // Pad with more sidecars so the concurrent branch actually splits.
+            let mut paths = vec![
+                a.to_string_lossy().to_string(),
+                b.to_string_lossy().to_string(),
+            ];
+            for i in 0..6 {
+                let p = work.join(format!("p{i}.cr3"));
+                fs::write(&p, b"cr3").unwrap();
+                fs::write(
+                    p.with_extension("xmp"),
+                    b"xmpDM:pick=\"-1\" xmpDM:good=\"false\"",
+                )
+                .unwrap();
+                paths.push(p.to_string_lossy().to_string());
+            }
+            let to_read: Vec<usize> = (0..paths.len()).collect();
+            let r = restore_ratings(&paths, &to_read, concurrent, &|_| {});
+            assert_eq!(r.ratings[0], None, "concurrent={concurrent}");
+            assert_eq!(r.ratings[1].as_deref(), Some("keep"));
+            assert_eq!(r.ratings[2].as_deref(), Some("reject"));
+            assert_eq!(r.error_count, 1);
+            assert!(r.errors[0].contains("a.xmp"), "{}", r.errors[0]);
+            let _ = fs::remove_dir_all(&work);
+        }
     }
 }
