@@ -88,7 +88,7 @@ export const ThumbCell = memo(function ThumbCell({
           <img className="cull-thumb__img" src={url} alt="" decoding="sync" onLoad={probeOnLoad} />
         ) : (
           <div
-            className="cull-thumb__placeholder"
+            className="shimmer cull-thumb__placeholder"
             style={{ ["--shimmer-delay" as string]: `-${shimmerDelay}ms` }}
           />
         )}

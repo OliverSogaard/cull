@@ -135,23 +135,10 @@
   background-color: var(--surface);
 }
 
+/* Only addition to the shared `.shimmer` band: the grid cell stacks a
+   filename label (z-index 1) over the sweep. */
 .cull-grid__placeholder::after {
-  content: "";
-  position: absolute;
-  inset: 0;
   z-index: 0;
-  background-image: linear-gradient(
-    110deg,
-    rgba(255, 255, 255, 0) 35%,
-    rgba(255, 255, 255, 0.14) 50%,
-    rgba(255, 255, 255, 0) 65%
-  );
-  transform: translateX(-100%);
-  will-change: transform;
-  animation: cull-shimmer-sweep 1.4s linear infinite;
-  /* Shared phase (see utils/shimmer.ts) so every shimmer animates in sync
-     regardless of when its element mounted. */
-  animation-delay: var(--shimmer-delay, 0ms);
 }
 
 .cull-grid__placeholder-name {
@@ -170,19 +157,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-}
-
-/* Compositor-friendly shimmer: a translucent highlight band slides left→right
-   across the placeholder via transform (composited, immune to main-thread jank).
-   Replaces the old background-position sweep that ran on the main thread and
-   froze during hold-to-scrub. ~200% travel so the band fully clears the box. */
-@keyframes cull-shimmer-sweep {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(100%);
-  }
 }
 
 /* Verdict dot in grid — 18px, holds a Lucide SVG icon (Check / X / Star).

@@ -394,7 +394,7 @@ export const PhotoPane = memo(function PhotoPane({
           pixels presented, old content stays during navigation (no blanking). */}
       {!snap.front.url && (
         <div
-          className="cull-photo-frame__shimmer"
+          className="shimmer cull-photo-frame__shimmer"
           aria-hidden
           style={{ ["--shimmer-delay" as string]: `-${shimmerDelayMs}ms` }}
         />

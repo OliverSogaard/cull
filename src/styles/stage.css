@@ -64,35 +64,14 @@
   overflow: hidden;
 }
 
-/* Skeleton shimmer that fills the matte's content area on first load. Shares
-   the compositor-driven `cull-shimmer-sweep` with the grid + strip so it keeps
-   animating while the main thread is saturated during hold-to-scrub. */
+/* Skeleton shimmer that fills the matte's content area on first load; the
+   sweep band itself comes from the `.shimmer` mixin. */
 .cull-photo-frame__shimmer {
   position: absolute;
   inset: 10px;
   border-radius: 1px; /* off-scale */
   overflow: hidden;
   background-color: var(--surface);
-}
-
-/* Light band slides across via translateX — runs on the compositor (immune to
-   main-thread jank), unlike a background-position paint animation. */
-.cull-photo-frame__shimmer::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image: linear-gradient(
-    110deg,
-    rgba(255, 255, 255, 0) 35%,
-    rgba(255, 255, 255, 0.14) 50%,
-    rgba(255, 255, 255, 0) 65%
-  );
-  transform: translateX(-100%);
-  will-change: transform;
-  animation: cull-shimmer-sweep 1.4s linear infinite;
-  /* Shared phase (see utils/shimmer.ts) so every shimmer animates in sync
-     regardless of when its element mounted. */
-  animation-delay: var(--shimmer-delay, 0ms);
 }
 
 /* The sizer alone drives the matte's size: a transparent replaced element whose

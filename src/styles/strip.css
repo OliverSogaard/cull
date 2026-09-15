@@ -141,28 +141,8 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  /* Animated skeleton shimmer (matches the grid + loupe). The sweep below runs
-     on the compositor (translateX), so it keeps animating while the main thread
-     is saturated by hold-to-scrub (JS + scrollIntoView layout). */
+  /* Base colour under the `.shimmer` sweep band (matches the grid + loupe). */
   background-color: var(--surface);
-}
-
-.cull-thumb__placeholder::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image: linear-gradient(
-    110deg,
-    rgba(255, 255, 255, 0) 35%,
-    rgba(255, 255, 255, 0.14) 50%,
-    rgba(255, 255, 255, 0) 65%
-  );
-  transform: translateX(-100%);
-  will-change: transform;
-  animation: cull-shimmer-sweep 1.4s linear infinite;
-  /* Shared phase (see utils/shimmer.ts) so every shimmer animates in sync
-     regardless of when its element mounted. */
-  animation-delay: var(--shimmer-delay, 0ms);
 }
 
 /* Verdict glyph dot — bottom right; holds a Lucide SVG icon (Check / X / Star)
