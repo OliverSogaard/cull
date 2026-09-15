@@ -1,0 +1,299 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · home screen — hero, recents, scan-failure card
+   Split out of chrome.css (pure move): the start screen's own
+   furniture. chrome.css keeps the window chrome, the status bar and
+   the loading / staged phases.
+   ──────────────────────────────────────────────────────────── */
+
+/* ── landing hero (start screen) ──────────────────────────── */
+.cull-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  max-width: 620px;
+  width: 100%;
+  animation: cull-hero-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cull-hero__title {
+  font-size: var(--fs-hero);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  font-weight: 500;
+  margin: 0 0 20px;
+  color: var(--text);
+  text-align: left;
+  text-shadow: none;
+  padding: 0;
+}
+
+.cull-hero__title em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.cull-hero__sub {
+  font-size: 17px; /* off-scale */
+  color: var(--text-2);
+  line-height: 1.55;
+  margin: 0 0 44px;
+  max-width: 500px;
+}
+
+.cull-hero__cta-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 0;
+}
+
+/* `btn btn--primary btn--cta` carries the fill, the weight and the hero
+   sizing; what is left here is the CTA's own layout and slower fade. */
+.cull-hero__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  transition: background 200ms; /* off-scale */
+}
+
+.cull-hero__cta:disabled {
+  background: var(--surface-2);
+}
+
+.cull-hero__cta-key {
+  font-size: var(--fs-3);
+  padding: 2px 7px;
+  letter-spacing: 0.05em;
+}
+
+.cull-hero__drop-hint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.cull-hero__how {
+  margin-top: 70px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  gap: 28px;
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
+  font-family: Inter, sans-serif;
+  font-size: var(--fs-4);
+  color: var(--muted);
+  max-width: 500px;
+}
+
+/* ── home recents list ──────────────────────────────────────
+   Sits below the CTA row, has a small
+   uppercase "Recent" label with a divider, then up to RECENTS_CAP
+   rows of path + count + relative time. */
+.cull-recent {
+  margin-top: 68px;
+  width: 100%;
+  max-width: 620px;
+  align-self: stretch;
+}
+
+.cull-recent__label {
+  font-size: var(--fs-3);
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cull-recent__items {
+  display: flex;
+  flex-direction: column;
+}
+
+.cull-recent__item {
+  display: grid;
+  grid-template-columns: 1fr 110px 100px;
+  gap: 20px;
+  align-items: baseline;
+  padding: 13px 0;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-soft);
+  transition: color 150ms ease;
+  outline: none;
+}
+
+.cull-recent__item:last-child {
+  border-bottom: none;
+}
+
+.cull-recent__item:hover .cull-recent__path,
+.cull-recent__item:focus-visible .cull-recent__path {
+  color: var(--accent);
+}
+
+/* Keyboard focus needs a real, non-color-only indicator — the path-colour shift
+   above is identical to hover and easy to miss on a dim/truncated row. */
+.cull-recent__item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+  border-radius: var(--r-2);
+}
+
+.cull-recent__path {
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
+  font-family: Inter, sans-serif;
+  font-size: var(--fs-6);
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: color 150ms ease;
+  min-width: 0;
+}
+
+.cull-recent__count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-4);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cull-recent__count b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cull-recent__of {
+  color: var(--muted);
+}
+
+.cull-recent__done {
+  color: var(--ok);
+  margin-left: 2px;
+}
+
+.cull-recent__time {
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
+  font-family: Inter, sans-serif;
+  font-size: var(--fs-4);
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cull-recent__empty {
+  padding: 22px 0 14px;
+  font-size: var(--fs-5);
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.cull-recent__kbd {
+  font-size: var(--fs-3);
+  background: var(--surface);
+  margin: 0 2px;
+}
+
+.cull-hero__how-key {
+  font-size: var(--fs-2);
+  background: var(--surface);
+  padding: 3px 7px;
+  margin-right: 8px;
+  letter-spacing: 0.04em;
+}
+
+@keyframes cull-hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── scan-failure card ────────────────────────────────────────
+   Designed replacement for the raw error dump when a recent /
+   dropped folder can't be opened: name + tag per folder, dimmed
+   path, one calm explanation at the bottom. */
+.cull-scanfail {
+  margin: 20px 0 4px;
+  max-width: 560px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid rgba(200, 127, 127, 0.3);
+  border-radius: var(--r-3);
+  padding: 14px 16px 12px;
+  animation: cull-hero-in 0.35s ease both;
+}
+
+.cull-scanfail__title {
+  color: var(--bad);
+  margin-bottom: 12px;
+}
+
+.cull-scanfail__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cull-scanfail__row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cull-scanfail__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cull-scanfail__name {
+  font-size: var(--fs-5);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cull-scanfail__tag {
+  flex: none;
+  font-size: var(--fs-1);
+  letter-spacing: 0.12em;
+  border-color: rgba(200, 127, 127, 0.45);
+  padding: 1px 8px;
+}
+
+.cull-scanfail__path,
+.cull-scanfail__detail {
+  font-family: var(--font-mono);
+  font-size: 10.5px; /* off-scale */
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cull-scanfail__detail {
+  color: var(--text-2);
+}
+
+.cull-scanfail__note {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-3);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
