@@ -37,7 +37,7 @@ export function SettingsDialog({
 
   return (
     <div
-      className="cull-quitguard cull-settings-overlay"
+      className="dialog cull-settings-overlay"
       onClick={(e) => {
         // Click on the backdrop itself (not bubbled from inside the box) closes.
         if (e.target === e.currentTarget) onClose();

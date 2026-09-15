@@ -18,18 +18,18 @@ export function QuitGuardOverlay({
   onCloseAnyway,
 }: Props): ReactNode {
   return (
-    <div className="cull-quitguard">
-      <div className="cull-quitguard__box">
+    <div className="dialog">
+      <div className="dialog__box">
         {failedCount > 0 ? (
           <>
-            <div className="cull-quitguard__title cull-quitguard__title--warn">
+            <div className="dialog__title dialog__title--warn">
               ⚠ {failedCount} rating{failedCount > 1 ? "s" : ""} didn’t save
             </div>
-            <div className="cull-quitguard__body">
+            <div className="dialog__body">
               {failedCount} {failedCount > 1 ? "ratings are" : "rating is"} not on disk (the sidecar
               write kept failing). Closing now will lose {failedCount > 1 ? "them" : "it"}.
             </div>
-            <div className="cull-quitguard__actions">
+            <div className="dialog__actions">
               <button className="btn btn--primary" onClick={retryFailed}>
                 retry saving
               </button>
@@ -43,13 +43,13 @@ export function QuitGuardOverlay({
           </>
         ) : (
           <>
-            <div className="cull-quitguard__title">
+            <div className="dialog__title">
               saving {savingCount} rating{savingCount > 1 ? "s" : ""}…
             </div>
-            <div className="cull-quitguard__body">
+            <div className="dialog__body">
               The app will close on its own the moment your ratings are safely on disk.
             </div>
-            <div className="cull-quitguard__actions">
+            <div className="dialog__actions">
               <button className="btn" onClick={onKeepCulling}>
                 keep culling
               </button>

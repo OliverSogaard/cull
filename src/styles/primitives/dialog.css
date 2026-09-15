@@ -1,0 +1,99 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · dialog — the modal scrim, box and its parts
+   One recipe for the four modals (quit guard, leave-to-home, finish,
+   settings). `--flush` variants are for a box with padding: 0, where the
+   actions row and the hint carry their own gutters — they replace the
+   two inline style patches FinishDialog used to ship.
+   ──────────────────────────────────────────────────────────── */
+.dialog {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: var(--scrim-modal);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.dialog__box {
+  max-width: 480px;
+  width: 100%;
+  padding: 26px 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  text-align: left;
+  box-shadow: var(--shadow-3);
+}
+
+/* Bordered header bar, for the boxes that run edge-to-edge (padding: 0).
+   Callers set their own cross-axis alignment. */
+.dialog__head {
+  display: flex;
+  justify-content: space-between;
+  padding: 22px 26px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+  font-size: var(--fs-8);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+.dialog__title {
+  font-size: var(--fs-7);
+  letter-spacing: -0.005em;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.dialog__title--warn {
+  color: var(--bad);
+}
+
+.dialog__body {
+  font-size: var(--fs-5);
+  line-height: 1.55;
+  color: var(--text-2);
+  margin-bottom: 22px;
+}
+
+.dialog__actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.dialog__actions--flush {
+  padding: 16px 26px;
+}
+
+.dialog__hint {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dialog__hint--flush {
+  margin: 0;
+  padding: 0 26px 16px;
+  border-top: 0;
+}
+
+/* The hint row is uppercase; the keycaps inside it are not. */
+.dialog__hint kbd {
+  display: inline-block;
+  margin: 0 2px;
+  font-size: var(--fs-2);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}

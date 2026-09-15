@@ -1,69 +1,7 @@
-/* ── quit guard / overlay base ─────────────────────────────── */
-.cull-quitguard {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  background: var(--scrim-modal);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px;
-}
-
-.cull-quitguard__box {
-  max-width: 480px;
-  width: 100%;
-  padding: 26px 28px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-3);
-  text-align: left;
-  box-shadow: var(--shadow-3);
-}
-
-.cull-quitguard__title {
-  font-size: var(--fs-7);
-  letter-spacing: -0.005em;
-  font-weight: 500;
-  color: var(--text);
-  margin-bottom: 12px;
-}
-
-.cull-quitguard__title--warn {
-  color: var(--bad);
-}
-
-.cull-quitguard__body {
-  font-size: var(--fs-5);
-  line-height: 1.55;
-  color: var(--text-2);
-  margin-bottom: 22px;
-}
-
-.cull-quitguard__actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-}
-
-.cull-quitguard__hint {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-soft);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
 /* ── settings dialog ──────────────────────────────────────── */
 .cull-settings-overlay {
   /* The overlay is just the dimmed background — the dialog itself owns its
-     own surface + border. Keep .cull-quitguard's blur and dimming. */
+     own surface + border. Keep the .dialog scrim's blur and dimming. */
 }
 
 .cull-settings {
@@ -81,15 +19,7 @@
 }
 
 .cull-settings__head {
-  display: flex;
-  justify-content: space-between;
   align-items: baseline;
-  padding: 22px 26px 18px;
-  border-bottom: 1px solid var(--border-soft);
-  color: var(--text);
-  font-size: var(--fs-8);
-  font-weight: 500;
-  letter-spacing: -0.005em;
 }
 
 .cull-settings__head-title {
@@ -198,21 +128,6 @@
 
 .cull-settings__foot kbd {
   margin: 0 4px;
-}
-
-/* Legacy class names kept so other call sites don't break — title-meta is
-   referenced by FinishDialog. */
-.cull-settings__title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 22px 26px 18px;
-  border-bottom: 1px solid var(--border-soft);
-  color: var(--text);
-  font-size: var(--fs-8);
-  font-weight: 500;
-  letter-spacing: -0.005em;
 }
 
 .cull-settings__title-meta {
@@ -518,15 +433,6 @@
   margin-right: 2px;
 }
 
-/* Small keycap visual — the hint row is uppercase, the keycap is not. */
-.cull-quitguard__hint kbd {
-  display: inline-block;
-  margin: 0 2px;
-  font-size: var(--fs-2);
-  letter-spacing: 0.04em;
-  text-transform: none;
-}
-
 /* ── finish (act-on-cull) dialog ──────────────────────────── */
 .cull-actions {
   /* Wider than the stock quit-guard box: this dialog holds a path + an
@@ -534,6 +440,13 @@
      520px forces a wrap or an overflow for ordinary root paths). */
   max-width: 560px;
   padding: 0;
+}
+
+/* Finish dialog header — the same bar as the settings head, but its meta
+   chip is centred against the title rather than sitting on its baseline. */
+.cull-actions__head {
+  align-items: center;
+  gap: 8px;
 }
 
 /* Two-stat summary grid (keeps + rejects) */

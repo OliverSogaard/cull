@@ -210,7 +210,7 @@ export function FinishDialog({
 
   return (
     <div
-      className="cull-quitguard"
+      className="dialog"
       onClick={(e) => {
         // Backdrop click closes, like the settings dialog: only a click on the
         // backdrop itself (not one bubbled from inside the box). Safe even
@@ -220,14 +220,14 @@ export function FinishDialog({
       }}
     >
       <div
-        className="cull-quitguard__box cull-actions"
+        className="dialog__box cull-actions"
         ref={trapRef}
         role="dialog"
         aria-modal="true"
         aria-label="Finish session"
         tabIndex={-1}
       >
-        <div className="cull-settings__title">
+        <div className="dialog__head cull-actions__head">
           <span>Finish session</span>
           <span className="cull-settings__title-meta">{folderName || "session"}</span>
         </div>
@@ -402,15 +402,12 @@ export function FinishDialog({
           </div>
         </div>
 
-        <div className="cull-quitguard__actions" style={{ padding: "16px 26px" }}>
+        <div className="dialog__actions dialog__actions--flush">
           <button className="btn" onClick={onClose}>
             close
           </button>
         </div>
-        <div
-          className="cull-quitguard__hint"
-          style={{ padding: "0 26px 16px", margin: 0, borderTop: 0 }}
-        >
+        <div className="dialog__hint dialog__hint--flush">
           <kbd className="kbd">esc</kbd> to close
         </div>
       </div>
