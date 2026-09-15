@@ -1933,9 +1933,25 @@ fix round (a wrong doc cross-reference; a `pruneHistory` empty-set guard; an
 empty-session compare exit plus live-cursor functional remap) — all findings
 fixed in place. Live check (Task 16) deferred: the PC was in use during the
 session; the driver `phase0-live.ps1` and a 12-frame scratch copy are
-prepared and the PR's test plan keeps that box unticked. Left for later
-phases: the smart-culling "N frames could not be scored" notice and the
-settings/recents storage-failure notice (§5.1 MEDIUM, last bullet). Extra on
+prepared and the PR's test plan keeps that box unticked. Extra on
 the way: clippy's two pending `as_chunks` lints (analyze.rs, phash.rs) were
 applied so the CI clippy gate is green; `cargo test` rejects multi-filter
 invocations on cargo 1.98, so per-module gates were run one filter at a time.
+
+Left for later phases:
+
+- The smart-culling "N frames could not be scored" notice.
+- The settings/recents storage-failure notice (§5.1 MEDIUM, last bullet).
+- Phase 3 — a distinct chip text/title for `source missing:` write failures
+  ("photo no longer at its path") instead of a retry that cannot succeed.
+- Phase 2 — an `overlayService.forget(paths)` next to `imageStore.forget`
+  (overlay rasters for moved frames stay cached until session end).
+- Phase 2 — key smart-culling's session on a stable path set rather than
+  `images` array identity so a mid-cull prune does not wipe scores and
+  re-run inference.
+- Phase 2 — guard the two tier-landing sites in `imageStore` against a path
+  no longer in `pathIndex` (a read in flight for a moved frame lands as a
+  stray entry until the eviction window passes).
+
+Final whole-branch review (2026-09-14): ready to merge with fixes; the no-op
+unrate and the empty-session pool clear landed as the fix wave.
