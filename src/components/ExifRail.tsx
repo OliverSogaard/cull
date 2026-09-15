@@ -79,7 +79,7 @@ export function ExifRail({
     <aside className="cull-exif-rail" aria-label="Image info">
       {ghost && (
         <div className="cull-exif-rail__section">
-          <div className="cull-exif-rail__label">Suggestion</div>
+          <div className="eyebrow cull-exif-rail__label">Suggestion</div>
           <div className="cull-exif-rail__rows">
             <div className="cull-exif-rail__row">
               <span className={`cull-exif-rail__k cull-exif-rail__suggest--${ghost.verdict}`}>
@@ -98,7 +98,7 @@ export function ExifRail({
         </div>
       )}
       <div className="cull-exif-rail__section">
-        <div className="cull-exif-rail__label">Frame</div>
+        <div className="eyebrow cull-exif-rail__label">Frame</div>
         <div className="cull-exif-rail__rows">
           {body && <RailRow k="Body" v={body} />}
           {lens && <RailRow k="Lens" v={lens} />}
@@ -127,7 +127,7 @@ export function ExifRail({
       </div>
 
       <div className="cull-exif-rail__section">
-        <div className="cull-exif-rail__label">Exposure</div>
+        <div className="eyebrow cull-exif-rail__label">Exposure</div>
         <div className="cull-exif-rail__rows">
           {shutter && <RailRow k="Shutter" v={shutter} />}
           {aperture && <RailRow k="Aperture" v={aperture} />}
@@ -145,7 +145,7 @@ export function ExifRail({
       </div>
 
       <div className="cull-exif-rail__section">
-        <div className="cull-exif-rail__label">Histogram</div>
+        <div className="eyebrow cull-exif-rail__label">Histogram</div>
         <div className="cull-exif-rail__hist">
           {histogramUrl ? (
             <img src={histogramUrl} alt="RGB histogram" />
@@ -159,7 +159,7 @@ export function ExifRail({
           about the shoot (shown with smart culling off too), not a suggestion. */}
       {burst && (
         <div className="cull-exif-rail__section">
-          <div className="cull-exif-rail__label">Burst</div>
+          <div className="eyebrow cull-exif-rail__label">Burst</div>
           <div className="cull-exif-rail__rows">
             <RailRow k="Frame" v={`${burst.pos} of ${burst.len}`} />
           </div>
@@ -171,7 +171,7 @@ export function ExifRail({
           every frame's thumbnail), so this renders with smart culling off too. */}
       {similar && (
         <div className="cull-exif-rail__section">
-          <div className="cull-exif-rail__label">Similar set</div>
+          <div className="eyebrow cull-exif-rail__label">Similar set</div>
           <div className="cull-exif-rail__rows">
             <RailRow k="Frame" v={`${similar.pos} of ${similar.len}`} />
           </div>
@@ -294,21 +294,21 @@ export function CompareExifRail({
     <aside className="cull-exif-rail cull-exif-rail--compare" aria-label="Compare info">
       <div className="cull-cr-rail__head">
         <span />
-        <span className="cull-cr-rail__col cull-cr-rail__col--champion">Champion</span>
-        <span className="cull-cr-rail__col cull-cr-rail__col--challenger">Challenger</span>
+        <span className="eyebrow cull-cr-rail__col cull-cr-rail__col--champion">Champion</span>
+        <span className="eyebrow cull-cr-rail__col cull-cr-rail__col--challenger">Challenger</span>
       </div>
 
       {(championSuggestion?.verdict || challengerSuggestion?.verdict) && (
         <div className="cull-exif-rail__section">
-          <div className="cull-exif-rail__label">Suggestion</div>
+          <div className="eyebrow cull-exif-rail__label">Suggestion</div>
           <div className="cull-exif-rail__rows">
             <div className="cull-cr-rail__row">
-              <span className="cull-cr-rail__k">Verdict</span>
+              <span className="eyebrow cull-cr-rail__k">Verdict</span>
               <SuggestCell s={championSuggestion} />
               <SuggestCell s={challengerSuggestion} />
             </div>
             <div className="cull-cr-rail__row">
-              <span className="cull-cr-rail__k">Why</span>
+              <span className="eyebrow cull-cr-rail__k">Why</span>
               <span className="cull-cr-rail__v cull-exif-rail__v--dim">
                 {championSuggestion?.verdict ? championSuggestion.reasons.join(", ") : "—"}
               </span>
@@ -321,7 +321,7 @@ export function CompareExifRail({
       )}
 
       <div className="cull-exif-rail__section">
-        <div className="cull-exif-rail__label">Frame</div>
+        <div className="eyebrow cull-exif-rail__label">Frame</div>
         <div className="cull-exif-rail__rows">
           {frameRows.map((r) => (
             <CompareRow key={r.k} k={r.k} a={r.a} b={r.b} />
@@ -331,7 +331,7 @@ export function CompareExifRail({
       </div>
 
       <div className="cull-exif-rail__section">
-        <div className="cull-exif-rail__label">Exposure</div>
+        <div className="eyebrow cull-exif-rail__label">Exposure</div>
         <div className="cull-exif-rail__rows">
           {exposureRows.map((r) => (
             <CompareRow key={r.k} k={r.k} a={r.a} b={r.b} />
@@ -357,7 +357,7 @@ function CompareRow({ k, a, b }: { k: string; a: string; b: string }) {
   const diff = a !== b && a !== "—" && b !== "—";
   return (
     <div className={`cull-cr-rail__row${diff ? " is-diff" : ""}`}>
-      <span className="cull-cr-rail__k">{k}</span>
+      <span className="eyebrow cull-cr-rail__k">{k}</span>
       <span className="cull-cr-rail__v">{a}</span>
       <span className="cull-cr-rail__v">{b}</span>
     </div>

@@ -25,7 +25,7 @@ export function ScanFailureCard({ failures }: { failures: readonly ScanFailure[]
   const anyPermanent = failures.some((f) => f.permanent);
   return (
     <div className="cull-scanfail" role="alert">
-      <div className="cull-scanfail__title">
+      <div className="eyebrow cull-scanfail__title">
         {failures.length === 1
           ? "couldn't open folder"
           : `couldn't open ${failures.length} folders`}

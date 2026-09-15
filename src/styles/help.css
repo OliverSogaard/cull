@@ -20,10 +20,7 @@
 }
 
 .cull-help__eyebrow {
-  font-family: var(--font-mono);
   font-size: var(--fs-3);
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
   color: var(--accent);
   margin-bottom: 10px;
 }
@@ -51,10 +48,6 @@
 }
 
 .cull-help__group {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
   color: var(--accent);
   border-bottom: 1px solid var(--border-soft);
   padding-bottom: 6px;

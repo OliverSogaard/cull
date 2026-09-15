@@ -27,10 +27,6 @@
 }
 
 .cull-exif-rail__label {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
   color: var(--accent);
 }
 
@@ -117,10 +113,7 @@
 }
 
 .cull-cr-rail__col {
-  font-family: var(--font-mono);
   font-size: var(--fs-1);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
 }
 
 .cull-cr-rail__col--champion {
@@ -137,14 +130,6 @@
   gap: 12px;
   align-items: baseline;
   padding: 5px 0;
-}
-
-.cull-cr-rail__row .cull-cr-rail__k {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
 }
 
 .cull-cr-rail__row .cull-cr-rail__v {

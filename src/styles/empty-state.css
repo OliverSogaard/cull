@@ -47,11 +47,7 @@
 }
 
 .cull-empty-state__eyebrow {
-  font-family: var(--font-mono);
   font-size: var(--fs-3);
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--muted);
 }
 
 .cull-empty-state__title {

@@ -53,7 +53,7 @@ export function SettingsDialog({
       >
         <div className="cull-settings__head">
           <span className="cull-settings__head-title">Settings</span>
-          <span className="cull-settings__head-meta">CULL</span>
+          <span className="eyebrow">CULL</span>
         </div>
 
         <div className="cull-settings__layout">
@@ -288,7 +288,7 @@ export function SettingsDialog({
           </div>
         </div>
 
-        <div className="cull-settings__foot">
+        <div className="eyebrow cull-settings__foot">
           <kbd className="kbd">esc</kbd> to close · <kbd className="kbd">{modGlyph} ,</kbd> to
           reopen
         </div>

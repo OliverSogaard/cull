@@ -29,14 +29,6 @@
   letter-spacing: -0.005em;
 }
 
-.cull-settings__head-meta {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
 /* Two-column body: fixed nav rail left, one scrolling pane right. A stable
    height keeps the dialog from resizing as tabs change. */
 .cull-settings__layout {
@@ -119,23 +111,10 @@
 .cull-settings__foot {
   padding: 14px 26px;
   border-top: 1px solid var(--border-soft);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  text-transform: uppercase;
 }
 
 .cull-settings__foot kbd {
   margin: 0 4px;
-}
-
-.cull-settings__title-meta {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
 }
 
 .cull-settings__row {
@@ -468,11 +447,7 @@
 }
 
 .cull-actions__stat-label {
-  font-family: var(--font-mono);
   font-size: var(--fs-1);
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--muted);
 }
 
 .cull-actions__stat-value {
@@ -675,11 +650,6 @@
 }
 
 .cull-finish__picked-label {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
   flex-shrink: 0;
 }
 

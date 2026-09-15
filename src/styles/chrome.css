@@ -659,11 +659,7 @@
 }
 
 .cull-recent__label {
-  font-family: var(--font-mono);
   font-size: var(--fs-3);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--muted);
   margin-bottom: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
@@ -799,10 +795,6 @@
 }
 
 .cull-scanfail__title {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
   color: var(--bad);
   margin-bottom: 12px;
 }

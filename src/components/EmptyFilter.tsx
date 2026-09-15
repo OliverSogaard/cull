@@ -22,7 +22,7 @@ function NoMatchEmptyState({
 }) {
   return (
     <div className="cull-empty-state cull-empty-state--desert">
-      <div className="cull-empty-state__eyebrow">{eyebrow}</div>
+      <div className="eyebrow cull-empty-state__eyebrow">{eyebrow}</div>
       <div className="cull-empty-state__title">{title}</div>
       <div className="cull-empty-state__hint">{hint}</div>
     </div>

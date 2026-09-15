@@ -229,13 +229,13 @@ export function FinishDialog({
       >
         <div className="dialog__head cull-actions__head">
           <span>Finish session</span>
-          <span className="cull-settings__title-meta">{folderName || "session"}</span>
+          <span className="eyebrow">{folderName || "session"}</span>
         </div>
 
         {/* Two-stat summary — keeps (with fav sub-line) + rejects. */}
         <div className="cull-actions__summary">
           <div className="cull-actions__stat">
-            <div className="cull-actions__stat-label">Keeps</div>
+            <div className="eyebrow cull-actions__stat-label">Keeps</div>
             <div
               className={`cull-actions__stat-value is-keep${keepsCount === 0 ? " is-zero" : ""}`}
             >
@@ -248,7 +248,7 @@ export function FinishDialog({
             )}
           </div>
           <div className="cull-actions__stat">
-            <div className="cull-actions__stat-label">Rejects</div>
+            <div className="eyebrow cull-actions__stat-label">Rejects</div>
             <div
               className={`cull-actions__stat-value is-reject${rejectedPaths.length === 0 ? " is-zero" : ""}`}
             >
@@ -370,7 +370,7 @@ export function FinishDialog({
             ) : (
               // Ask each time, stage 2: confirm or change.
               <div className="cull-finish__picked">
-                <span className="cull-finish__picked-label">Will copy to</span>
+                <span className="eyebrow cull-finish__picked-label">Will copy to</span>
                 <code className="cull-finish__picked-path" title={pickedDestination}>
                   {pickedDestination}
                 </code>

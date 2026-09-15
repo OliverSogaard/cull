@@ -210,7 +210,7 @@ export const StatusBar = memo(function StatusBar({
       </div>
       <div className="cull-statusbar__spacer" />
       <div className="cull-statusbar__right">
-        <span className="cull-statusbar__keyhint" aria-hidden>
+        <span className="eyebrow cull-statusbar__keyhint" aria-hidden>
           tab · keys
         </span>
         <span

@@ -155,7 +155,7 @@ export function HelpOverlay({
   return (
     <div className="cull-help" onClick={onDismiss}>
       <div className="cull-help__inner">
-        <div className="cull-help__eyebrow">CULL · {mode.toUpperCase()} KEYS</div>
+        <div className="eyebrow cull-help__eyebrow">CULL · {mode.toUpperCase()} KEYS</div>
         <h2 className="cull-help__title">
           {intro ? (
             <>
@@ -170,7 +170,7 @@ export function HelpOverlay({
         <div className="cull-help__grid">
           {groups.map((g) => (
             <div key={g.title}>
-              <div className="cull-help__group">{g.title}</div>
+              <div className="eyebrow cull-help__group">{g.title}</div>
               {g.keys.map(([k, label]) => (
                 <div key={k} className="cull-help__row">
                   <span className="cull-help__key">{k}</span>

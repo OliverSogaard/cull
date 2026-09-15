@@ -23,7 +23,7 @@ export function RecentFolders({
 }) {
   return (
     <div className="cull-recent">
-      <div className="cull-recent__label">Recent</div>
+      <div className="eyebrow cull-recent__label">Recent</div>
       {recents.length === 0 ? (
         <div className="cull-recent__empty">
           No folders yet. Drop some anywhere, or press{" "}
