@@ -62,6 +62,7 @@ import { normalizeRejectedSubfolder } from "./types/settings";
 import { imageStore } from "./image/imageStore";
 import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
+import type { AnalyzeWarning } from "./utils/analyzeWarnings";
 import { passesFilter } from "./utils/filter";
 import { cycleFilter, topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
@@ -211,6 +212,10 @@ export default function App() {
   // rating-restore returns the user to staged with a retry instead of silently
   // dropping them into an unsorted, ratings-not-restored cull.
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  // Non-fatal analyze-pass trouble (an unreadable folder, sidecars that
+  // couldn't be read): the cull still enters, but the status bar flags what
+  // didn't come back clean. Click to dismiss.
+  const [analyzeWarning, setAnalyzeWarning] = useState<AnalyzeWarning | null>(null);
   // True from the moment pickFolder is invoked until the OS dialog resolves
   // (success OR cancel). Prevents a double-click — or a stuck dialog — from
   // queuing a second picker behind the first.
@@ -605,6 +610,7 @@ export default function App() {
       setPickerBusy,
       setScanFailures,
       setAnalyzeError,
+      setAnalyzeWarning,
       setLastAdded,
       setLastIgnored,
       setLastBatchFolders,
@@ -2026,6 +2032,16 @@ export default function App() {
                   : folderTrouble === "recovered"
                     ? "reconnected"
                     : "folder unreachable · retry"}
+            </button>
+          )}
+          {analyzeWarning && (
+            <button
+              type="button"
+              className="cull-trouble-chip"
+              title={analyzeWarning.detail}
+              onClick={() => setAnalyzeWarning(null)}
+            >
+              ⚠ {analyzeWarning.label}
             </button>
           )}
           {memPressure !== "normal" && (

@@ -30,6 +30,7 @@ import { basename } from "../utils/path";
 import { imageStore } from "../image/imageStore";
 import { overlayService } from "../overlays/overlayService";
 import { omitIds, pruneGone, pruneHistory, remapNavStack } from "../utils/pruneSession";
+import { summarizeAnalyzeWarnings, type AnalyzeWarning } from "../utils/analyzeWarnings";
 
 /**
  * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
@@ -90,6 +91,7 @@ export function useSessionLifecycle({
   setPickerBusy,
   setScanFailures,
   setAnalyzeError,
+  setAnalyzeWarning,
   setLastAdded,
   setLastIgnored,
   setLastBatchFolders,
@@ -133,6 +135,7 @@ export function useSessionLifecycle({
   setPickerBusy: Dispatch<SetStateAction<boolean>>;
   setScanFailures: Dispatch<SetStateAction<readonly ScanFailure[] | null>>;
   setAnalyzeError: Dispatch<SetStateAction<string | null>>;
+  setAnalyzeWarning: Dispatch<SetStateAction<AnalyzeWarning | null>>;
   setLastAdded: Dispatch<SetStateAction<number>>;
   setLastIgnored: Dispatch<SetStateAction<number>>;
   setLastBatchFolders: Dispatch<SetStateAction<string[]>>;
@@ -425,6 +428,7 @@ export function useSessionLifecycle({
     if (analyzingRef.current) return; // ignore a double-click — one analyze pass
     analyzingRef.current = true;
     setAnalyzeError(null);
+    setAnalyzeWarning(null);
     setProgress({ done: 0, total: images.length, phase: "reading" });
     setPhase("analyzing");
     const unlisten = await listen<AnalyzeProgress>("analyze-progress", (e) =>
@@ -461,6 +465,7 @@ export function useSessionLifecycle({
       // ids ride along, so the rating map stays valid post-sort.
       setImages(sorted);
       setRatings(restoredRatings);
+      setAnalyzeWarning(summarizeAnalyzeWarnings(result));
       setMetadata((prev) => ({ ...seededMeta, ...prev }));
       // Point the image store at the (sorted) culling set: revoke any prior
       // full-res blobs, keep thumbs, and kick off background thumb fill in
@@ -517,6 +522,7 @@ export function useSessionLifecycle({
     setFilter,
     setPhase,
     setAnalyzeError,
+    setAnalyzeWarning,
     setProgress,
     setThumbsVisible,
     setExifVisible,
@@ -609,6 +615,7 @@ export function useSessionLifecycle({
     setPendingFolder(null);
     setScanFailures(null);
     setAnalyzeError(null);
+    setAnalyzeWarning(null);
     setLastAdded(0);
     setLastIgnored(0);
     setLastBatchFolders([]);
@@ -645,6 +652,7 @@ export function useSessionLifecycle({
     setPendingFolder,
     setScanFailures,
     setAnalyzeError,
+    setAnalyzeWarning,
     setLastAdded,
     setLastIgnored,
     setLastBatchFolders,

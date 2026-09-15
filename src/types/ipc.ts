@@ -101,4 +101,11 @@ export type AnalyzeResult = {
    * sidecar pass as `ratings`, so it's free to extract on the backend.
    */
   lrcRatings: (number | null)[];
+  /** Parent folders the analyze pass could not list (`"<dir>: <error>"`):
+   *  their frames sort last and read back unrated. */
+  unreadableDirs: string[];
+  /** Sidecars that exist but could not be read (`"<path>: <error>"`), capped
+   *  at 20 — `restoreErrorCount` is the true total. */
+  restoreErrors: string[];
+  restoreErrorCount: number;
 };
