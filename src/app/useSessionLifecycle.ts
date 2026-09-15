@@ -31,6 +31,7 @@ import { imageStore } from "../image/imageStore";
 import { overlayService } from "../overlays/overlayService";
 import { omitIds, pruneGone, pruneHistory, remapNavStack } from "../utils/pruneSession";
 import { summarizeAnalyzeWarnings, type AnalyzeWarning } from "../utils/analyzeWarnings";
+import { writeLocalStorage } from "../utils/storage";
 
 /**
  * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
@@ -254,7 +255,9 @@ export function useSessionLifecycle({
 
             // Persist the last-used dir only AFTER a successful scan, so a folder
             // that fails to open never becomes the picker default / auto-open target.
-            localStorage.setItem("cull:lastDir", folderPath);
+            // writeLocalStorage never throws, so a full/private-mode storage can no
+            // longer surface here as a scan failure.
+            writeLocalStorage("cull:lastDir", folderPath);
 
             // APPEND, never replace. Read the prior set from imagesRef and update it
             // synchronously alongside setImages, so dedupe + ids are computed against

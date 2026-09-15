@@ -72,6 +72,7 @@ import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
 import { pickSmartEmptyState } from "./utils/smartEmptyState";
+import { writeLocalStorage } from "./utils/storage";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
 import type { ScrubSpeed } from "./utils/scrubAccel";
@@ -153,7 +154,7 @@ export default function App() {
     if (phase !== "culling") return;
     try {
       if (localStorage.getItem("cull:helpSeen")) return;
-      localStorage.setItem("cull:helpSeen", "1");
+      writeLocalStorage("cull:helpSeen", "1");
     } catch {
       return; // private mode: skip the intro rather than show it every time
     }
@@ -778,7 +779,7 @@ export default function App() {
       // so the next session's picker opens there. Pinned mode is its own root,
       // so it doesn't need this hint.
       if (settings.exportFolder.mode === "remember") {
-        localStorage.setItem("cull:lastExportDest", dest);
+        writeLocalStorage("cull:lastExportDest", dest);
       }
       setActionBusy("copy");
       setCopyResult(null);
