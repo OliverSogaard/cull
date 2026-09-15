@@ -170,7 +170,7 @@ body,
   overflow: hidden;
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: var(--fs-6);
   font-feature-settings: "ss01", "cv11", "cv10";
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -191,7 +191,7 @@ body,
   align-items: center;
   justify-content: space-between;
   padding: 0 18px;
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--text-2);
   background: var(--surface);
   border-top: 1px solid var(--border);
@@ -205,7 +205,7 @@ body,
   border-top: 0;
   border-bottom: 1px solid var(--border);
   padding: 0 148px 0 14px;
-  font-size: 12px;
+  font-size: var(--fs-4);
   letter-spacing: 0.04em;
 }
 
@@ -229,9 +229,9 @@ body,
   gap: 6px;
   margin-left: 16px;
   padding: 2px 9px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.06em;
   text-transform: lowercase;
   color: var(--muted);
@@ -290,7 +290,7 @@ body,
   position: fixed;
   top: 0;
   right: 0;
-  z-index: 60;
+  z-index: var(--z-wincontrols);
   display: flex;
   height: 36px;
 }
@@ -305,7 +305,7 @@ body,
   border: none;
   color: var(--text-2);
   cursor: pointer;
-  transition: background 120ms ease-out, color 120ms ease-out;
+  transition: background var(--dur-fast) ease-out, color var(--dur-fast) ease-out;
 }
 
 .cull-winbtn:hover {
@@ -336,7 +336,7 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-4);
   letter-spacing: 0.18em;
   font-weight: 500;
 }
@@ -348,13 +348,13 @@ body,
 
 .cull-statusbar__brand-sep {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-4);
 }
 
 /* Current view name — LOUPE / COMPARE / GRID. */
 .cull-statusbar__brand-mode {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-4);
   letter-spacing: 0.18em;
   font-weight: 500;
 }
@@ -362,7 +362,7 @@ body,
 .cull-statusbar__filename {
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.02em;
   display: inline-flex;
   align-items: baseline;
@@ -389,7 +389,7 @@ body,
   align-items: center;
   gap: 7px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   flex-shrink: 0;
@@ -455,7 +455,7 @@ body,
   background: transparent;
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   font-weight: 500;
   cursor: pointer;
   transition: background 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
@@ -484,7 +484,7 @@ body,
    Surfaced while a held-arrow scrub is in flight. */
 .cull-statusbar__scrub {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--accent);
@@ -496,7 +496,7 @@ body,
 
 .cull-statusbar__scrub::before {
   content: "⟶";
-  font-size: 11px;
+  font-size: var(--fs-3);
   animation: cull-scrub-flash 0.5s infinite;
 }
 
@@ -512,17 +512,17 @@ body,
 .cull-statusbar__scrubspeed {
   margin-left: 8px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.08em;
   color: var(--accent);
   border: 1px solid rgba(212, 175, 106, 0.4);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 1px 6px;
 }
 
 .cull-statusbar__pos {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
   color: var(--text-2);
@@ -563,12 +563,12 @@ body,
   color: var(--muted);
   padding: 4px 12px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   cursor: pointer;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   border-bottom: 1px solid transparent;
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 
 /* Instant hover tip for inactive filter tabs. CSS-only (::after + attr) so
@@ -588,14 +588,14 @@ body,
   white-space: nowrap;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 4px 9px;
-  font-size: 9px;
+  font-size: var(--fs-1);
   letter-spacing: 0.1em;
   color: var(--text-2);
   text-transform: none;
   pointer-events: none;
-  z-index: 30;
+  z-index: var(--z-feedback);
 }
 
 /* The last group's tab (Smart) sits near the window edge — right-align its
@@ -650,9 +650,9 @@ body,
   white-space: nowrap;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 5px; /* off-scale */
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-  z-index: 20;
+  z-index: var(--z-tooltip);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.4s ease 0.35s;
@@ -661,22 +661,22 @@ body,
 .cull-filter-tab-tooltip.is-on {
   opacity: 1;
   pointer-events: auto;
-  transition: opacity 0.12s ease 0s;
+  transition: opacity var(--dur-fast) ease 0s;
 }
 
 .cull-filter-tab-tooltip button {
   appearance: none;
   padding: 3px 7px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-1);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
   color: var(--muted);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   background: var(--surface-2);
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 
 .cull-filter-tab-tooltip button:hover:not(.is-active) {
@@ -699,11 +699,11 @@ body,
 .cull-statusbar__chip {
   padding: 1px 8px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   background: var(--surface-2);
   color: var(--text-2);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -727,11 +727,11 @@ body,
   gap: 6px;
   padding: 3px 9px;
   margin-left: 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -780,8 +780,8 @@ body,
   position: relative;
   padding: 10px;
   background: var(--matte);
-  border-radius: 2px;
-  box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6);
+  border-radius: var(--r-1);
+  box-shadow: var(--shadow-2);
   /* content-box so aspect-ratio sizes the CONTENT box (where the image lives),
      not the padded border box. Then content-box AR == image AR, object-fit:contain
      is a true no-op, and the overlays (inset 14px) cover the image exactly — the
@@ -809,7 +809,7 @@ body,
 .cull-photo-frame__shimmer {
   position: absolute;
   inset: 10px;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   overflow: hidden;
   background-color: var(--surface);
 }
@@ -878,7 +878,7 @@ body,
   will-change: transform;
   object-fit: contain; /* NEVER clip — portrait images show side matte */
   display: block;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   background-color: var(--matte);
 }
 
@@ -898,7 +898,7 @@ body,
   content: "";
   position: absolute;
   inset: 14px;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   z-index: 5;
   pointer-events: none;
   animation: cull-flash-pulse 380ms ease-out forwards;
@@ -983,7 +983,7 @@ body,
   height: 100%;
   pointer-events: none;
   image-rendering: pixelated;
-  z-index: 4;
+  z-index: var(--z-overlay);
 }
 
 /* Focus peaking overlay — same sizing as clipping. Layered above the
@@ -1022,12 +1022,12 @@ body,
    voice as the folder-trouble chip; informational only (never a button). */
 .cull-mem-chip {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--accent);
   border: 1px solid rgba(212, 175, 106, 0.4);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 2px 8px;
   white-space: nowrap;
 }
@@ -1058,7 +1058,7 @@ body,
    voice in the footer — present, never competing. */
 .cull-statusbar__keyhint {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-1);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
@@ -1070,15 +1070,15 @@ body,
   appearance: none;
   background: transparent;
   border: 1px solid var(--accent);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   padding: 5px 14px;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .cull-statusbar__finish:hover {
@@ -1116,11 +1116,11 @@ body,
   border: 1px solid var(--border);
   padding: 12px 24px;
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--fs-5);
   letter-spacing: 0.05em;
   cursor: pointer;
-  border-radius: 3px;
-  transition: border-color 120ms ease-out, color 120ms ease-out, background 120ms ease-out;
+  border-radius: 3px; /* off-scale */
+  transition: border-color var(--dur-fast) ease-out, color var(--dur-fast) ease-out, background var(--dur-fast) ease-out;
 }
 
 .cull-pick-button:hover:not(:disabled) {
@@ -1207,7 +1207,7 @@ body,
   inset: 20px;
   background: rgba(212, 175, 106, 0.07);
   border: 2px dashed var(--accent);
-  border-radius: 6px;
+  border-radius: var(--r-3);
   z-index: 5;
   display: flex;
   flex-direction: column;
@@ -1218,14 +1218,14 @@ body,
 }
 
 .cull-drag-indicator__arrow {
-  font-size: 36px;
+  font-size: 36px; /* off-scale */
   color: var(--accent);
   line-height: 1;
 }
 
 .cull-drag-indicator__text {
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: var(--fs-6);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--accent);
@@ -1243,7 +1243,7 @@ body,
 }
 
 .cull-hero__title {
-  font-size: 56px;
+  font-size: var(--fs-hero);
   line-height: 1.05;
   letter-spacing: -0.025em;
   font-weight: 500;
@@ -1260,7 +1260,7 @@ body,
 }
 
 .cull-hero__sub {
-  font-size: 17px;
+  font-size: 17px; /* off-scale */
   color: var(--text-2);
   line-height: 1.55;
   margin: 0 0 44px;
@@ -1282,9 +1282,9 @@ body,
   background: var(--accent);
   color: #1a1408;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--r-2);
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: 15px; /* off-scale */
   font-weight: 500;
   cursor: pointer;
   transition: background 200ms;
@@ -1302,16 +1302,16 @@ body,
 
 .cull-hero__cta-key {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   padding: 2px 7px;
   background: rgba(26, 20, 8, 0.18);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   letter-spacing: 0.05em;
 }
 
 .cull-hero__drop-hint {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--muted);
   letter-spacing: 0.06em;
 }
@@ -1323,7 +1323,7 @@ body,
   display: flex;
   gap: 28px;
   font-family: Inter, sans-serif;
-  font-size: 12px;
+  font-size: var(--fs-4);
   color: var(--muted);
   max-width: 500px;
 }
@@ -1341,7 +1341,7 @@ body,
 
 .cull-recent__label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--muted);
@@ -1380,12 +1380,12 @@ body,
    above is identical to hover and easy to miss on a dim/truncated row. */
 .cull-recent__item:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent-soft);
-  border-radius: 4px;
+  border-radius: var(--r-2);
 }
 
 .cull-recent__path {
   font-family: Inter, sans-serif;
-  font-size: 14px;
+  font-size: var(--fs-6);
   color: var(--text);
   overflow: hidden;
   white-space: nowrap;
@@ -1396,7 +1396,7 @@ body,
 
 .cull-recent__count {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-4);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -1418,7 +1418,7 @@ body,
 
 .cull-recent__time {
   font-family: Inter, sans-serif;
-  font-size: 12px;
+  font-size: var(--fs-4);
   color: var(--muted);
   text-align: right;
   white-space: nowrap;
@@ -1426,29 +1426,29 @@ body,
 
 .cull-recent__empty {
   padding: 22px 0 14px;
-  font-size: 13px;
+  font-size: var(--fs-5);
   color: var(--muted);
   line-height: 1.55;
 }
 
 .cull-recent__kbd {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   background: var(--surface);
   padding: 2px 6px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   color: var(--text-2);
   margin: 0 2px;
 }
 
 .cull-hero__how-key {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   background: var(--surface);
   padding: 3px 7px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   margin-right: 8px;
   color: var(--text-2);
   letter-spacing: 0.04em;
@@ -1481,14 +1481,14 @@ body,
   text-align: left;
   background: var(--surface);
   border: 1px solid rgba(200, 127, 127, 0.3);
-  border-radius: 6px;
+  border-radius: var(--r-3);
   padding: 14px 16px 12px;
   animation: cull-hero-in 0.35s ease both;
 }
 
 .cull-scanfail__title {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--bad);
@@ -1519,7 +1519,7 @@ body,
 }
 
 .cull-scanfail__name {
-  font-size: 13px;
+  font-size: var(--fs-5);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1529,19 +1529,19 @@ body,
 .cull-scanfail__tag {
   flex: none;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-1);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--bad);
   border: 1px solid rgba(200, 127, 127, 0.45);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 1px 8px;
 }
 
 .cull-scanfail__path,
 .cull-scanfail__detail {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10.5px; /* off-scale */
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1556,14 +1556,14 @@ body,
   margin-top: 14px;
   padding-top: 10px;
   border-top: 1px solid var(--border-soft);
-  font-size: 11px;
+  font-size: var(--fs-3);
   line-height: 1.5;
   color: var(--text-2);
 }
 
 .cull-chrome__status {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--accent);
@@ -1577,7 +1577,7 @@ body,
 
 .cull-chrome__sub {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--muted);
   letter-spacing: 0.06em;
 }
@@ -1602,14 +1602,14 @@ body,
   max-width: 60vw;
   height: 4px;
   background: var(--surface-2);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   overflow: hidden;
 }
 
 .cull-progress__fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   transition: width 150ms ease-out;
 }
 
@@ -1617,7 +1617,7 @@ body,
   height: 100%;
   width: 35%;
   background: var(--accent);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   animation: cull-indeterminate 1s ease-in-out infinite;
 }
 
@@ -1631,21 +1631,21 @@ body,
 }
 
 .cull-staged__check {
-  font-size: 40px;
+  font-size: 40px; /* off-scale */
   line-height: 1;
   color: var(--ok);
 }
 
 .cull-staged__count {
   font-family: var(--font-mono);
-  font-size: 22px;
+  font-size: var(--fs-9);
   letter-spacing: 0.04em;
   color: var(--text);
 }
 
 .cull-staged__folder {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-4);
   color: var(--muted);
   margin-bottom: 8px;
 }
@@ -1654,7 +1654,7 @@ body,
    muted contrast: it explains an absence, which is information, not a hint. */
 .cull-staged__ignored {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--muted);
   margin-bottom: 8px;
 }
@@ -1670,7 +1670,7 @@ body,
 .cull-staged__hint {
   margin-top: 14px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--muted);
   letter-spacing: 0.06em;
 }
@@ -1678,14 +1678,14 @@ body,
 .cull-statusbar__saving {
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.06em;
 }
 
 .cull-statusbar__unsaved {
   color: var(--bad);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   font-weight: 500;
   cursor: pointer;
   letter-spacing: 0.06em;
@@ -1700,7 +1700,7 @@ body,
 .cull-quitguard {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-modal);
   background: rgba(8, 8, 10, 0.7);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -1716,13 +1716,13 @@ body,
   padding: 26px 28px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-3);
   text-align: left;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-3);
 }
 
 .cull-quitguard__title {
-  font-size: 16px;
+  font-size: var(--fs-7);
   letter-spacing: -0.005em;
   font-weight: 500;
   color: var(--text);
@@ -1734,7 +1734,7 @@ body,
 }
 
 .cull-quitguard__body {
-  font-size: 13px;
+  font-size: var(--fs-5);
   line-height: 1.55;
   color: var(--text-2);
   margin-bottom: 22px;
@@ -1752,7 +1752,7 @@ body,
   padding-top: 14px;
   border-top: 1px solid var(--border-soft);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
@@ -1768,13 +1768,13 @@ body,
   position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-3);
   width: 100%;
   max-width: 680px;
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-3);
   overflow: hidden;
 }
 
@@ -1785,13 +1785,13 @@ body,
   padding: 22px 26px 18px;
   border-bottom: 1px solid var(--border-soft);
   color: var(--text);
-  font-size: 18px;
+  font-size: var(--fs-8);
   font-weight: 500;
   letter-spacing: -0.005em;
 }
 
 .cull-settings__head-title {
-  font-size: 18px;
+  font-size: var(--fs-8);
   font-weight: 500;
   color: var(--text);
   letter-spacing: -0.005em;
@@ -1799,7 +1799,7 @@ body,
 
 .cull-settings__head-meta {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
@@ -1826,16 +1826,16 @@ body,
   appearance: none;
   background: transparent;
   border: none;
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   text-align: left;
   padding: 8px 10px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--muted);
   cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
 }
 
 .cull-settings__navitem:hover:not(.is-active) {
@@ -1887,7 +1887,7 @@ body,
   padding: 14px 26px;
   border-top: 1px solid var(--border-soft);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.1em;
   color: var(--muted);
   text-transform: uppercase;
@@ -1897,7 +1897,7 @@ body,
   background: var(--surface-2);
   border: 1px solid var(--border);
   padding: 2px 6px;
-  border-radius: 2px;
+  border-radius: var(--r-1);
   color: var(--text-2);
   font-family: inherit;
   margin: 0 4px;
@@ -1913,14 +1913,14 @@ body,
   padding: 22px 26px 18px;
   border-bottom: 1px solid var(--border-soft);
   color: var(--text);
-  font-size: 18px;
+  font-size: var(--fs-8);
   font-weight: 500;
   letter-spacing: -0.005em;
 }
 
 .cull-settings__title-meta {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
@@ -1941,7 +1941,7 @@ body,
 
 .cull-settings__row-name {
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 13.5px; /* off-scale */
   letter-spacing: 0;
   text-transform: none;
 }
@@ -1950,7 +1950,7 @@ body,
   margin-top: 3px;
   min-height: 0;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 11.5px; /* off-scale */
   line-height: 1.5;
   letter-spacing: 0;
   text-transform: none;
@@ -1974,15 +1974,15 @@ body,
   padding: 5px 9px;
   white-space: nowrap;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-2);
   font-family: Inter, sans-serif;
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 
 .cull-settings__chip:hover:not(.is-on) {
@@ -2010,7 +2010,7 @@ body,
   width: 36px;
   height: 20px;
   background: var(--surface-2);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   position: relative;
   cursor: pointer;
   border: 1px solid var(--border);
@@ -2060,11 +2060,11 @@ body,
 
 .cull-settings__pinned-path {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--text-2);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 5px 10px;
   max-width: 220px;
   overflow: hidden;
@@ -2076,7 +2076,7 @@ body,
   display: inline-flex;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 2px;
   gap: 0;
 }
@@ -2085,15 +2085,15 @@ body,
   appearance: none;
   padding: 5px 12px;
   border: 0;
-  border-radius: 2px;
+  border-radius: var(--r-1);
   background: transparent;
   color: var(--text-2);
   font-family: Inter, sans-serif;
-  font-size: 12px;
+  font-size: var(--fs-4);
   letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
   white-space: nowrap;
 }
 
@@ -2126,15 +2126,15 @@ body,
   appearance: none;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 6px 10px;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-4);
   letter-spacing: 0;
   width: 200px;
   outline: none;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease;
 }
 
 .cull-settings__text:focus {
@@ -2168,15 +2168,15 @@ body,
   appearance: none;
   background: transparent;
   border: 1px solid var(--bad);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 7px 16px;
   color: var(--bad);
   font-family: Inter, sans-serif;
-  font-size: 12px;
+  font-size: var(--fs-4);
   letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
   white-space: nowrap;
 }
 
@@ -2204,7 +2204,7 @@ body,
 
 .cull-settings__reset-msg {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--bad);
   letter-spacing: 0.04em;
   margin-right: 2px;
@@ -2212,7 +2212,7 @@ body,
 
 .cull-settings__reset-confirm .cull-pick-button {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-4);
 }
 
 /* Small keycap visual. */
@@ -2221,11 +2221,11 @@ body,
   padding: 2px 6px;
   margin: 0 2px;
   border: 1px solid var(--border);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   background: var(--surface-2);
   color: var(--text-2);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.04em;
   text-transform: none;
 }
@@ -2259,7 +2259,7 @@ body,
 
 .cull-actions__stat-label {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-1);
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--muted);
@@ -2267,7 +2267,7 @@ body,
 
 .cull-actions__stat-value {
   font-family: var(--font-mono);
-  font-size: 24px;
+  font-size: 24px; /* off-scale */
   font-variant-numeric: tabular-nums;
   color: var(--text);
   font-weight: 500;
@@ -2288,7 +2288,7 @@ body,
 
 .cull-actions__stat-sub {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--fav);
   letter-spacing: 0.04em;
   margin-top: 2px;
@@ -2303,8 +2303,8 @@ body,
   padding: 10px 14px;
   background: rgba(212, 175, 106, 0.07);
   border-left: 3px solid var(--accent);
-  border-radius: 2px;
-  font-size: 11.5px;
+  border-radius: var(--r-1);
+  font-size: 11.5px; /* off-scale */
   color: var(--text-2);
   display: flex;
   gap: 8px;
@@ -2314,7 +2314,7 @@ body,
 
 .cull-actions__unrated-icon {
   color: var(--accent);
-  font-size: 13px;
+  font-size: var(--fs-5);
 }
 
 .cull-actions__rows {
@@ -2332,19 +2332,19 @@ body,
 }
 
 .cull-actions__row-label {
-  font-size: 13.5px;
+  font-size: 13.5px; /* off-scale */
   color: var(--text);
 }
 
 .cull-actions__row-help {
-  font-size: 11.5px;
+  font-size: 11.5px; /* off-scale */
   color: var(--muted);
   line-height: 1.5;
 }
 
 .cull-actions__result {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.06em;
   text-transform: none;
   color: var(--muted);
@@ -2360,9 +2360,9 @@ body,
   padding: 10px 14px;
   background: rgba(212, 175, 106, 0.07);
   border-left: 3px solid var(--accent);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   color: var(--text-2);
-  font-size: 11.5px;
+  font-size: 11.5px; /* off-scale */
   letter-spacing: 0;
   text-transform: none;
   text-align: left;
@@ -2384,8 +2384,8 @@ body,
   padding: 8px 12px;
   background: rgba(200, 127, 127, 0.08);
   border-left: 3px solid var(--bad);
-  border-radius: 2px;
-  font-size: 11.5px;
+  border-radius: var(--r-1);
+  font-size: 11.5px; /* off-scale */
   color: var(--text-2);
   line-height: 1.45;
   display: flex;
@@ -2417,7 +2417,7 @@ body,
   background: var(--bg);
   border: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11.5px; /* off-scale */
 }
 
 .cull-finish__dest-edit:focus-within .cull-finish__dest-root,
@@ -2429,7 +2429,7 @@ body,
   display: inline-flex;
   align-items: center;
   border-right: 0;
-  border-radius: 3px 0 0 3px;
+  border-radius: 3px 0 0 3px; /* off-scale */
   padding: 7px 0 7px 10px;
   color: var(--muted);
   white-space: nowrap;
@@ -2440,14 +2440,14 @@ body,
   max-width: 45%;
   overflow: hidden;
   flex-shrink: 0;
-  transition: border-color 0.12s ease;
+  transition: border-color var(--dur-fast) ease;
 }
 
 .cull-finish__dest-sub {
   appearance: none;
   outline: none;
   border-left: 0;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 3px 3px 0; /* off-scale */
   padding: 7px 10px 7px 0;
   color: var(--text);
   /* Basis 0, NOT auto: WebKit won't shrink an input below its content-based
@@ -2457,7 +2457,7 @@ body,
   /* Wide enough that a long pinned root can never squeeze the name being
      typed into a peephole. */
   min-width: 150px;
-  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
 }
 
 .cull-finish__dest-sub.is-invalid {
@@ -2487,7 +2487,7 @@ body,
 
 .cull-finish__picked-label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
@@ -2498,11 +2498,11 @@ body,
   flex: 1 1 200px;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11.5px; /* off-scale */
   color: var(--text-2);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 6px 10px;
   white-space: nowrap;
   overflow: hidden;
@@ -2520,7 +2520,7 @@ body,
 
 .cull-finish__confirm-msg {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--bad);
   letter-spacing: 0.04em;
   margin-right: 2px;
@@ -2550,7 +2550,7 @@ body,
 
 .cull-finish__progress-label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   color: var(--text-2);
   letter-spacing: 0.04em;
   min-width: 110px;
@@ -2566,7 +2566,7 @@ body,
   flex: 1 1 auto;
   height: 4px;
   background: var(--surface-2);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   overflow: hidden;
 }
 
@@ -2574,7 +2574,7 @@ body,
   width: 60%;
   height: 100%;
   background: var(--accent);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   animation: cull-finish-progress-breathe 1.8s ease-in-out infinite;
 }
 
@@ -2644,7 +2644,7 @@ body,
 
 .cull-empty-state__eyebrow {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--muted);
@@ -2652,7 +2652,7 @@ body,
 
 .cull-empty-state__title {
   font-family: Inter, sans-serif;
-  font-size: 22px;
+  font-size: var(--fs-9);
   font-weight: 500;
   color: var(--text);
   letter-spacing: -0.01em;
@@ -2665,7 +2665,7 @@ body,
 
 .cull-empty-state__hint {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-4);
   color: var(--muted);
   letter-spacing: 0.04em;
 }
@@ -2674,7 +2674,7 @@ body,
   background: var(--surface);
   padding: 2px 7px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   color: var(--text-2);
   font-family: inherit;
   margin: 0 2px;
@@ -2684,7 +2684,7 @@ body,
 .cull-message {
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-4);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   text-align: center;
@@ -2700,7 +2700,7 @@ body,
 
 .cull-message__body {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   text-transform: none;
   letter-spacing: 0;
   color: var(--text-2);
@@ -2709,7 +2709,7 @@ body,
   background: var(--surface);
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   margin: 16px 0;
 }
 
@@ -2717,13 +2717,13 @@ body,
    eventually go terminal — this re-queues the frame immediately). */
 .cull-message__retry {
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 6px 18px;
   cursor: pointer;
 }
@@ -2737,13 +2737,13 @@ body,
    the store when several reads go terminal (NAS unmounted / sleep-wake). */
 .cull-trouble-chip {
   font: inherit;
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--bad);
   background: transparent;
   border: 1px solid var(--bad);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 2px 10px;
   margin-left: 10px;
   cursor: pointer;
@@ -2791,17 +2791,17 @@ body,
   position: absolute;
   left: 20px;
   bottom: 20px;
-  z-index: 4;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--bad);
   background: rgba(8, 8, 8, 0.82);
   border: 1px solid var(--bad);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 3px 10px;
 }
 
@@ -2825,17 +2825,17 @@ body,
   position: fixed;
   left: 10px;
   bottom: 44px;
-  z-index: 80;
+  z-index: var(--z-hud);
   pointer-events: none;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   line-height: 1.5;
   letter-spacing: 0;
   text-transform: none;
   color: rgba(235, 235, 235, 0.92);
   background: rgba(8, 8, 8, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 4px;
+  border-radius: var(--r-2);
   padding: 6px 9px;
   max-width: 380px;
 }
@@ -2854,7 +2854,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-1);
 }
 
 /* ── feedback popup ───────────────────────────────────────── */
@@ -2865,7 +2865,7 @@ body,
   position: absolute;
   bottom: 16px;
   right: 16px;
-  z-index: 30;
+  z-index: var(--z-feedback);
   pointer-events: none;
 }
 
@@ -2876,7 +2876,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: cull-feedback-pop 320ms ease-out forwards;
+  animation: cull-feedback-pop var(--dur-slow) ease-out forwards;
 }
 
 @keyframes cull-feedback-pop {
@@ -2952,7 +2952,7 @@ body,
   bottom: 3px;
   height: 2px;
   background: var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.4s ease 0.35s;
@@ -2960,7 +2960,7 @@ body,
 
 .cull-scrubbar.is-on {
   opacity: 1;
-  transition: opacity 0.12s ease 0s;
+  transition: opacity var(--dur-fast) ease 0s;
 }
 
 /* Positioner — full-width overlay the thumb + speed badge ride. Moved by
@@ -2980,12 +2980,12 @@ body,
   bottom: 7px;
   transform: translateX(-50%);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-1);
   letter-spacing: 0.08em;
   color: var(--accent);
   background: rgba(8, 8, 10, 0.85);
   border: 1px solid rgba(212, 175, 106, 0.4);
-  border-radius: 3px;
+  border-radius: 3px; /* off-scale */
   padding: 0 5px;
   line-height: 14px;
   white-space: nowrap;
@@ -2997,7 +2997,7 @@ body,
   top: -1px;
   width: 26px;
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--accent);
   transform: translateX(-50%);
 }
@@ -3019,7 +3019,7 @@ body,
   width: 76px;
   height: 54px;
   box-sizing: border-box;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   overflow: hidden;
   background: linear-gradient(135deg, #2a2018 0%, #1a1410 100%);
 }
@@ -3035,7 +3035,7 @@ body,
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   box-shadow: inset 0 0 0 var(--thumb-outline-w, 1.5px)
     var(--thumb-outline, transparent);
   pointer-events: none;
@@ -3092,7 +3092,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--halo);
 }
 
 /* Solid verdict colors — shared with the grid dots (grouped like the ghost
@@ -3124,7 +3124,7 @@ body,
   color: var(--accent);
   background: rgba(0, 0, 0, 0.55);
   padding: 2px 3px;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   z-index: 2;
   pointer-events: none;
   display: inline-flex;
@@ -3183,7 +3183,7 @@ body,
   padding: 0;
   min-inline-size: 0;
   border: 2px solid rgba(214, 178, 120, 0.5);
-  border-radius: 4px;
+  border-radius: var(--r-2);
   z-index: 3;
   pointer-events: none;
 }
@@ -3195,7 +3195,7 @@ body,
   /* Native legend: sits in the top border's gap, tucked just past the corner. */
   margin-left: 4px;
   padding: 0 4px;
-  font-size: 8px;
+  font-size: 8px; /* off-scale */
   line-height: 10px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -3270,7 +3270,7 @@ body,
   top: 0;
   right: -16px; /* sits in .cull-grid's own right padding gutter, clear of cells */
   width: 3px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--border);
   opacity: 0;
   pointer-events: none;
@@ -3279,7 +3279,7 @@ body,
 
 .cull-grid__scrollbar-track.is-on {
   opacity: 1;
-  transition: opacity 0.12s ease 0s;
+  transition: opacity var(--dur-fast) ease 0s;
 }
 
 .cull-grid__scrollbar-thumb {
@@ -3287,7 +3287,7 @@ body,
   left: 0;
   top: 0;
   width: 100%;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--accent);
 }
 
@@ -3324,7 +3324,7 @@ body,
   position: relative;
   width: 100%;
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--r-1);
   outline: 3px solid transparent;
   outline-offset: 2px;
   /* No transition — the outline must follow `is-current` instantly, not
@@ -3387,7 +3387,7 @@ body,
   z-index: 1;
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-1);
   letter-spacing: 0.04em;
   text-align: left;
   word-break: break-all;
@@ -3442,7 +3442,7 @@ body,
   color: var(--accent);
   background: rgba(0, 0, 0, 0.55);
   padding: 3px 5px;
-  border-radius: 2px;
+  border-radius: var(--r-1);
   z-index: 3;
   pointer-events: none;
   display: inline-flex;
@@ -3458,7 +3458,7 @@ body,
   position: absolute;
   inset: 3px; /* match .cull-grid__cell padding so it sits inside the frame */
   background: rgba(212, 175, 106, 0.42);
-  border-radius: 2px;
+  border-radius: var(--r-1);
   z-index: 2;
   pointer-events: none;
 }
@@ -3478,12 +3478,12 @@ body,
   left: 8px;
   bottom: 8px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-1);
   color: var(--text);
   background: rgba(0, 0, 0, 0.78);
   padding: 2px 6px;
-  border-radius: 2px;
-  z-index: 4;
+  border-radius: var(--r-1);
+  z-index: var(--z-overlay);
   max-width: calc(100% - 36px);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3508,7 +3508,7 @@ body,
 .cull-help {
   position: fixed;
   inset: 36px 0 0;
-  z-index: 150;
+  z-index: var(--z-help);
   background: rgba(8, 8, 10, 0.92);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -3527,7 +3527,7 @@ body,
 
 .cull-help__eyebrow {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--accent);
@@ -3536,7 +3536,7 @@ body,
 
 .cull-help__title {
   font-family: Inter, sans-serif;
-  font-size: 28px;
+  font-size: var(--fs-display);
   font-weight: 500;
   color: var(--text);
   letter-spacing: -0.015em;
@@ -3557,7 +3557,7 @@ body,
 
 .cull-help__group {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--accent);
@@ -3571,7 +3571,7 @@ body,
   grid-template-columns: 110px 1fr;
   gap: 12px;
   align-items: baseline;
-  font-size: 12px;
+  font-size: var(--fs-4);
   white-space: nowrap;
   margin-bottom: 8px;
 }
@@ -3579,7 +3579,7 @@ body,
 .cull-help__key {
   font-family: var(--font-mono);
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.04em;
   font-weight: 400;
 }
@@ -3587,7 +3587,7 @@ body,
 .cull-help__desc {
   font-family: Inter, sans-serif;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-4);
   white-space: normal;
 }
 
@@ -3648,8 +3648,8 @@ body,
   position: relative;
   padding: 10px;
   background: var(--matte);
-  border-radius: 2px;
-  box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6);
+  border-radius: var(--r-1);
+  box-shadow: var(--shadow-2);
   /* content-box: see .cull-photo-frame — sizes the content box so overlays
      (inset 14px) match the image exactly instead of the letterboxed border box. */
   box-sizing: content-box;
@@ -3677,7 +3677,7 @@ body,
   will-change: transform;
   object-fit: contain; /* NEVER clip — portrait shows side matte */
   display: block;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   background-color: var(--matte);
 }
 
@@ -3689,7 +3689,7 @@ body,
   position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 7; /* above the clip(4)/peak(5)/thirds(6) overlays so the verdict shows */
+  z-index: var(--z-frame-chip); /* above the clip(4)/peak(5)/thirds(6) overlays so the verdict shows */
 }
 
 /* Role chip below the photo — champion filled, challenger hollow. */
@@ -3699,9 +3699,9 @@ body,
   align-items: center;
   gap: 6px;
   padding: 5px 14px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.22em;
   text-transform: uppercase;
   font-weight: 500;
@@ -3752,7 +3752,7 @@ body,
   left: 2px;
   background: rgba(0, 0, 0, 0.7);
   padding: 1px 4px;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   z-index: 2;
   pointer-events: none;
   display: inline-flex;
@@ -3762,7 +3762,7 @@ body,
 
 .cull-thumb__role-badge-text {
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: 7px; /* off-scale */
   letter-spacing: 0.14em;
   text-transform: uppercase;
   font-weight: 500;
@@ -3807,7 +3807,7 @@ body,
 
 .cull-exif-rail__label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--accent);
@@ -3824,14 +3824,14 @@ body,
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  font-size: 12px;
+  font-size: var(--fs-4);
   line-height: 1.4;
 }
 
 .cull-exif-rail__k {
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-3);
   letter-spacing: 0.02em;
   flex-shrink: 0;
 }
@@ -3839,7 +3839,7 @@ body,
 .cull-exif-rail__v {
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-4);
   font-variant-numeric: tabular-nums;
   text-align: right;
   word-break: break-word;
@@ -3851,7 +3851,7 @@ body,
 
 .cull-exif-rail__lrc {
   letter-spacing: 0.04em;
-  font-size: 13px;
+  font-size: var(--fs-5);
   line-height: 1;
   font-family: -apple-system, "Segoe UI Symbol", system-ui, sans-serif;
 }
@@ -3868,7 +3868,7 @@ body,
   height: 70px;
   position: relative;
   overflow: hidden;
-  border-radius: 1px;
+  border-radius: 1px; /* off-scale */
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -3897,7 +3897,7 @@ body,
 
 .cull-cr-rail__col {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-1);
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }
@@ -3920,7 +3920,7 @@ body,
 
 .cull-cr-rail__row .cull-cr-rail__k {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
@@ -3928,7 +3928,7 @@ body,
 
 .cull-cr-rail__row .cull-cr-rail__v {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-4);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
   word-break: break-word;
