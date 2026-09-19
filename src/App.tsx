@@ -1284,6 +1284,107 @@ export default function App() {
     />
   );
 
+  // ── Status-bar prop groups ────────────────────────────────────────────────
+  // The bottom status bar's six prop groups (see StatusBar) are built HERE,
+  // above the chrome early return, because `useMemo` needs an unconditional
+  // call site. Built as plain literals below that return they were fresh on
+  // every render, which defeated StatusBar's `memo` outright — and App
+  // re-renders on every cursor move, pan mouse-move, feedback flash and
+  // save-pill change. The three consts the groups read (`current`,
+  // `currentRating`, `statusBarImg`) move up with them; nothing they depend on
+  // is computed further down.
+  const current = images[currentIndex];
+  const currentRating = current ? ratings[current.id] : undefined;
+  // In compare mode the status bar's filename follows the CHALLENGER — the frame
+  // the user is actively judging — not the current cursor (which would track the
+  // champion). Single-view shows the cursor's frame.
+  const statusBarImg = compareMode ? images[challengerIndex] : current;
+
+  const statusFrame = useMemo<StatusBarFrame>(
+    () => ({
+      filename: statusBarImg?.filename ?? null,
+      // No verdict pill in compare: two frames are under judgement at once, so
+      // there is no single "current" verdict to print.
+      rating: compareMode ? null : (currentRating ?? null),
+      isZooming,
+      zoomLevel,
+      scrubbing,
+      scrubSpeed,
+      compareMode,
+      comparePos: challengerPos,
+      compareCount: compareCandidates.length,
+    }),
+    [
+      statusBarImg,
+      compareMode,
+      currentRating,
+      isZooming,
+      zoomLevel,
+      scrubbing,
+      scrubSpeed,
+      challengerPos,
+      compareCandidates.length,
+    ],
+  );
+  // The five toggles close over `useState` setters only, so the group's
+  // identity turns on the six booleans and nothing else.
+  const statusOverlays = useMemo<StatusBarOverlays>(
+    () => ({
+      visible: !gridVisible,
+      exif: { on: exifVisible, toggle: () => setExifVisible((v) => !v) },
+      clipping: { on: clippingVisible, toggle: () => setClippingVisible((v) => !v) },
+      peaking: { on: peakingVisible, toggle: () => setPeakingVisible((v) => !v) },
+      composition: { on: compositionVisible, toggle: () => setCompositionVisible((v) => !v) },
+      thumbs: { on: thumbsVisible, toggle: () => setThumbsVisible((v) => !v) },
+    }),
+    [gridVisible, exifVisible, clippingVisible, peakingVisible, compositionVisible, thumbsVisible],
+  );
+  const statusSelection = useMemo<StatusBarSelection>(
+    () => ({ gridVisible, selectedCount: selectedIndices.size }),
+    [gridVisible, selectedIndices.size],
+  );
+  const statusSave = useMemo<StatusBarSave>(
+    () => ({ savingCount, failedCount, retryFailed }),
+    [savingCount, failedCount, retryFailed],
+  );
+  const statusFilter = useMemo<StatusBarFilter>(
+    () => ({
+      filter,
+      setFilter,
+      stats,
+      qualityAnalyzing,
+      qualityProgress,
+      smartCulling: settings.smartCulling,
+      startAnalysis,
+      suggestionCount: liveSuggestionCount,
+      chipsTooltip,
+      positionInFilter,
+      visibleCount: visibleIndices.length,
+    }),
+    [
+      filter,
+      setFilter,
+      stats,
+      qualityAnalyzing,
+      qualityProgress,
+      settings.smartCulling,
+      startAnalysis,
+      liveSuggestionCount,
+      chipsTooltip,
+      positionInFilter,
+      visibleIndices.length,
+    ],
+  );
+  const statusSession = useMemo<StatusBarSession>(
+    () => ({
+      openActions: () => setActionsOpen(true),
+      actionsOpen,
+      rejectedCount: rejectedPaths.length,
+      keyhint: modGlyph,
+    }),
+    [actionsOpen, rejectedPaths.length],
+  );
+
   // ── Chrome phases (start / loading / staged) ───────────────────────────────
   if (phase !== "culling") {
     const chromeMode =
@@ -1454,11 +1555,11 @@ export default function App() {
   }
 
   // ── Culling phase ──────────────────────────────────────────────────────────
-  const current = images[currentIndex];
-  // `cur` (the loupe's useImage result) is computed unconditionally near the
-  // top of the component. It carries the stage/url/dims/error for the loupe.
+  // `current` / `currentRating` are declared with the status-bar groups above
+  // the chrome return. `cur` (the loupe's useImage result) is computed
+  // unconditionally near the top of the component: it carries the
+  // stage/url/dims/error for the loupe.
   const currentMeta = current ? metadata[current.path] : undefined;
-  const currentRating = current ? ratings[current.id] : undefined;
 
   // Zoom transform-origin = AF point (display coords) + pan, clamped to image.
   const { x: originX, y: originY } = afZoomOrigin(currentMeta, panOffset);
@@ -1609,59 +1710,9 @@ export default function App() {
 
   // The bottom status bar renders inside each view's flex column AFTER the
   // thumb strip (the last row, with a border-top) — built once here and placed
-  // in all three culling views. Its props are grouped by concern (see
-  // StatusBar); plain object literals, because this sits below the phase early
-  // returns (no useMemo available) and most groups change every render anyway.
-  //
-  // In compare mode the status bar's filename follows the CHALLENGER — the frame
-  // the user is actively judging — not the current cursor (which would track the
-  // champion). Single-view shows the cursor's frame.
-  const statusBarImg = compareMode ? images[challengerIndex] : current;
-  const statusFrame: StatusBarFrame = {
-    filename: statusBarImg?.filename ?? null,
-    // No verdict pill in compare: two frames are under judgement at once, so
-    // there is no single "current" verdict to print.
-    rating: compareMode ? null : (currentRating ?? null),
-    isZooming,
-    zoomLevel,
-    scrubbing,
-    scrubSpeed,
-    compareMode,
-    comparePos: challengerPos,
-    compareCount: compareCandidates.length,
-  };
-  const statusOverlays: StatusBarOverlays = {
-    visible: !gridVisible,
-    exif: { on: exifVisible, toggle: () => setExifVisible((v) => !v) },
-    clipping: { on: clippingVisible, toggle: () => setClippingVisible((v) => !v) },
-    peaking: { on: peakingVisible, toggle: () => setPeakingVisible((v) => !v) },
-    composition: { on: compositionVisible, toggle: () => setCompositionVisible((v) => !v) },
-    thumbs: { on: thumbsVisible, toggle: () => setThumbsVisible((v) => !v) },
-  };
-  const statusSelection: StatusBarSelection = {
-    gridVisible,
-    selectedCount: selectedIndices.size,
-  };
-  const statusSave: StatusBarSave = { savingCount, failedCount, retryFailed };
-  const statusFilter: StatusBarFilter = {
-    filter,
-    setFilter,
-    stats,
-    qualityAnalyzing,
-    qualityProgress,
-    smartCulling: settings.smartCulling,
-    startAnalysis,
-    suggestionCount: liveSuggestionCount,
-    chipsTooltip,
-    positionInFilter,
-    visibleCount: visibleIndices.length,
-  };
-  const statusSession: StatusBarSession = {
-    openActions: () => setActionsOpen(true),
-    actionsOpen,
-    rejectedCount: rejectedPaths.length,
-    keyhint: modGlyph,
-  };
+  // in all three culling views. Its six prop groups are memoized above the
+  // phase early return, so re-creating this element is free: StatusBar's `memo`
+  // bails whenever none of the groups actually changed.
   const bottomStatusBar = (
     <StatusBar
       frame={statusFrame}
