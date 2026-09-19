@@ -113,9 +113,9 @@ the `<Profiler>` that wraps `<App>` in `main.tsx`:
 | `derive` | Full `burstData` re-derivations (`useSmartDerivations`) |
 | `…s` | Seconds since `renderMeter.reset()`, i.e. since begin culling |
 
-Two caveats before quoting a number. React strips Profiler timing from
-production bundles, so `Σ` and `max` read 0 in a release build — measure in a
-dev build. And the counters start climbing the moment the session starts, so
+Two caveats before quoting a number. React's production build never calls
+the Profiler, so `commits`, `Σ` and `max` all read 0 in a release build (only
+`derive` and the seconds survive) — measure in a dev build. And the counters start climbing the moment the session starts, so
 read them only once the session has settled: the `cache … thumb` figure two
 rows down equalling the folder's frame count is the signal that background
 thumb fill is finished and nothing is still committing behind your back.
