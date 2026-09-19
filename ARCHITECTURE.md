@@ -180,10 +180,31 @@ through functional setState off its live value (`utils/pruneSession.ts`) —
 this runs after an await, so a closure value could otherwise be stale. The
 undo/redo history loses the moved frames' changes, and `imageStore.forget()`
 revokes their blobs without a generation bump so the mounted panes keep their
-registrations. The session's recents entry is not written immediately from
-that same closure; it's refreshed by the debounced effect that already
-watches `images`/`ratings` while culling. The staged-set identity changes, so
-smart-culling scores restart for the remaining unrated frames.
+registrations; `overlayService.forget()` drops their cached overlays the same
+way. The session's recents entry is not written immediately from that same
+closure; it's refreshed by the debounced effect that already watches
+`images`/`ratings` while culling.
+
+A prune is not a new session. `isPrunedSubset` (`smart/sessionIdentity.ts`)
+recognises the shorter array as the same staged set — matching by id AND path,
+since ids restart at 0 per folder and a different folder must never pass — so
+smart-culling keeps the survivors' scores and the pass stays latched instead
+of re-inferring the whole remaining shoot. A pass dispatched before the prune
+still lands: its scores map back through the frozen dispatch array and are
+inserted only for ids still live, so a frame moved mid-pass leaves no ghost
+entry behind. Reads already in flight for a moved path are dropped when they
+land — success and error alike — by the store's `forgotten` tombstones: the
+blob is revoked, nothing is cached, no failure is recorded and no retry is
+scheduled, so a moved file can neither re-create a record nor have its "not
+found" mistaken for a missing backend command that dormants a whole tier.
+
+Two consequences of treating a prune as the same session are deliberate. A
+main pass that landed ZERO scores (drive hiccup, every chunk skipped) is
+retryable — but a Move carries the latch onto the survivors rather than
+re-opening the auto-start, so after a prune only the manual `4` / Smart tab
+start re-runs it. And the catch-up pass's `attempted` set survives the prune,
+so a frame whose catch-up attempt already failed gets no second shot within
+the session.
 
 The analyze pass reports what it could not read — parent folders that failed
 to list, sidecars that exist but failed to read — on `AnalyzeResult`; the

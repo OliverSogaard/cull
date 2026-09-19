@@ -31,6 +31,13 @@ const CATCHUP_DEBOUNCE_MS = 800;
  * suggestions where they matter without re-reading thousands of decided
  * frames. Frames unrated afterwards are swept up by a debounced catch-up
  * pass; frames scored before being rated keep their score for free.
+ *
+ * Two consequences of carrying the latch across a prune are deliberate:
+ * - a main pass that landed ZERO scores stays retryable, but a Move moves its
+ *   latch onto the survivors rather than re-opening the auto-start — after a
+ *   prune only the manual `4` / Smart tab start re-runs it;
+ * - `attemptedRef` survives a prune, so a frame whose catch-up attempt already
+ *   failed gets no second shot within the session.
  */
 export function useSmartCulling(opts: {
   enabled: boolean;
@@ -124,8 +131,9 @@ export function useSmartCulling(opts: {
           isBusyLoading: () => imageStore.isBusyLoading(),
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
           onChunkFailed: (chunkStart, message) => {
-            // Diagnostics ride the same flag as the dev HUD — never console
-            // noise in normal use, one line per skipped chunk when debugging.
+            // Diagnostics follow the dev HUD's localStorage switch ONLY (not
+            // the build-time VITE_CULL_DEVHUD one) — never console noise in
+            // normal use, one line per skipped chunk when debugging.
             if (localStorage.getItem("cull:devhud") === "1") {
               // eslint-disable-next-line no-console
               console.debug(`[cull] analyze chunk @${chunkStart} skipped: ${message}`);
