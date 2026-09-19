@@ -1697,8 +1697,12 @@ describe("imageStore — reads in flight for a forgotten path", () => {
     vi.useRealTimers();
   });
 
-  /** A one-path session with every read deferred and the metadata flush manual. */
-  async function stagedStore() {
+  /** The frame that survives the prune in the tests that need one. */
+  const SURVIVOR = "/t/b.cr3";
+
+  /** A session with every read deferred and the metadata flush manual.
+   *  One path unless a test needs a survivor to check the tier on. */
+  async function stagedStore(paths: string[] = [PATH]) {
     const deferreds = deferredInvoke(vi.mocked(invoke));
     const { scheduler, flushWindow } = manualScheduler();
     const Store = await getStoreClass();
@@ -1707,7 +1711,7 @@ describe("imageStore — reads in flight for a forgotten path", () => {
     store.setMetaSink(sink);
     // Network profile: no local mid-generation sweep firing extra reads.
     store.setProfile(PERFORMANCE_PROFILES.network);
-    store.reset([PATH]);
+    store.reset(paths);
     return { store, sink, flushWindow, deferreds };
   }
 
@@ -1807,6 +1811,24 @@ describe("imageStore — reads in flight for a forgotten path", () => {
 
     expect(readsOf("read_preview")).toBe(1);
     expect(store.snapshot(PATH).error).toBeUndefined();
+    expect(store.debugStats().counts.errors).toBe(0);
+  });
+
+  it("drops a mid ERROR landing: a moved file's 'not found' never dormants the tier", async () => {
+    const { store, deferreds } = await stagedStore([PATH, SURVIVOR]);
+    store.setNeedPxProvider(() => 1860); // 4K-class stage — the mid tier engages
+    store.maybeRequestMid(PATH);
+    expect(readsOf("read_mid")).toBe(1);
+
+    store.forget(new Set([PATH]));
+    // What a moved file's mid read really reports. Untombstoned, "not found"
+    // reads as "this backend has no read_mid" and latches midUnsupported —
+    // one Move would leave every survivor on preview for the session.
+    deferreds[0].reject(new Error("read_mid failed: not found"));
+    await flush();
+
+    store.maybeRequestMid(SURVIVOR);
+    expect(readsOf("read_mid")).toBe(2); // the tier is still live
     expect(store.debugStats().counts.errors).toBe(0);
   });
 
