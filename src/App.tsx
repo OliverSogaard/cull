@@ -48,7 +48,6 @@ import {
 import { ThumbStrip } from "./components/ThumbStrip";
 import { useChipsTooltipVisibility } from "./hooks/useChipsTooltipVisibility";
 import { WindowControls } from "./components/WindowControls";
-import { DevHud } from "./components/DevHud";
 import { PhotoPane } from "./components/pane/PhotoPane";
 import { zoomTransition } from "./components/pane/zoomTransition";
 
@@ -343,14 +342,6 @@ export default function App() {
   // the WebContent process sheds BEFORE jetsam kills it (the proven gray-
   // window crash: 2.25 GB lifetimeMax at the 2026-07-06 jetsam event).
   const [memPressure, setMemPressure] = useState<PressureLevel>("normal");
-  // Dev HUD flag, read once at mount: localStorage["cull:devhud"]="1" + reload.
-  const [devHudOn] = useState(() => {
-    try {
-      return localStorage.getItem("cull:devhud") === "1";
-    } catch {
-      return false;
-    }
-  });
   const visibleIndices = useMemo(() => {
     // The whole "suggested" family resolves against the live suggestions
     // map: frames with a suggestion that are STILL unrated (rating a frame
@@ -1718,7 +1709,6 @@ export default function App() {
   return (
     <main className="cull-app" data-thumbs-pos={settings.thumbsPosition}>
       {quitGuardOverlay}
-      {devHudOn && <DevHud />}
       <WindowControls onSettings={() => setSettingsOpen(true)} />
       {/* Top chrome / title bar — brand block + view name + save status pill.
           Top-right chrome (settings · minimize · close) is fixed by

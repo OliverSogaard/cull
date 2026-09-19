@@ -31,6 +31,7 @@ import { imageStore } from "../image/imageStore";
 import { overlayService } from "../overlays/overlayService";
 import { omitIds, pruneGone, pruneHistory, remapNavStack } from "../utils/pruneSession";
 import { summarizeAnalyzeWarnings, type AnalyzeWarning } from "../utils/analyzeWarnings";
+import { renderMeter } from "../utils/renderMeter";
 import { writeLocalStorage } from "../utils/storage";
 
 /**
@@ -474,6 +475,7 @@ export function useSessionLifecycle({
       // full-res blobs, keep thumbs, and kick off background thumb fill in
       // cursor-outward / grid-viewport order. Same array we just set.
       imageStore.reset(sorted.map((im) => im.path));
+      renderMeter.reset();
       // Same-session folder switch: drop overlays computed for the previous
       // set (resetSession isn't on this path; the store generation just moved).
       overlayService.reset();

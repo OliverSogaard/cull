@@ -1,7 +1,10 @@
+import { Profiler } from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
+import { DevHud } from "./components/DevHud";
 import { isMac } from "./utils/platform";
+import { renderMeter } from "./utils/renderMeter";
 
 // Let CSS branch per platform (e.g. traffic-light padding on macOS).
 document.documentElement.dataset.platform = isMac ? "mac" : "win";
@@ -58,7 +61,31 @@ window.addEventListener("unhandledrejection", (e) => {
   reportFatal(r instanceof Error ? `${r.message}\n${r.stack ?? ""}` : String(r));
 });
 
+// Dev HUD flag: VITE_CULL_DEVHUD=1 enables it without devtools (undefined in
+// release builds); localStorage["cull:devhud"]="1" + reload works too.
+const devHudOn = (() => {
+  if (import.meta.env.VITE_CULL_DEVHUD === "1") return true;
+  try {
+    return localStorage.getItem("cull:devhud") === "1";
+  } catch {
+    return false;
+  }
+})();
+
 // No StrictMode: this app's effects fire native CR3 reads over IPC and create
 // (and revoke) blob URLs. StrictMode's dev-only double-invoke would double those
 // side effects, muddying latency logs. Keep dev behavior == prod behavior.
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<App />);
+// The HUD renders OUTSIDE the profiled <App> tree so its own 500ms poll
+// commits are not counted toward the render meter.
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  devHudOn ? (
+    <>
+      <Profiler id="app" onRender={(_id, _phase, actualMs) => renderMeter.record(actualMs)}>
+        <App />
+      </Profiler>
+      <DevHud />
+    </>
+  ) : (
+    <App />
+  ),
+);

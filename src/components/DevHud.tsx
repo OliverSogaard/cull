@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { imageStore } from "../image/imageStore";
+import { renderMeter } from "../utils/renderMeter";
 
 /**
  * Dev-only performance HUD (docs/history/IMAGE_PIPELINE_PLAN.md Phase 3): per-nav fetch
@@ -11,14 +12,22 @@ import { imageStore } from "../image/imageStore";
  */
 export function DevHud() {
   const [stats, setStats] = useState(() => imageStore.debugStats());
+  const [meter, setMeter] = useState(() => renderMeter.snapshot());
   useEffect(() => {
-    const id = window.setInterval(() => setStats(imageStore.debugStats()), 500);
+    const id = window.setInterval(() => {
+      setStats(imageStore.debugStats());
+      setMeter(renderMeter.snapshot());
+    }, 500);
     return () => window.clearInterval(id);
   }, []);
   return (
     <div className="cull-devhud" aria-hidden>
       <div className="cull-devhud__row cull-devhud__row--head">
         nav avg {stats.navMsAvg}ms · ~{stats.decodedMB}MB decoded
+      </div>
+      <div className="cull-devhud__row">
+        react&nbsp; commits {meter.commits} · Σ {meter.totalMs}ms · max {meter.maxMs}ms · derive{" "}
+        {meter.derives} · {meter.elapsedS}s
       </div>
       <div className="cull-devhud__row">
         lanes&nbsp; prvw {stats.lanes.preview} · zoom {stats.lanes.zoom} · thumb {stats.lanes.thumb}{" "}
