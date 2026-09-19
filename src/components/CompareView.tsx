@@ -16,9 +16,13 @@ import { PhotoPane } from "./pane/PhotoPane";
  * of the frame. Each panel's PhotoPane computes its own 1:1 scale from its
  * native sensor dims over its measured rect, so 1:1 means "one image pixel
  * per screen pixel" even though the two panels may be different sizes.
+ *
+ * `memo`: App re-renders on churn this view does not care about (cursor moves,
+ * save-pill ticks); every prop it takes is identity-stable, so those stop here
+ * instead of walking both panes.
  */
 
-export function CompareView({
+export const CompareView = memo(function CompareView({
   images,
   championIndex,
   challengerIndex,
@@ -134,7 +138,7 @@ export function CompareView({
       </div>
     </div>
   );
-}
+});
 
 const ComparePanel = memo(function ComparePanel({
   role,
