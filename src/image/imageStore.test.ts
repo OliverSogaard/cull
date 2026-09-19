@@ -1684,10 +1684,18 @@ describe("imageStore — metadata batching", () => {
 // for it still matched the lane's generation and LANDED: it re-created the
 // tier record (a stray blob waiting for the next eviction sweep) and pushed the
 // moved path's metadata back into React. Each landing site now checks the
-// tombstone set and drops the arrival the way a stale generation does.
+// tombstone set and drops the arrival the way a stale generation does — on the
+// SUCCESS path and, since the moved file is gone, on the ERROR path too (which
+// is the likelier landing: the read ends in ENOENT).
 // ─────────────────────────────────────────────────────────────────────────────
 describe("imageStore — reads in flight for a forgotten path", () => {
   const PATH = "/t/a.cr3";
+
+  // The error-landing tests drive the retry backoff, so they run on fake
+  // timers; restore real ones whatever the test did.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   /** A one-path session with every read deferred and the metadata flush manual. */
   async function stagedStore() {
@@ -1702,6 +1710,11 @@ describe("imageStore — reads in flight for a forgotten path", () => {
     store.reset([PATH]);
     return { store, sink, frame, deferreds };
   }
+
+  /** Backend reads of one command issued so far — a re-read of a moved file
+   *  is the harm the error-landing tombstone prevents. */
+  const readsOf = (cmd: string) =>
+    vi.mocked(invoke).mock.calls.filter((c) => c[0] === cmd).length;
 
   it("drops a thumb landing: blob revoked, no cache entry, no metadata delivery", async () => {
     const { store, sink, frame, deferreds } = await stagedStore();
@@ -1760,6 +1773,69 @@ describe("imageStore — reads in flight for a forgotten path", () => {
 
     expect(liveUrls.size).toBe(0);
     expect(store.snapshot(PATH).mid).toBeUndefined();
+  });
+
+  it("drops a thumb ERROR landing: no failure recorded, no bg re-queue, no re-read", async () => {
+    vi.useFakeTimers();
+    const { store, deferreds } = await stagedStore();
+    const trouble = vi.fn();
+    store.setTroubleSink(trouble);
+    store.requestThumbFor(PATH);
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].reject(new Error("ENOENT: no such file or directory"));
+    await flush();
+    // Long past the 1 s first backoff: the bg retry would re-read a file the
+    // Move already took away.
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(readsOf("extract_thumbnail")).toBe(1);
+    expect(store.debugStats().counts.errors).toBe(0);
+    expect(trouble).not.toHaveBeenCalled();
+  });
+
+  it("drops a nav ERROR landing: no error state, no scheduled retry, no re-read", async () => {
+    vi.useFakeTimers();
+    const { store, deferreds } = await stagedStore();
+    store.registerWantFull(PATH); // the wantFull that scheduleFullRetry checks
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].reject(new Error("ENOENT: no such file or directory"));
+    await flush();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(readsOf("read_preview")).toBe(1);
+    expect(store.snapshot(PATH).error).toBeUndefined();
+    expect(store.debugStats().counts.errors).toBe(0);
+  });
+
+  it("a whole rejected batch failing at once never latches the folder-unreachable chip", async () => {
+    vi.useFakeTimers();
+    const deferreds = deferredInvoke(vi.mocked(invoke));
+    const Store = await getStoreClass();
+    const store = new Store();
+    const trouble = vi.fn();
+    store.setTroubleSink(trouble);
+    // 4 distinct paths — exactly the folder-trouble threshold, i.e. an
+    // ordinary "Move rejects" of four frames.
+    const paths = Array.from({ length: 4 }, (_, i) => `/t/r${i}.cr3`);
+    store.reset(paths);
+    for (const p of paths) store.requestThumbFor(p);
+
+    store.forget(new Set(paths));
+    // Reject every attempt the backoff schedule makes, the way a moved file
+    // really would, until the store stops asking (bounded so a regression
+    // can't spin here).
+    for (let round = 0; round < 12 && deferreds.length > 0; round++) {
+      for (const d of deferreds.splice(0)) d.reject(new Error("ENOENT"));
+      await flush();
+      await vi.advanceTimersByTimeAsync(40_000); // past the 30 s backoff cap
+    }
+
+    expect(trouble).not.toHaveBeenCalled();
+    expect(store.debugStats().counts.errors).toBe(0);
   });
 
   it("reset() clears the tombstones — a re-staged path loads normally again", async () => {

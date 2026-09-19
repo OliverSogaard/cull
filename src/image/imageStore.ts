@@ -237,7 +237,8 @@ export class ImageStore {
   /** Paths removed by forget() this session — the OTHER cancellation channel.
    *  forget() deliberately does not bump the generation, so a read already in
    *  flight for a gone path still passes its landing site's generation check;
-   *  these tombstones are what stops it re-creating the path's records.
+   *  these tombstones are what stops it re-creating the path's records, on the
+   *  success AND the error landing of all four tiers.
    *  Cleared by reset()/hardReset(). */
   private forgotten = new Set<string>();
   // ── Session generation counter (cancellation) ─────────────────────────
@@ -553,6 +554,7 @@ export class ImageStore {
     // already landed is never re-fetched — dropping its pending delivery would
     // lose that frame's phash for the rest of the session (hardReset, which
     // revokes the thumbs too, does clear it).
+
     // A re-stage re-admits every path it lists, so the prune tombstones die
     // with the session that created them.
     this.forgotten.clear();
@@ -635,8 +637,10 @@ export class ImageStore {
    * the mounted loupe/compare consumers — whose paths did not change — would
    * never re-register). Gone paths have their blobs revoked and every
    * per-path record removed. A read still in flight for a gone path is
-   * DROPPED when it lands — its blob revoked, no record re-created — by the
-   * tombstones below; it is never swept later.
+   * DROPPED when it lands, on BOTH landings — a success revokes its blob and
+   * caches nothing, an error (the likely one: the file is gone) records no
+   * failure and schedules no retry — so no record is ever re-created and
+   * nothing is left for a later sweep.
    */
   forget(gone: ReadonlySet<string>): void {
     if (gone.size === 0) return;
@@ -1130,16 +1134,23 @@ export class ImageStore {
       // so the path CAN re-arm (backoff expiry, folder revisit, manual retry),
       // and re-join the bg sweep, which skips it until nextRetryAt. Terminal
       // after MAX_TIER_ATTEMPTS. Only act for the current generation.
-      if (this.generation === gen) {
-        const msg = e instanceof Error ? e.message : String(e);
-        const te = this.noteTierError(this.thumbErrors, path, msg);
-        this.requestedThumb.delete(path);
-        if (te.attempts < MAX_TIER_ATTEMPTS && !this.trouble.isTroubled) {
-          if (!this.bgLane.queue.includes(path)) this.bgLane.queue.push(path);
-          setTimeout(() => {
-            if (this.generation === gen && !this.trouble.isTroubled) this.bgLane.pump();
-          }, backoffMs(te.attempts));
-        }
+      if (this.generation !== gen) return;
+      // …and only for a path still IN the session. A moved file's read ends in
+      // ENOENT, so this is the landing it usually reaches: recording the
+      // failure would re-create the error state dropPath() just cleared AND
+      // re-queue real reads of a file that is gone — four of those go terminal
+      // and falsely latch the "folder unreachable" chip after an ordinary
+      // Move rejects. Nothing is left dangling: dropPath already removed the
+      // request marker and the error entry this branch would otherwise touch.
+      if (this.forgotten.has(path)) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      const te = this.noteTierError(this.thumbErrors, path, msg);
+      this.requestedThumb.delete(path);
+      if (te.attempts < MAX_TIER_ATTEMPTS && !this.trouble.isTroubled) {
+        if (!this.bgLane.queue.includes(path)) this.bgLane.queue.push(path);
+        setTimeout(() => {
+          if (this.generation === gen && !this.trouble.isTroubled) this.bgLane.pump();
+        }, backoffMs(te.attempts));
       }
     }
   }
@@ -1264,6 +1275,11 @@ export class ImageStore {
       this.refreshPool();
     } catch (e) {
       if (this.generation !== gen) return;
+      // Forgotten mid-flight: the error state, the fullErrors entry and
+      // scheduleFullRetry below would all resurrect a moved frame (its
+      // wantFull refcount survives forget(), so the retry WOULD fire).
+      // dropPath already cleared the markers this branch deletes.
+      if (this.forgotten.has(path)) return;
       const msg = e instanceof Error ? e.message : String(e);
       this.fulls.set(path, { status: "error", error: msg });
       // Phase 1 retry model (P6): clear the request marker so the path CAN
@@ -1370,6 +1386,9 @@ export class ImageStore {
       if (this.evaluateMidEngaged()) this.scheduleMidReprobe(path, gen);
     } catch (e) {
       if (this.generation !== gen) return;
+      // Forgotten mid-flight — dropPath already deleted requestedZoom and the
+      // zoomFulls entry this branch would rewrite as an error.
+      if (this.forgotten.has(path)) return;
       const msg = e instanceof Error ? e.message : String(e);
       this.requestedZoom.delete(path);
       if (/^cancelled$/i.test(msg)) {
@@ -1479,6 +1498,12 @@ export class ImageStore {
       this.midLane.evictAround(this.cursor);
     } catch (e) {
       if (this.generation !== gen) return;
+      // Forgotten mid-flight — dropPath already deleted requestedMid, the mids
+      // entry, midUncached and midReprobed. Skipping also spares the
+      // midUnsupported latch a false positive: a moved file's ENOENT can read
+      // as "not found" and would otherwise dormant the whole tier for the
+      // session.
+      if (this.forgotten.has(path)) return;
       const msg = e instanceof Error ? e.message : String(e);
       this.requestedMid.delete(path);
       this.mids.delete(path);
