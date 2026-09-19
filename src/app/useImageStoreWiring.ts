@@ -105,7 +105,8 @@ export function useImageStoreWiring({
   // bundle no longer reads the sidecar per navigation; phash: only the thumb
   // path ever computes it, so a later preview/full read with phash: null
   // must not wipe the standing near-duplicate signal Similar groups chain on).
-  // Deliveries arrive batched per animation frame — see MetaBatcher.
+  // Deliveries arrive batched, at most one per 100 ms — see MetaBatcher, which
+  // explains why that window is a fixed time and not an animation frame.
   useEffect(() => {
     imageStore.setMetaSink((batch) => {
       setMetadata((m) => applyMetaBatch(m, batch));

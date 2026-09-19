@@ -1613,21 +1613,21 @@ describe("forget (frames that left the session after Move rejects)", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Metadata batching (Phase 2 Optimize, Task 2). Every landed thumb used to hand
-// React its own delivery; the store now coalesces a frame's worth into one sink
-// call. These build their OWN ImageStore with a manual frame scheduler so the
-// flush is driven by hand — the singleton-based tests above are untouched.
+// React its own delivery; the store now coalesces a 100 ms window's worth into one
+// sink call. These build their OWN ImageStore with a manual flush scheduler so
+// the window closes on demand — the singleton-based tests above are untouched.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("imageStore — metadata batching", () => {
-  /** Two paths whose thumbs land with metadata, with the frame not yet run. */
+  /** Two paths whose thumbs land with metadata, the flush window still open. */
   async function twoLandedThumbs() {
     vi.mocked(invoke).mockImplementation((cmd) =>
       cmd === "extract_thumbnail"
         ? Promise.resolve(makeThumbnailBuf(800, 600, { iso: 100 }))
         : Promise.resolve(new ArrayBuffer(0)),
     );
-    const { scheduler, frame } = manualScheduler();
+    const { scheduler, flushWindow } = manualScheduler();
     const Store = await getStoreClass();
-    const store = new Store({ frameScheduler: scheduler });
+    const store = new Store({ flushScheduler: scheduler });
     const sink = makeSink();
     store.setMetaSink(sink);
     const paths = ["/m/a.cr3", "/m/b.cr3"];
@@ -1635,43 +1635,43 @@ describe("imageStore — metadata batching", () => {
     for (const p of paths) store.requestThumbFor(p);
     await vi.waitUntil(() => paths.every((p) => store.snapshot(p).stage === "thumb"));
     await flush();
-    return { store, sink, frame, paths };
+    return { store, sink, flushWindow, paths };
   }
 
-  it("coalesces two thumb landings into one sink call, only once the frame runs", async () => {
-    const { sink, frame, paths } = await twoLandedThumbs();
+  it("coalesces two thumb landings into one sink call, only once the window closes", async () => {
+    const { sink, flushWindow, paths } = await twoLandedThumbs();
 
     expect(sink).not.toHaveBeenCalled();
-    frame();
+    flushWindow();
 
     expect(sink).toHaveBeenCalledTimes(1);
     expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
   });
 
   it("hardReset drops the pending batch — the sink never sees the old session", async () => {
-    const { store, sink, frame } = await twoLandedThumbs();
+    const { store, sink, flushWindow } = await twoLandedThumbs();
 
     store.hardReset();
-    frame();
+    flushWindow();
 
     expect(sink).not.toHaveBeenCalled();
   });
 
   it("forget drops the pending delivery for a path that left the session", async () => {
-    const { store, sink, frame, paths } = await twoLandedThumbs();
+    const { store, sink, flushWindow, paths } = await twoLandedThumbs();
 
     store.forget(new Set([paths[0]]));
-    frame();
+    flushWindow();
 
     expect(sink).toHaveBeenCalledTimes(1);
     expect([...sink.mock.calls[0][0].keys()]).toEqual([paths[1]]);
   });
 
   it("reset KEEPS the pending batch — thumbs survive it, so their metadata must too", async () => {
-    const { store, sink, frame, paths } = await twoLandedThumbs();
+    const { store, sink, flushWindow, paths } = await twoLandedThumbs();
 
     store.reset(paths);
-    frame();
+    flushWindow();
 
     expect(sink).toHaveBeenCalledTimes(1);
     expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
@@ -1700,15 +1700,15 @@ describe("imageStore — reads in flight for a forgotten path", () => {
   /** A one-path session with every read deferred and the metadata flush manual. */
   async function stagedStore() {
     const deferreds = deferredInvoke(vi.mocked(invoke));
-    const { scheduler, frame } = manualScheduler();
+    const { scheduler, flushWindow } = manualScheduler();
     const Store = await getStoreClass();
-    const store = new Store({ frameScheduler: scheduler });
+    const store = new Store({ flushScheduler: scheduler });
     const sink = makeSink();
     store.setMetaSink(sink);
     // Network profile: no local mid-generation sweep firing extra reads.
     store.setProfile(PERFORMANCE_PROFILES.network);
     store.reset([PATH]);
-    return { store, sink, frame, deferreds };
+    return { store, sink, flushWindow, deferreds };
   }
 
   /** Backend reads of one command issued so far — a re-read of a moved file
@@ -1716,7 +1716,7 @@ describe("imageStore — reads in flight for a forgotten path", () => {
   const readsOf = (cmd: string) => vi.mocked(invoke).mock.calls.filter((c) => c[0] === cmd).length;
 
   it("drops a thumb landing: blob revoked, no cache entry, no metadata delivery", async () => {
-    const { store, sink, frame, deferreds } = await stagedStore();
+    const { store, sink, flushWindow, deferreds } = await stagedStore();
     store.requestThumbFor(PATH);
     expect(deferreds).toHaveLength(1); // the read is in flight
 
@@ -1727,12 +1727,12 @@ describe("imageStore — reads in flight for a forgotten path", () => {
     expect(liveUrls.size).toBe(0); // the freshly created blob was revoked
     expect(store.debugStats().caches.thumbs).toBe(0);
     expect(store.snapshot(PATH).thumbUrl).toBeUndefined();
-    frame();
+    flushWindow();
     expect(sink).not.toHaveBeenCalled();
   });
 
   it("drops a nav landing: preview blob revoked, no cache entry, no metadata delivery", async () => {
-    const { store, sink, frame, deferreds } = await stagedStore();
+    const { store, sink, flushWindow, deferreds } = await stagedStore();
     store.registerWantFull(PATH);
     expect(deferreds).toHaveLength(1);
 
@@ -1743,7 +1743,7 @@ describe("imageStore — reads in flight for a forgotten path", () => {
     expect(liveUrls.size).toBe(0);
     expect(store.debugStats().caches.previews).toBe(0);
     expect(store.snapshot(PATH).url).toBeUndefined();
-    frame();
+    flushWindow();
     expect(sink).not.toHaveBeenCalled();
   });
 

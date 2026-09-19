@@ -32,8 +32,8 @@ export function mergeMeta(prev: ImageMetadata | undefined, incoming: ImageMetada
   return merged;
 }
 
-/** Applies one frame's worth of deliveries (see MetaBatcher) to the metadata
- *  map: one clone per frame instead of one per image. */
+/** Applies one flush window's worth of deliveries (see MetaBatcher) to the
+ *  metadata map: one clone per 100 ms window instead of one per image. */
 export function applyMetaBatch(
   prev: Record<string, ImageMetadata>,
   batch: ReadonlyMap<string, ImageMetadata>,

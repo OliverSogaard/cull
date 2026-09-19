@@ -64,7 +64,7 @@ import {
 } from "./tierErrors";
 import { MidSweep } from "./midSweep";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
-import { MetaBatcher, type FrameScheduler, type MetaBatchSink } from "./metaBatcher";
+import { MetaBatcher, type FlushScheduler, type MetaBatchSink } from "./metaBatcher";
 import type { ImageDims } from "../utils/bundle";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -89,8 +89,9 @@ export type ImageStoreOptions = {
   /** Decode-ahead pool element factory (Phase 5) — tests inject fakes; the
    *  default uses `new Image()` and disables the pool when no DOM exists. */
   poolImageFactory?: () => PoolImage;
-  /** Frame scheduler for the metadata batcher (tests inject a manual one). */
-  frameScheduler?: FrameScheduler;
+  /** Flush-window scheduler for the metadata batcher (tests inject a manual
+   *  one so the window closes on demand). */
+  flushScheduler?: FlushScheduler;
 };
 
 // ── ImageStore ─────────────────────────────────────────────────────────────
@@ -252,10 +253,11 @@ export class ImageStore {
   // ── Metadata sink ──────────────────────────────────────────────────────
   // The full-res bundle read also returns the image's EXIF metadata (camera /
   // lens / AF point / pixel dims). The store doesn't own metadata state — it
-  // hands each freshly-read `meta` to the batcher, which coalesces a frame's
-  // worth of deliveries into ONE sink call so App can merge them into its
-  // `metadata` map (consumed by the EXIF rail, AF-point zoom origin, and the
-  // status-bar MP) with one clone per frame. Sink set via `setMetaSink`.
+  // hands each freshly-read `meta` to the batcher, which coalesces a
+  // META_FLUSH_MS window's worth of deliveries into ONE sink call so App can
+  // merge them into its `metadata` map (consumed by the EXIF rail, AF-point
+  // zoom origin, and the status-bar MP) with one clone per window. Sink set
+  // via `setMetaSink`.
   private readonly metaBatcher: MetaBatcher;
   // ── Tunables ─────────────────────────────────────────────────────────────
   private readonly thumbLruCap: number;
@@ -420,7 +422,7 @@ export class ImageStore {
     const poolFactory =
       opts.poolImageFactory ?? (typeof Image !== "undefined" ? () => new Image() : undefined);
     this.pool = poolFactory ? new DecodePool(poolFactory) : null;
-    this.metaBatcher = new MetaBatcher(opts.frameScheduler);
+    this.metaBatcher = new MetaBatcher(opts.flushScheduler);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────
@@ -523,9 +525,10 @@ export class ImageStore {
   }
 
   /**
-   * Register the metadata sink. The store calls it once per animation frame
-   * with every path whose thumb / full-res bundle read yielded EXIF metadata
-   * in that frame. App uses this to keep its `metadata` map fed.
+   * Register the metadata sink. The store calls it at most once per
+   * META_FLUSH_MS window, with every path whose thumb / full-res bundle read
+   * yielded EXIF metadata during it. App uses this to keep its `metadata` map
+   * fed.
    */
   setMetaSink(sink: MetaBatchSink | undefined): void {
     this.metaBatcher.setSink(sink);
