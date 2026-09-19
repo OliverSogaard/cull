@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Branch `phase-2-optimize`, cut from `phase-1-clean` @ `107dd46`. Line numbers below are as of that commit; if they drifted, the symbol names win.
-- Behaviour is unchanged except: metadata reaches React up to one animation frame later; a Move no longer resets smart-culling scores.
+- Behaviour is unchanged except: metadata reaches React up to 100 ms later (written as "one animation frame" until the measurement re-ruled it; see the implementation note); a Move no longer resets smart-culling scores.
 - No Rust changes. No new runtime dependencies. No `console.log`.
 - Commits: conventional (`perf:`, `feat:`, `test:`, `refactor:`, `docs:`), **no attribution trailers**, and always pathspec form: `git commit -m "…" -- <files>`. Never `git add -A`, never a bare `git commit`.
 - The repo's prettier hook may leave working-tree changes after a commit: content → a follow-up `style:` commit; line-endings only (empty `git diff`) → `git add <file>` to refresh.
@@ -724,3 +724,48 @@ Not a subagent task. Only while the PC is idle (check `GetLastInputInfo` ≥ 10 
 - `MidSweep.pick()` resumable pointer — load-bounded, idle-only, no measured cost; touching the read pipeline for it is not justified.
 - `withChanges(ratings, changes)` and replacing the decide tests' line citations with symbol names — Phase 4 (tests), where those files are opened anyway.
 - The class ↔ rule census — Phase 3, with the rest of the CSS work.
+
+---
+
+## Implementation note (2026-09-19)
+
+Executed with subagent-driven development: a fresh implementer and a fresh reviewer per task, a pre-flight fact-check of this plan against the code (4 blockers and 3 should-fixes corrected before Task 1), fix rounds on Tasks 2 and 3, and a whole-branch review on the strongest model followed by one fix wave.
+
+### Measured result
+
+2,726-frame shoot (2026-04-20), hard-linked scratch copy, dev build, dev HUD `react` row, read when `cache … thumb` reached 2,726. Display: 3840×2160 @ 240 Hz. No rating key was sent at any point.
+
+| At t = 10 s after "begin culling" | Before (Task 1 only) | Per-frame batching | 100 ms window (shipped) |
+|---|---|---|---|
+| React commits | 1,833 | 1,550 | **97** |
+| Render time, Σ | 2,857 ms | 1,891 ms | **166 ms** |
+| Slowest commit | 9.8 ms | 9.7 ms | 9.6 ms |
+| `burstData` re-derivations | 1,226 | 1,009 | **34** |
+| Thumbs loaded at t = 5 s | 2,028 | 2,395 | **2,726 (all)** |
+| Nav read average (HUD) | 72 ms | 44 ms | 34 ms |
+
+A second before-run reproduced the first (1,877 commits / 3,236 ms / 1,255 derivations at t = 30 s). "Derives" counts `burstData` recomputations only. Evidence screenshots: `~/.claude/plans/cull-audit-2026-09-13/phase-2-shots/`.
+
+**The plan was wrong about the clock.** The audit's sketch and this plan batched per `requestAnimationFrame`, assuming a 60 Hz frame. On a 240 Hz panel rAF fires every 4.2 ms while thumbnails land at roughly 480 per second, so a frame coalesced about two deliveries. The measurement caught it; the flush now runs on a fixed window, `META_FLUSH_MS = 100`, independent of refresh rate. Cost: a just-landed frame's EXIF and badges can appear up to 100 ms later.
+
+### Rulings made during execution
+
+- The batcher lives in `imageStore` (not in `useImageStoreWiring`, as the audit sketched) so `forget()`, `reset()` and `hardReset()` own the pending queue. `reset()` keeps it (thumbs survive `reset()` and are never re-fetched, so dropping a pending delivery would lose that frame's pHash for the session); `hardReset()` clears it; a sink detach keeps it and re-arms when a sink returns.
+- `EMPTY_METADATA` moved to `src/types/image.ts` as the one all-null template; the plan's instruction to copy a test helper contradicted the const's own "one place" comment.
+- Task 3's review found that only success landings were tombstoned. Error landings for a moved file re-queued the read (up to four backend reads of a missing file), recorded errors, and with four or more rejects could latch the "folder unreachable" chip after an ordinary Move. All four tiers now drop both landings; the latch has a regression test.
+- `useFolderTrouble` still resets on `images` identity: after a Move the folder just proved reachable.
+- The zoomed hold-pan memo check was not run by the controller: it needs synthetic zoom and drag input on a frame, and the no-stray-keys rule outweighs a confirmation the prop audit and unit tests already give. It is on Oliver's walk list.
+- Dropped as not worth doing: a stable `scores` identity on a no-op prune (`images` identity changes in the same commit, so derivations re-run anyway).
+
+### Oliver's walk (real verification — no screenshot gate ran beyond the HUD readings)
+
+Open a large folder and begin culling: the strip and grid should fill without hitching and the EXIF rail should populate as before. Zoom into a frame and drag: the filmstrip and footer should stay still. Analyze-progress bar on open: fills left to right as before. After a cull with smart culling on, Move rejects: suggestions and badges on the remaining frames stay, the "analyzing" progress does not restart, and no "folder unreachable" chip appears.
+
+### Left for later phases
+
+- Pre-existing, found by the final review: the first staged frame can lose its LrC star (the begin-culling seed spread lets a thumb delivery's null `lrcRating` win; fold the seed through `mergeMeta`); the `/not found/` test that latches `midUnsupported` can fire from any vanished file.
+- The AF zoom-origin can jump if a frame's first metadata lands mid-zoom (pre-existing; the window is now up to 100 ms). Latch the origin at zoom start if it is ever seen.
+- Request entry points and `rearm()` do not consult the tombstones, so a stale request for a moved path costs one doomed read before it is dropped.
+- `App.tsx` is ~1,980 lines; the status-bar group block extracts cleanly into a `useStatusBarGroups()` hook.
+- Still open from earlier phases: `withChanges` and symbol-name citations in the decide tests (Phase 4); the class ↔ rule census (Phase 3); `MidSweep.pick()` pointer and `setScores` batching only if a measurement ever asks for them.
+- The Phase 0 live check on a scratch copy is still owed before PR #3 merges.
