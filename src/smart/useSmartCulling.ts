@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { imageStore } from "../image/imageStore";
 import { LOCAL_CHUNK, LOCAL_IDLE_MS, NET_CHUNK, NET_IDLE_MS, runAnalysis } from "./analysisDriver";
 import { missingTargets, unratedTargets } from "./analysisTargets";
+import { isPrunedSubset } from "./sessionIdentity";
 import type { ImageScore } from "../types/ipc";
 import type { Img } from "../types/image";
 import type { StorageMode } from "../types/settings";
@@ -17,10 +18,13 @@ const CATCHUP_DEBOUNCE_MS = 800;
 /**
  * The smart-culling driver hook: owns the chunked, gen-guarded, backpressure-
  * aware pass (`runAnalysis` — the tested engine) and the accumulated `scores`
- * keyed by `Img.id`. Restarts fresh when the staged set changes; a folder
- * switch mid-pass dies via the generation guard (frontend drop + backend
- * mid-chunk cancel, both keyed to `imageStore.getGeneration()`, which
- * `begin_session` already pushed to the backend's SessionGate).
+ * keyed by `Img.id`. Restarts fresh when the staged set changes — a prune is
+ * not a change: "Move rejects" hands back the same frames minus the moved
+ * ones, and the survivors keep their scores rather than re-inferring the whole
+ * remaining shoot. A folder switch mid-pass dies via the generation guard
+ * (frontend drop + backend mid-chunk cancel, both keyed to
+ * `imageStore.getGeneration()`, which `begin_session` already pushed to the
+ * backend's SessionGate).
  *
  * The pass starts from where the user has reached: only UNRATED frames are
  * dispatched (rated frames need no suggestion), so a half-culled folder gets
@@ -35,7 +39,8 @@ export function useSmartCulling(opts: {
   active: boolean;
   /** Tier-2 face analysis flag — forwarded to the backend per chunk. */
   ml: boolean;
-  /** The frozen post-beginCulling array — its identity IS the session key. */
+  /** The frozen post-beginCulling array — its identity IS the session key,
+   *  except when the new array is a prune of the old one (Move rejects). */
   images: readonly Img[];
   /** Ids the user has rated — fresh identity per ratings change (drives the
    *  catch-up effect); the initial dispatch reads it at click time only. */
@@ -67,8 +72,32 @@ export function useSmartCulling(opts: {
   const scoresRef = useRef(scores);
   scoresRef.current = scores;
 
-  // A new staged set invalidates everything derived from the old one.
+  /** The previous staged set, to tell a prune from a new session. */
+  const prevImagesRef = useRef<readonly Img[]>(images);
+  /** Ids in the live session — a pass dispatched before a prune must not
+   *  insert scores for frames that have since been moved away. */
+  const liveIdsRef = useRef<ReadonlySet<number>>(new Set());
+
+  // A new staged set invalidates everything derived from the old one — except
+  // a prune (Move rejects): the survivors keep their scores and the pass stays
+  // latched, so a Move never re-runs inference over the whole shoot.
   useEffect(() => {
+    const prev = prevImagesRef.current;
+    prevImagesRef.current = images;
+    const live = new Set(images.map((im) => im.id));
+    liveIdsRef.current = live;
+    if (isPrunedSubset(prev, images)) {
+      setScores((s) => {
+        const out: Record<number, ImageScore> = {};
+        for (const [id, sc] of Object.entries(s)) if (live.has(Number(id))) out[Number(id)] = sc;
+        return out;
+      });
+      // Move the auto-start latch onto the new array so the pass reads as
+      // already run for it (this effect is defined BEFORE the auto-start one,
+      // and effects fire in definition order).
+      if (startedForRef.current === prev) startedForRef.current = images;
+      return;
+    }
     setScores({});
     setProgress(null);
     startedForRef.current = null;
@@ -109,9 +138,11 @@ export function useSmartCulling(opts: {
               for (const s of chunk) {
                 // s.index is absolute within the DISPATCHED array — which is
                 // a filtered subset of the staged set, so the map back to ids
-                // must go through the frozen dispatch, never `images`.
+                // must go through the frozen dispatch, never `images`. A frame
+                // pruned since the dispatch is no longer live: its score would
+                // be a ghost entry no view can reach.
                 const im = dispatched[s.index];
-                if (im) next[im.id] = s;
+                if (im && liveIdsRef.current.has(im.id)) next[im.id] = s;
               }
               return next;
             });
