@@ -131,8 +131,11 @@ describe("useSmartCulling — a prune is not a new session", () => {
     });
     expect(Object.keys(result.current.scores)).toEqual(["0", "1", "2"]);
 
-    // Another folder, ids reused from 0 — nothing carries over.
-    rerender({ images: [img(0, "/shoot/b"), img(1, "/shoot/b"), img(2, "/shoot/b")] });
+    // Another folder, ids reused from 0 — nothing carries over. SHORTER than
+    // the original three on purpose: a same-length array would exit
+    // isPrunedSubset on the length check alone, so only a shorter one proves
+    // the path compare is what rejects the new folder.
+    rerender({ images: [img(0, "/shoot/b"), img(1, "/shoot/b")] });
 
     expect(result.current.scores).toEqual({});
     tick(HEAD_START_MS);
