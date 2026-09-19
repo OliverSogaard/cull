@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { PERFORMANCE_PROFILES } from "../types/settings";
+import type { FrameScheduler, MetaBatch } from "./metaBatcher";
 
 // ── Mock @tauri-apps/api/core before importing imageStore ──────────────────
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -53,9 +54,14 @@ afterEach(() => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Build a minimal ArrayBuffer that fetchThumbnail parses: u32 LE header-len,
- *  JSON header, then `jpegLen` bytes of fake JPEG. */
-function makeThumbnailBuf(w: number, h: number): ArrayBuffer {
-  const header = JSON.stringify({ width: w, height: h, jpegLen: 3 });
+ *  JSON header, then `jpegLen` bytes of fake JPEG. `meta` rides the header on
+ *  fresh parses (the Phase 3 metadata fast path). */
+function makeThumbnailBuf(
+  w: number,
+  h: number,
+  meta: Record<string, unknown> | null = null,
+): ArrayBuffer {
+  const header = JSON.stringify({ width: w, height: h, jpegLen: 3, meta });
   const headerBytes = new TextEncoder().encode(header);
   const buf = new ArrayBuffer(4 + headerBytes.length + 3);
   const dv = new DataView(buf);
@@ -1602,5 +1608,89 @@ describe("forget (frames that left the session after Move rejects)", () => {
     // forget() must drop the pool's decoded rasters itself.
     store.forget(new Set(paths));
     expect(poolImages.every((i) => i.src === "")).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metadata batching (Phase 2 Optimize, Task 2). Every landed thumb used to hand
+// React its own delivery; the store now coalesces a frame's worth into one sink
+// call. These build their OWN ImageStore with a manual frame scheduler so the
+// flush is driven by hand — the singleton-based tests above are untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("imageStore — metadata batching", () => {
+  /** A FrameScheduler whose frame only runs when the test says so. */
+  function manualScheduler() {
+    let queued: (() => void) | null = null;
+    const scheduler: FrameScheduler = {
+      request: (cb) => {
+        queued = cb;
+        return 1;
+      },
+      cancel: () => {
+        queued = null;
+      },
+    };
+    return { scheduler, frame: () => queued?.() };
+  }
+
+  const makeSink = () => vi.fn((_batch: MetaBatch) => {});
+
+  /** Two paths whose thumbs land with metadata, with the frame not yet run. */
+  async function twoLandedThumbs() {
+    vi.mocked(invoke).mockImplementation((cmd) =>
+      cmd === "extract_thumbnail"
+        ? Promise.resolve(makeThumbnailBuf(800, 600, { iso: 100 }))
+        : Promise.resolve(new ArrayBuffer(0)),
+    );
+    const { scheduler, frame } = manualScheduler();
+    const Store = await getStoreClass();
+    const store = new Store({ frameScheduler: scheduler });
+    const sink = makeSink();
+    store.setMetaSink(sink);
+    const paths = ["/m/a.cr3", "/m/b.cr3"];
+    store.reset(paths);
+    for (const p of paths) store.requestThumbFor(p);
+    await vi.waitUntil(() => paths.every((p) => store.snapshot(p).stage === "thumb"));
+    await flush();
+    return { store, sink, frame, paths };
+  }
+
+  it("coalesces two thumb landings into one sink call, only once the frame runs", async () => {
+    const { sink, frame, paths } = await twoLandedThumbs();
+
+    expect(sink).not.toHaveBeenCalled();
+    frame();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
+  });
+
+  it("hardReset drops the pending batch — the sink never sees the old session", async () => {
+    const { store, sink, frame } = await twoLandedThumbs();
+
+    store.hardReset();
+    frame();
+
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("forget drops the pending delivery for a path that left the session", async () => {
+    const { store, sink, frame, paths } = await twoLandedThumbs();
+
+    store.forget(new Set([paths[0]]));
+    frame();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect([...sink.mock.calls[0][0].keys()]).toEqual([paths[1]]);
+  });
+
+  it("reset KEEPS the pending batch — thumbs survive it, so their metadata must too", async () => {
+    const { store, sink, frame, paths } = await twoLandedThumbs();
+
+    store.reset(paths);
+    frame();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
   });
 });
