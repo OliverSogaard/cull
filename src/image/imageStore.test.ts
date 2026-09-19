@@ -103,6 +103,18 @@ function makePreviewBuf(orientation = 1, fullOffset = 1000, fullLen = 5000): Arr
   return buf;
 }
 
+/** read_mid-shaped frame: { midLen, width, height } header + 3 JPEG bytes. */
+function makeMidBuf(): ArrayBuffer {
+  const header = JSON.stringify({ midLen: 3, width: 2560, height: 1707 });
+  const headerBytes = new TextEncoder().encode(header);
+  const buf = new ArrayBuffer(4 + headerBytes.length + 3);
+  const dv = new DataView(buf);
+  dv.setUint32(0, headerBytes.length, true);
+  new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
+  new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
+  return buf;
+}
+
 /** read_fullres-shaped frame. */
 function makeFullresBuf(): ArrayBuffer {
   const header = JSON.stringify({ fullLen: 3 });
@@ -1032,18 +1044,6 @@ describe("Phase 5 — direction-biased prefetch + decode pool", () => {
 // ── Mid tier (Phase 8): display-adaptive needPx selection ───────────────────
 
 describe("mid tier (Phase 8)", () => {
-  /** read_mid-shaped frame: { midLen, width, height } header + 3 JPEG bytes. */
-  function makeMidBuf(): ArrayBuffer {
-    const header = JSON.stringify({ midLen: 3, width: 2560, height: 1707 });
-    const headerBytes = new TextEncoder().encode(header);
-    const buf = new ArrayBuffer(4 + headerBytes.length + 3);
-    const dv = new DataView(buf);
-    dv.setUint32(0, headerBytes.length, true);
-    new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
-    new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
-    return buf;
-  }
-
   /** Route invoke by command; records calls. Unrouted commands resolve to a
    *  valid frame of their kind so background machinery never poisons a test. */
   function routeMidInvoke(overrides: Record<string, (args: unknown) => Promise<unknown>> = {}) {
@@ -1675,5 +1675,108 @@ describe("imageStore — metadata batching", () => {
 
     expect(sink).toHaveBeenCalledTimes(1);
     expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tombstones (Phase 2 Optimize, Task 3). `forget()` prunes a moved frame from
+// the live session without a generation bump, so a tier read already in flight
+// for it still matched the lane's generation and LANDED: it re-created the
+// tier record (a stray blob waiting for the next eviction sweep) and pushed the
+// moved path's metadata back into React. Each landing site now checks the
+// tombstone set and drops the arrival the way a stale generation does.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("imageStore — reads in flight for a forgotten path", () => {
+  const PATH = "/t/a.cr3";
+
+  /** A one-path session with every read deferred and the metadata flush manual. */
+  async function stagedStore() {
+    const deferreds = deferredInvoke(vi.mocked(invoke));
+    const { scheduler, frame } = manualScheduler();
+    const Store = await getStoreClass();
+    const store = new Store({ frameScheduler: scheduler });
+    const sink = makeSink();
+    store.setMetaSink(sink);
+    // Network profile: no local mid-generation sweep firing extra reads.
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset([PATH]);
+    return { store, sink, frame, deferreds };
+  }
+
+  it("drops a thumb landing: blob revoked, no cache entry, no metadata delivery", async () => {
+    const { store, sink, frame, deferreds } = await stagedStore();
+    store.requestThumbFor(PATH);
+    expect(deferreds).toHaveLength(1); // the read is in flight
+
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makeThumbnailBuf(800, 600, { iso: 100 }));
+    await flush();
+
+    expect(liveUrls.size).toBe(0); // the freshly created blob was revoked
+    expect(store.debugStats().caches.thumbs).toBe(0);
+    expect(store.snapshot(PATH).thumbUrl).toBeUndefined();
+    frame();
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("drops a nav landing: preview blob revoked, no cache entry, no metadata delivery", async () => {
+    const { store, sink, frame, deferreds } = await stagedStore();
+    store.registerWantFull(PATH);
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makePreviewBuf());
+    await flush();
+
+    expect(liveUrls.size).toBe(0);
+    expect(store.debugStats().caches.previews).toBe(0);
+    expect(store.snapshot(PATH).url).toBeUndefined();
+    frame();
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("drops a zoom landing: the ~10 MB blob is revoked, not cached", async () => {
+    const { store, deferreds } = await stagedStore();
+    store.requestZoomFull(PATH);
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makeFullresBuf());
+    await flush();
+
+    expect(liveUrls.size).toBe(0);
+    expect(store.debugStats().caches.zoomFulls).toBe(0);
+  });
+
+  it("drops a mid landing: the blob is revoked, not cached", async () => {
+    const { store, deferreds } = await stagedStore();
+    store.setNeedPxProvider(() => 1860); // 4K-class stage — the mid tier engages
+    store.maybeRequestMid(PATH);
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makeMidBuf());
+    await flush();
+
+    expect(liveUrls.size).toBe(0);
+    expect(store.snapshot(PATH).mid).toBeUndefined();
+  });
+
+  it("reset() clears the tombstones — a re-staged path loads normally again", async () => {
+    const { store, deferreds } = await stagedStore();
+    store.requestThumbFor(PATH);
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+    expect(store.debugStats().caches.thumbs).toBe(0);
+
+    store.reset([PATH]); // the folder is re-staged
+    store.requestThumbFor(PATH);
+    expect(deferreds).toHaveLength(2);
+    deferreds[1].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+
+    expect(store.snapshot(PATH).thumbUrl).toBeDefined();
+    expect(store.debugStats().caches.thumbs).toBe(1);
   });
 });

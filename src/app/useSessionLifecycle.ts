@@ -513,9 +513,9 @@ export function useSessionLifecycle({
   // the live session in place. Every cursor is remapped through functional
   // setState from its LIVE value — this runs after an await, and the dialog
   // can be dismissed mid-move, so closure values may be stale. The undo/redo
-  // history loses the moved frames' changes, and the image store forgets them
-  // WITHOUT a generation bump (survivors keep their tiers and the mounted
-  // panes keep their registrations). A stale cell for a moved photo used to
+  // history loses the moved frames' changes, and the image store + overlay
+  // cache forget them WITHOUT a generation bump (survivors keep their tiers,
+  // rasters and registrations). A stale cell for a moved photo used to
   // write a real, orphaned sidecar into the old folder.
   const pruneMoved = useCallback(
     (gone: readonly string[]) => {
@@ -538,7 +538,9 @@ export function useSessionLifecycle({
       setSelectionAnchor(null);
       undoStack.current = pruneHistory(undoStack.current, goneIds);
       redoStack.current = pruneHistory(redoStack.current, goneIds);
-      imageStore.forget(new Set(gone));
+      const goneSet = new Set(gone);
+      imageStore.forget(goneSet);
+      overlayService.forget(goneSet);
       if (survivors.length === 0) {
         // Nothing left to compare or grid: the compare branch has no
         // empty-session guard, and an empty grid is just the "no images" loupe.

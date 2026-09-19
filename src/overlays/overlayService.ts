@@ -143,6 +143,20 @@ export class OverlayService {
     if (had) this.bump();
   }
 
+  /** Prune hook, next to imageStore.forget(): drop the moved paths' rasters
+   *  and cancel their in-flight work (a wiped marker fails the live() check).
+   *  Silent when none of them were cached — no render for a no-op prune. */
+  forget(paths: ReadonlySet<string>): void {
+    let had = false;
+    for (const kind of KINDS) {
+      for (const p of paths) {
+        had = this.caches[kind].delete(p) || had;
+        this.inFlight[kind].delete(p);
+      }
+    }
+    if (had) this.bump();
+  }
+
   /** Session-change hook (reset/hardReset, next to imageStore's): drop every
    *  kind. In-flight results are already doomed by the generation check; this
    *  also frees the markers immediately. */

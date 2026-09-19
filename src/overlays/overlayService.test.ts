@@ -194,6 +194,36 @@ describe("OverlayService", () => {
     expect(h.svc.get("peak", "/c")).toBeUndefined();
   });
 
+  it("forget drops the moved paths' rasters and cancels their in-flight work", async () => {
+    const h = harness();
+    await commit(h, "clip", "/a"); // cached — moved away
+    await commit(h, "peak", "/keep"); // a survivor — must not be touched
+    h.sources.set("/b", "blob:b");
+    h.svc.ensure("histogram", "/b"); // in flight across the prune
+    const v0 = h.svc.getVersion();
+
+    h.svc.forget(new Set(["/a", "/b"]));
+
+    expect(h.svc.get("clip", "/a")).toBeUndefined();
+    expect(h.svc.get("peak", "/keep")).toBe("data:peak:/keep");
+    expect(h.svc.getVersion()).toBe(v0 + 1); // one render for the whole prune
+    h.calls[h.calls.length - 1].resolve("data:late");
+    await flush();
+    expect(h.svc.get("histogram", "/b")).toBeUndefined();
+  });
+
+  it("forget of paths it never cached doesn't notify", async () => {
+    const h = harness();
+    await commit(h, "clip", "/a");
+    let notified = 0;
+    h.svc.subscribe(() => notified++);
+
+    h.svc.forget(new Set(["/never-seen"]));
+
+    expect(notified).toBe(0);
+    expect(h.svc.get("clip", "/a")).toBe("data:clip:/a");
+  });
+
   it("evicts the least-recently-used entry beyond the cap", async () => {
     const h = harness(2);
     await commit(h, "clip", "/a");
