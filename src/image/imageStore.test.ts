@@ -17,7 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { PERFORMANCE_PROFILES } from "../types/settings";
-import type { FrameScheduler, MetaBatch } from "./metaBatcher";
+import { makeSink, manualScheduler } from "./__fixtures__/metaBatching";
 
 // ── Mock @tauri-apps/api/core before importing imageStore ──────────────────
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -1618,23 +1618,6 @@ describe("forget (frames that left the session after Move rejects)", () => {
 // flush is driven by hand — the singleton-based tests above are untouched.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("imageStore — metadata batching", () => {
-  /** A FrameScheduler whose frame only runs when the test says so. */
-  function manualScheduler() {
-    let queued: (() => void) | null = null;
-    const scheduler: FrameScheduler = {
-      request: (cb) => {
-        queued = cb;
-        return 1;
-      },
-      cancel: () => {
-        queued = null;
-      },
-    };
-    return { scheduler, frame: () => queued?.() };
-  }
-
-  const makeSink = () => vi.fn((_batch: MetaBatch) => {});
-
   /** Two paths whose thumbs land with metadata, with the frame not yet run. */
   async function twoLandedThumbs() {
     vi.mocked(invoke).mockImplementation((cmd) =>

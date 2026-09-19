@@ -37,9 +37,20 @@ export class MetaBatcher {
 
   constructor(private readonly scheduler: FrameScheduler = defaultFrameScheduler) {}
 
+  /** Detaching the sink CANCELS the frame but KEEPS the pending deliveries:
+   *  the thumbs behind them already landed and are never re-fetched, so
+   *  dropping them would lose their phash for the rest of the session (the
+   *  same loss `reset()` goes out of its way to avoid). Re-attaching a sink
+   *  re-arms the frame, so an unmount/remount of the wiring effect costs
+   *  nothing. Only `clear()` — i.e. `hardReset`, which revokes the thumbs
+   *  too — discards them. */
   setSink(sink: MetaBatchSink | undefined): void {
     this.sink = sink;
-    if (!sink) this.clear();
+    if (!sink) {
+      this.cancelFrame();
+      return;
+    }
+    if (this.pending.size > 0) this.scheduleFrame();
   }
 
   push(path: string, meta: ImageMetadata): void {
@@ -47,7 +58,7 @@ export class MetaBatcher {
     // Fold same-frame deliveries with the sink's own rule, so a thumb's phash
     // survives a preview delivery that lands in the same frame.
     this.pending.set(path, mergeMeta(this.pending.get(path), meta));
-    if (this.handle === null) this.handle = this.scheduler.request(() => this.flush());
+    this.scheduleFrame();
   }
 
   forget(gone: ReadonlySet<string>): void {
@@ -56,6 +67,14 @@ export class MetaBatcher {
 
   clear(): void {
     this.pending.clear();
+    this.cancelFrame();
+  }
+
+  private scheduleFrame(): void {
+    if (this.handle === null) this.handle = this.scheduler.request(() => this.flush());
+  }
+
+  private cancelFrame(): void {
     if (this.handle !== null) {
       this.scheduler.cancel(this.handle);
       this.handle = null;

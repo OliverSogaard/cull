@@ -1,51 +1,13 @@
-import { describe, expect, test, vi } from "vitest";
-import { MetaBatcher, type FrameScheduler, type MetaBatch } from "./metaBatcher";
-import type { ImageMetadata } from "../types";
+import { describe, expect, test } from "vitest";
+import { MetaBatcher } from "./metaBatcher";
+import { makeSink, manualScheduler } from "./__fixtures__/metaBatching";
+import { EMPTY_METADATA, type ImageMetadata } from "../types";
 
-function manualScheduler() {
-  let queued: (() => void) | null = null;
-  const scheduler: FrameScheduler = {
-    request: (cb) => {
-      queued = cb;
-      return 1;
-    },
-    cancel: () => {
-      queued = null;
-    },
-  };
-  return { scheduler, frame: () => queued?.(), hasFrame: () => queued !== null };
-}
-
-/** All-null template so each test only sets the fields it cares about
- *  (mirrors the helper in src/utils/mergeMeta.test.ts — EMPTY_METADATA is a
- *  private const of useSessionLifecycle, not importable). */
+/** All-null template so each test only sets the fields it cares about. */
 const meta = (over: Partial<ImageMetadata> = {}): ImageMetadata => ({
-  capturedAt: null,
-  subSecMs: null,
-  camera: null,
-  lens: null,
-  focalLengthMm: null,
-  aperture: null,
-  shutterSeconds: null,
-  iso: null,
-  gpsLat: null,
-  gpsLon: null,
-  afXPct: null,
-  afYPct: null,
-  exposureBias: null,
-  whiteBalance: null,
-  driveMode: null,
-  pixelWidth: null,
-  pixelHeight: null,
-  fileSize: null,
-  lrcRating: null,
-  phash: null,
+  ...EMPTY_METADATA,
   ...over,
 });
-
-// Typed spy: a bare vi.fn() types mock.calls as any[][] and fails the
-// no-unsafe-* lint rules that stay on for test files.
-const makeSink = () => vi.fn((_batch: MetaBatch) => {});
 
 describe("MetaBatcher", () => {
   test("coalesces many deliveries into one sink call per frame", () => {
@@ -109,5 +71,28 @@ describe("MetaBatcher", () => {
     b.push("/c.CR3", meta({}));
     frame();
     expect(sink).toHaveBeenCalledTimes(2);
+  });
+
+  test("a pending batch survives a sink swap and flushes to the new sink", () => {
+    const { scheduler, frame, hasFrame } = manualScheduler();
+    const first = makeSink();
+    const b = new MetaBatcher(scheduler);
+    b.setSink(first);
+    b.push("/a.CR3", meta({ phash: "abc" }));
+
+    // Unmount: the frame is cancelled, but the delivery must NOT be lost —
+    // the thumb behind it already landed and is never re-fetched.
+    b.setSink(undefined);
+    expect(hasFrame()).toBe(false);
+
+    // Remount re-arms the frame and the kept delivery reaches the new sink.
+    const second = makeSink();
+    b.setSink(second);
+    expect(hasFrame()).toBe(true);
+    frame();
+
+    expect(first).not.toHaveBeenCalled();
+    expect([...second.mock.calls[0][0].keys()]).toEqual(["/a.CR3"]);
+    expect(second.mock.calls[0][0].get("/a.CR3")?.phash).toBe("abc");
   });
 });

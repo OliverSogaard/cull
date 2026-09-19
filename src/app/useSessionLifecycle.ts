@@ -23,6 +23,7 @@ import type {
   Settings,
   UndoAction,
 } from "../types";
+import { EMPTY_METADATA } from "../types";
 import type { ScanFailure } from "../components/ScanFailureCard";
 import { recentKey, type RecentEntry } from "../hooks/useRecents";
 import { normalizeRejectedSubfolder, type PerformanceProfile } from "../types/settings";
@@ -33,34 +34,6 @@ import { omitIds, pruneGone, pruneHistory, remapNavStack } from "../utils/pruneS
 import { summarizeAnalyzeWarnings, type AnalyzeWarning } from "../utils/analyzeWarnings";
 import { renderMeter } from "../utils/renderMeter";
 import { writeLocalStorage } from "../utils/storage";
-
-/**
- * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
- * before the per-image bundle read fills in real EXIF — kept centralized (and
- * frozen) so adding a metadata field only touches one place, not every seed.
- */
-const EMPTY_METADATA: ImageMetadata = Object.freeze({
-  capturedAt: null,
-  subSecMs: null,
-  camera: null,
-  lens: null,
-  focalLengthMm: null,
-  aperture: null,
-  shutterSeconds: null,
-  iso: null,
-  gpsLat: null,
-  gpsLon: null,
-  afXPct: null,
-  afYPct: null,
-  exposureBias: null,
-  whiteBalance: null,
-  driveMode: null,
-  pixelWidth: null,
-  pixelHeight: null,
-  fileSize: null,
-  lrcRating: null,
-  phash: null,
-});
 
 /**
  * Session lifecycle, verbatim from App (grand cleanup Phase 6): staging

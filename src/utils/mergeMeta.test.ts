@@ -1,29 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { ImageMetadata } from "../types";
+import { EMPTY_METADATA, type ImageMetadata } from "../types";
 import { applyMetaBatch, mergeMeta } from "./mergeMeta";
 
 /** All-null template so each test only sets the fields it cares about. */
 const meta = (over: Partial<ImageMetadata> = {}): ImageMetadata => ({
-  capturedAt: null,
-  subSecMs: null,
-  camera: null,
-  lens: null,
-  focalLengthMm: null,
-  aperture: null,
-  shutterSeconds: null,
-  iso: null,
-  gpsLat: null,
-  gpsLon: null,
-  afXPct: null,
-  afYPct: null,
-  exposureBias: null,
-  whiteBalance: null,
-  driveMode: null,
-  pixelWidth: null,
-  pixelHeight: null,
-  fileSize: null,
-  lrcRating: null,
-  phash: null,
+  ...EMPTY_METADATA,
   ...over,
 });
 

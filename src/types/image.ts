@@ -71,3 +71,32 @@ export type ImageMetadata = {
    */
   phash: string | null;
 };
+
+/**
+ * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
+ * before the per-image bundle read fills in real EXIF — kept centralized (and
+ * frozen) so adding a metadata field only touches one place, not every seed.
+ * Lives beside the type so the test fixtures can share it too.
+ */
+export const EMPTY_METADATA: ImageMetadata = Object.freeze({
+  capturedAt: null,
+  subSecMs: null,
+  camera: null,
+  lens: null,
+  focalLengthMm: null,
+  aperture: null,
+  shutterSeconds: null,
+  iso: null,
+  gpsLat: null,
+  gpsLon: null,
+  afXPct: null,
+  afYPct: null,
+  exposureBias: null,
+  whiteBalance: null,
+  driveMode: null,
+  pixelWidth: null,
+  pixelHeight: null,
+  fileSize: null,
+  lrcRating: null,
+  phash: null,
+});
