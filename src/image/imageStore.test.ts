@@ -1713,8 +1713,7 @@ describe("imageStore — reads in flight for a forgotten path", () => {
 
   /** Backend reads of one command issued so far — a re-read of a moved file
    *  is the harm the error-landing tombstone prevents. */
-  const readsOf = (cmd: string) =>
-    vi.mocked(invoke).mock.calls.filter((c) => c[0] === cmd).length;
+  const readsOf = (cmd: string) => vi.mocked(invoke).mock.calls.filter((c) => c[0] === cmd).length;
 
   it("drops a thumb landing: blob revoked, no cache entry, no metadata delivery", async () => {
     const { store, sink, frame, deferreds } = await stagedStore();
