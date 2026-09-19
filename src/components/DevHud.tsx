@@ -4,11 +4,17 @@ import { renderMeter } from "../utils/renderMeter";
 
 /**
  * Dev-only performance HUD (docs/history/IMAGE_PIPELINE_PLAN.md Phase 3): per-nav fetch
- * timings, lane/queue utilization, cache sizes, eviction/error counters, and
- * the decoded-memory estimate. Enable with `localStorage["cull:devhud"]="1"`
- * in devtools + reload. Every later profile-tuning claim cites these numbers,
- * not feel — this is also where the pending Windows raw-IPC measurement
- * (Phase 2 decision gate) gets read off.
+ * timings, lane/queue utilization, cache sizes, eviction/error counters, the
+ * decoded-memory estimate, and the `react` row — the render meter's commit
+ * count, total/max commit cost, burst re-derivations and seconds since the
+ * cull began (`utils/renderMeter.ts`; Profiler timing is dev-only, so the
+ * costs read zero in a release build).
+ *
+ * Enable with `localStorage["cull:devhud"]="1"` in devtools + reload, or, in a
+ * dev build, `VITE_CULL_DEVHUD=1` in the environment (see `main.tsx`). Every
+ * later profile-tuning claim cites these numbers, not feel — this is also
+ * where the pending Windows raw-IPC measurement (Phase 2 decision gate) gets
+ * read off. TESTING.md's "Measuring render cost" is the recipe.
  */
 export function DevHud() {
   const [stats, setStats] = useState(() => imageStore.debugStats());

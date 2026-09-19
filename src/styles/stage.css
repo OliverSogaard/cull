@@ -472,7 +472,8 @@
   color: var(--accent);
 }
 
-/* Dev performance HUD (localStorage cull:devhud=1) — read-only overlay,
+/* Dev performance HUD (localStorage cull:devhud=1, or VITE_CULL_DEVHUD=1 in a
+   dev build) — read-only overlay mounted outside the profiled <App> tree,
    bottom-left so it never collides with chrome buttons or the EXIF rail. */
 .cull-devhud {
   position: fixed;

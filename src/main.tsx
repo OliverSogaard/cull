@@ -61,10 +61,13 @@ window.addEventListener("unhandledrejection", (e) => {
   reportFatal(r instanceof Error ? `${r.message}\n${r.stack ?? ""}` : String(r));
 });
 
-// Dev HUD flag: VITE_CULL_DEVHUD=1 enables it without devtools (undefined in
-// release builds); localStorage["cull:devhud"]="1" + reload works too.
+// Dev HUD flag: VITE_CULL_DEVHUD=1 enables it without devtools, but only in a
+// dev build — the variable is baked in at build time, so a release built from
+// a shell that happened to export it would otherwise ship the HUD on. The
+// localStorage switch (`localStorage["cull:devhud"]="1"` + reload) is the one
+// that keeps working in a release build.
 const devHudOn = (() => {
-  if (import.meta.env.VITE_CULL_DEVHUD === "1") return true;
+  if (import.meta.env.DEV && import.meta.env.VITE_CULL_DEVHUD === "1") return true;
   try {
     return localStorage.getItem("cull:devhud") === "1";
   } catch {

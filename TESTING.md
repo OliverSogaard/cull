@@ -84,3 +84,38 @@ build or CI run. The build-time model fetch is `scripts/fetch-models.sh`
 before the corpus-gated ML smoke tests: `clip_vitb32_visual.onnx` and
 `dinov2s.onnx` live on the `models-v1` release, not in git, and the
 `embed.rs` tests load them from `src-tauri/models/` at runtime.
+
+## Measuring render cost
+
+No unit test can tell you what a cull actually costs the React tree — the dev
+HUD can. Enable it either way. From devtools, in any build (then reload):
+
+```js
+localStorage["cull:devhud"] = "1";
+```
+
+Or from the environment, in a **dev build only** — `VITE_*` is baked in at
+build time, and `main.tsx` gates this switch on `import.meta.env.DEV` so a
+release built from a shell that exported it does not ship the HUD on:
+
+```bash
+VITE_CULL_DEVHUD=1 pnpm tauri dev
+```
+
+The HUD's `react` row is the render meter (`src/utils/renderMeter.ts`), fed by
+the `<Profiler>` that wraps `<App>` in `main.tsx`:
+
+| Field | Meaning |
+| --- | --- |
+| `commits` | React commits to the App tree since the cull began |
+| `Σ …ms` | Total committed render time |
+| `max …ms` | The single most expensive commit — the visible-stutter suspect |
+| `derive` | Full `burstData` re-derivations (`useSmartDerivations`) |
+| `…s` | Seconds since `renderMeter.reset()`, i.e. since begin culling |
+
+Two caveats before quoting a number. React strips Profiler timing from
+production bundles, so `Σ` and `max` read 0 in a release build — measure in a
+dev build. And the counters start climbing the moment the session starts, so
+read them only once the session has settled: the `cache … thumb` figure two
+rows down equalling the folder's frame count is the signal that background
+thumb fill is finished and nothing is still committing behind your back.
