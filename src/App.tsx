@@ -1390,7 +1390,7 @@ export default function App() {
                 ) : (
                   <div
                     className="progress__fill cull-progress__fill"
-                    style={{ width: `${(progress.done / progress.total) * 100}%` }}
+                    style={{ transform: `translateX(${(progress.done / progress.total) * 100 - 100}%)` }}
                   />
                 )}
               </div>
