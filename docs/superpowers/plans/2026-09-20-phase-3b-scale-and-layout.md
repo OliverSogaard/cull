@@ -3414,3 +3414,54 @@ The controller runs implementers in parallel **only** on disjoint file sets. Wav
 ‡ Tasks 8 and 10 are **strictly serial** on `src-tauri/src/lib.rs`, not merely in different waves: Task 8 adds `mod gridthumb;` *with* `#[cfg_attr(not(test), allow(dead_code))]` (that attribute is what lets its own clippy gate pass with no caller yet), and Task 10 *deletes* that attribute in the same file when it registers the command. Running them concurrently would lose one edit or the other.
 
 **Serial chains to respect:** 1 → {2, 3, 4}; 6 → 7; 8 → 10 and 9 → 10, then 10 → 11; {6, 11} → 12; everything → 14. **Never parallel:** 8 and 10 (`lib.rs`, see ‡); 6 and 11 (`types/settings.ts`); 2, 3, 4 and 13 (`styles/layout.test.ts`); 6 and 12 (`GridView.tsx`, `App.tsx`); 2 and 13 (`chrome.css`). Task 2 is the only owner of `styles/base.css`, so that file adds no new overlap.
+
+---
+
+## Implementation note (2026-09-20)
+
+Executed with subagent-driven development. Before any code: two fresh checkers fact-checked this plan against the repository (6 blockers, 10 should-fixes, 11 nits — listed under "Pre-flight corrections" above, all applied). Then a fresh implementer and a fresh reviewer per task, up to five tasks in parallel on disjoint files; fix rounds on Tasks 2 (three), 6, 10 and 11; a whole-branch review on the strongest model split in two (layout/UI/docs; the grid-thumbnail pipeline end to end); ONE fix wave by four implementers; ONE scoped re-review; two wording-and-number corrections by the controller. Gates at the tip: 736 tests in 76 files (661 before), lint, lint:css, typecheck, typecheck:tests, build (JS ≈ 125.5 kB gzip, CSS ≈ 10.6 kB gzip); `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, 136 Rust tests (122 before).
+
+### What shipped
+
+- **Grid sizes** Small / Medium / Large — column targets 128 / 168 / 256. `+` / `=` / `-` (numpad too) in the grid, `Ctrl+0` back to Medium, `Ctrl`+wheel at most one step per 160 ms; a `gridSize` setting with a row in Settings; help-sheet rows. A clamped step writes nothing; a held key steps once.
+- **The grid thumbnail** — 512 px on the long edge, q82, made in Rust from the CR3's embedded 1620 × 1080 preview (`gridthumb.rs`), a fourth cache tier (`grid/`, 512 MiB), `read_grid_thumb`, a sixth lane in `imageStore`, and a second `<img>` layered over the THMB in `GridCell`, faded in on `load`. Requested only for MOUNTED cells in the reported range and only when `(cellW − 18) × devicePixelRatio > 160`.
+- **Filmstrip** 76 × 54, and 104 × 74 when the window is at least 1200 px tall; the strip's box is border-box now — 83 / 103 px where it declared 82 and rendered 111.
+- **Footer** sheds instead of clipping; minimum window width 1024.
+- **Info rail** 232 px (compare 288) below 1200 px of window width.
+- **Home** grows from 2000 px of window width. **Settings** unchanged.
+- **Help sheet** draws keycaps from structured rows.
+- Window first-paint colour `#0c0c0d`; the title bar reserves 176 px; dead layout tokens wired; backdrops tone-baked at 2560 px by `node scripts/bake-backdrop.mjs` (max channel difference 2 of 255 against the old runtime recipe; 133 + 82 kB → 88 + 32 kB).
+
+### Where the spec or the plan was wrong, and what was ruled instead
+
+- **The footer's breakpoints are not the design board's.** The board said 1360 / 1200 / 1100. The worst case (scrubbing + overlay cluster + a four-digit missing-photos chip + the finish button) did not fit with those, and each recount found another always-shown piece the sums had left out (the save chip's tail, the all-rated finish label, the `.CR3` extension, the scrub chip's margin). Shipped: below **1360** the key hint, the save chip's action tail (visually hidden — the button keeps its full accessible name), the file extension and the ALL-RATED finish label; below **1240** the zoom, scrub and verdict words; below **1120** the ordinary finish label. The rail's own breakpoint stays 1200. The sums live in `statusbar.css`'s comment; slack is positive at every pinned width, 14 px at the tightest. They rest on estimated glyph advances and have never been measured in a live render.
+- **Medium is 168, not the board's 176** — 176 equals today's grid only at 2560 px of width.
+- **The wheel has a 160 ms cooldown**, where the plan said "saturate": a touchpad pinch slammed to an end and made Medium unreachable.
+- **The preview cache.** The planner overrode the spec and reused `preview_parts`, which fills the preview cache; the spec was reinstated — `preview_parts_opt(.., put_on_miss)`, the grid passes `false`, with an ungated test (the first test of the flag could not fail, and the one that could is skipped in CI).
+- **Two sentinels, not one.** `"grid thumb unavailable"` latches a path for the session; `"grid thumb pending"` (another producer holds the shared generation claim) is quiet backoff. A pending bounce fed the folder-trouble latch in the first implementation — four of them would have shown "folder unreachable" on a healthy folder.
+- **Found only by the whole-branch review, all four "sharp thumbnails arrive slowly or never":** the idle mid sweep (about 11 minutes on a 2,726-frame shoot) never yielded to the grid lane; the lane's queue was never pruned, so a scrollbar drag queued a thousand stale cells ahead of the visible ones; under a filter the min..max absolute range requested every hidden frame in between; the single pending timer used the first bounce's delay and stranded later ones. All fixed in the wave.
+- **The strip's box fix had a casualty:** the ×5 / ×50 scrub-speed chip would have sat on the thumbnails. It is anchored in the strip's top headroom now, in terms of `--cell-h`.
+- A cached preview header is parsed for its orientation only, so an unrelated field can never cost a cell its sharp thumbnail.
+
+### Verification
+
+Tests and static gates only. **Nothing in this phase has been seen running**: the click-only live check (`~/.claude/plans/cull-audit-2026-09-13/live-check/phase3b-shots.ps1`: home default and maximized, loupe at both strip steps, the grid at three sizes, the loupe at 1100 and 1024 px — navigation keys only, no rating key, scratch folder only) was not run because the PC was in use.
+
+### Oliver's walk
+
+1. Grid (`g`), then `+` and `-`: at Large the thumbnails should turn sharp within a second or two of landing on a screenful; scroll fast, then stop — the visible cells should sharpen first.
+2. Loupe, default window vs maximized: the filmstrip is 28 px shorter than it used to be at the default size (the photo is taller), and steps up to bigger frames when maximized.
+3. Hold Shift-scrub over the strip: the ×5 / ×50 chip now sits ABOVE the thumbnails. Where a burst bracket is, the bracket and its ×N legend paint over the chip — say if that bothers you. The thin scrub bar also runs along a burst box's bottom border now.
+4. Drag the window narrow (to its new 1024 minimum): the footer loses words in steps and nothing is cut off; the info rail goes compact below 1200. `.CR3` is dimmer than the file name at every width.
+5. Home, maximized: the composition is bigger. Tab (hold): keycaps in the help sheet.
+6. If a save ever fails: hovering the footer chip underlines its two parts separately.
+
+### Left for later
+
+- 3C: Home / End / PgUp / PgDn, the Rejects tab, capture-time sort.
+- Phase 4: the imageStore test file's stores run on real timers unless a test opts out — a suite-level teardown now hard-resets them, which also hides a class of timer leak; `App.tsx` and `useCullKeymap.ts` have no test harness, so the wheel, key-repeat and cell-width changes were verified by reading.
+- `recordPendingBounce` rewrites the attempt count unconditionally, so a path alternating real errors and pending bounces never reaches the terminal cap (theoretical).
+- `read_grid_thumb` takes its generation permit before the IoGate wait (parity with `read_mid`); with the sweep yielding it no longer matters in practice.
+- Ctrl+wheel steps the size in place, not under the cursor (the grid's auto-scroll would fight it).
+- Grid-tier prefill was left out: lazy-visible proved enough on paper; revisit after the live check.
+- Still owed from earlier phases: the Phase 0 live check of Move rejects on a scratch copy.
