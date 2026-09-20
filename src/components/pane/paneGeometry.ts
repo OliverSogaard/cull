@@ -15,6 +15,27 @@ export type PaneRect = { left: number; top: number; width: number; height: numbe
  *  breathe on the same clock. */
 export const ZOOM_UNSETTLE_MEASURE_DELAY_MS = 260;
 
+/** How long after unzoom starts before the settle-time hi-res layer may
+ *  return — the release glide plus slack. */
+const UNZOOM_RETREAT_MS = 240;
+
+/** The settle wait to use before the hi-res layer may return after an
+ *  unzoom: 0 under reduced motion, since motion.css removes the release
+ *  glide entirely there and there is nothing left to wait out; the full
+ *  retreat otherwise. */
+export function unzoomRetreatMs(prefersReducedMotion: boolean): number {
+  return prefersReducedMotion ? 0 : UNZOOM_RETREAT_MS;
+}
+
+/** Whether the OS currently asks for reduced motion. Read fresh on every
+ *  call rather than cached, since the setting can change while the app is
+ *  running. Hosts without `matchMedia` (some test runners, non-browser
+ *  embeds) read as false rather than throwing. */
+export function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 /**
  * Transform for the deferred hi-res layer: the native-size raster reproduces
  * the base layer's `scale(Z)` about (originX%, originY%) EXACTLY, so it can

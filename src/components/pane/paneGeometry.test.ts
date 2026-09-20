@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { hiResTransform, paneZoomZ, ZOOM_UNSETTLE_MEASURE_DELAY_MS } from "./paneGeometry";
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from "vitest";
+import {
+  hiResTransform,
+  paneZoomZ,
+  prefersReducedMotion,
+  unzoomRetreatMs,
+  ZOOM_UNSETTLE_MEASURE_DELAY_MS,
+} from "./paneGeometry";
 
 const rect = { left: 0, top: 0, width: 800, height: 533 };
 const native = { w: 6960, h: 4640 };
@@ -44,5 +51,35 @@ describe("paneZoomZ — zoomLevel × true-1:1, one formula for loupe and compare
 describe("shared constants", () => {
   it("unzoom measure delay outlives the 200ms release transition", () => {
     expect(ZOOM_UNSETTLE_MEASURE_DELAY_MS).toBeGreaterThan(200);
+  });
+});
+
+describe("unzoomRetreatMs — reduced motion skips the removed glide", () => {
+  it("is 0 when the OS asks for reduced motion", () => {
+    expect(unzoomRetreatMs(true)).toBe(0);
+  });
+
+  it("is 240 otherwise", () => {
+    expect(unzoomRetreatMs(false)).toBe(240);
+  });
+});
+
+describe("prefersReducedMotion — reads the OS setting fresh, not at module load", () => {
+  it("is false when window.matchMedia is not a function", () => {
+    const original = window.matchMedia;
+    // Simulate a host without matchMedia (some embeds, older test runners).
+    // @ts-expect-error assigning undefined models the missing API.
+    window.matchMedia = undefined;
+    expect(prefersReducedMotion()).toBe(false);
+    window.matchMedia = original;
+  });
+
+  it("reflects the media query's matches", () => {
+    const original = window.matchMedia;
+    const matchMedia = vi.fn((_query: string) => ({ matches: true }) as MediaQueryList);
+    window.matchMedia = matchMedia;
+    expect(prefersReducedMotion()).toBe(true);
+    expect(matchMedia).toHaveBeenCalledWith("(prefers-reduced-motion: reduce)");
+    window.matchMedia = original;
   });
 });

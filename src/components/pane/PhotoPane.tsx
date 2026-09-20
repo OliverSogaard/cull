@@ -13,13 +13,11 @@ import {
   hiResTransform,
   measurePaneRect,
   paneZoomZ,
+  prefersReducedMotion,
+  unzoomRetreatMs,
   ZOOM_UNSETTLE_MEASURE_DELAY_MS,
   type PaneRect,
 } from "./paneGeometry";
-
-/** How long after unzoom starts before the settle-time hi-res layer may
- *  return — the release glide plus slack. */
-const UNZOOM_RETREAT_MS = 240;
 
 /** Class names per consuming surface — same recipe, each surface's CSS. */
 const VARIANT_CLASSES = {
@@ -342,7 +340,7 @@ export const PhotoPane = memo(function PhotoPane({
     }
     if (!everZoomedRef.current) return undefined;
     setUnzoomSettling(true);
-    const t = setTimeout(() => setUnzoomSettling(false), UNZOOM_RETREAT_MS);
+    const t = setTimeout(() => setUnzoomSettling(false), unzoomRetreatMs(prefersReducedMotion()));
     return () => clearTimeout(t);
   }, [isZooming]);
 
