@@ -34,7 +34,10 @@ The **grid tier** (Phase 3B) is NOT a fourth display stage — `resolveStage`
 never sees it. It exists only inside the contact sheet: a second `<img>`
 layered, absolutely positioned, over the cell's THMB and faded in on `load`
 once it decodes, so a soft THMB never flashes to blank while the sharper
-frame loads. Loupe and compare never request it.
+frame loads. Loupe and compare never request it. The sharp layer is requested
+only while its cell is mounted, and only when the measured cell width times
+DPR beats the THMB — so closing the grid, or narrowing the cells past the
+rule, stops the tier entirely.
 `src/image/stage.ts` is the pure heart of this: `resolveStage(ImageState) →
 Resolved { stage, url, dims, error, full, mid }` (`full`/`mid` = the ready
 zoom/mid blobs, whatever the nav stage). It has no I/O and no React, so the
@@ -90,7 +93,22 @@ race, which makes scrubbing through prefetched neighbourhoods SHARP.
   the loupe cursor, so its blobs are kept within `gridThumbKeep` cells of the
   reported grid RANGE (start/end of what's visible) and evicted outside it.
   Leaving the grid sets the range to none, which frees every grid blob no
-  cell still displays.
+  cell still displays. Requests enter through ONE path,
+  `requestGridThumbsInRange`, driven by the reported range and nothing else:
+  the lane's queue is REBUILT on every range report rather than appended to
+  (a scrollbar drag would otherwise spend the lane on the thousand cells the
+  user flew past), and only paths with a mounted display ref are asked for —
+  the reported range is the min..max ABSOLUTE index of the rendered cells,
+  so under a filter it spans every hidden frame in between. Queued paths
+  carry no request marker (the lane marks a path when it STARTS it), so
+  emptying the queue leaks nothing and a read already in flight still
+  finishes. Leaving the grid clears the queue and disarms the pending
+  self-retry. A `pending` bounce — the backend's shared generation claim
+  already held — is pure backoff, never an error: it never feeds the
+  folder-trouble latch and is capped one below the terminal attempt count,
+  so such a cell is always askable again; a single deduped timer re-arms for
+  the soonest cell still in cooldown and re-runs the visible range, so a
+  cell that lost a race never waits for the user to scroll.
 - **Generation-based cancellation** — `reset(paths)` (folder change) keeps
   thumbs but revokes all fulls and bumps a generation counter; `hardReset()`
   (session end) revokes everything. In-flight reads from a superseded
@@ -307,7 +325,10 @@ flips via a matchMedia listener, so dragging the window between a 4K and a
 jitter). On 1440p-class displays the mid is never requested. Generation is
 profile-aware: the local profile generates on `read_mid` misses and runs a
 budgeted idle sweep (paused whenever any on-demand lane has work or the
-cursor moved recently); the network profile only ever serves the cache —
+cursor moved recently — the grid tier counts as on-demand, since its cells
+are what the user is looking at and the sweep holds the same generation
+permits in ~450 ms jobs; draining the last grid cell is what lets the sweep
+run again); the network profile only ever serves the cache —
 mids appear there as a free by-product of zoom reads (the bytes are already
 in memory; CPU only). The presenter treats the mid as one more upgrade tier
 between preview and full; mid-scrub it is never offered.
@@ -541,7 +562,7 @@ reads a token or a class, so nothing needs to know a breakpoint exists.
 Six breakpoints, on two independent axes (window width and window height —
 there is still no DPR-driven layout, no `zoom`, no user font-size setting):
 
-- **1100 px window width** — the footer's ORDINARY finish label ("Ctrl+E ·
+- **1120 px window width** — the footer's ORDINARY finish label ("Ctrl+E ·
   N keeps") sheds to "Finish" — the tighter of the footer's two finish
   breakpoints, since the ordinary label is shorter than the all-rated one.
 - **1200 px window width** — the info rail's own, unrelated breakpoint
