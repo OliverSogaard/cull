@@ -51,6 +51,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Every ImageStore a test builds (see getStoreClass), torn down after it.
+ *
+ *  `reset()` arms a 2 s background-fill fallback, and the local profile runs
+ *  real background sweeps. This file's tests take ~4 s in total, so a store
+ *  left alive keeps issuing reads into whichever test happens to be running
+ *  two seconds later — which showed up as intermittent, order-dependent read
+ *  counts in the tombstone tests near the end of the file. `hardReset()`
+ *  bumps the generation, so every pending timer and in-flight read bails.
+ *  Registered after the mock-restoring hook above so it runs BEFORE it
+ *  (Vitest unwinds afterEach hooks in reverse registration order) and the
+ *  revokes it performs still land on the mocked URL functions. */
+const liveStores: { hardReset: () => void }[] = [];
+afterEach(() => {
+  for (const s of liveStores.splice(0)) {
+    s.hardReset();
+  }
+});
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Build a minimal ArrayBuffer that fetchThumbnail parses: u32 LE header-len,
@@ -140,7 +158,14 @@ async function getStore() {
  *  (fresh generation/counters, optional small LRU cap). */
 async function getStoreClass() {
   const mod = await import("./imageStore");
-  return mod.ImageStore;
+  // Every instance registers itself for teardown (see liveStores) — the store
+  // owns wall-clock timers that outlive the test that built it.
+  return class TrackedStore extends mod.ImageStore {
+    constructor(...args: ConstructorParameters<typeof mod.ImageStore>) {
+      super(...args);
+      liveStores.push(this);
+    }
+  };
 }
 
 // ── Deferred fetch control ──────────────────────────────────────────────────
@@ -1779,6 +1804,98 @@ describe("lane parity net (Phase 8 TierLane collapse)", () => {
         deferreds[1].resolve(makeGridThumbBuf());
         await flush();
         expect(store.snapshot("/net/busy.cr3").gridThumbUrl).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("staggered pending bounces are BOTH re-asked: the timer re-arms for the next one due", async () => {
+      // One deduped timer armed on the FIRST bounce is not enough: B bounces
+      // later, so its cooldown outlives that timer, and the fire that saves A
+      // skips B. Nothing then asks for B until the user happens to scroll.
+      vi.useFakeTimers();
+      try {
+        const paths = ["/net/a.cr3", "/net/b.cr3"];
+        const StoreClass = await getStoreClass();
+        const store = new StoreClass();
+        store.setProfile(PERFORMANCE_PROFILES.local); // cap 4: both read at once
+        store.reset(paths);
+        for (const p of paths) store.registerDisplay(p);
+        store.setGridCellW(400);
+        const deferreds = laneDeferreds("read_grid_thumb");
+        store.setGridRange(0, 1);
+        await flush();
+        expect(deferreds).toHaveLength(2);
+        // A bounces now; B bounces 600 ms later, so its backoff ends later too.
+        deferreds[0].reject(new Error("grid thumb pending"));
+        await flush();
+        await vi.advanceTimersByTimeAsync(600);
+        deferreds[1].reject(new Error("grid thumb pending"));
+        await flush();
+
+        // No range is EVER re-reported from here on — the store must recover
+        // both cells on its own.
+        await vi.advanceTimersByTimeAsync(5000);
+        await flush();
+        const asked = askedFor();
+        expect(asked.filter((p) => p === "/net/a.cr3").length).toBeGreaterThanOrEqual(2);
+        expect(asked.filter((p) => p === "/net/b.cr3").length).toBeGreaterThanOrEqual(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a pending bounce never goes terminal: a cell that loses four races still recovers", async () => {
+      // recordTierError bumps `attempts`, and at MAX_TIER_ATTEMPTS inCooldown
+      // is true forever. For a real failure that is the point; for a pending
+      // bounce it would strand the cell on the soft THMB for the session.
+      vi.useFakeTimers();
+      try {
+        const store = await armed(["/net/busy.cr3"]);
+        const deferreds = laneDeferreds("read_grid_thumb");
+        store.setGridRange(0, 0);
+        await flush();
+        // Five bounces — one more than MAX_TIER_ATTEMPTS (4).
+        for (let i = 0; i < 5; i++) {
+          expect(deferreds).toHaveLength(i + 1);
+          deferreds[i].reject(new Error("grid thumb pending"));
+          await flush();
+          await vi.advanceTimersByTimeAsync(40_000); // past the backoff cap
+          await flush();
+        }
+        // Still asking, and a success still lands.
+        expect(deferreds).toHaveLength(6);
+        deferreds[5].resolve(makeGridThumbBuf());
+        await flush();
+        expect(store.snapshot("/net/busy.cr3").gridThumbUrl).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("nothing is fetched after reset()/hardReset(), however long the pending timer waits", async () => {
+      // Honest note: this pins the CONTRACT, it does not discriminate one
+      // guard. Three independent things hold it — the teardown disarms the
+      // timer, the callback re-checks the generation, and the range it would
+      // re-run is -1/-1 after a session change. Removing any one (or even
+      // two) still leaves nothing fetched. Kept because the contract is what
+      // a future change must not break.
+      vi.useFakeTimers();
+      try {
+        for (const teardown of ["reset", "hardReset"] as const) {
+          const store = await armed(["/net/busy.cr3"]);
+          const deferreds = laneDeferreds("read_grid_thumb");
+          store.setGridRange(0, 0);
+          await flush();
+          deferreds[0].reject(new Error("grid thumb pending"));
+          await flush();
+
+          if (teardown === "reset") store.reset(["/net/busy.cr3"]);
+          else store.hardReset();
+          await vi.advanceTimersByTimeAsync(10_000);
+          await flush();
+          expect(deferreds).toHaveLength(1);
+        }
       } finally {
         vi.useRealTimers();
       }

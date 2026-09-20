@@ -214,6 +214,12 @@ export class ImageStore {
   /** The grid's current cell width in CSS px, 0 while the grid is closed.
    *  With the DPR it decides whether the tier is worth asking for at all. */
   private gridCellW = 0;
+  /** Paths whose last grid read bounced off the backend's generation claim
+   *  (`pending`) and are waiting out their backoff. The self-retry timer
+   *  re-arms for the soonest of these; a path leaves the set the moment it is
+   *  re-queued, so a cell that is being asked for again can never hold the
+   *  timer open. */
+  private gridThumbPending = new Set<string>();
   /** The ONE armed self-retry after a `pending` bounce (undefined = none).
    *  Deduped on purpose: a whole viewport bouncing off the idle sweep's
    *  generation claim must arm one timer, not one per cell — it re-runs the
@@ -672,6 +678,7 @@ export class ImageStore {
     // that set it (a re-stage may be looking at re-exported files).
     this.revokeReadyBlobs(this.gridThumbs);
     this.gridThumbUnavailable.clear();
+    this.gridThumbPending.clear();
     this.clearGridThumbPendingRetry();
     // The pool's decoded refs point at blob URLs this reset revokes.
     this.pool?.clear();
@@ -828,6 +835,7 @@ export class ImageStore {
       this.midUncached,
       this.midReprobed,
       this.gridThumbUnavailable,
+      this.gridThumbPending,
     ]) {
       set.delete(p);
     }
@@ -872,6 +880,7 @@ export class ImageStore {
     this.midSweep.reset();
     this.revokeReadyBlobs(this.gridThumbs); // REVOKE SITE 14
     this.gridThumbUnavailable.clear();
+    this.gridThumbPending.clear();
     this.clearGridThumbPendingRetry();
     this.fullHints.clear();
     this.nativeDims.clear();
@@ -950,9 +959,11 @@ export class ImageStore {
     this.refreshPool(); // back in loupe — re-warm the band (incl. zoom fulls)
     this.bgLane.pump();
     // Leaving the grid: drop the queued cells (nothing is mounted to show
-    // them any more) and let the now-empty window free every blob no other
-    // surface still displays.
+    // them any more), disarm the pending self-retry (it would re-run a range
+    // that no longer exists) and let the now-empty window free every blob no
+    // other surface still displays.
     this.gridThumbLane.queue = [];
+    this.clearGridThumbPendingRetry();
     this.gridThumbLane.evictAround(this.cursor);
   }
 
@@ -1031,6 +1042,9 @@ export class ImageStore {
     if (existing?.status === "ready" || existing?.status === "loading") return;
     if (this.requestedGridThumb.has(path) || this.gridThumbInFlightPaths.has(path)) return;
     if (inCooldown(this.gridThumbErrors.get(path), Date.now())) return;
+    // Being asked for again ends the wait — the self-retry timer only tracks
+    // cells that are still sitting out a bounce.
+    this.gridThumbPending.delete(path);
     if (!this.gridThumbLane.queue.includes(path)) this.gridThumbLane.queue.push(path);
   }
 
@@ -1799,8 +1813,9 @@ export class ImageStore {
       this.gridThumbs.delete(path);
       if (/(^|: )cancelled$/i.test(msg)) {
         // Superseded by a session change the backend saw first — quiet drop.
-        // Two shapes: the bare sentinel, and preview_parts's wrapped
-        // "cr3 preview: cancelled" (bundle.rs:184 + cr3.rs:684).
+        // Two shapes: the bare sentinel, and the wrapped "cr3 preview:
+        // cancelled" that bundle.rs's preview_parts_opt puts around
+        // cr3::read_preview_bundle's cancellation.
       } else if (GRID_THUMB_PENDING_RE.test(msg)) {
         // TRANSIENT, and NOT a failure: another producer holds the backend's
         // shared MidGen claim (the opportunistic mid generator and the
@@ -1813,7 +1828,8 @@ export class ImageStore {
         // equivalent, midUncached, is quiet for the same reason). Never the
         // unavailable latch either, or a scroll that raced the sweep would
         // strand those cells on the soft THMB for the rest of the session.
-        this.scheduleGridThumbPendingRetry(recordTierError(this.gridThumbErrors, path, msg), gen);
+        this.gridThumbPending.add(path);
+        this.armGridThumbPendingRetry(this.recordPendingBounce(path, msg).nextRetryAt, gen);
       } else if (GRID_THUMB_UNAVAILABLE_RE.test(msg)) {
         // PERMANENT, and not a failure: this file has no preview to sharpen
         // from. LATCH it — the cell keeps its THMB for the session, with no
@@ -1830,25 +1846,75 @@ export class ImageStore {
   }
 
   /**
+   * Record a `pending` bounce as pure backoff that can NEVER go terminal.
+   * `recordTierError` bumps `attempts`, and at MAX_TIER_ATTEMPTS `inCooldown`
+   * is true forever — right for a real failure, wrong here: a cell that lost
+   * four races against the sweep would sit on the soft THMB for the rest of
+   * the session. Capping one below the terminal mark keeps the backoff
+   * growing but always leaves the path askable. Real errors keep the standard
+   * semantics (the generic branch still calls noteTierError).
+   */
+  private recordPendingBounce(path: string, msg: string): TierError {
+    const te = recordTierError(this.gridThumbErrors, path, msg);
+    if (te.attempts < MAX_TIER_ATTEMPTS) return te;
+    const capped: TierError = { ...te, attempts: MAX_TIER_ATTEMPTS - 1 };
+    this.gridThumbErrors.set(path, capped);
+    return capped;
+  }
+
+  /**
    * After a `pending` bounce, ask again by ourselves once the path's backoff
    * has actually expired — a cell that lost the race must not stay on the soft
    * THMB until the user happens to scroll. ONE timer for the whole grid
    * (deduped): it re-runs the visible range, so it re-queues exactly the cells
-   * still on screen and nothing else. Gen-scoped, and every guard re-checks at
-   * fire time, so a stale fire is a no-op.
+   * still on screen and nothing else, and then re-arms for the next cell whose
+   * cooldown has yet to expire. Gen-scoped, and every guard re-checks at fire
+   * time, so a stale fire is a no-op.
    */
-  private scheduleGridThumbPendingRetry(te: TierError, gen: number): void {
+  private armGridThumbPendingRetry(dueAt: number, gen: number): void {
     if (this.gridThumbPendingRetry !== undefined) return;
-    const delay = Math.max(0, te.nextRetryAt - Date.now()) + GRID_THUMB_PENDING_RETRY_MS;
+    const delay = Math.max(0, dueAt - Date.now()) + GRID_THUMB_PENDING_RETRY_MS;
     this.gridThumbPendingRetry = setTimeout(() => {
       this.gridThumbPendingRetry = undefined;
       if (this.generation !== gen) return;
       this.requestGridThumbsInRange();
+      this.rearmGridThumbPendingRetry(gen);
     }, delay);
   }
 
-  /** Disarm the pending self-retry (session change — it must not fire into
-   *  the next folder's grid). */
+  /**
+   * Re-arm for the SOONEST cell still waiting out a pending bounce. Bounces
+   * are staggered (the lane runs a few at a time), so one timer armed on the
+   * first bounce fires while later cells are still in cooldown — they would
+   * be skipped and never asked for again without this.
+   *
+   * Only cells that the next fire could actually request count: still on
+   * screen, still mounted, and still genuinely IN cooldown. Anything else
+   * (scrolled away, unmounted, already re-queued — requestGridThumb clears
+   * the pending mark when it queues one) is excluded, which is also what
+   * stops this from re-arming on a due time that has already passed and
+   * spinning at the margin interval.
+   */
+  private rearmGridThumbPendingRetry(gen: number): void {
+    if (this.gridStart < 0 || !this.gridThumbWanted()) return;
+    const now = Date.now();
+    const last = Math.min(this.gridEnd, this.paths.length - 1);
+    let soonest = Infinity;
+    for (let i = Math.max(0, this.gridStart); i <= last; i++) {
+      const p = this.paths[i];
+      if (!this.gridThumbPending.has(p)) continue;
+      if (!this.displayRefs.has(p)) continue;
+      const te = this.gridThumbErrors.get(p);
+      if (te === undefined || te.attempts >= MAX_TIER_ATTEMPTS) continue;
+      if (now < te.nextRetryAt && te.nextRetryAt < soonest) soonest = te.nextRetryAt;
+    }
+    if (soonest !== Infinity) this.armGridThumbPendingRetry(soonest, gen);
+  }
+
+  /** Disarm the pending self-retry (session change, or the grid closing — it
+   *  must not fire into the next folder's grid). Defence in depth rather than
+   *  the only guard: the callback re-checks the generation, and the range it
+   *  re-runs is read fresh, so a stale fire could at worst waste a timer. */
   private clearGridThumbPendingRetry(): void {
     if (this.gridThumbPendingRetry === undefined) return;
     clearTimeout(this.gridThumbPendingRetry);
