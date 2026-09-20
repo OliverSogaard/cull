@@ -57,7 +57,7 @@ computes against it from drifting apart:
   checks that every layout token it covers (`--bar-h`, `--winbtn-w`,
   `--rail-w`, `--rail-w-compare`) is actually referenced somewhere, and that
   the footer's, rail's and home screen's picked window-WIDTH breakpoints
-  (1360 / 1240 / 1200 / 1100 / 2000 px) exist in the stylesheet at the exact
+  (1360 / 1240 / 1200 / 1120 / 2000 px) exist in the stylesheet at the exact
   width each was picked for, plus the filmstrip's scrub-speed chip anchor
   (`--cell-h`, `strip.css`). `--strip-h` / `--cell-w` / `--cell-h` themselves
   are NOT this file's concern — see `metrics.test.ts` below.

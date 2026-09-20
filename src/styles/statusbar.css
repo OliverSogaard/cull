@@ -91,8 +91,8 @@
    alongside the other cosmetic words at 1220 while still being priced as if
    it were already gone; moving it up here is what closes the overflow band
    described below. The ORDINARY finish label ("Ctrl+E · N keeps") is
-   untouched at this breakpoint — it keeps its own 1100 tier, exactly as the
-   owner saw it on the design board.
+   untouched at this breakpoint — it keeps its own tier at 1120 (the design
+   board said 1100; the sums below are why it moved 20px).
 
    1240 — the three remaining cosmetic words go: the zoom/scrub chip's word
    ("zoom 1:1" → "1:1" / "Scrubbing" → gone) and the verdict pill's word
@@ -105,7 +105,7 @@
    breakpoint (exif-rail.css) is a different decision and stays exactly
    where it is.
 
-   1100 — the ordinary finish label sheds to "Finish", unchanged by any of
+   1120 — the ordinary finish label sheds to "Finish", unchanged by any of
    this.
 
    The arithmetic, restated in full with EVERY always-shown piece counted —
@@ -120,16 +120,20 @@
        R-ordinary = 79 + 14 + 347 + 14 + 163 = 617
        R-short    = 79 + 14 + 347 + 14 +  66 = 520
 
+     The 347 above is the tabs' measured advance; if it excludes their own
+     4px side margins, take 8 off every slack figure below — each stays
+     positive.
+
      left cluster, the binding (NOT-all-rated) case, the two mutually
      exclusive pairs collapsed to their larger member (zoom XOR scrub;
      overlay cluster XOR "N selected") — verdict glyph 14 + gap 7 +
      "REJECT" 47 = 68 (or 14 alone once the word sheds); scrub icon 12 +
-     two 4px gaps + "Scrubbing" 67 + ×10 chip 42 = 129 (or 58 once the word
-     sheds); the overlay cluster 133; the all-missing chip with its tail
+     two 4px gaps + "Scrubbing" 67 + ×10 chip 42 + that chip's own
+     `margin-left: 8px` = 137 (or 66 once the word sheds); the overlay cluster 133; the all-missing chip with its tail
      already gone, "4194 photos missing", 143; four 14px gaps between the
      five rendered items (filename included, even at zero width) = 56.
-       L-full   (cosmetic words shown) = 68 + 129 + 133 + 143 + 56 = 529
-       L-shrunk (cosmetic words hidden) = 14 +  58 + 133 + 143 + 56 = 404
+       L-full   (cosmetic words shown) = 68 + 137 + 133 + 143 + 56 = 537
+       L-shrunk (cosmetic words hidden) = 14 +  66 + 133 + 143 + 56 = 412
 
      filename — the stem ellipses toward zero in the worst case
      (min-width: 0); the extension (".CR3") costs ~27px whenever it is
@@ -144,17 +148,18 @@
    slack to spare:
 
      1359px (cosmetic shown, finish ordinary, extension already hidden):
-       529 + 0 + 617 + 72 = 1218 needed, 1359 available → 141px slack.
+       537 + 0 + 617 + 72 = 1226 needed, 1359 available → 133px slack.
      1240px (same state, this tier's own tightest width):
-       1218 needed, 1240 available → 22px slack.
+       1226 needed, 1240 available → 14px slack.
      1239px (cosmetic just hidden, finish still ordinary, extension hidden):
-       404 + 0 + 617 + 72 = 1093 needed, 1239 available → 146px slack.
-     1100px (same state, this tier's own tightest width):
-       1093 needed, 1100 available → 7px slack.
-     1099px (cosmetic hidden, finish just shed to short, extension hidden):
-       404 + 0 + 520 + 72 = 996 needed, 1099 available → 103px slack.
+       412 + 0 + 617 + 72 = 1101 needed, 1239 available → 138px slack.
+     1120px (same state, this tier's own tightest width):
+       1101 needed, 1120 available → 19px slack (at 1100, the design board's number, this state
+       would be 1px short — which is why the tier sits at 1120).
+     1119px (cosmetic hidden, finish just shed to short, extension hidden):
+       412 + 0 + 520 + 72 = 1004 needed, 1119 available → 115px slack.
      1024px (the app's minimum window width, same state):
-       996 needed, 1024 available → 28px slack — the filename stem's
+       1004 needed, 1024 available → 20px slack — the filename stem's
        worst-case headroom (all-missing chip + scrub + overlay cluster at
        once); the stem ellipses there and nothing clips. In every ordinary
        state the stem has its full 240px max-width.
@@ -192,7 +197,7 @@
      button already carries `is-done` (brightened fill + the one-time
      breathe animation, stage.css), so "Finish" alone still reads as the
      same moment. The ORDINARY label ("Ctrl+E · N keeps", ~163px at worst)
-     is far smaller and keeps shedding at 1100 as on the design board — see
+     is far smaller and keeps shedding at its own 1120 tier — see
      the arithmetic above; it is now the tighter of the two, not this one.
      Three classes deep, this pair outranks the plain finish-short rule
      below it (one class) on specificity alone, regardless of which comes
@@ -231,21 +236,20 @@
   }
 }
 
-@media (width < 1100px) {
+@media (width < 1120px) {
   .cull-statusbar__finish-long {
     display: none;
   }
 }
 
 /* The short finish label is the exception: hidden by default, shown only
-   under 1100 (the reverse of every rule above). */
+   under 1120 (the reverse of every rule above). */
 .cull-statusbar__finish-short {
   display: none;
 }
 
-@media (width < 1100px) {
+@media (width < 1120px) {
   .cull-statusbar__finish-short {
     display: inline;
   }
 }
-

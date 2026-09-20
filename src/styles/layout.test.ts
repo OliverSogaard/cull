@@ -65,7 +65,7 @@ describe("the footer's breakpoints", () => {
     // The cosmetic shed sits at 1240 (fix round 4 — moved up from 1220 for
     // margin, since the sums it rests on are estimated glyph advances, not
     // the info rail's own, unrelated 1200px breakpoint in exif-rail.css).
-    for (const w of [1360, 1240, 1100]) {
+    for (const w of [1360, 1240, 1120]) {
       expect(statusbar, `${w}px breakpoint`).toContain(`@media (width < ${w}px)`);
     }
     expect(statusbar, "range notation only").not.toMatch(/@media\s*\(max-width/);
@@ -102,14 +102,14 @@ describe("the footer's breakpoints", () => {
     expect(block(1240), "the tail moved to 1360 and must not still be here").not.toContain(
       ".cull-statusbar__unsaved-tail",
     );
-    expect(block(1100)).toContain(".cull-statusbar__finish-long");
+    expect(block(1120)).toContain(".cull-statusbar__finish-long");
   });
 
-  test("only the ALL-RATED finish label sheds at 1360 — the ordinary one waits for 1100", () => {
+  test("only the ALL-RATED finish label sheds at 1360 — the ordinary one waits for 1120", () => {
     // Fix round 2: the all-rated form ("All N rated · Ctrl+E finish", the
     // biggest thing on the right) sheds to "Finish" at 1360, scoped to
     // `.is-done` so the ordinary form ("Ctrl+E · N keeps", far smaller)
-    // keeps shedding at 1100, unchanged. ruleBody's exact "selector {"
+    // keeps shedding at 1120, unchanged. ruleBody's exact "selector {"
     // match is used (not the block()/toContain() substring pair above) so
     // a comment merely mentioning these classes can't fake a pass — the
     // fix-round-1 report found exactly that kind of false positive once.
@@ -124,7 +124,7 @@ describe("the footer's breakpoints", () => {
       /display:\s*inline/,
     );
 
-    // The plain (unscoped) finish-long shed must still live ONLY at 1100 —
+    // The plain (unscoped) finish-long shed must still live ONLY at 1120 —
     // exactly one occurrence of its selector in the 1360 tier, and that one
     // occurrence must be the `.is-done`-scoped pair above, not a bare copy.
     const needle = ".cull-statusbar__finish-long {";

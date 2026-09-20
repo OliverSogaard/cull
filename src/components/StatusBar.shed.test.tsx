@@ -6,7 +6,7 @@ import { StatusBar, type StatusBarProps } from "./StatusBar";
 import type { Filter } from "../types";
 
 /**
- * Below 1360 / 1240 / 1100 px of window width the footer sheds, in CSS. jsdom
+ * Below 1360 / 1240 / 1120 px of window width the footer sheds, in CSS. jsdom
  * has no layout and evaluates no media query, so what is testable here is the
  * CONTRACT the CSS needs: every shed label is rendered in BOTH forms, each in
  * its own element, and nothing the accessible name is built from moved.
