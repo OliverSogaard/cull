@@ -71,9 +71,8 @@
   letter-spacing: 0.04em;
 }
 
+/* Lighter cap than the default, so it lifts off the empty state's panel.
+   Geometry is `.kbd`'s. */
 .cull-empty-state__hint kbd {
   background: var(--surface);
-  padding: 2px 7px;
-  margin: 0 2px;
 }
-

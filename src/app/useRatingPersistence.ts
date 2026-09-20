@@ -8,27 +8,45 @@ const FEEDBACK_MS = 320;
 // after the last attempt is surfaced as "unsaved" rather than silently dropped.
 const WRITE_RETRY_DELAYS = [400, 1500, 4000];
 
+/** A write that exhausted its options, and what kind of failure it was.
+ *  `rating === null` = an unrate (clear) that failed, so a stuck unrate is
+ *  surfaced and guarded just like a stuck rating. `missing` = the backend
+ *  refused because the photo is not at its path (utils/writeFailure), which a
+ *  timer cannot fix — only the drive coming back or the photo being put back
+ *  can, so it gets one attempt per deliberate retry and no schedule. */
+type FailedWrite = { rating: Rating | null; missing: boolean };
+
 /**
  * Rating-write durability + the rating feedback flash, verbatim from App
  * (grand cleanup Phase 6). Every rating writes an .xmp sidecar; we count
  * writes in flight (savingCount) and remember any that exhausted their
- * retries (failedWrites: path → the rating that didn't land) so we can show
- * them and block a quit that would lose work (see useQuitGuard, which reads
- * this hook's counts).
+ * retries (failedWrites: path → what didn't land) so we can show them and
+ * block a quit that would lose work (see useQuitGuard, which reads this
+ * hook's counts).
+ *
+ * Failures come in two kinds and the chrome must tell them apart: `failedCount`
+ * is every failure (so the quit guard and the leave-to-home warning still
+ * refuse to lose one silently), `missingCount` is the subset whose photo was
+ * not at its path. What is left — `failedCount - missingCount` — is what a
+ * retry can be expected to save, and the only thing that blocks finishing the
+ * cull; a missing photo warns instead, because blocking on one would leave a
+ * session with no way out.
  */
 export function useRatingPersistence() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
 
   const [savingCount, setSavingCount] = useState(0);
-  // path → the rating that didn't land. `null` = an unrate (clear) that failed,
-  // so a stuck unrate is surfaced and guarded just like a stuck rating.
-  const [failedWrites, setFailedWrites] = useState<Record<string, Rating | null>>({});
+  // path → the failure. One record rather than a second parallel set of missing
+  // paths: the two could drift apart (a missingCount above failedCount would
+  // make the retryable remainder go negative), and they never have to.
+  const [failedWrites, setFailedWrites] = useState<Record<string, FailedWrite>>({});
   // Mirrors of the above for the (once-registered) close-request handler, which
   // would otherwise capture stale values.
   const savingRef = useRef(0);
   const failedCountRef = useRef(0);
   const failedCount = Object.keys(failedWrites).length;
+  const missingCount = Object.values(failedWrites).filter((write) => write.missing).length;
 
   const flashFeedback = useCallback((rating: Rating, imageId: number) => {
     setFeedback({ rating, imageId, ts: Date.now() });
@@ -110,8 +128,9 @@ export function useRatingPersistence() {
         // (successful) write already cleared.
         if (isLatest()) {
           console.error(`${cmd} failed permanently`, path, e);
+          const missing = isPermanentWriteError(e);
           setFailedWrites((f) => {
-            const next = { ...f, [path]: rating };
+            const next = { ...f, [path]: { rating, missing } };
             failedCountRef.current = Object.keys(next).length;
             return next;
           });
@@ -120,10 +139,17 @@ export function useRatingPersistence() {
     );
   }, []);
 
-  // Re-attempt every rating that exhausted its retries (triggered from the unsaved
-  // indicator or the quit guard).
+  // Re-attempt every rating that exhausted its retries (triggered from the
+  // unsaved indicator or the quit guard) — the missing ones included. A photo
+  // is usually "missing" because the drive or NAS it lives on dropped out, and
+  // the user clicking this is saying it may be back; skipping them would strand
+  // every rating made during an outage with no way to ever save it. What the
+  // missing flag still buys them is no automatic SCHEDULE (tryWrite above):
+  // one attempt per click, fail fast.
   const retryFailed = useCallback(() => {
-    Object.entries(failedWrites).forEach(([path, rating]) => persistRating(path, rating));
+    Object.entries(failedWrites).forEach(([path, write]) => {
+      persistRating(path, write.rating);
+    });
   }, [failedWrites, persistRating]);
 
   // savingRef / failedCountRef are maintained SYNCHRONOUSLY inside persistRating
@@ -145,6 +171,7 @@ export function useRatingPersistence() {
     retryFailed,
     savingCount,
     failedCount,
+    missingCount,
     savingRef,
     failedCountRef,
   };

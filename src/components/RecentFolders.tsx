@@ -1,6 +1,8 @@
+import { Check } from "lucide-react";
 import { recentKey, type RecentEntry } from "../hooks/useRecents";
 import { formatFolderSet, formatRelativeTime } from "../utils/format";
-import { modGlyph } from "../utils/platform";
+import { ICON } from "./icons";
+import { KeyCombo } from "./KeyCombo";
 
 /**
  * Recent-sessions section on the home screen. Renders nothing on a totally
@@ -27,7 +29,7 @@ export function RecentFolders({
       {recents.length === 0 ? (
         <div className="cull-recent__empty">
           No folders yet. Drop some anywhere, or press{" "}
-          <kbd className="kbd cull-recent__kbd">{modGlyph} O</kbd>.
+          <KeyCombo keys={["mod", "O"]} className="cull-recent__kbd" />.
         </div>
       ) : (
         <div className="cull-recent__items">
@@ -66,9 +68,8 @@ function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }
           entry.done ? (
             <>
               <b>{entry.count}</b>
-              <span className="cull-recent__done" aria-label="finished">
-                {" "}
-                ✓
+              <span className="cull-recent__done" role="img" aria-label="finished">
+                <Check {...ICON.sm} aria-hidden />
               </span>
             </>
           ) : entry.rated > 0 ? (

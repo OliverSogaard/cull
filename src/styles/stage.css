@@ -154,9 +154,14 @@
   box-shadow: inset 0 0 0 3px rgba(200, 127, 127, 0.7);
 }
 
+/* The favourite has its own colour (`--fav`, lilac); the champagne literal
+   this used to carry was the ACCENT, which made a favourite flash the same
+   wash as the app's chrome. Its siblings above spell `--ok` / `--bad` out as
+   rgba because they predate the token; `--fav` is newer than color-mix here,
+   so it stays a token and only the alphas (45 / 70) are shared with them. */
 .cull-photo-frame--flash-fav::after {
-  background: rgba(212, 175, 106, 0.45);
-  box-shadow: inset 0 0 0 3px rgba(212, 175, 106, 0.7);
+  background: color-mix(in srgb, var(--fav) 45%, transparent);
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--fav) 70%, transparent);
 }
 
 @keyframes cull-flash-pulse {
@@ -292,12 +297,16 @@
    voice in the footer — present, never competing. */
 .cull-statusbar__keyhint {
   font-size: var(--fs-1);
+  color: var(--text-2);
   opacity: 0.7;
   white-space: nowrap;
 }
 
-/* Rides `.btn` for the skeleton; everything below is what makes it the
-   footer's accent-outline mono pill rather than a dialog button. */
+/* Rides `btn btn--sm` for the skeleton and the size; everything below is what
+   makes it the footer's accent-outline mono pill rather than a dialog button.
+   The 10px mono label stays its own: sm unifies height and padding, and
+   uppercase mono at the sm 12px would widen the pill past the footer's
+   breathing room. */
 .cull-statusbar__finish {
   border-color: var(--accent);
   border-radius: var(--r-1);
@@ -306,7 +315,6 @@
   font-size: var(--fs-2);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
-  padding: 5px 14px; /* off-scale */
   transition:
     background var(--dur-fast) ease,
     color var(--dur-fast) ease;
@@ -342,7 +350,7 @@
 
 .cull-statusbar__finish:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 /* ── messages ─────────────────────────────────────────────── */
@@ -376,17 +384,21 @@
   border: 1px solid var(--border);
   border-radius: 3px; /* off-scale */
   margin: 16px 0;
+  /* Error text (preview-failed detail, analyze-error dump) is copyable data —
+     carve an exception out of the app-wide `user-select: none` in base.css. */
+  user-select: text;
 }
 
 /* Retry affordance on the preview-failed panel (errored reads back off and
-   eventually go terminal — this re-queues the frame immediately). */
+   eventually go terminal — this re-queues the frame immediately). Size comes
+   from `btn--sm`; the 11px mono label stays its own, so the button keeps
+   speaking in the panel's voice rather than the dialogs'. */
 .cull-message__retry {
   font: inherit; /* mono + 1.7 line-height off .cull-message */
   font-size: var(--fs-3);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   background: var(--surface-2);
-  padding: 6px 18px; /* off-scale */
 }
 
 .cull-message__retry:hover:not(:disabled) {
@@ -400,6 +412,12 @@
   /* The bar is Inter, not mono — this chip has always inherited that. */
   font-family: var(--font-ui);
   letter-spacing: 0.08em;
+  /* The analyze variant leads with a warning icon; inline-flex sits it on the
+     label's centre line instead of the baseline it would drop to as an
+     inline SVG. Harmless on the text-only variants. */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
   background: transparent;
   margin-left: 10px;
   cursor: pointer;
@@ -460,6 +478,12 @@
 
 .cull-error-chip button {
   font: inherit;
+  /* Chromium's UA stylesheet resets text-transform (and other form-control
+     text styling) to none on <button>, so it does NOT pick up the chip's
+     uppercase the way the sibling <span> does — pull both back explicitly so
+     "retry" reads the same case/tracking as "read failed" next to it. */
+  text-transform: inherit;
+  letter-spacing: inherit;
   color: var(--text);
   background: none;
   border: none;
@@ -470,6 +494,11 @@
 
 .cull-error-chip button:hover {
   color: var(--accent);
+}
+
+.cull-error-chip button:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 /* Dev performance HUD (localStorage cull:devhud=1, or VITE_CULL_DEVHUD=1 in a

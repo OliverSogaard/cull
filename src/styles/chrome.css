@@ -1,7 +1,13 @@
 /* ── save-status pill (top chrome) ────────────────────────────
-   XMP save indicator next to the brand block. Three states driven
+   XMP save indicator next to the brand block. Four states driven
    purely from the existing savingCount / failedWrites state. */
+/* The failed / missing states render as a real <button>, so the base carries
+   the reset that keeps a button looking like this pill (the size and the mono
+   face come from `.chip`; only the UA's own chrome has to go). */
 .cull-save-status {
+  appearance: none;
+  background: none;
+  border: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -35,25 +41,29 @@
   animation: cull-save-pulse 0.9s infinite;
 }
 
-.cull-save-status--failed {
+/* --missing shares the failed pill's alarm AND its affordance: a photo that
+   wasn't at its path is usually a drive that dropped out, so both states are
+   one click on the same retry. They differ only in what they say. */
+.cull-save-status--failed,
+.cull-save-status--missing {
   color: var(--bad);
   background: rgba(200, 127, 127, 0.12);
   cursor: pointer;
 }
 
-.cull-save-status--failed .cull-save-status__dot {
+.cull-save-status--failed .cull-save-status__dot,
+.cull-save-status--missing .cull-save-status__dot {
   background: var(--bad);
   opacity: 1;
 }
 
-.cull-save-status--failed:hover {
+.cull-save-status--failed:hover,
+.cull-save-status--missing:hover {
   background: rgba(200, 127, 127, 0.2);
 }
 
-.cull-save-status--failed:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
+/* `.chip:focus-visible` already carries --ring; these two are the only
+   focusable pills, and they take it from there. */
 
 @keyframes cull-save-pulse {
   0%,
@@ -97,9 +107,12 @@
   color: var(--text);
 }
 
-.cull-winbtn:focus,
-.cull-winbtn:focus-visible {
+.cull-winbtn:focus {
   outline: none;
+}
+
+.cull-winbtn:focus-visible {
+  box-shadow: var(--ring-inset);
 }
 
 .cull-winbtn--close:hover {
@@ -264,7 +277,9 @@
 
 .cull-statusbar__ov:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  /* .cull-statusbar__overlay-cluster has a 3px gap between chips — inset
+     per the ring rule. */
+  box-shadow: var(--ring-inset);
 }
 
 /* Scrubbing indicator — champagne pulse with an animated arrow prefix.
@@ -281,9 +296,7 @@
   gap: 4px;
 }
 
-.cull-statusbar__scrub::before {
-  content: "⟶";
-  font-size: var(--fs-3);
+.cull-statusbar__scrub-arrow {
   animation: cull-scrub-flash 0.5s infinite;
 }
 
@@ -350,7 +363,7 @@
   appearance: none;
   background: transparent;
   border: none;
-  color: var(--muted);
+  color: var(--text-2);
   padding: 4px 12px;
   font-family: var(--font-mono);
   font-size: var(--fs-2);
@@ -399,7 +412,7 @@
 }
 
 .cull-filter-tabs button:hover:not(.is-active) {
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .cull-filter-tabs button.is-active {
@@ -410,6 +423,7 @@
 .cull-filter-tabs button:focus-visible {
   outline: none;
   color: var(--text);
+  box-shadow: var(--ring-inset);
 }
 
 /* Keeps / Smart wrap their tab button so the sub-mode tooltip (below) can
@@ -473,6 +487,17 @@
     border-color var(--dur-fast) ease;
 }
 
+/* The sub-mode tabs whose whole content is one icon. The rule above tracks
+   these buttons out by .08em for uppercase text; on an SVG that tracking is
+   pure trailing space, which shoves the icon left of centre. Drop it and let
+   flex do the centring. */
+.cull-filter-tab-tooltip button.is-icon {
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .cull-filter-tab-tooltip button:hover:not(.is-active) {
   color: var(--text-2);
 }
@@ -486,6 +511,9 @@
 .cull-filter-tab-tooltip button:focus-visible {
   outline: none;
   color: var(--text);
+  /* .cull-filter-tab-tooltip has a 3px gap between its sub-mode buttons —
+     inset per the ring rule. */
+  box-shadow: var(--ring-inset);
 }
 
 /* ── chrome phases: start / loading / staged ──────────────── */
@@ -552,7 +580,10 @@
 }
 
 .cull-drag-indicator__arrow {
-  font-size: 36px; /* off-scale */
+  /* Display glyph: the 36px arrow is a Lucide SVG, so the box is the icon —
+     flex keeps it from sitting on a text baseline with descender space under
+     it, which would push it off the indicator's optical centre. */
+  display: flex;
   color: var(--accent);
   line-height: 1;
 }
@@ -615,9 +646,14 @@
 }
 
 .cull-staged__check {
+  /* 40px display tick (a Lucide SVG) or a 40px em dash when nothing staged —
+     the font-size still sizes the dash. Flex centres whichever it is. */
   font-size: 40px; /* off-scale */
   line-height: 1;
   color: var(--ok);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .cull-staged__count {
@@ -649,8 +685,8 @@
   margin-top: 8px;
 }
 
-/* The "add more" affordance lives in this hint now (drop or ⌃O) — the staged
-   screen no longer has a dedicated button for it. */
+/* The "add more" affordance lives in this hint now (drop or Ctrl+O, ⌘O on
+   macOS) — the staged screen no longer has a dedicated button for it. */
 .cull-staged__hint {
   margin-top: 14px;
   font-family: var(--font-mono);
@@ -666,17 +702,28 @@
   letter-spacing: 0.06em;
 }
 
+/* A real <button>: both kinds of failed write re-attempt on click, so the
+   chip is keyboard-reachable and takes the focus ring like every other
+   control (--ring, not --ring-inset — the footer gives it 14px of gap and
+   13px above and below). The reset is what a bare button needs to sit in a
+   text row: no UA chrome, no UA padding, no UA font. */
 .cull-statusbar__unsaved {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
   color: var(--bad);
   font-family: var(--font-mono);
   font-size: var(--fs-2);
   font-weight: 500;
   cursor: pointer;
   letter-spacing: 0.06em;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
 .cull-statusbar__unsaved:hover {
   color: var(--bad-hover);
   text-decoration: underline;
 }
-

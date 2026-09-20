@@ -1,5 +1,5 @@
 import type { HelpGroup, HelpMode } from "../types";
-import { modGlyph, modName } from "../utils/platform";
+import { modName } from "../utils/platform";
 
 /**
  * Context-aware keyboard reference. The "switch view" group lists only the
@@ -15,11 +15,11 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
   const session: HelpGroup = {
     title: "session",
     keys: [
-      [`${modName}+z`, "undo"],
-      [`${modName}+⇧+z`, "redo"],
-      [`${modName}+e`, "finish actions"],
-      ["tab (hold)", "this help"],
-      ["esc", "leave to home (clears a grid selection first)"],
+      [`${modName}+z`, "Undo"],
+      [`${modName}+⇧+z`, "Redo"],
+      [`${modName}+e`, "Finish actions"],
+      ["tab (hold)", "This help"],
+      ["esc", "Leave to home (clears a grid selection first)"],
     ],
   };
   if (mode === "loupe") {
@@ -27,37 +27,37 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
       {
         title: "rate",
         keys: [
-          ["enter", "keep"],
-          ["backspace", "reject"],
-          ["f", "favorite"],
-          ["u", "unrate"],
+          ["enter", "Keep"],
+          ["backspace", "Reject"],
+          ["f", "Favorite"],
+          ["u", "Unrate"],
         ],
       },
       {
         title: "navigate",
         keys: [
-          ["← →", "prev / next  (hold to scrub)"],
+          ["← →", "Prev / next  (hold to scrub)"],
           ["space (hold)", "1:1 zoom · ←↑↓→ pan · rating carries zoom to the next frame"],
-          ["click (hold)", "zoom at cursor · drag to pan"],
+          ["click (hold)", "Zoom at cursor · drag to pan"],
           ["shift+space", "2:1 zoom  (shift+click too)"],
-          ["1 – 4", "filter: all / unrated / keeps / smart  (repeat to cycle sub-modes)"],
+          ["1 – 4", "Filter: all / unrated / keeps / smart  (repeat to cycle sub-modes)"],
         ],
       },
       {
         title: "overlays",
         keys: [
-          ["i", "exif + histogram"],
-          ["h", "clipping"],
-          ["p", "focus peaking"],
-          ["o", "thirds grid"],
-          ["t", "thumbnail strip"],
+          ["i", "EXIF + histogram"],
+          ["h", "Clipping"],
+          ["p", "Focus peaking"],
+          ["o", "Thirds grid"],
+          ["t", "Thumbnail strip"],
         ],
       },
       {
         title: "switch view",
         keys: [
-          ["c", "compare"],
-          ["g", "grid"],
+          ["c", "Compare"],
+          ["g", "Grid"],
         ],
       },
       session,
@@ -68,16 +68,16 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
       {
         title: "decide",
         keys: [
-          ["enter", "challenger wins  (champion rejected)"],
-          ["k", "keep both"],
-          ["f", "keep both · challenger ★"],
-          ["backspace", "reject challenger"],
+          ["enter", "Challenger wins  (champion rejected)"],
+          ["k", "Keep both"],
+          ["f", "Keep both · challenger ★"],
+          ["backspace", "Reject challenger"],
         ],
       },
       {
         title: "navigate",
         keys: [
-          ["← →", "pick challenger  (hold to scrub)"],
+          ["← →", "Pick challenger  (hold to scrub)"],
           ["space (hold)", "1:1 zoom · ←↑↓→ pan · deciding carries zoom"],
           ["shift+space", "2:1 zoom"],
         ],
@@ -85,18 +85,18 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
       {
         title: "overlays",
         keys: [
-          ["i", "exif + histogram"],
-          ["h", "clipping"],
-          ["p", "focus peaking"],
-          ["o", "thirds grid"],
-          ["t", "candidate strip"],
+          ["i", "EXIF + histogram"],
+          ["h", "Clipping"],
+          ["p", "Focus peaking"],
+          ["o", "Thirds grid"],
+          ["t", "Candidate strip"],
         ],
       },
       {
         title: "switch view",
         keys: [
-          ["l", "loupe"],
-          ["g", "grid"],
+          ["l", "Loupe"],
+          ["g", "Grid"],
         ],
       },
       session,
@@ -107,30 +107,30 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
     {
       title: "rate",
       keys: [
-        ["enter", "keep selected"],
-        ["backspace", "reject selected"],
-        ["f", "favorite"],
-        ["u", "unrate"],
+        ["enter", "Keep selected"],
+        ["backspace", "Reject selected"],
+        ["f", "Favorite"],
+        ["u", "Unrate"],
       ],
     },
     {
       title: "navigate",
       keys: [
-        ["← →", "prev / next  (hold to traverse)"],
-        ["↑ ↓", "row up / down"],
-        ["1 – 4", "filter: all / unrated / keeps / smart  (repeat to cycle sub-modes)"],
-        ["click", "open in loupe"],
-        ["⇧+click", "select range"],
-        ["⇧+← → ↑ ↓", "grow selection"],
-        [`${modGlyph}+click`, "add to selection"],
-        [`${modName}+a`, "select all in filter"],
+        ["← →", "Prev / next  (hold to traverse)"],
+        ["↑ ↓", "Row up / down"],
+        ["1 – 4", "Filter: all / unrated / keeps / smart  (repeat to cycle sub-modes)"],
+        ["click", "Open in loupe"],
+        ["⇧+click", "Select range"],
+        ["⇧+← → ↑ ↓", "Grow selection"],
+        [`${modName}+click`, "Add to selection"],
+        [`${modName}+a`, "Select all in filter"],
       ],
     },
     {
       title: "switch view",
       keys: [
-        ["l", "loupe"],
-        ["c", "compare"],
+        ["l", "Loupe"],
+        ["c", "Compare"],
       ],
     },
     session,

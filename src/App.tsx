@@ -10,7 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check, Star, X as XIcon } from "lucide-react";
+import { ArrowDown, Check, Star, TriangleAlert, X as XIcon } from "lucide-react";
 import type {
   AnalyzeProgress,
   FileOpResult,
@@ -31,6 +31,8 @@ import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
+import { ICON, ICON_DISPLAY_STROKE } from "./components/icons";
+import { KeyCombo } from "./components/KeyCombo";
 import { QuitGuardOverlay } from "./components/QuitGuardOverlay";
 import { RecentFolders } from "./components/RecentFolders";
 import { SaveStatusPill } from "./components/SaveStatusPill";
@@ -81,7 +83,6 @@ import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
 import { basename } from "./utils/path";
-import { modGlyph } from "./utils/platform";
 import { writeLocalStorage } from "./utils/storage";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
@@ -282,6 +283,7 @@ export default function App() {
     retryFailed,
     savingCount,
     failedCount,
+    missingCount,
     savingRef,
     failedCountRef,
   } = useRatingPersistence();
@@ -1184,7 +1186,7 @@ export default function App() {
 
   // Ctrl/Cmd+A — select everything the current filter shows. Rating keys then
   // act on the whole set (one undo entry): the sanctioned bulk-apply path, e.g.
-  // Smart ✕ filter → grid → ⌘A → Backspace clears every suggested reject.
+  // Smart ✕ filter → grid → Ctrl/Cmd+A → Backspace clears every suggested reject.
   const selectAllInGrid = useCallback(() => {
     if (visibleIndices.length === 0) return;
     setSelectedIndices(new Set(visibleIndices));
@@ -1277,6 +1279,7 @@ export default function App() {
   const quitGuardOverlay = quitGuard && (
     <QuitGuardOverlay
       failedCount={failedCount}
+      missingCount={missingCount}
       savingCount={savingCount}
       retryFailed={retryFailed}
       onKeepCulling={() => setQuitGuard(false)}
@@ -1344,8 +1347,8 @@ export default function App() {
     [gridVisible, selectedIndices.size],
   );
   const statusSave = useMemo<StatusBarSave>(
-    () => ({ savingCount, failedCount, retryFailed }),
-    [savingCount, failedCount, retryFailed],
+    () => ({ savingCount, failedCount, missingCount, retryFailed }),
+    [savingCount, failedCount, missingCount, retryFailed],
   );
   const statusFilter = useMemo<StatusBarFilter>(
     () => ({
@@ -1380,7 +1383,6 @@ export default function App() {
       openActions: () => setActionsOpen(true),
       actionsOpen,
       rejectedCount: rejectedPaths.length,
-      keyhint: modGlyph,
     }),
     [actionsOpen, rejectedPaths.length],
   );
@@ -1412,6 +1414,7 @@ export default function App() {
             </span>
             <SaveStatusPill
               failedCount={failedCount}
+              missingCount={missingCount}
               savingCount={savingCount}
               onRetry={retryFailed}
             />
@@ -1420,7 +1423,9 @@ export default function App() {
         <div className={`cull-chrome${isDragOver ? " is-drag-over" : ""}`} data-tauri-drag-region>
           {isDragOver && (
             <div className="cull-drag-indicator" aria-hidden>
-              <div className="cull-drag-indicator__arrow">↓</div>
+              <div className="cull-drag-indicator__arrow">
+                <ArrowDown size={36} strokeWidth={ICON_DISPLAY_STROKE} aria-hidden />
+              </div>
               <div className="cull-drag-indicator__text">Drop folders to open</div>
             </div>
           )}
@@ -1439,10 +1444,10 @@ export default function App() {
                   onClick={pickFolder}
                   disabled={pickerBusy}
                 >
-                  {pickerBusy ? "opening…" : "Open folders"}
-                  <span className="kbd kbd--tint cull-hero__cta-key">{modGlyph} O</span>
+                  {pickerBusy ? "Opening…" : "Open folders"}
+                  <KeyCombo keys={["mod", "O"]} className="kbd--tint cull-hero__cta-key" />
                 </button>
-                <span className="cull-hero__drop-hint">or drop folders anywhere</span>
+                <span className="cull-hero__drop-hint">Or drop folders anywhere</span>
               </div>
               <RecentFolders
                 recents={recentFolders}
@@ -1454,8 +1459,8 @@ export default function App() {
               {scanFailures && <ScanFailureCard failures={scanFailures} />}
               <div className="cull-hero__how">
                 <span>
-                  <span className="kbd cull-hero__how-key">{modGlyph} ,</span>
-                  settings
+                  <KeyCombo keys={["mod", ","]} className="cull-hero__how-key" />
+                  Settings
                 </span>
               </div>
             </div>
@@ -1471,7 +1476,7 @@ export default function App() {
                 </span>
               </div>
               <div className="cull-chrome__sub">
-                {images.length > 0 ? `${images.length} files staged · scanning…` : "scanning…"}
+                {images.length > 0 ? `${images.length} files staged · scanning…` : "Scanning…"}
               </div>
             </>
           )}
@@ -1498,14 +1503,22 @@ export default function App() {
                 )}
               </div>
               <div className="cull-chrome__sub">
-                {progress.done > 0 ? `${progress.done} / ${progress.total}` : "starting…"}
+                {progress.done > 0 ? `${progress.done} / ${progress.total}` : "Starting…"}
               </div>
             </>
           )}
 
           {phase === "staged" && (
             <>
-              <div className="cull-staged__check">{images.length > 0 ? "✓" : "—"}</div>
+              {/* The count line below says what was staged, so the tick is
+                  decoration and stays out of the accessibility tree. */}
+              <div className="cull-staged__check">
+                {images.length > 0 ? (
+                  <Check size={40} strokeWidth={ICON_DISPLAY_STROKE} aria-hidden />
+                ) : (
+                  "—"
+                )}
+              </div>
               <div className="cull-staged__count">
                 {images.length} CR3 {images.length === 1 ? "image" : "images"} staged
               </div>
@@ -1529,16 +1542,17 @@ export default function App() {
               <div className="cull-staged__actions">
                 {images.length > 0 ? (
                   <button className="btn btn--primary" onClick={beginCulling}>
-                    begin culling →
+                    Begin culling →
                   </button>
                 ) : (
                   <button className="btn btn--primary" onClick={pickFolder} disabled={pickerBusy}>
-                    {pickerBusy ? "opening…" : "open folders"}
+                    {pickerBusy ? "Opening…" : "Open folders"}
                   </button>
                 )}
               </div>
               <div className="cull-staged__hint">
-                drop folders anywhere to add more · {modGlyph} O · esc to start over
+                Drop folders anywhere to add more · <KeyCombo keys={["mod", "O"]} /> ·{" "}
+                <kbd className="kbd">esc</kbd> to start over
               </div>
             </>
           )}
@@ -1583,6 +1597,8 @@ export default function App() {
   // Rating feedback chip — a brief corner badge. Rendered INSIDE the loupe photo
   // stage and the grid view (each its own positioning context) so it sits bottom-
   // right within the image / grid area, clear of the thumb strip and the footer.
+  // The 22px / stroke-3 glyph is off the shared ICON scale on purpose — it is
+  // sized against the 48px circle it fills (see icons.ts).
   const feedbackChip = feedback && (
     <div className="cull-feedback" key={feedback.ts}>
       <div
@@ -1598,13 +1614,23 @@ export default function App() {
     </div>
   );
 
+  // While the help sheet is open, the loupe and compare panes get no overlay
+  // props at all — hiding the toggle STATE would also reset it, so closing
+  // help wouldn't restore what was showing. Gating only the props passed
+  // down keeps the toggles themselves untouched.
+  const overlaysShown = !helpVisible;
+
   // Analysis-overlay pixels for the displayed frame, read from the service's
   // bounded LRUs (the useSyncExternalStore subscription above re-renders this
   // component when one lands, so plain reads here stay fresh).
   const currentClipMask =
-    clippingVisible && current ? overlayService.get("clip", current.path) : undefined;
+    overlaysShown && clippingVisible && current
+      ? overlayService.get("clip", current.path)
+      : undefined;
   const currentPeakMask =
-    peakingVisible && current ? overlayService.get("peak", current.path) : undefined;
+    overlaysShown && peakingVisible && current
+      ? overlayService.get("peak", current.path)
+      : undefined;
   const currentHistogram =
     exifVisible && current ? overlayService.get("histogram", current.path) : undefined;
 
@@ -1642,7 +1668,7 @@ export default function App() {
               <pre className="cull-message__body">{cur.error}</pre>
               <button
                 type="button"
-                className="btn cull-message__retry"
+                className="btn btn--sm cull-message__retry"
                 onClick={() => current && imageStore.retry(current.path)}
               >
                 retry
@@ -1680,7 +1706,7 @@ export default function App() {
                 }
                 clipMaskUrl={currentClipMask}
                 peakingMaskUrl={currentPeakMask}
-                showComposition={compositionVisible}
+                showComposition={overlaysShown && compositionVisible}
                 measureContainerRef={stageRef}
                 onRectChange={setImgRect}
               />
@@ -1789,12 +1815,12 @@ export default function App() {
               onClick={() => void retryUnreachableFolders()}
               title={
                 folderTrouble === "checking"
-                  ? "probing every source folder…"
+                  ? "Probing every source folder…"
                   : folderTrouble === "still"
-                    ? "still not responding. Check the drive or NAS, then retry"
+                    ? "Still not responding. Check the drive or NAS, then retry"
                     : folderTrouble === "recovered"
-                      ? "folder reachable again. Resuming loads"
-                      : "several reads failed. The folder may be unreachable (NAS asleep or unmounted)"
+                      ? "Folder reachable again. Resuming loads"
+                      : "Several reads failed. The folder may be unreachable (NAS asleep or unmounted)"
               }
             >
               {folderTrouble === "checking"
@@ -1813,7 +1839,8 @@ export default function App() {
               title={analyzeWarning.detail}
               onClick={() => setAnalyzeWarning(null)}
             >
-              ⚠ {analyzeWarning.label}
+              <TriangleAlert {...ICON.sm} aria-hidden />
+              {analyzeWarning.label}
             </button>
           )}
           {memPressure !== "normal" && (
@@ -1821,8 +1848,8 @@ export default function App() {
               className={`chip chip--soft chip--accent cull-mem-chip${memPressure === "critical" ? " is-critical" : ""}`}
               title={
                 memPressure === "critical"
-                  ? "system memory critically low. Zoom was released and its caches dropped to keep the app alive"
-                  : "system memory is running low. Image caches shrunk; full speed returns when pressure eases"
+                  ? "System memory critically low. Zoom was released and its caches dropped to keep the app alive"
+                  : "System memory is running low. Image caches shrunk; full speed returns when pressure eases"
               }
             >
               {memPressure === "critical" ? "low memory · zoom off" : "low memory"}
@@ -1841,22 +1868,30 @@ export default function App() {
             challengerIndex={challengerIndex}
             metadata={metadata}
             championClipMask={
-              images[championIndex] && overlayService.get("clip", images[championIndex].path)
+              overlaysShown && clippingVisible && images[championIndex]
+                ? overlayService.get("clip", images[championIndex].path)
+                : undefined
             }
             challengerClipMask={
-              images[challengerIndex] && overlayService.get("clip", images[challengerIndex].path)
+              overlaysShown && clippingVisible && images[challengerIndex]
+                ? overlayService.get("clip", images[challengerIndex].path)
+                : undefined
             }
             championPeakingMask={
-              images[championIndex] && overlayService.get("peak", images[championIndex].path)
+              overlaysShown && peakingVisible && images[championIndex]
+                ? overlayService.get("peak", images[championIndex].path)
+                : undefined
             }
             challengerPeakingMask={
-              images[challengerIndex] && overlayService.get("peak", images[challengerIndex].path)
+              overlaysShown && peakingVisible && images[challengerIndex]
+                ? overlayService.get("peak", images[challengerIndex].path)
+                : undefined
             }
             ratings={ratings}
             exifVisible={exifVisible}
-            clippingVisible={clippingVisible}
-            peakingVisible={peakingVisible}
-            compositionVisible={compositionVisible}
+            clippingVisible={overlaysShown && clippingVisible}
+            peakingVisible={overlaysShown && peakingVisible}
+            compositionVisible={overlaysShown && compositionVisible}
             isZooming={isZooming}
             zoomLevel={zoomLevel}
             panOffset={panOffset}
@@ -1929,6 +1964,7 @@ export default function App() {
       {confirmHome && (
         <ConfirmHomeDialog
           failedCount={failedCount}
+          missingCount={missingCount}
           onLeave={leaveToHome}
           onStay={() => setConfirmHome(false)}
         />
@@ -1945,6 +1981,7 @@ export default function App() {
           keepsCount={stats.keeps}
           savingCount={savingCount}
           failedCount={failedCount}
+          missingCount={missingCount}
           actionBusy={actionBusy}
           moveResult={moveResult}
           copyResult={copyResult}

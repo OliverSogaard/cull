@@ -1,4 +1,6 @@
 import { memo, useMemo } from "react";
+import { Dot, Star } from "lucide-react";
+import { ICON } from "./icons";
 import { stripExt } from "../utils/path";
 import type { ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
@@ -15,6 +17,10 @@ import {
   formatWhiteBalance,
 } from "../utils/format";
 import { hasLrcRating } from "../utils/ratingColor";
+
+/** The five LrC star slots, so the meter maps over positions instead of
+ *  repeating a character twice with two different colours. */
+const LRC_STAR_SLOTS = [1, 2, 3, 4, 5];
 
 /**
  * Loupe-side EXIF rail. A 290-px column glued to the right
@@ -114,17 +120,27 @@ export const ExifRail = memo(function ExifRail({
               <span className="cull-exif-rail__k">LrC rating</span>
               <span
                 className="cull-exif-rail__v cull-exif-rail__lrc"
+                role="img"
                 aria-label={`${lrc} of 5 stars`}
               >
-                <span className="cull-exif-rail__lrc-filled">{"★".repeat(lrc)}</span>
-                <span className="cull-exif-rail__lrc-dim">{"★".repeat(5 - lrc)}</span>
+                {LRC_STAR_SLOTS.map((slot) => (
+                  <Star
+                    key={slot}
+                    className={
+                      slot <= lrc ? "cull-exif-rail__lrc-filled" : "cull-exif-rail__lrc-dim"
+                    }
+                    {...ICON.sm}
+                    fill="currentColor"
+                    aria-hidden
+                  />
+                ))}
               </span>
             </div>
           )}
           {!body && !lens && !timeStr && !dateStr && !imageSize && !showLrc && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">—</span>
-              <span className="cull-exif-rail__v cull-exif-rail__v--dim">reading…</span>
+              <span className="cull-exif-rail__v cull-exif-rail__v--dim">Reading…</span>
             </div>
           )}
         </div>
@@ -142,7 +158,7 @@ export const ExifRail = memo(function ExifRail({
           {!shutter && !aperture && !iso && !focal && !ev && !wb && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">—</span>
-              <span className="cull-exif-rail__v cull-exif-rail__v--dim">no exposure data</span>
+              <span className="cull-exif-rail__v cull-exif-rail__v--dim">No exposure data</span>
             </div>
           )}
         </div>
@@ -361,7 +377,12 @@ function CompareRow({ k, a, b }: { k: string; a: string; b: string }) {
   const diff = a !== b && a !== "—" && b !== "—";
   return (
     <div className={`cull-cr-rail__row${diff ? " is-diff" : ""}`}>
-      <span className="eyebrow cull-cr-rail__k">{k}</span>
+      <span className="eyebrow cull-cr-rail__k">
+        {diff && (
+          <Dot className="cull-cr-rail__diff-dot" {...ICON.md} fill="currentColor" aria-hidden />
+        )}
+        {k}
+      </span>
       <span className="cull-cr-rail__v">{a}</span>
       <span className="cull-cr-rail__v">{b}</span>
     </div>

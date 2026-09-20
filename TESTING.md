@@ -24,6 +24,28 @@ without any corpus checked in, while a developer with real CR3s gets the
 full validation depth locally. If you see `skip:` lines in test output,
 that's this layer telling you what it would have covered.
 
+## Reading source files in tests
+
+`@types/node` is not installed, so frontend tests never import `node:fs` /
+`node:path` to read a source file. Where a test needs a stylesheet's or
+module's actual text (e.g. `motion.test.ts` scanning for `@keyframes`, or a
+design-token assertion), it reads it via Vite's raw-import glob instead:
+
+```ts
+const sheets = import.meta.glob<string>("./**/*.css", {
+  query: "?raw",
+  eager: true,
+  import: "default",
+});
+```
+
+`vite.config.ts`'s `test.css.include` is scoped to `/\.css\?.*\braw\b/` so
+only these explicit `?raw` reads get real CSS content — Vitest's default
+`css.include: []` would otherwise stub out all CSS, `?raw` included. A
+component test that side-effect-imports a stylesheet (e.g. via `App.tsx`
+importing `styles/index.css`) still gets the cheap default stub, since its
+import has no `?raw` query.
+
 ## Env-var-gated corpus tests
 
 Real Canon CR3 files are not committed (see `.gitignore`'s `sample_cr3s`

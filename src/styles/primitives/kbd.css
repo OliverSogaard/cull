@@ -1,16 +1,42 @@
 /* ────────────────────────────────────────────────────────────
    CULL · kbd — the keycap
-   One recipe for the six hand-rolled keycaps. Font SIZE is left to the
-   caller: every keycap either inherits its hint row's size or sets its
-   own, and they legitimately differ (9–12px across the app).
+   ONE keycap, everywhere: 20px tall, 11px mono, and at least as wide as
+   it is tall so a single digit and a word-key read as the same object.
+   Surfaces keep only their INK and voice (a lighter background inside a
+   dark panel, a tracking tweak, the hint row's text-transform) — size,
+   shape and spacing live here.
+   Spacing has one source: a keycap carries its own 2px gutter to the text
+   beside it. Inside a `.keycombo` the caps are ONE object, so that gutter
+   is dropped and the wrapper's `gap` is the only thing between them; the
+   space AROUND a combo belongs to its caller — a flex gap, an explicit
+   rule, or the sentence's own spaces.
+   Border-box on purpose: the app has no global box-sizing reset, so
+   `height` here is the height you see, the 1px border included.
    ──────────────────────────────────────────────────────────── */
 .kbd {
-  font-family: var(--font-mono);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px; /* off-scale */
+  min-width: 20px; /* off-scale */
+  padding: 0 5px; /* off-scale */
+  margin: 0 var(--sp-0);
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--r-1);
-  padding: var(--sp-0) var(--sp-2);
   color: var(--text-2);
+  /* Longhands, never the `font` shorthand — that would reset weight and
+     style along with the family and size. */
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  line-height: 1;
+  /* A keycap is the NAME of a key, so it prints what it was given — "esc",
+     "Ctrl" — and is spaced the same wherever it sits. Both are stated here
+     rather than left to inherit: a cap inside an uppercase, widely tracked
+     surface (the settings footer is an `.eyebrow`) used to come out "ESC". */
+  text-transform: none;
+  letter-spacing: 0.04em; /* off-scale */
 }
 
 /* Keycap sitting INSIDE a filled accent button: a translucent scrim of the
@@ -19,4 +45,18 @@
   background: rgba(26, 20, 8, 0.18); /* off-scale */
   border: none;
   color: inherit;
+}
+
+/* Wrapper for a KeyCombo (src/components/KeyCombo.tsx): one keycap per key,
+   side by side, never wrapping onto a second line. */
+.keycombo {
+  display: inline-flex;
+  gap: 3px; /* off-scale */
+  white-space: nowrap;
+}
+
+/* The caps in a combo are one object: `gap` above is the only thing between
+   them, so each cap's own text gutter would double it. */
+.keycombo .kbd {
+  margin: 0;
 }

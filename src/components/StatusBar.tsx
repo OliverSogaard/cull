@@ -1,7 +1,17 @@
 import { memo, type Dispatch, type SetStateAction } from "react";
+import { ArrowRight, Check, Star, TriangleAlert, X as XIcon } from "lucide-react";
 import type { Filter, Rating } from "../types";
 import type { useChipsTooltipVisibility } from "../hooks/useChipsTooltipVisibility";
 import { cycleFilter, topOf } from "../utils/filterModes";
+import { modCombo } from "../utils/platform";
+import {
+  MISSING_PHOTO_TITLE,
+  UNSAVED_TITLE,
+  missingCheckAgainLabel,
+  saveFailureKind,
+  unsavedLabel,
+} from "../utils/saveStatusCopy";
+import { ICON } from "./icons";
 import { verdictGlyph } from "./verdictGlyph";
 
 type ChipsTooltip = ReturnType<typeof useChipsTooltipVisibility>;
@@ -34,8 +44,15 @@ export type StatusBarOverlays = {
 
 export type StatusBarSelection = { gridVisible: boolean; selectedCount: number };
 
-/** XMP write durability: in-flight writes, failed writes, and the retry. */
-export type StatusBarSave = { savingCount: number; failedCount: number; retryFailed: () => void };
+/** XMP write durability: in-flight writes, failed writes (`missingCount` = the
+ *  subset whose photo was not at its path), and the retry, which re-attempts
+ *  both kinds. */
+export type StatusBarSave = {
+  savingCount: number;
+  failedCount: number;
+  missingCount: number;
+  retryFailed: () => void;
+};
 
 /** The filter tabs and what they print. `smartCulling` is the SETTING (it gates the
  *  lazy `startAnalysis()`), not the analysis state; `chipsTooltip` is passed whole. */
@@ -53,12 +70,11 @@ export type StatusBarFilter = {
   visibleCount: number;
 };
 
-/** The act-on-the-cull chip and the platform modifier glyph it prints. */
+/** The act-on-the-cull chip. */
 export type StatusBarSession = {
   openActions: () => void;
   actionsOpen: boolean;
   rejectedCount: number;
-  keyhint: string;
 };
 
 export type StatusBarProps = {
@@ -100,6 +116,10 @@ export const StatusBar = memo(function StatusBar({
     favorite: "cull-statusbar__verdict--fav",
   };
   const totalKeeps = filter.stats.keeps; // includes favorites
+  // Both kinds of failure are one button running one action (retryFailed);
+  // only the words change, because a missing photo is usually a drive that
+  // went away rather than a write that won't take (see utils/saveStatusCopy).
+  const failureKind = saveFailureKind(save.failedCount, save.missingCount);
   return (
     <footer className="cull-statusbar">
       <div className="cull-statusbar__left">
@@ -126,6 +146,7 @@ export const StatusBar = memo(function StatusBar({
         )}
         {frame.scrubbing && (
           <span className="cull-statusbar__scrub" aria-label="scrubbing">
+            <ArrowRight className="cull-statusbar__scrub-arrow" {...ICON.sm} aria-hidden />
             Scrubbing
             {frame.scrubSpeed > 1 && (
               <span className="chip chip--soft chip--accent cull-statusbar__scrubspeed">
@@ -189,22 +210,26 @@ export const StatusBar = memo(function StatusBar({
         {selection.gridVisible && selection.selectedCount >= 1 && (
           <span
             className="chip cull-statusbar__multi"
-            title="selection · rating keys apply to all selected"
+            title="Selection · rating keys apply to all selected"
           >
             {selection.selectedCount} selected
           </span>
         )}
-        {save.failedCount > 0 ? (
-          <span
+        {failureKind !== "none" ? (
+          <button
+            type="button"
             className="cull-statusbar__unsaved"
             onClick={save.retryFailed}
-            title="ratings failed to save · click to retry"
+            title={failureKind === "missing" ? MISSING_PHOTO_TITLE : UNSAVED_TITLE}
           >
-            ⚠ {save.failedCount} unsaved · retry
-          </span>
+            <TriangleAlert {...ICON.sm} aria-hidden />
+            {failureKind === "missing"
+              ? missingCheckAgainLabel(save.missingCount)
+              : unsavedLabel(save.failedCount)}
+          </button>
         ) : (
           save.savingCount > 0 && (
-            <span className="cull-statusbar__saving">saving {save.savingCount}…</span>
+            <span className="cull-statusbar__saving">Saving {save.savingCount}…</span>
           )
         )}
       </div>
@@ -217,8 +242,8 @@ export const StatusBar = memo(function StatusBar({
           className="cull-statusbar__pos"
           title={
             frame.compareMode
-              ? "challenger position / total candidates"
-              : "current position / filtered total"
+              ? "Challenger position / total candidates"
+              : "Current position / filtered total"
           }
         >
           {frame.compareMode ? (
@@ -281,20 +306,25 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("keeps");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="keeps and favorites"
+                    title="Keeps and favorites"
                   >
                     all
                   </button>
                   <button
                     type="button"
-                    className={filter.filter === "keepsFavs" ? "is-active" : ""}
+                    className={`is-icon${filter.filter === "keepsFavs" ? " is-active" : ""}`}
                     onClick={() => {
                       filter.setFilter("keepsFavs");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="favorites only"
+                    // The star is an aria-hidden SVG, so the button has no text
+                    // to name it. `title` is a hover affordance a screen reader
+                    // may or may not announce; the aria-label is the name, and
+                    // the two are kept identical — same for the three below.
+                    title="Favorites only"
+                    aria-label="Favorites only"
                   >
-                    ★
+                    <Star {...ICON.sm} fill="currentColor" aria-hidden />
                   </button>
                 </span>
               )}
@@ -337,42 +367,45 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("suggested");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="any suggestion"
+                    title="Any suggestion"
                   >
                     all
                   </button>
                   <button
                     type="button"
-                    className={filter.filter === "suggestedRejects" ? "is-active" : ""}
+                    className={`is-icon${filter.filter === "suggestedRejects" ? " is-active" : ""}`}
                     onClick={() => {
                       filter.setFilter("suggestedRejects");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="suggested rejects"
+                    title="Suggested rejects"
+                    aria-label="Suggested rejects"
                   >
-                    ✕
+                    <XIcon {...ICON.sm} aria-hidden />
                   </button>
                   <button
                     type="button"
-                    className={filter.filter === "suggestedKeeps" ? "is-active" : ""}
+                    className={`is-icon${filter.filter === "suggestedKeeps" ? " is-active" : ""}`}
                     onClick={() => {
                       filter.setFilter("suggestedKeeps");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="suggested keeps"
+                    title="Suggested keeps"
+                    aria-label="Suggested keeps"
                   >
-                    ✓
+                    <Check {...ICON.sm} aria-hidden />
                   </button>
                   <button
                     type="button"
-                    className={filter.filter === "suggestedFavs" ? "is-active" : ""}
+                    className={`is-icon${filter.filter === "suggestedFavs" ? " is-active" : ""}`}
                     onClick={() => {
                       filter.setFilter("suggestedFavs");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="suggested favorites"
+                    title="Suggested favorites"
+                    aria-label="Suggested favorites"
                   >
-                    ★
+                    <Star {...ICON.sm} fill="currentColor" aria-hidden />
                   </button>
                 </span>
               )}
@@ -384,15 +417,15 @@ export const StatusBar = memo(function StatusBar({
           // and brightens — the one nudge from "culling" to "act on the cull".
           <button
             type="button"
-            className={`btn cull-statusbar__finish${
+            className={`btn btn--sm cull-statusbar__finish${
               filter.stats.unrated === 0 && filter.stats.total > 0 ? " is-done" : ""
             }`}
             onClick={session.openActions}
-            title="finish the cull · move rejects / copy keeps"
+            title="Finish the cull · move rejects / copy keeps"
           >
             {filter.stats.unrated === 0 && filter.stats.total > 0
-              ? `All ${filter.stats.total} rated · ${session.keyhint}E finish`
-              : `${session.keyhint}E · ${totalKeeps} keeps`}
+              ? `All ${filter.stats.total} rated · ${modCombo("E")} finish`
+              : `${modCombo("E")} · ${totalKeeps} keeps`}
           </button>
         )}
       </div>

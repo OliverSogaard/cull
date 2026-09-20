@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Star, TriangleAlert } from "lucide-react";
 import type { FileOpResult, Settings } from "../types";
+import { ICON } from "./icons";
 import { normalizeRejectedSubfolder } from "../types/settings";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { missingFailureSentence, missingRecovery } from "../utils/saveStatusCopy";
 import {
   isReservedFolderName,
   joinPath,
@@ -16,10 +19,12 @@ import {
 const FOLDER_EXISTS_DEBOUNCE_MS = 250;
 
 /**
- * Finish-session dialog (the act-on-cull modal opened via `⌃E` or the status-
- * bar `✦ finish` chip). Wraps two destructive actions — *move rejects* into a
- * subfolder in the source, and *copy keeps* to an export folder — both backed
- * by idempotent Tauri commands so re-running after a partial failure is safe.
+ * Finish-session dialog (the act-on-cull modal opened via `Ctrl+E` — `⌘E` on
+ * macOS — or the status bar's finish button, which prints that same shortcut).
+ * Wraps two destructive actions —
+ * *move rejects* into a subfolder in the source, and *copy keeps* to an
+ * export folder — both backed by idempotent Tauri commands so re-running
+ * after a partial failure is safe.
  *
  * The "Copy keeps" half has two modes that match the export-folder setting:
  *
@@ -46,6 +51,7 @@ export function FinishDialog({
   keepsCount,
   savingCount,
   failedCount,
+  missingCount,
   actionBusy,
   moveResult,
   copyResult,
@@ -63,6 +69,7 @@ export function FinishDialog({
   keepsCount: number;
   savingCount: number;
   failedCount: number;
+  missingCount: number;
   actionBusy: "move" | "copy" | null;
   moveResult: FileOpResult | null;
   copyResult: FileOpResult | null;
@@ -71,6 +78,11 @@ export function FinishDialog({
   onCopyKeeps: (dest: string) => void;
   onClose: () => void;
 }) {
+  // Only a failure a retry could still fix may block the cull from being
+  // finished. A rating whose photo is gone can never be written, so blocking on
+  // it would leave the session with no way out at all — it warns instead.
+  const retryableFailedCount = Math.max(0, failedCount - missingCount);
+
   const pinnedMode = settings.exportFolder.mode === "pinned";
   const pinnedRoot = settings.exportFolder.mode === "pinned" ? settings.exportFolder.path : "";
   // Default the editable subfolder to <source-basename>-keeps. If the user opens
@@ -169,11 +181,25 @@ export function FinishDialog({
   // and its pinned root must still exist on disk.
   const subTrimmed = sub.trim();
   const subInvalid = pinnedMode && (subTrimmed.length === 0 || isReservedFolderName(subTrimmed));
+
+  // Which story the pending note tells, in priority order. A retryable failure
+  // is the loudest — it is the one disabling the actions. An in-flight write
+  // outranks a missing photo: while savingCount > 0 the buttons ARE disabled,
+  // so the missing note's "these failures do not block the actions below" would
+  // contradict the screen it sits on.
+  const pendingNote =
+    retryableFailedCount > 0
+      ? "retryable"
+      : savingCount > 0
+        ? "saving"
+        : failedCount > 0
+          ? "missing"
+          : "none";
   const copyDisabled =
     keptPaths.length === 0 ||
     actionBusy !== null ||
     savingCount > 0 ||
-    failedCount > 0 ||
+    retryableFailedCount > 0 ||
     (pinnedMode && (subInvalid || !pinnedRoot || rootMissing));
 
   const pickDestination = async () => {
@@ -185,7 +211,7 @@ export function FinishDialog({
         directory: true,
         multiple: false,
         defaultPath: lastExport,
-        title: "choose export folder",
+        title: "Choose export folder",
       });
       if (typeof picked === "string") {
         // NFC-normalize like openFoldersByPaths: macOS dialogs can return
@@ -243,7 +269,8 @@ export function FinishDialog({
             </div>
             {favorites > 0 && (
               <div className="cull-actions__stat-sub">
-                <span>★</span> {favorites} favorite{favorites === 1 ? "" : "s"}
+                <Star {...ICON.sm} fill="currentColor" aria-hidden /> {favorites} favorite
+                {favorites === 1 ? "" : "s"}
               </div>
             )}
           </div>
@@ -259,18 +286,36 @@ export function FinishDialog({
 
         {unrated > 0 && (
           <div className="note cull-actions__unrated">
-            <span className="cull-actions__unrated-icon">⚠</span>
+            <TriangleAlert className="cull-actions__unrated-icon" {...ICON.md} aria-hidden />
             <span>
               <b>{unrated} unrated</b> will stay in the source untouched.
             </span>
           </div>
         )}
 
-        {(savingCount > 0 || failedCount > 0) && (
-          <div className={`note cull-actions__pending${failedCount > 0 ? " note--bad" : ""}`}>
-            {failedCount > 0
-              ? `⚠ ${failedCount} rating${failedCount > 1 ? "s" : ""} haven't saved · actions disabled until resolved (status bar · retry)`
-              : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`}
+        {pendingNote !== "none" && (
+          <div
+            className={`note cull-actions__pending${pendingNote === "saving" ? "" : " note--bad"}`}
+          >
+            {pendingNote === "retryable" ? (
+              <>
+                <TriangleAlert {...ICON.md} aria-hidden />
+                <span>
+                  {failedCount} rating{failedCount > 1 ? "s" : ""} haven't saved · actions disabled
+                  until resolved (status bar · retry)
+                </span>
+              </>
+            ) : pendingNote === "missing" ? (
+              <>
+                <TriangleAlert {...ICON.md} aria-hidden />
+                <span>
+                  {missingFailureSentence(missingCount)} These failures do not block the actions
+                  below. {missingRecovery(missingCount)}
+                </span>
+              </>
+            ) : (
+              `Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`
+            )}
           </div>
         )}
 
@@ -280,7 +325,7 @@ export function FinishDialog({
             folder={folder}
             actionBusy={actionBusy}
             savingCount={savingCount}
-            failedCount={failedCount}
+            retryableFailedCount={retryableFailedCount}
             moveResult={moveResult}
             settings={settings}
             onMoveRejects={onMoveRejects}
@@ -298,7 +343,11 @@ export function FinishDialog({
               <>
                 {rootMissing && (
                   <div className="note note--bad cull-finish__folder-exists">
-                    <span className="cull-finish__folder-exists-icon">⚠</span>
+                    <TriangleAlert
+                      className="cull-finish__folder-exists-icon"
+                      {...ICON.md}
+                      aria-hidden
+                    />
                     <span>
                       The pinned export root no longer exists. Re-pick it in <b>Settings</b> before
                       copying.
@@ -307,7 +356,11 @@ export function FinishDialog({
                 )}
                 {folderExists && (
                   <div className="note note--bad cull-finish__folder-exists">
-                    <span className="cull-finish__folder-exists-icon">⚠</span>
+                    <TriangleAlert
+                      className="cull-finish__folder-exists-icon"
+                      {...ICON.md}
+                      aria-hidden
+                    />
                     <span>
                       A folder with this name already exists at your pinned root. Rename it in the
                       field below, or click <b>Confirm (merge)</b> to copy into the existing one.
@@ -317,14 +370,14 @@ export function FinishDialog({
                 <div className="cull-finish__dest-edit">
                   <span
                     className="cull-finish__dest-root"
-                    title={pinnedRoot || "(pinned root not set)"}
+                    title={pinnedRoot || "(Pinned root not set)"}
                   >
                     {pinnedRoot
                       ? truncatePathDisplay(
                           `${pinnedRoot.replace(/[\\/]+$/, "")}${pinnedRoot.includes("\\") ? "\\" : "/"}`,
                           24,
                         )
-                      : "(no pinned root) "}
+                      : "(No pinned root) "}
                   </span>
                   <input
                     className={`cull-finish__dest-sub${subInvalid ? " is-invalid" : ""}${flashing ? " is-flash" : ""}`}
@@ -345,7 +398,7 @@ export function FinishDialog({
                     onClick={commitCopy}
                   >
                     {actionBusy === "copy"
-                      ? "copying…"
+                      ? "Copying…"
                       : folderExists
                         ? "Confirm (merge)"
                         : "Copy keeps"}
@@ -360,12 +413,12 @@ export function FinishDialog({
                   keptPaths.length === 0 ||
                   actionBusy !== null ||
                   savingCount > 0 ||
-                  failedCount > 0 ||
+                  retryableFailedCount > 0 ||
                   picking
                 }
                 onClick={pickDestination}
               >
-                {picking ? "opening picker…" : "Pick destination"}
+                {picking ? "Opening picker…" : "Pick destination"}
               </button>
             ) : (
               // Ask each time, stage 2: confirm or change.
@@ -379,7 +432,7 @@ export function FinishDialog({
                   disabled={actionBusy !== null || picking}
                   onClick={pickDestination}
                 >
-                  {picking ? "opening…" : "Change"}
+                  {picking ? "Opening…" : "Change"}
                 </button>
                 <button
                   className="btn btn--primary"
@@ -387,22 +440,22 @@ export function FinishDialog({
                     keptPaths.length === 0 ||
                     actionBusy !== null ||
                     savingCount > 0 ||
-                    failedCount > 0
+                    retryableFailedCount > 0
                   }
                   onClick={commitCopy}
                 >
-                  {actionBusy === "copy" ? "copying…" : "Copy keeps"}
+                  {actionBusy === "copy" ? "Copying…" : "Copy keeps"}
                 </button>
               </div>
             )}
 
-            {copyResult && <FileOpResultLine verb="copied" result={copyResult} />}
+            {copyResult && <FileOpResultLine verb="Copied" result={copyResult} />}
           </div>
         </div>
 
         <div className="dialog__actions dialog__actions--flush">
           <button className="btn" onClick={onClose}>
-            close
+            Close
           </button>
         </div>
         <div className="dialog__hint dialog__hint--flush">
@@ -426,7 +479,7 @@ function MoveRejectsRow({
   folder,
   actionBusy,
   savingCount,
-  failedCount,
+  retryableFailedCount,
   moveResult,
   settings,
   onMoveRejects,
@@ -435,18 +488,22 @@ function MoveRejectsRow({
   folder: string | null;
   actionBusy: "move" | "copy" | null;
   savingCount: number;
-  failedCount: number;
+  retryableFailedCount: number;
   moveResult: FileOpResult | null;
   settings: Settings;
   onMoveRejects: (dest: "subfolder" | "trash") => void;
 }) {
-  const [armed, setArmed] = useArmedConfirm();
+  const [armed, setArmed, armedRef] = useArmedConfirm();
   // Where rejects go: the in-source subfolder (default, reversible in place)
   // or the OS Trash (recoverable from the Bin; CULL never hard-deletes).
   const [dest, setDest] = useState<"subfolder" | "trash">("subfolder");
 
   const disabled =
-    !folder || rejectedCount === 0 || actionBusy !== null || savingCount > 0 || failedCount > 0;
+    !folder ||
+    rejectedCount === 0 ||
+    actionBusy !== null ||
+    savingCount > 0 ||
+    retryableFailedCount > 0;
 
   return (
     <div className="cull-actions__row">
@@ -493,7 +550,7 @@ function MoveRejectsRow({
         // batched and doesn't stream per-file progress, so we don't show a %.
         <div className="cull-finish__progress">
           <span className="cull-finish__progress-label">
-            <b>moving</b> {rejectedCount}…
+            <b>Moving</b> {rejectedCount}…
           </span>
           <div className="progress cull-finish__progress-bar">
             <div className="progress__fill cull-finish__progress-fill" />
@@ -507,6 +564,7 @@ function MoveRejectsRow({
               : `Sure? This moves ${rejectedCount} files.`}
           </span>
           <button
+            ref={armedRef}
             className="btn btn--primary btn--danger"
             onClick={() => {
               setArmed(false);
@@ -520,12 +578,17 @@ function MoveRejectsRow({
           </button>
         </div>
       ) : (
-        <button className="btn btn--primary" disabled={disabled} onClick={() => setArmed(true)}>
+        <button
+          ref={armedRef}
+          className="btn btn--primary"
+          disabled={disabled}
+          onClick={() => setArmed(true)}
+        >
           Move rejects
         </button>
       )}
 
-      {moveResult && <FileOpResultLine verb="moved" result={moveResult} />}
+      {moveResult && <FileOpResultLine verb="Moved" result={moveResult} />}
     </div>
   );
 }

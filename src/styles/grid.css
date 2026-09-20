@@ -203,8 +203,8 @@
    rejected cell can still show its selection state without fading out. */
 .cull-grid__multi-tint {
   position: absolute;
-  inset: 3px; /* match .cull-grid__cell padding so it sits inside the frame */
-  background: rgba(212, 175, 106, 0.42);
+  inset: 9px; /* match .cull-grid__cell padding so it sits inside the frame */
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
   border-radius: var(--r-1);
   z-index: 2;
   pointer-events: none;

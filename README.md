@@ -174,14 +174,15 @@ fixtures.
 ## Keyboard reference
 
 Hold **Tab** at any time inside the cull view for a context-aware reference.
-On macOS, `ctrl` means `⌘` throughout (every shortcut accepts either).
+On macOS, `Ctrl` means `⌘` throughout (every shortcut accepts either).
 Cheat sheet:
 
 | Key | Loupe | Compare | Grid |
 | --- | ----- | ------- | ---- |
 | `enter`    | keep                | challenger wins      | keep selected      |
 | `backspace`| reject              | reject challenger    | reject selected    |
-| `f`        | favorite            | —                    | favorite           |
+| `f`        | favorite            | keep both, challenger ★ | favorite        |
+| `k`        | —                   | keep both            | —                  |
 | `u`        | unrate              | —                    | unrate             |
 | `← →`      | prev / next (hold to scrub) | pick challenger (hold) | prev / next (hold to traverse) |
 | `↑ ↓`      | —                   | —                    | row up / down      |
@@ -195,9 +196,9 @@ Cheat sheet:
 | `o`        | rule of thirds      | rule of thirds       | —                  |
 | `t`        | toggle thumb strip  | toggle candidate strip | —                |
 | `1 – 4`    | filter tabs (all / unrated / keeps / smart); re-press cycles sub-modes (keeps→★, smart→rejects/keeps/favs) | — | same |
-| `ctrl+z` / `ctrl+shift+z` | undo / redo | undo / redo | undo / redo |
-| `ctrl+e`   | finish actions (move rejects / copy keeps) | same | same |
-| `ctrl+,`   | settings (also from the home screen) | same | same |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo | undo / redo | undo / redo |
+| `Ctrl+E`   | finish actions (move rejects / copy keeps) | same | same |
+| `Ctrl+,`   | settings (also from the home screen) | same | same |
 
 ## Rating model
 

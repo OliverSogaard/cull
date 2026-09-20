@@ -44,14 +44,31 @@
 
 .dialog__title {
   font-size: var(--fs-7);
+  /* Pinned rather than left at `normal`, because the warning variant's icon is
+     centred against this line box by hand below: 16px × 1.25 = a 20px line. */
+  line-height: 1.25;
   letter-spacing: -0.005em;
   font-weight: 500;
   color: var(--text);
   margin-bottom: var(--sp-4);
 }
 
+/* The warning variant is the only title that carries an icon, so flex (and the
+   gap that sits it off the first word) lives here rather than on every title.
+   flex-start, not center: a title long enough to wrap would otherwise centre
+   the icon against BOTH lines and leave it floating beside the line break. */
 .dialog__title--warn {
   color: var(--bad);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+
+.dialog__title-icon {
+  flex-shrink: 0;
+  /* What `align-items: center` used to do for the single-line case, done
+     against the FIRST line only: (20px line − 16px icon) / 2 = 2px. */
+  margin-top: var(--sp-0);
 }
 
 .dialog__body {
@@ -89,11 +106,6 @@
   border-top: 0;
 }
 
-/* The hint row is uppercase; the keycaps inside it are not. */
-.dialog__hint kbd {
-  display: inline-block;
-  margin: 0 2px;
-  font-size: var(--fs-2);
-  letter-spacing: 0.04em;
-  text-transform: none;
-}
+/* The hint row is uppercase and widely tracked; the keycaps inside it are
+   neither — but that is `.kbd`'s own doing now, so there is nothing to say
+   here. */

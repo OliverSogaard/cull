@@ -498,6 +498,8 @@ const GridCell = memo(function GridCell({
           </div>
         )}
       </div>
+      {/* 11px star, off the shared ICON scale: it is sized to the badge pill on
+          a 76px-ish cell, not to a text run (see icons.ts). */}
       {showLrc && (
         <div className="cull-grid__lrc-badge" aria-label={`LrC ${lrcRating}★`}>
           <Star size={11} strokeWidth={2.4} fill="currentColor" />

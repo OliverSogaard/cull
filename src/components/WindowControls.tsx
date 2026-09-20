@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Copy, Minus, Settings as SettingsIcon, Square, X as XIcon } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isMac } from "../utils/platform";
+import { ICON } from "./icons";
 
 /**
  * Top-right chrome buttons for the borderless window. Order is
@@ -10,6 +11,11 @@ import { isMac } from "../utils/platform";
  * The close button routes through Tauri's normal close-request handler so the
  * quit guard still gets a chance to protect unsaved work. Each button blurs
  * itself on click so the focus ring doesn't linger after pointer interaction.
+ *
+ * The icon SIZES here are off the shared scale on purpose — they follow the
+ * Windows caption-button metric so the title bar matches every other window
+ * on the desktop (see icons.ts). Their stroke is the scale's lightest, so they
+ * still weigh the same as the icons in the app below them.
  */
 export function WindowControls({ onSettings }: { onSettings?: () => void }) {
   const win = getCurrentWindow();
@@ -47,34 +53,34 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
       {onSettings && (
         <button
           className="cull-winbtn"
-          title={`settings  (${isMac ? "Cmd" : "Ctrl"} + , )`}
-          aria-label="settings"
+          title={`Settings  (${isMac ? "Cmd" : "Ctrl"} + , )`}
+          aria-label="Settings"
           // NOTE: deliberately NOT blurring here (unlike minimize/close). The
           // settings dialog's focus trap restores focus to whatever was focused
           // when it opened; blurring first would lose the gear as that target
           // (focus would fall to <body>), so closing wouldn't return focus here.
           onClick={onSettings}
         >
-          <SettingsIcon size={13} strokeWidth={2} />
+          <SettingsIcon size={13} strokeWidth={ICON.lg.strokeWidth} aria-hidden />
         </button>
       )}
       {!isMac && (
         <>
           <button
             className="cull-winbtn"
-            title="minimize"
-            aria-label="minimize"
+            title="Minimize"
+            aria-label="Minimize"
             onClick={(e) => {
               e.currentTarget.blur();
               void win.minimize();
             }}
           >
-            <Minus size={13} strokeWidth={2.5} />
+            <Minus size={13} strokeWidth={ICON.lg.strokeWidth} aria-hidden />
           </button>
           <button
             className="cull-winbtn"
-            title={maximized ? "restore" : "maximize"}
-            aria-label={maximized ? "restore window" : "maximize window"}
+            title={maximized ? "Restore" : "Maximize"}
+            aria-label={maximized ? "Restore window" : "Maximize window"}
             onClick={(e) => {
               e.currentTarget.blur();
               void win.toggleMaximize();
@@ -82,21 +88,21 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
           >
             {maximized ? (
               // Two offset squares — the Windows "restore down" glyph.
-              <Copy size={11} strokeWidth={2.5} />
+              <Copy size={11} strokeWidth={ICON.lg.strokeWidth} aria-hidden />
             ) : (
-              <Square size={11} strokeWidth={2.5} />
+              <Square size={11} strokeWidth={ICON.lg.strokeWidth} aria-hidden />
             )}
           </button>
           <button
             className="cull-winbtn cull-winbtn--close"
-            title="close"
-            aria-label="close"
+            title="Close"
+            aria-label="Close"
             onClick={(e) => {
               e.currentTarget.blur();
               void win.close();
             }}
           >
-            <XIcon size={14} strokeWidth={2.5} />
+            <XIcon size={14} strokeWidth={ICON.lg.strokeWidth} aria-hidden />
           </button>
         </>
       )}

@@ -65,3 +65,22 @@ body,
   flex-direction: column;
 }
 
+/* Focus-ring safety net: a plain grep for `:focus`/`:focus-visible` in
+   src/styles can't see a classless focusable added later (a bare <button>,
+   <a>, <summary>, or a manual role="button"/tabIndex widget) — it would
+   silently get no ring at all. :where() keeps this at zero specificity, so
+   any control's own :focus-visible rule (however low-specificity) still
+   wins; this only fires when nothing else claims the control. Text inputs/
+   textareas/selects are deliberately excluded — they show :focus-visible on
+   a plain mouse click and already carry their own border-based treatment. */
+:where(
+    button,
+    a,
+    summary,
+    [role="button"][tabindex],
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
