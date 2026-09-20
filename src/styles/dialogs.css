@@ -63,7 +63,8 @@
 
 .cull-settings__navitem:focus-visible {
   outline: none;
-  box-shadow: var(--ring);
+  /* .cull-settings__nav stacks these with a 2px gap — inset per the ring rule. */
+  box-shadow: var(--ring-inset);
 }
 
 .cull-settings__pane {
@@ -295,7 +296,8 @@
 
 .cull-settings__seg-opt:focus-visible {
   outline: none;
-  box-shadow: var(--ring);
+  /* .cull-settings__seg has gap: 0 between options — inset per the ring rule. */
+  box-shadow: var(--ring-inset);
 }
 
 .cull-settings__seg.is-disabled,

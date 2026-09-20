@@ -267,7 +267,9 @@
 
 .cull-statusbar__ov:focus-visible {
   outline: none;
-  box-shadow: var(--ring);
+  /* .cull-statusbar__overlay-cluster has a 3px gap between chips — inset
+     per the ring rule. */
+  box-shadow: var(--ring-inset);
 }
 
 /* Scrubbing indicator — champagne pulse with an animated arrow prefix.
@@ -490,7 +492,9 @@
 .cull-filter-tab-tooltip button:focus-visible {
   outline: none;
   color: var(--text);
-  box-shadow: var(--ring);
+  /* .cull-filter-tab-tooltip has a 3px gap between its sub-mode buttons —
+     inset per the ring rule. */
+  box-shadow: var(--ring-inset);
 }
 
 /* ── chrome phases: start / loading / staged ──────────────── */
