@@ -1133,6 +1133,56 @@ describe("mid tier (Phase 8)", () => {
     expect(midCalls(calls)).toHaveLength(1);
   });
 
+  it("a per-file 'not found' from read_mid is an ordinary tier error — it does not latch the tier off for other paths", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const calls = routeMidInvoke({
+      read_mid: (args) => {
+        const p = (args as Record<string, unknown>).path;
+        return p === "/p/a.cr3"
+          ? Promise.reject(new Error("read_mid(/p/a.cr3): file not found"))
+          : Promise.resolve(makeMidBuf());
+      },
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(["/p/a.cr3", "/p/b.cr3"]);
+    store.setNeedPxProvider(() => 1860);
+
+    store.maybeRequestMid("/p/a.cr3");
+    await flush();
+    expect(midCalls(calls)).toHaveLength(1);
+    expect(store.snapshot("/p/a.cr3").mid).toBeUndefined();
+
+    // A live path's own "not found" must not dormant the tier for the rest
+    // of the session — only a missing read_mid COMMAND does that.
+    store.maybeRequestMid("/p/b.cr3");
+    await vi.waitUntil(() => store.snapshot("/p/b.cr3").mid !== undefined, { timeout: 2000 });
+    expect(midCalls(calls)).toHaveLength(2);
+    expect(store.snapshot("/p/b.cr3").mid?.url).toMatch(/^blob:/);
+  });
+
+  it("'Command read_mid not found' latches the mid tier off for the session", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const calls = routeMidInvoke({
+      read_mid: () => Promise.reject(new Error("Command read_mid not found")),
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(["/p/a.cr3", "/p/b.cr3"]);
+    store.setNeedPxProvider(() => 1860);
+
+    store.maybeRequestMid("/p/a.cr3");
+    await flush();
+    expect(midCalls(calls)).toHaveLength(1);
+
+    // The whole tier stays dormant — a second path never even tries.
+    store.maybeRequestMid("/p/b.cr3");
+    await flush();
+    expect(midCalls(calls)).toHaveLength(1);
+  });
+
   it("a mid wanted mid-nav defers until the hint lands, then carries it", async () => {
     const { PERFORMANCE_PROFILES } = await import("../types/settings");
     let releaseNav: ((buf: ArrayBuffer) => void) | undefined;

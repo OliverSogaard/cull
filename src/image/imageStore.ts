@@ -1533,8 +1533,12 @@ export class ImageStore {
           this.midReprobed.add(path);
           this.scheduleMidReprobe(path, gen);
         }
-      } else if (/not found|unknown command|no handler/i.test(msg)) {
-        // Phase-8 frontend on an older backend: the tier stays dormant.
+      } else if (/command\s+\S*\s*not found|unknown command|no handler/i.test(msg)) {
+        // Phase-8 frontend on an older backend: the tier stays dormant. Narrowed
+        // to the command-missing shapes (Tauri's own "Command read_mid not
+        // found") — a per-file "not found" (a real file, or a moved one still
+        // untombstoned) must go to the ordinary per-path error path instead of
+        // dormanting the whole tier for the session.
         this.midUnsupported = true;
       } else {
         this.noteTierError(this.midErrors, path, msg);
