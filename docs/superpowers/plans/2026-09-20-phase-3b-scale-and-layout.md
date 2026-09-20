@@ -119,7 +119,7 @@ Run it: every assertion after the first fails (the tokens exist but nothing refe
 
 ### Task 2: The footer sheds instead of clipping
 
-**Files:** Modify `src/components/StatusBar.tsx`, `src/utils/path.ts` (+ `src/utils/path.test.ts`), `src/utils/saveStatusCopy.ts` (+ `src/utils/saveStatusCopy.test.ts`), `src/styles/chrome.css`, `src/styles/statusbar.css`, `src/styles/stage.css`. Test: create `src/components/StatusBar.shed.test.tsx`; extend `src/styles/layout.test.ts` (Task 1's file).
+**Files:** Modify `src/components/StatusBar.tsx`, `src/utils/path.ts` (+ `src/utils/path.test.ts`), `src/utils/saveStatusCopy.ts` (+ `src/utils/saveStatusCopy.test.ts`), `src/styles/base.css`, `src/styles/chrome.css`, `src/styles/statusbar.css`, `src/styles/stage.css`. Test: create `src/components/StatusBar.shed.test.tsx`; extend `src/styles/layout.test.ts` (Task 1's file).
 
 **Interfaces — Consumes:** `layout.test.ts`'s `ruleBody` helper (Task 1). **Produces:**
 - `src/utils/path.ts`: `export function extOf(filename: string): string` — the extension *including* its dot (`"IMG_0001.CR3"` → `".CR3"`), `""` when there is none. Exact complement of the existing `stripExt`.
@@ -144,20 +144,22 @@ Left cluster, worst case, after the spec's shedding — the mutually exclusive p
 | Left item at < 1200 | px |
 | --- | --- |
 | verdict pill, word shown (glyph 14 + gap 7 + `REJECT` 71) | 92 |
-| max(zoom chip `1:1` 39, scrub icon + `10×` chip 54) | 54 |
+| max(zoom chip `1:1` 39, scrub icon 12 + gap 4 + `10×` chip 42 — the chip's `margin-left: 8` (`chrome.css:323`), 1 px border, `1px 6px` padding and 3 tracked characters) | 58 |
 | max(overlay cluster 133, `4194 SELECTED` chip 122) | 133 |
-| save chip `4194 photos missing · check again` (icon 12 + gap 6 + 218) | 236 |
+| save chip `4194 photos missing · check again` (icon 12 + gap 6 + 33 chars × 6.6) | 236 |
 | four 14 px gaps | 56 |
-| **subtotal, filename at zero** | **571** |
+| **subtotal, filename at zero** | **575** |
 
-571 > 432, so **the spec's three breakpoints are not enough**. Two more sheds, both information-preserving, bring it inside:
+575 > 432, so **the spec's three breakpoints are not enough**. Two more sheds, both information-preserving, bring it inside:
 
 - the **verdict pill drops its word** below 1200 and keeps the coloured glyph; its `aria-label` already carries "Keep" / "Reject" / "Fav" (`StatusBar.tsx:134`). 92 → 14.
-- the **save chip drops its action tail** below 1200 (`4194 photos missing`, `12 unsaved`); the button's `title` still spells out what clicking does, and the chip is the only button there. 236 → 97.
+- the **save chip drops its action tail** below 1200 — `4194 photos missing` is 19 characters at `--fs-2` mono + `letter-spacing: 0.06em` (`chrome.css:710-724`) = 125, + icon 12 + `gap: var(--sp-2)` 6. 236 → **143**.
 
-New subtotal = 14 + 54 + 133 + 97 + 56 = **354**, leaving **78 px** for the filename. A Canon stem without its extension is 8 characters (`IMG_0001`) ≈ 53 px at 11 px mono — it fits with room, and anything longer ellipses.
+New subtotal = 14 + 58 + 133 + 143 + 56 = **404**, leaving **28 px** for the filename stem in the absolute worst case — every one of 4,194 photos missing, while scrubbing at 10×, with the overlay cluster up. The stem ellipses to about four characters there and **nothing is clipped**. In every ordinary state (nothing failed, not scrubbing) the stem has its full 240 px `max-width`.
 
 **Ruling:** the guarantee this task ships is *nothing is ever clipped*, enforced structurally — `.cull-statusbar__left` becomes shrinkable and the filename stem is the only shrinkable child (it already has `overflow: hidden; text-overflow: ellipsis`). The arithmetic above is the justification for the breakpoints, not a runtime assertion: jsdom has no layout, so a width test would assert on numbers it cannot measure. The table lives in a comment in `statusbar.css`; Oliver's 1024-px walk is the verification.
+
+**Ruling (the save chip keeps its accessible name):** a `display: none` subtree is excluded from accessible-name computation, and `title` is only a fallback when an element has no text content — so hiding the tail that way would silently shorten the button's name to `"4194 photos missing"`. It is hidden **visually** instead, with a new one-off `.visually-hidden` utility in `base.css`: the name stays `"4194 photos missing · check again"` at every width, and `StatusBar.saveChip.test.tsx:105` keeps passing for the right reason. The verdict pill and the scrub label need no such care — both carry their own `aria-label` on the wrapper (`StatusBar.tsx:134`, `:148`), so `display: none` on the inner word costs nothing.
 
 **Ruling:** the two extra sheds are recorded here as a deliberate extension of spec §3B, taken under its own instruction — *"Nothing is ever clipped at 1024 … if it does not fit, the plan must say what else sheds."*
 
@@ -165,11 +167,11 @@ New subtotal = 14 + 54 + 133 + 97 + 56 = **354**, leaving **78 px** for the file
 
 ```ts
 describe("extOf", () => {
-  test("returns the extension with its dot, complementing stripExt", () => {
+  it("returns the extension with its dot, complementing stripExt", () => {
     expect(extOf("IMG_0001.CR3")).toBe(".CR3");
     expect(stripExt("IMG_0001.CR3") + extOf("IMG_0001.CR3")).toBe("IMG_0001.CR3");
   });
-  test("handles a dotted stem and a bare name", () => {
+  it("handles a dotted stem and a bare name", () => {
     expect(extOf("a.b.CR3")).toBe(".CR3");
     expect(extOf("README")).toBe("");
     expect(stripExt("README") + extOf("README")).toBe("README");
@@ -177,16 +179,18 @@ describe("extOf", () => {
 });
 ```
 
-(add `extOf` to the file's existing import from `./path`.) Append to `src/utils/saveStatusCopy.test.ts`:
+**`it`, not `test`:** both host files are `import { describe, expect, it } from "vitest";` (`path.test.ts:1`, `saveStatusCopy.test.ts:1`) — a `test(` here is undefined and throws at collection, which is not failing for the right reason. Add `extOf` to `path.test.ts`'s existing import from `./path`. Append to `src/utils/saveStatusCopy.test.ts`:
 
 ```ts
 describe("the footer's short forms", () => {
-  test("the count phrase plus the action tail is the full label, character for character", () => {
+  it("the count phrase plus the action tail is the full label, character for character", () => {
     expect(unsavedCountLabel(3) + UNSAVED_ACTION_TAIL).toBe(unsavedLabel(3));
     expect(missingPhotosLabel(2) + MISSING_ACTION_TAIL).toBe(missingCheckAgainLabel(2));
   });
 });
 ```
+
+(add `MISSING_ACTION_TAIL`, `UNSAVED_ACTION_TAIL` and `unsavedCountLabel` to that file's import from `./saveStatusCopy`; `missingPhotosLabel`, `unsavedLabel` and `missingCheckAgainLabel` are already there.)
 
 - [ ] **Step 2: implement the helpers.** In `src/utils/path.ts`, directly under `stripExt`:
 
@@ -401,9 +405,36 @@ Nothing else in the file changes. `missingCheckAgainLabel` / `unsavedLabel` stop
   - `.cull-statusbar__filename-name`: add `flex-shrink: 1;` (it already has `min-width: 0`'s effect via `overflow: hidden` + `max-width: 240px`; add `min-width: 0` explicitly).
   - `.cull-statusbar__filename-ext`: new rule, `flex: 0 0 auto; color: var(--text-2);`.
   - `.cull-statusbar__verdict-label`: new rule, `flex: 0 0 auto;` (it exists so the media query has something to hide).
-  - `.cull-statusbar__chip`: add `display: inline-flex; align-items: center; gap: 4px;`.
-  - Every other child of `.cull-statusbar__left` (`.cull-statusbar__verdict`, `.cull-statusbar__chip`, `.cull-statusbar__scrub`, `.cull-statusbar__overlay-cluster`, `.cull-statusbar__multi`, `.cull-statusbar__unsaved`) already carries `flex-shrink: 0` or must gain it — check each and add `flex-shrink: 0` where it is missing, so the filename is the ONLY thing that can shrink.
-- [ ] **Step 6: the breakpoints.** One block at the END of `src/styles/statusbar.css`, headed by the arithmetic table from this task, written in stylelint's range notation (`stylelint-config-standard` sets `media-feature-range-notation: "context"`, so `(max-width: …)` is a lint error):
+  - `.cull-statusbar__unsaved` (`chrome.css:710`) is the one left-cluster child with NO `flex-shrink` — add `flex-shrink: 0`. The other three that live here already have it: `.cull-statusbar__verdict` (`:195`), `.cull-statusbar__overlay-cluster` (`:247`), `.cull-statusbar__scrub` (`:296`).
+
+  Then in **`src/styles/statusbar.css`** — these two rules live there, NOT in `chrome.css`:
+  - `.cull-statusbar__chip` (`statusbar.css:43`): add `display: inline-flex; align-items: center; gap: 4px;` (the two spans must not lose the space the old `zoom 2:1` text node had) and `flex-shrink: 0`.
+  - `.cull-statusbar__multi` (`statusbar.css:53`): add `flex-shrink: 0`.
+
+  The filename stem must end up the ONLY shrinkable thing in the left cluster.
+- [ ] **Step 6: the visually-hidden utility.** In `src/styles/base.css`, after the focus-ring safety net:
+
+```css
+/* Visually hidden, still in the accessibility tree. The app has exactly one
+   user: the footer's save chip, whose action tail ("· check again") is hidden
+   below 1200px of window width. `display: none` would ALSO remove it from the
+   button's accessible name — and `title` only stands in for an element with no
+   text content at all — so the chip would quietly stop announcing what
+   clicking it does. This keeps the name whole while the pixels go. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+```
+
+- [ ] **Step 7: the breakpoints.** One block at the END of `src/styles/statusbar.css`, headed by the arithmetic table from this task, written in stylelint's range notation (`stylelint-config-standard` sets `media-feature-range-notation: "context"`, so `(max-width: …)` is a lint error). A media query cannot add a class, so the tail's rule repeats `.visually-hidden`'s declarations rather than sharing the class — the comment says why, and the guard test in Step 8 pins the pair:
 
 ```css
 /* ── the footer sheds as the window narrows ───────────────────
@@ -416,11 +447,11 @@ Nothing else in the file changes. `missingCheckAgainLabel` / `unsavedLabel` stop
    (filter tabs, worst "SMART · 4194") + 66 ("FINISH") + 28 gaps = 520.
    Left, with every chip present and the two mutually exclusive pairs
    collapsed (zoom XOR scrub; overlay cluster XOR "N selected") = 14
-   (verdict glyph) + 54 (scrub + ×10) + 133 (overlay cluster) + 97
-   ("4194 photos missing") + 56 gaps = 354 → 78px left for the filename
-   stem, which holds an 8-character Canon name (≈53px) with room.
-   Nothing is clipped at any width: the left cluster shrinks and the stem
-   ellipses last. */
+   (verdict glyph) + 58 (scrub + ×10) + 133 (overlay cluster) + 143
+   ("4194 photos missing") + 56 gaps = 404 → 28px for the filename stem in
+   the absolute worst case (all-missing chip + scrub + overlay cluster at
+   once); the stem ellipses there and nothing is clipped. In every ordinary
+   state the stem has its full 240px max-width. */
 @media (width < 1360px) {
   .cull-statusbar__keyhint {
     display: none;
@@ -432,13 +463,27 @@ Nothing else in the file changes. `missingCheckAgainLabel` / `unsavedLabel` stop
   .cull-statusbar__filename-ext,
   /* "zoom 1:1" → "1:1". */
   .cull-statusbar__chip-label,
-  /* The arrow and the ×N chip still say it. */
+  /* aria-label="scrubbing" on the wrapper keeps the word for AT. */
   .cull-statusbar__scrub-label,
   /* aria-label on the pill keeps the word for AT. */
-  .cull-statusbar__verdict-label,
-  /* The button's title still says what clicking it does. */
-  .cull-statusbar__unsaved-tail {
+  .cull-statusbar__verdict-label {
     display: none;
+  }
+
+  /* The save chip's tail is hidden VISUALLY, not removed: `display: none`
+     would drop it from the button's accessible name, and the button would
+     stop announcing what clicking it does. Same declarations as
+     base.css's .visually-hidden — a media query cannot add a class. */
+  .cull-statusbar__unsaved-tail {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
 }
 
@@ -461,7 +506,7 @@ Nothing else in the file changes. `missingCheckAgainLabel` / `unsavedLabel` stop
 }
 ```
 
-- [ ] **Step 7: extend the stylesheet guard.** Append to `src/styles/layout.test.ts`:
+- [ ] **Step 8: extend the stylesheet guard.** Append to `src/styles/layout.test.ts`:
 
 ```ts
 describe("the footer's breakpoints", () => {
@@ -500,11 +545,26 @@ describe("the footer's breakpoints", () => {
       /text-overflow:\s*ellipsis/,
     );
   });
+
+  test("the save chip's tail is hidden visually, never removed from the name", () => {
+    // `display: none` would shorten the button's accessible name; the tail is
+    // clipped instead, with the same declarations base.css's utility uses.
+    const block = statusbar.slice(
+      statusbar.indexOf("@media (width < 1200px) {"),
+      statusbar.indexOf("@media (width < 1100px) {"),
+    );
+    const tail = block.slice(block.indexOf(".cull-statusbar__unsaved-tail {"));
+    expect(tail).toMatch(/clip-path:\s*inset\(50%\)/);
+    expect(tail.slice(0, tail.indexOf("}"))).not.toMatch(/display:\s*none/);
+    expect(ruleBody(sheet("./base.css"), ".visually-hidden")).toMatch(
+      /clip-path:\s*inset\(50%\)/,
+    );
+  });
 });
 ```
 
-- [ ] **Step 8:** `pnpm test` — the existing `src/components/StatusBar.saveChip.test.tsx` must stay green untouched: the accessible name is built from the concatenated text, and `"4194 photos missing"` + `" · check again"` is character-identical to `missingCheckAgainLabel(4194)`. If it fails, the split is wrong, not the test.
-- [ ] **Step 9:** gate green. Commit: `feat(ui): the footer sheds labels instead of clipping below 1360 / 1200 / 1100`.
+- [ ] **Step 9:** `pnpm test` — the existing `src/components/StatusBar.saveChip.test.tsx` must stay green untouched: the accessible name is built from the concatenated text, and `"4194 photos missing"` + `" · check again"` is character-identical to `missingCheckAgainLabel(4194)`. If it fails, the split is wrong, not the test.
+- [ ] **Step 10:** gate green. Commit: `feat(ui): the footer sheds labels instead of clipping below 1360 / 1200 / 1100`.
 
 ### Task 3: The info rail goes compact below 1200
 
@@ -560,7 +620,13 @@ describe("the info rail", () => {
     --rail-col-k: 76px;
   }
 
-  .cull-exif-rail {
+  /* :not(--compare) is load-bearing. ExifRail renders the compare rail as
+     `cull-exif-rail cull-exif-rail--compare` (ExifRail.tsx:314), and a media
+     query adds no specificity — a bare `.cull-exif-rail` here would sit at
+     the end of the file at the same (0,1,0) weight as the `--compare` rule
+     above and steal its 32px/24px padding. Spec §4B narrows the compare
+     rail's WIDTH only. */
+  .cull-exif-rail:not(.cull-exif-rail--compare) {
     padding: 28px 20px;
     gap: 28px;
   }
@@ -675,7 +741,9 @@ export function stripMetricsFor(tall: boolean): StripMetrics;
 
 `src/components/strip/BurstBoxes.tsx`: `burstBoxOverlays(segs, prefix, m: StripMetrics)` — a third parameter, replacing the module-level `CELL_STRIDE` / `CELL_W` imports.
 
-**Consumers verified:** `CELL_W` / `CELL_H` / `CELL_STRIDE` / `STRIP_BUFFER` are imported in exactly two files — `PhotoStrip.tsx:8` and `BurstBoxes.tsx:2`. No test imports them (`gridWindow.ts:15` and `ThumbCell.tsx:87` only *mention* `STRIP_BUFFER` in comments). `computeWindow.ts` and `useStripVirtualizer.ts` already take `stride` / `cellWidth` / `buffer` as arguments and need no change.
+**Consumers verified:** `CELL_W` / `CELL_H` / `CELL_STRIDE` / `STRIP_BUFFER` are imported in exactly two files — `PhotoStrip.tsx:8` and `BurstBoxes.tsx:2`. No test imports them (`gridWindow.ts:15` and `ThumbCell.tsx:87` only *mention* `STRIP_BUFFER` in comments). `computeWindow.ts` and `useStripVirtualizer.ts` already take `stride` / `cellWidth` / `buffer` as arguments and need no change. **`CELL_GAP` is `const`, not `export const`, today (`metrics.ts:5`)** — the Step 1 test imports it, so exporting it is part of this task, not an accident. `src/components/memoBailout.test.tsx:18` mocks `./strip/PhotoStrip`, so no existing test mounts the new `matchMedia` subscription; the `typeof window.matchMedia !== "function"` guard in the hook is belt-and-braces.
+
+**A note on the two `ruleBody` helpers:** this file and Task 1's `layout.test.ts` each define their own four-line `ruleBody`. That duplication is deliberate — there is no shared test-helper module in `src/`, and inventing one would put a non-source file in the type-checked tree for two callers. Neither copy's `indexOf("}")` is at risk: every rule body these tests slice was read and contains no literal `}`.
 
 **Re-centring on a metric change — verified, do not rebuild:** `useStripVirtualizer`'s `center` callback lists `stride` and `cellWidth` in its deps (`useStripVirtualizer.ts:57`), and the layout effect at `:67-69` re-runs on `center`'s identity. Changing the step therefore re-centres and recomputes the window in the same commit. The `ResizeObserver` at `:93-99` covers the strip's own height change as well.
 
@@ -1190,16 +1258,16 @@ and add `settings.gridSize` to that effect's dependency array (so a size change 
 
 ```tsx
   // Grid size: the setting is the source of truth, so + / − / Ctrl+0 and the
-  // Settings row all write the same field and all persist. Stable callbacks —
-  // the keymap lists them in its dependency array.
+  // Settings row all write the same field and all persist. useSettings's
+  // setter takes a WHOLE Settings, not an updater, so these close over the
+  // current object and change identity on any settings write.
   const stepGridSizeBy = useCallback(
-    (dir: 1 | -1) =>
-      setSettings((s) => ({ ...s, gridSize: stepGridSize(s.gridSize, dir) })),
-    [setSettings],
+    (dir: 1 | -1) => setSettings({ ...settings, gridSize: stepGridSize(settings.gridSize, dir) }),
+    [settings, setSettings],
   );
   const resetGridSize = useCallback(
-    () => setSettings((s) => ({ ...s, gridSize: "medium" })),
-    [setSettings],
+    () => setSettings({ ...settings, gridSize: "medium" }),
+    [settings, setSettings],
   );
 
   // Ctrl + wheel over the grid steps the size. NON-PASSIVE on purpose: the
@@ -1224,7 +1292,11 @@ and add `settings.gridSize` to that effect's dependency array (so a size change 
   }, [gridVisible, compareMode, gridHasCells, stepGridSizeBy]);
 ```
 
-`setSettings` is the `update` callback from `useSettings` (`App.tsx` destructures `const [settings, setSettings] = useSettings()` — confirm the local name before writing, and note `update` is wrapped in `useCallback` with `[]`, so it is identity-stable). `gridHasCells` is in the deps for the same reason the cols effect has it: under a no-match filter `GridView` is not mounted and `gridContainerRef.current` is null, so the effect must re-run once cells appear. `setSettings` takes a full `Settings`, not an updater — if its signature is `(next: Settings) => void`, write the two callbacks as `() => setSettings({ ...settings, gridSize: … })` with `settings` in the deps instead, and say so in the report.
+`setSettings` is the `update` callback from `useSettings` (`App.tsx:183` destructures `const [settings, setSettings] = useSettings()`; `useSettings.ts:87` types it `(next: Settings) => void` and `:115` wraps it in `useCallback(…, [])`). **There is no updater overload** — `setSettings((s) => …)` is a type error, which is why the two callbacks above spread `settings` and list it in their deps.
+
+**The identity consequence, stated:** `setSettings` itself is stable, but `settings` is not — so `stepGridSizeBy` and `resetGridSize` change identity on *every* settings write. The wheel effect therefore detaches and re-attaches its listener, and the big keymap effect rebuilds its closures, whenever any setting changes. Both are harmless: a settings write is a user action, not a hot path (the keymap already rebuilds on `settings.smartCulling`), and the listener swap is one `removeEventListener`/`addEventListener` pair. Do **not** "optimise" this with a ref — the scrub hot path is already protected by `cullKeyRef`, and a ref here would only hide the dependency.
+
+`gridHasCells` is in the wheel effect's deps for the same reason the cols effect has it: under a no-match filter `GridView` is not mounted and `gridContainerRef.current` is null, so the effect must re-run once cells appear.
 
 - [ ] **Step 7: the keymap.** In `src/app/useCullKeymap.ts`:
   - add `stepGridSizeBy` and `resetGridSize` to the destructured parameters and to the prop type: `stepGridSizeBy: (dir: 1 | -1) => void;` and `resetGridSize: () => void;`
@@ -1272,7 +1344,7 @@ and add `settings.gridSize` to that effect's dependency array (so a size change 
 ```tsx
                 <SettingRow
                   label="Grid size"
-                  help="Contact-sheet cell size. + / − in the grid, Ctrl+0 for medium."
+                  help={`Contact-sheet cell size. + / − in the grid, ${modCombo("0")} for medium.`}
                 >
                   <SegmentToggle<GridSize>
                     value={settings.gridSize}
@@ -1286,7 +1358,7 @@ and add `settings.gridSize` to that effect's dependency array (so a size change 
                 </SettingRow>
 ```
 
-The help string says `Ctrl+0` as plain text on purpose: `SettingRow`'s `help` prop is typed `string`, and the row is prose, not a keycap surface (the keycaps live in the help sheet — Task 7). On macOS this reads "Ctrl+0" rather than "⌘0"; use `` `${modCombo("0")} for medium.` `` with `import { modCombo } from "../utils/platform";` so it is right on both platforms.
+The modifier is plain text, not a keycap: `SettingRow`'s `help` prop is typed `string`, and the row is prose (the keycaps live in the help sheet — Task 7). `modCombo` makes it read "⌘0" on macOS and "Ctrl+0" on Windows — add `import { modCombo } from "../utils/platform";` (`SettingsDialog.tsx` imports `KeyCombo` at `:12` but not `modCombo` today).
 
 - [ ] **Step 9:** gate green, plus `grep -rn "GRID_CELL_TARGET" src` shows only `src/utils/gridSize.ts` and its test. Commit: `feat(grid): three grid sizes, remembered, on + / − / Ctrl+wheel / Ctrl+0`.
 
@@ -1316,7 +1388,9 @@ export type HelpGroup = { title: string; rows: readonly HelpRow[] };
 
 **Where the caps come from:** `KeyCombo` (`src/components/KeyCombo.tsx`) already renders one `<kbd className="kbd">` per key and maps `"mod"` through `modLabel` (`"⌘"` / `"Ctrl"`, `src/utils/platform.ts:5`). Pass **no** `className` — the sheet's scrim is dark and `.kbd`'s own `--surface-2` fill reads correctly on it, and adding a `__kbd` class would pull the rule into `src/styles/keycap.test.ts`'s cap-rule scan for no gain.
 
-**`modName` vs `modLabel`:** `HelpOverlay.tsx:2` imports `modName` (`"ctrl"` / `"cmd"` — the lowercase PROSE word) to build strings like `` `${modName}+z` ``. Those strings disappear with this task; the modifier becomes the `"mod"` token and `KeyCombo` spells it with `modLabel`. **Drop the `modName` import from `HelpOverlay.tsx`** and check whether `modName` still has any consumer (`grep -rn "modName" src`) — if not, delete it from `platform.ts` and its assertion from `src/utils/platform.test.ts`; if it does, leave both alone. Report which.
+**`modName` vs `modLabel`:** `HelpOverlay.tsx:2` imports `modName` (`platform.ts:8` — the lowercase PROSE word `"ctrl"` / `"cmd"`) to build strings like `` `${modName}+z` ``; `modLabel` (`platform.ts:5`) is the keycap label `"Ctrl"` / `"⌘"`. Those prose strings disappear with this task — the modifier becomes the `"mod"` token and `KeyCombo` spells it with `modLabel`. `modName`'s only consumers today are `HelpOverlay.tsx:2` and `src/utils/platform.test.ts`, so **after this task it is dead: delete `modName` from `platform.ts` and its assertion from `platform.test.ts`.** Re-run `grep -rn "modName" src` first to confirm nothing landed in between, and report if it did.
+
+**The 132 px key column, and the one row that would overflow it.** From `primitives/kbd.css`: `.kbd` is `min-width: 20px; padding: 0 5px; border: 1px; font-size: var(--fs-3)` (11 px mono, `letter-spacing: 0.04em`), and `.keycombo` is `gap: 3px; white-space: nowrap`. The grid group's `{ keys: ["Shift","←","→","↑","↓"] }` measures ≈47 (the `Shift` cap) + 4 × 20 + 4 × 3 = **139 px** — over the column, and `.cull-help__row` is `white-space: nowrap` (`help.css:63`), so it would bleed into the description. `flex-wrap` on `.cull-help__key` cannot save it while all five caps sit inside ONE nowrap `.keycombo`. **Ruling:** keep the 132 px the spec picked and let that row wrap, by rendering its modifier as its own combo — see Step 3. The row still exposes all five caps, in order, which Step 1 asserts.
 
 - [ ] **Step 1: failing test** — `src/components/HelpOverlay.test.tsx`:
 
@@ -1373,6 +1447,15 @@ describe("the help sheet draws keycaps", () => {
     expect(caps(rowFor(container, "Bigger / smaller cells"))).toEqual(["+", "−"]);
     expect(caps(rowFor(container, "Medium cells"))).toEqual([modLabel, "0"]);
   });
+
+  test("the five-cap row still shows all five, in order, across two combos", () => {
+    // Split so the 132px key column can wrap (one nowrap combo would bleed
+    // into the description) — the caps and their order must not change.
+    const { container } = render(<HelpOverlay mode="grid" />);
+    const row = rowFor(container, "Grow selection");
+    expect(caps(row)).toEqual(["Shift", "←", "→", "↑", "↓"]);
+    expect(row.querySelectorAll(".keycombo")).toHaveLength(2);
+  });
 });
 ```
 
@@ -1425,6 +1508,15 @@ describe("the help sheet draws keycaps", () => {
                         <span className="cull-help__range">–</span>
                         <KeyCombo keys={[row.keys[1]]} />
                       </>
+                    ) : row.keys.length > 3 ? (
+                      // Four or more caps overflow the 132px key column inside
+                      // one `white-space: nowrap` combo. Splitting the leading
+                      // modifier off gives .cull-help__key's flex-wrap a seam
+                      // to break at, without changing the caps or their order.
+                      <>
+                        <KeyCombo keys={[row.keys[0]]} />
+                        <KeyCombo keys={row.keys.slice(1)} />
+                      </>
                     ) : (
                       <KeyCombo keys={row.keys} />
                     )}
@@ -1468,8 +1560,8 @@ describe("the help sheet draws keycaps", () => {
 - [ ] **Step 5: the icons allowlist.** Five `ALLOWLIST` entries in `src/components/icons.test.ts` pin HelpOverlay source lines verbatim; all five lines are rewritten by this task, so the entries go stale in the same commit that breaks them. Procedure — do NOT hand-guess the new text:
   1. Delete the five `file: "src/components/HelpOverlay.tsx"` entries.
   2. Let the prettier hook format `HelpOverlay.tsx` (or run `pnpm format`) — the allowlist matches the TRIMMED line as prettier leaves it, and `printWidth` is 100.
-  3. Run `pnpm test -- icons`. The "every chrome glyph is drawn by a Lucide icon" test fails and prints `src/components/HelpOverlay.tsx:<line>  <glyphs>  <trimmed line>` for each remaining `↓` / `★`.
-  4. Paste each printed trimmed line back as a new `ALLOWLIST` entry with its reason. Expect four or five, covering: the two `←↑↓→ pan` descriptions (loupe and compare), the `["↑", "↓"]` row-up/down keys, the `["Shift", "←", "→", "↑", "↓"]` grow-selection keys, and `"Keep both · challenger ★"`. Reasons, reusing the existing voice:
+  3. Run `pnpm test -- icons`. The "every chrome glyph is drawn by a Lucide icon" test fails and prints `src/components/HelpOverlay.tsx:<line>  <glyphs>  <trimmed line>` for each remaining `↓` / `★`. (`CHROME_GLYPHS`, `icons.test.ts:18`, contains only `↓` and `★` of the marks involved — `←`, `→` and `↑` are not guarded, so a row carrying only those is not reported and needs no entry.)
+  4. Paste each printed trimmed line back as a new `ALLOWLIST` entry with its reason. Expect **five**, matching the five that were deleted: the two `←↑↓→ pan` descriptions (loupe and compare), the `["↑", "↓"]` row-up/down keys, the `["Shift", "←", "→", "↑", "↓"]` grow-selection keys, and `"Keep both · challenger ★"`. Prettier breaks the loupe Space row past `printWidth: 100`, so its pinned line is the trimmed `desc: "1:1 zoom · ←↑↓→ pan · rating carries zoom to the next frame",`; the compare one (~90 columns) stays on one line — which is exactly why the lines are copied from the failure output rather than predicted. Reasons, reusing the existing voice:
      - arrows in a description → `"Names the arrow KEYS being pressed — key names, like the caps on the row above."`
      - arrows in `keys` → `"The key cap itself — this row IS the arrow keys."`
      - the star → `"Prose describing what the f key does; the help table is text, not chrome."`
@@ -1706,7 +1798,18 @@ pub fn generate_grid_thumb_jpeg(
 }
 ```
 
-- [ ] **Step 3: register it.** `src-tauri/src/lib.rs`: add `mod gridthumb;` in the alphabetical `mod` block (between `file_ops` and `io_gate`), and a row to the module-map table in the crate doc:
+- [ ] **Step 3: register it.** `src-tauri/src/lib.rs`: add the module in the alphabetical `mod` block (between `file_ops` and `io_gate`) — **with the dead-code attribute, which is what lets this task's gate go green on its own**:
+
+```rust
+// Consumed by `bundle::read_grid_thumb` (Task 10); until that lands the
+// module's only callers are its own tests.
+#[cfg_attr(not(test), allow(dead_code))]
+mod gridthumb;
+```
+
+Without it, `cargo clippy --all-targets -- -D warnings` also builds the plain lib target with `cfg(test)` off, where `generate_grid_thumb_jpeg`, `grid_dims`, `GridThumb`, `GRID_LONG_EDGE` and `GRID_QUALITY` have no caller → `function is never used` → the gate fails. Repo precedent for exactly this shape: `src-tauri/src/phash.rs:50` (`#[cfg_attr(not(test), allow(dead_code))]`) and `lib.rs:53`/`:55` (`#[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]`). Task 10 deletes the attribute when it adds the caller.
+
+Add a row to the module-map table in the crate doc:
 
 ```
 //! | [`gridthumb`] | Phase 3B grid tier: PRVW → SIMD resize ≤512 → q82 encode + orientation splice. |
@@ -1758,8 +1861,11 @@ pub fn generate_grid_thumb_jpeg(
         assert!(cache.get(CacheTier::Thumb, &src, 1000, 3).is_none());
         assert!(cache.get(CacheTier::Mid, &src, 1000, 3).is_none());
         // Over the 512 KiB cap → refused outright (put bails before the disk).
+        // Bound first, like the mid tier's test does — an inline `&vec![…]`
+        // reads worse and invites a clippy argument nobody needs to have.
+        let huge = vec![0u8; 512 * 1024];
         let before = cache.size_bytes();
-        cache.put(CacheTier::Grid, &src, 2000, 4, b"{}", &vec![0u8; 512 * 1024]);
+        cache.put(CacheTier::Grid, &src, 2000, 4, b"{}", &huge);
         assert_eq!(cache.size_bytes(), before, "oversized put must be a no-op");
         assert!(cache.get(CacheTier::Grid, &src, 2000, 4).is_none());
         let _ = std::fs::remove_dir_all(&work);
@@ -1856,6 +1962,17 @@ pub struct TierCache {
 **Produces:**
 
 ```rust
+// bundle.rs — the acquisition split (see the prvw ruling below)
+fn preview_parts_opt(
+    path: &str,
+    session: &SessionGate,
+    cache: &TierCache,
+    cancelled: &dyn Fn() -> bool,
+    put_on_miss: bool,
+) -> Result<(Vec<u8>, Vec<u8>, bool), String>;
+// preview_parts(…) stays, as the put_on_miss: true wrapper — read_preview and
+// fetch_decoded_preview are untouched. read_grid_thumb passes false.
+
 #[tauri::command]
 pub(crate) async fn read_grid_thumb(
     path: String,
@@ -1867,11 +1984,14 @@ pub(crate) async fn read_grid_thumb(
 ) -> Result<Response, String>;
 ```
 
-Wire frame: the app's usual `u32 LE headerLen + JSON header + JPEG`, header `{ "gridLen": u32, "width": u32, "height": u32 }` (unrotated dims, `serde(rename_all = "camelCase")`). Quiet sentinel error: the string **`"grid thumb unavailable"`** plus a parenthesised reason.
+Wire frame: the app's usual `u32 LE headerLen + JSON header + JPEG`, header `{ "gridLen": u32, "width": u32, "height": u32 }` (unrotated dims, `serde(rename_all = "camelCase")`). **Two** error sentinels, deliberately distinct:
+- **`"grid thumb unavailable"`** + a parenthesised reason — permanent for this file. The frontend latches it and never asks again.
+- **`"grid thumb pending"`** — transient: another producer holds this path's `MidGen` claim. The frontend must be able to ask again.
 
 ```ts
 // src/utils/bundle.ts
 export const GRID_THUMB_UNAVAILABLE_RE: RegExp; // /grid thumb unavailable/i
+export const GRID_THUMB_PENDING_RE: RegExp;     // /grid thumb pending/i
 export async function fetchGridThumb(
   path: string,
   gen: number,
@@ -1879,13 +1999,73 @@ export async function fetchGridThumb(
 ```
 
 **Design notes, each verified against the code:**
-- **No `fullOffset` / `fullLen` / `orientation` arguments.** Unlike `read_mid`, this tier's source is the PRVW, not the mdat full — `preview_parts` fetches it from the `prvw/` cache or one ~2 MiB head read, and the orientation comes out of the stored `PreviewHeader` (`bundle.rs:124-130`). Two arguments, not five.
-- **The grid path must NOT fill the prvw cache — it is already the prvw cache's own filler.** `preview_parts` piggybacks a miss into `CacheTier::Prvw` (`:195-197`). Spec §"the sharper grid thumbnail" warns that 2,726 previews ≈ 2.2 GB would overflow the 2 GiB prvw cap and thrash it. **Ruling:** that warning is about generating from a *full-res* read; here `preview_parts` IS `read_preview`'s own path, the very reads the user's navigation makes anyway, and bypassing the cache would mean a second copy of the acquisition logic that could drift. So the grid path uses `preview_parts` as-is — and the guard that makes it safe is the **request rule**: only cells inside the visible grid range, only when the painted box needs more than the THMB has (Task 11). The grid never sweeps the whole shoot. Record this in the report; if Oliver's walk shows prvw thrash, the fix is to raise the prvw cap, not to fork the reader.
-- **One quiet sentinel, three causes:** no PRVW (`cr3::read_preview_bundle` → `Err("… no PRVW")` — HEVC/HDR bodies and other firmware), undecodable preview, and a preview not larger than 512 on its long edge. All three are permanent for that file, so the frontend latches one set and never asks again (Task 11).
-- **`Tier::Small` and a `MidGen` permit.** The read is a head read or a cache hit (Small's 8 s local / 20 s network timeout is right); the CPU work takes a generation permit from the SHARED `MidGen` so grid and mid generation cannot oversubscribe the CPU together. `try_begin` dedups a path against a concurrent mid generation — on a bounce, answer the sentinel's "generation pending" form, exactly like `read_mid` (`bundle.rs:511-513`).
+- **No `fullOffset` / `fullLen` / `orientation` arguments.** Unlike `read_mid`, this tier's source is the PRVW, not the mdat full — the acquisition reads the `prvw/` cache or takes one ~2 MiB head read, and the orientation comes out of the stored `PreviewHeader` (`bundle.rs:124-130`). Two arguments, not five.
+- **Ruling (the spec wins): the grid path does NOT fill the prvw cache.** `preview_parts` piggybacks a miss into `CacheTier::Prvw` (`bundle.rs:195-197`), and the grid visits frames the loupe never opens — so grid scrolling at Large genuinely would write every visited frame's ~0.3–0.8 MB PRVW across the shoot. At 2,726 frames that is ~2.2 GB against a 2 GiB cap: the store would shed 10–20 % of itself, and each shed loupe preview costs a fresh ~2 MiB head read on the next navigation. That is exactly what spec §"the sharper grid thumbnail" forbids — *"The grid path must NOT fill the preview cache."* So the reader is split rather than forked: `preview_parts_opt(…, put_on_miss)` holds the one copy of the acquisition logic, `preview_parts(…)` is the `true` wrapper (so `read_preview` and `fetch_decoded_preview` are byte-for-byte unchanged), and `read_grid_thumb` passes `false`. **A prvw cache HIT is still served** — zero source I/O when the user has already navigated to that frame; only the *write-back on a miss* is suppressed.
+- **Two sentinels, and why they must not be one.** `"grid thumb unavailable"` covers the three permanent causes: no PRVW (`cr3::read_preview_bundle` → `Err("… no PRVW")` — HEVC/HDR bodies and other firmware), an undecodable preview, and a preview not larger than 512 on its long edge. `"grid thumb pending"` is separate because `MidGen`'s pending set is SHARED with `maybe_generate_mid_opportunistic` (`bundle.rs:423`) and `generate_mid` (`:593`) — the local-profile idle sweep that walks the whole shoot. A grid scroll racing that sweep bounces often, and folding it into the latching sentinel would permanently strand those cells on the soft THMB.
+- **`Tier::Small` and a `MidGen` permit.** The read is a head read or a cache hit (Small's 8 s local / 20 s network timeout is right); the CPU work takes a generation permit from the SHARED `MidGen` so grid and mid generation cannot oversubscribe the CPU together.
 - **`generate_mid`-style local-only gating does NOT apply.** Spec has no such rule for this tier, the source is a ~2 MiB head read rather than a ~10 MB full, and on the network profile the grid is exactly where a NAS user needs the sharpening. The lane's own network concurrency (1) is the throttle.
 
-- [ ] **Step 1: the Rust command.** In `bundle.rs`, after the mid-tier section and before `// ── Thumbnail ──`:
+- [ ] **Step 1: split the prvw acquisition.** In `bundle.rs`, rename the existing `preview_parts` (`:172`) to `preview_parts_opt`, add the flag, and gate the one `cache.put` behind it. Nothing else in the body moves:
+
+```rust
+/// The one prvw acquisition path (shared by [`read_preview`],
+/// [`fetch_decoded_preview`] and [`read_grid_thumb`], so cache/read behavior
+/// can never drift): validated cache hit returns the stored wire header +
+/// payload VERBATIM; a miss is ONE head read.
+///
+/// `put_on_miss` decides whether that miss is written back to the prvw tier.
+/// Navigation says yes — it is the tier's own filler. The GRID says no: it
+/// visits frames the loupe never opens, and writing every one of them would
+/// push ~2.2 GB through a 2 GiB cap and evict the previews the user is
+/// actually navigating (spec: "the grid path must NOT fill the preview
+/// cache"). A cache HIT still serves the grid, at zero source I/O.
+///
+/// Returns `(header_json, preview_jpeg, was_cache_hit)`.
+fn preview_parts_opt(
+    path: &str,
+    session: &SessionGate,
+    cache: &TierCache,
+    cancelled: &dyn Fn() -> bool,
+    put_on_miss: bool,
+) -> Result<(Vec<u8>, Vec<u8>, bool), String> {
+    let stat = resolve_stat(session, path);
+    if let Some((ms, size)) = stat {
+        if let Some((header, payload)) = cache.get(CacheTier::Prvw, path, ms, size) {
+            return Ok((header, payload, true));
+        }
+    }
+    let b = cr3::read_preview_bundle(path, cancelled).map_err(|e| format!("cr3 preview: {e}"))?;
+    let mut meta = ImageMetadata::from(b.meta);
+    meta.file_size = Some(b.file_size);
+    let header = PreviewHeader {
+        meta,
+        orientation: b.orientation,
+        preview_len: b.preview.len() as u32,
+        full_offset: b.full_hint.map(|h| h.0),
+        full_len: b.full_hint.map(|h| h.1),
+    };
+    let header_json = serde_json::to_vec(&header).map_err(|e| format!("preview header: {e}"))?;
+    if put_on_miss {
+        if let Some((ms, size)) = stat {
+            cache.put(CacheTier::Prvw, path, ms, size, &header_json, &b.preview);
+        }
+    }
+    Ok((header_json, b.preview, false))
+}
+
+/// The navigation form: a miss piggy-backs into the prvw cache, as it always
+/// has. `read_preview` and `fetch_decoded_preview` call this and are unchanged.
+fn preview_parts(
+    path: &str,
+    session: &SessionGate,
+    cache: &TierCache,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<u8>, Vec<u8>, bool), String> {
+    preview_parts_opt(path, session, cache, cancelled, true)
+}
+```
+
+- [ ] **Step 2: the Rust command.** In `bundle.rs`, after the mid-tier section and before `// ── Thumbnail ──`:
 
 ```rust
 // ── Grid tier (Phase 3B): the sharp contact-sheet thumbnail ────────────────
@@ -1901,12 +2081,32 @@ struct GridThumbHeader {
     height: u32,
 }
 
-/// Error sentinel for "this file will never have a grid thumb, or not yet".
-/// The frontend latches it per path and leaves the cell on its THMB — never a
-/// shimmer, never a retry loop, never an error chip (grid cells have no error
-/// state). The "(generation pending)" form is the one exception the frontend
-/// may see again on a later request; it, too, simply leaves the THMB up.
+/// PERMANENT: this file will never have a grid thumb (no PRVW, an undecodable
+/// one, or one already ≤512px). The frontend latches it per path and leaves
+/// the cell on its THMB — never a shimmer, never a retry loop, never an error
+/// chip (grid cells have no error state).
 const GRID_THUMB_UNAVAILABLE: &str = "grid thumb unavailable";
+
+/// TRANSIENT: another producer holds this path's [`MidGen`] claim. NOT the
+/// quiet sentinel — the pending set is SHARED with the opportunistic mid
+/// generator and the whole-shoot idle sweep, so this bounce is common, and
+/// latching it would strand a cell on the soft THMB for the session.
+const GRID_THUMB_PENDING: &str = "grid thumb pending";
+
+/// Map a generation failure onto the wire. Permanent causes become the ONE
+/// quiet sentinel the frontend latches; a cancellation stays itself so the
+/// frontend drops it silently; anything else is a real error with backoff.
+fn grid_thumb_error(e: String) -> String {
+    if e == "cancelled" || e.ends_with(": cancelled") {
+        e
+    } else if e.contains("no PRVW") {
+        format!("{GRID_THUMB_UNAVAILABLE} (no preview)")
+    } else if e.contains("not larger") || e.starts_with("grid thumb ") {
+        format!("{GRID_THUMB_UNAVAILABLE} ({e})")
+    } else {
+        e
+    }
+}
 
 /// Generate the grid thumb from an in-memory PRVW and publish it to the cache.
 /// Returns (header JSON, jpeg) exactly as cached — `read_grid_thumb` frames them.
@@ -1931,13 +2131,18 @@ fn generate_and_cache_grid_thumb(
 
 /// The grid's sharp thumbnail (Phase 3B). Serves the generated 512px JPEG from
 /// the `grid/` disk cache; a hit costs ZERO source-file round-trips and replays
-/// the stored wire header verbatim. On a miss it acquires the PRVW through the
-/// SAME path `read_preview` uses (cache hit, else one ~2 MiB head read that
-/// piggy-backs into the prvw cache) and resizes it under a [`MidGen`] permit.
+/// the stored wire header verbatim. On a miss it acquires the PRVW through
+/// [`preview_parts_opt`] with `put_on_miss: false` — a prvw cache hit is used,
+/// but a miss's head read is NOT written back, because the grid visits frames
+/// the loupe never opens and would evict the previews navigation depends on
+/// (spec: "the grid path must NOT fill the preview cache") — then resizes it
+/// under a [`MidGen`] permit.
 ///
 /// A source that has no PRVW, whose PRVW will not decode, or whose PRVW is not
-/// larger than the tier answers ONE quiet sentinel: the frontend latches it and
-/// the cell keeps the THMB it is already showing.
+/// larger than the tier answers [`GRID_THUMB_UNAVAILABLE`]: the frontend
+/// latches it and the cell keeps the THMB it is already showing. A path whose
+/// generation claim is held elsewhere answers [`GRID_THUMB_PENDING`], which the
+/// frontend must NOT latch.
 #[tauri::command]
 pub(crate) async fn read_grid_thumb(
     path: String,
@@ -1967,9 +2172,11 @@ pub(crate) async fn read_grid_thumb(
         return Err(format!("{label}: source stat failed"));
     };
     // Claim the path against a concurrent mid/grid generation on the SAME
-    // shared gate. A bounce is the sentinel: the frontend keeps its THMB.
+    // shared gate (the opportunistic generator and the idle sweep use it too,
+    // so this bounce is common). TRANSIENT sentinel — the frontend must keep
+    // its THMB but stay free to ask again.
     if !midgen.try_begin(&path) {
-        return Err(format!("{GRID_THUMB_UNAVAILABLE} (generation pending)"));
+        return Err(GRID_THUMB_PENDING.to_string());
     }
     let permit = midgen.acquire().await;
     let result = {
@@ -1978,16 +2185,11 @@ pub(crate) async fn read_grid_thumb(
             let _permit = permit;
             let start = Instant::now();
             let cancelled = || session.is_cancelled(gen);
-            // The SAME prvw acquisition read_preview uses — cache hit, else one
-            // head read that piggy-backs into the prvw cache.
-            let (header_json, prvw, _hit) = preview_parts(&path, &session, &cache, &cancelled)
-                .map_err(|e| {
-                    if e.contains("no PRVW") {
-                        format!("{GRID_THUMB_UNAVAILABLE} (no preview)")
-                    } else {
-                        e
-                    }
-                })?;
+            // put_on_miss: false — a prvw HIT is used (zero source I/O), but a
+            // miss is not written back. See preview_parts_opt.
+            let (header_json, prvw, _hit) =
+                preview_parts_opt(&path, &session, &cache, &cancelled, false)
+                    .map_err(grid_thumb_error)?;
             let header: PreviewHeader = serde_json::from_slice(&header_json)
                 .map_err(|e| format!("grid thumb prvw header parse: {e}"))?;
             let (out_header, payload) = generate_and_cache_grid_thumb(
@@ -1998,17 +2200,7 @@ pub(crate) async fn read_grid_thumb(
                 header.orientation,
                 &cancelled,
             )
-            .map_err(|e| {
-                // "not larger" and a decode failure are both permanent for this
-                // file; "cancelled" must stay itself (the frontend drops it).
-                if e == "cancelled" {
-                    e
-                } else if e.contains("not larger") || e.starts_with("grid thumb ") {
-                    format!("{GRID_THUMB_UNAVAILABLE} ({e})")
-                } else {
-                    e
-                }
-            })?;
+            .map_err(grid_thumb_error)?;
             dlog!(
                 "[cull] read_grid_thumb({}): generated {}B in {:?}",
                 path,
@@ -2026,31 +2218,14 @@ pub(crate) async fn read_grid_thumb(
 
   Add `use crate::gridthumb;` to the module's `use` block, beside `use crate::midtier::{self, MidGen};`.
 
-- [ ] **Step 2: register.** `src-tauri/src/lib.rs`: add `bundle::read_grid_thumb,` to `generate_handler!` (after `bundle::generate_mid,`), and extend the `bundle` module-map row to name it. **No capability change is needed** — `src-tauri/capabilities/default.json` lists plugin permissions only; app commands are registered here and nowhere else (verify by reading that file before assuming).
-- [ ] **Step 3: a command test.** `bundle.rs`'s test module is unit-level (no Tauri `State`), so test the one piece of logic the command adds that is not already covered: the sentinel mapping. Extract it first so it is testable:
+- [ ] **Step 3: register.** `src-tauri/src/lib.rs`: add `bundle::read_grid_thumb,` to `generate_handler!` (after `bundle::generate_mid,`), extend the `bundle` module-map row to name it, and **delete the `#[cfg_attr(not(test), allow(dead_code))]` line above `mod gridthumb;`** — the command is now its caller, and leaving the attribute would hide a future real dead-code warning. (This is why Tasks 8 and 10 are strictly serial on `lib.rs`.) **No capability change is needed** — `src-tauri/capabilities/default.json` lists plugin permissions only; app commands are registered here and nowhere else (verify by reading that file before assuming).
+- [ ] **Step 4: the Rust tests.** `bundle.rs`'s test module opens with `use super::*`, so everything above is in scope, and it has no Tauri `State` — so test the two pieces of logic this task adds that the command wrapper only plumbs.
 
-```rust
-/// Map a generation failure onto the wire. Permanent causes become the ONE
-/// quiet sentinel the frontend latches; a cancellation stays itself so the
-/// frontend drops it silently; anything else is a real error.
-fn grid_thumb_error(e: String) -> String {
-    if e == "cancelled" {
-        e
-    } else if e.contains("no PRVW") {
-        format!("{GRID_THUMB_UNAVAILABLE} (no preview)")
-    } else if e.contains("not larger") || e.starts_with("grid thumb ") {
-        format!("{GRID_THUMB_UNAVAILABLE} ({e})")
-    } else {
-        e
-    }
-}
-```
-
-  and call it from both `map_err` sites above. Then:
+  **(a) the sentinel mapping** — a pure function, no fixtures:
 
 ```rust
     #[test]
-    fn grid_thumb_errors_map_onto_one_quiet_sentinel() {
+    fn grid_thumb_errors_map_onto_the_right_sentinel() {
         for permanent in [
             "cr3 preview: no PRVW".to_string(),
             "source not larger than grid tier (400x300)".to_string(),
@@ -2058,29 +2233,125 @@ fn grid_thumb_error(e: String) -> String {
         ] {
             assert!(
                 grid_thumb_error(permanent.clone()).starts_with(GRID_THUMB_UNAVAILABLE),
-                "should be the sentinel: {permanent}"
+                "should latch: {permanent}"
             );
         }
-        // A cancellation is not a failure and must not latch anything.
+        // A cancellation is not a failure and must not latch anything — in
+        // either of its two shapes (preview_parts wraps it as "cr3 preview:
+        // cancelled", cr3.rs:684 + bundle.rs:184).
         assert_eq!(grid_thumb_error("cancelled".into()), "cancelled");
-        // A real I/O failure stays a real failure (backoff + retry apply).
+        assert_eq!(
+            grid_thumb_error("cr3 preview: cancelled".into()),
+            "cr3 preview: cancelled"
+        );
+        // A real I/O failure stays a real failure (backoff + retry apply) and
+        // must NOT be confusable with either sentinel.
         let io = "read_grid_thumb(x): read timed out after 8s".to_string();
         assert_eq!(grid_thumb_error(io.clone()), io);
+        assert!(!io.contains(GRID_THUMB_UNAVAILABLE) && !io.contains(GRID_THUMB_PENDING));
+        // The two sentinels must never prefix-match each other, or the
+        // frontend's latch test would catch the transient one.
+        assert!(!GRID_THUMB_PENDING.starts_with(GRID_THUMB_UNAVAILABLE));
+        assert!(!GRID_THUMB_UNAVAILABLE.starts_with(GRID_THUMB_PENDING));
     }
 ```
 
-- [ ] **Step 4: the TS side.** In `src/utils/bundle.ts`, after `invokeGenerateMid`:
+  **(b) the prvw write-back flag** — the whole point of the split. Two tests, because the honest assertion needs a real CR3 and the repo's answer to that is a corpus gate (`TESTING.md` §"Pass-by-skip philosophy"; precedent in this very module at `thumb_phash_over_sample_dir_is_well_formed`, and in `tier_cache.rs`'s tests for the temp-dir harness):
+
+```rust
+    /// A temp dir + a real TierCache, the shape tier_cache.rs's own tests use.
+    fn grid_tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("cull-gridprvw-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Ungated: a prvw cache HIT still serves the grid, at zero source I/O —
+    /// `put_on_miss: false` suppresses the write-back, never the read.
+    #[test]
+    fn grid_acquisition_uses_a_prvw_hit_without_writing_anything() {
+        let work = grid_tmp("hit");
+        let cache = TierCache::new(work.join("tiers"));
+        let session = SessionGate::new();
+        // Any file will do: the cache validates against ITS stat, and a hit
+        // returns before cr3 parsing is ever reached.
+        let src = work.join("a.cr3");
+        std::fs::write(&src, b"not really a cr3").unwrap();
+        let src = src.to_string_lossy().to_string();
+        let (ms, size) = resolve_stat(&session, &src).expect("stat");
+        cache.put(CacheTier::Prvw, &src, ms, size, b"{\"orientation\":1}", b"\xFF\xD8prvw");
+
+        let before = cache.size_bytes();
+        let (header, payload, hit) =
+            preview_parts_opt(&src, &session, &cache, &|| false, false).expect("hit");
+        assert!(hit, "a current prvw entry must be served");
+        assert_eq!(payload.as_slice(), b"\xFF\xD8prvw");
+        assert_eq!(header.as_slice(), b"{\"orientation\":1}");
+        assert_eq!(cache.size_bytes(), before, "a hit writes nothing");
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// The real assertion, corpus-gated like every other test here that needs
+    /// pixels: a grid-tier acquisition on a prvw MISS reads the file and
+    /// leaves the prvw store empty, while the navigation form fills it.
+    /// `CULL_TEST_CR3_DIR=path cargo test -- --nocapture`.
+    #[test]
+    fn grid_acquisition_never_fills_the_prvw_cache_on_a_miss() {
+        let Ok(dir) = std::env::var("CULL_TEST_CR3_DIR") else {
+            eprintln!("skip: set CULL_TEST_CR3_DIR to a folder of .CR3 files");
+            return;
+        };
+        let src = std::fs::read_dir(&dir)
+            .expect("read dir")
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cr3")))
+            .expect("a CR3 under CULL_TEST_CR3_DIR")
+            .to_string_lossy()
+            .to_string();
+
+        let work = grid_tmp("miss");
+        let cache = TierCache::new(work.join("tiers"));
+        let session = SessionGate::new();
+
+        // The grid's form: reads the preview, caches nothing.
+        let (_, prvw, hit) =
+            preview_parts_opt(&src, &session, &cache, &|| false, false).expect("grid read");
+        assert!(!hit, "cold store must be a miss");
+        assert!(!prvw.is_empty(), "the preview really was read");
+        assert_eq!(
+            cache.size_bytes(),
+            0,
+            "the grid path must not write the prvw tier"
+        );
+
+        // The navigation form, same file, same store: fills it.
+        let (_, _, hit2) = preview_parts(&src, &session, &cache, &|| false).expect("nav read");
+        assert!(!hit2);
+        assert!(cache.size_bytes() > 0, "navigation still fills prvw");
+        let _ = std::fs::remove_dir_all(&work);
+    }
+```
+
+- [ ] **Step 5: the TS side.** In `src/utils/bundle.ts`, after `invokeGenerateMid`:
 
 ```ts
 /** Header for `read_grid_thumb` (Phase 3B): JPEG length + (unrotated) dims. */
 type GridThumbHeader = { gridLen: number; width: number; height: number };
 
-/** Matches the backend's quiet sentinel: this file has no usable preview to
- *  sharpen from (none embedded, undecodable, or already ≤512px), or another
- *  producer holds its generation claim. The store latches it per path and the
- *  grid cell simply keeps the THMB it is already showing — no shimmer, no
- *  retry loop, no error chip. */
+/** PERMANENT: this file has no usable preview to sharpen from — none embedded,
+ *  undecodable, or already ≤512px. The store LATCHES it per path and the grid
+ *  cell keeps the THMB it is already showing — no shimmer, no retry loop, no
+ *  error chip. */
 export const GRID_THUMB_UNAVAILABLE_RE = /grid thumb unavailable/i;
+
+/** TRANSIENT: another producer holds this path's generation claim on the
+ *  backend's shared MidGen gate (the opportunistic mid generator and the
+ *  whole-shoot idle sweep use the same pending set, so a grid scroll racing
+ *  the sweep hits this often). Must NOT latch — ordinary backoff only, and the
+ *  next viewport report asks again. */
+export const GRID_THUMB_PENDING_RE = /grid thumb pending/i;
 
 /** Grid-tier read (Phase 3B): the generated 512px JPEG from the disk cache,
  *  generated from the CR3's embedded preview on a miss. Two arguments only —
@@ -2103,7 +2374,7 @@ export async function fetchGridThumb(
 }
 ```
 
-- [ ] **Step 5:** both gates green. Commit: `feat(backend): read_grid_thumb serves the sharp contact-sheet tier`.
+- [ ] **Step 6:** both gates green. Commit: `feat(backend): read_grid_thumb serves the sharp contact-sheet tier`.
 
 ### Task 11: The sixth lane — grid thumbnails in `imageStore`
 
@@ -2111,7 +2382,7 @@ export async function fetchGridThumb(
 
 **Serial with Task 6:** both edit `src/types/settings.ts`. Task 6 goes first.
 
-**Interfaces — Consumes:** `fetchGridThumb`, `GRID_THUMB_UNAVAILABLE_RE` (Task 10). **Produces:**
+**Interfaces — Consumes:** `fetchGridThumb`, `GRID_THUMB_UNAVAILABLE_RE`, `GRID_THUMB_PENDING_RE` (Task 10). **Produces:**
 
 ```ts
 // src/image/gridThumbRule.ts
@@ -2288,7 +2559,7 @@ export function wantsGridThumb(cellW: number, dpr: number): boolean {
 
   `network`: `gridThumbConcurrency: 1, gridThumbKeep: 120`. `local`: `gridThumbConcurrency: 4, gridThumbKeep: 120`.
 
-- [ ] **Step 5: the pressure clamp.** `src/image/pressureProfile.ts` — add to the `warn` object `gridThumbConcurrency: Math.min(base.gridThumbConcurrency, 1), gridThumbKeep: Math.min(base.gridThumbKeep, 40),` and to the `critical` object `gridThumbConcurrency: 0, gridThumbKeep: 0,`. Update the doc comment's bullet list to name the grid tier. The existing `"never raises any value above the base"` test (`pressureProfile.test.ts:34`) iterates the whole profile and would have failed on an unclamped knob — that is the net; add an explicit case too:
+- [ ] **Step 5: the pressure clamp.** `src/image/pressureProfile.ts` — add to the `warn` object `gridThumbConcurrency: Math.min(base.gridThumbConcurrency, 1), gridThumbKeep: Math.min(base.gridThumbKeep, 40),` and to the `critical` object `gridThumbConcurrency: 0, gridThumbKeep: 0,`. Update the doc comment's bullet list to name the grid tier. **There is no safety net here:** both levels are built as `{ ...base, … }` (`pressureProfile.ts:31`, `:44`), so an unclamped new knob simply equals `base` and `pressureProfile.test.ts:34`'s whole-profile `toBeLessThanOrEqual(base[k])` loop *passes*. The explicit case below is the only thing that can catch a forgotten knob — write it:
 
 ```ts
   it("sheds the grid tier: its window first, then the lane entirely", () => {
@@ -2301,7 +2572,7 @@ export function wantsGridThumb(cellW: number, dpr: number): boolean {
 
 - [ ] **Step 6: the store.** In `src/image/imageStore.ts`:
 
-  **Imports:** add `fetchGridThumb, GRID_THUMB_UNAVAILABLE_RE` to the `../utils/bundle` import and `import { wantsGridThumb } from "./gridThumbRule";`.
+  **Imports:** add `fetchGridThumb, GRID_THUMB_PENDING_RE, GRID_THUMB_UNAVAILABLE_RE` to the `../utils/bundle` import and `import { wantsGridThumb } from "./gridThumbRule";`.
 
   **Header comment:** extend the revoke-site list with `14. grid tier (Phase 3B): reset/hardReset + fetchGridThumbInto stale/replace, gridThumbLane.evictAround window eviction` and add the grid lane to the "fetch*Into landing sites" line (site 13 becomes "all five").
 
@@ -2473,12 +2744,21 @@ export function wantsGridThumb(cellW: number, dpr: number): boolean {
       const msg = e instanceof Error ? e.message : String(e);
       this.requestedGridThumb.delete(path);
       this.gridThumbs.delete(path);
-      if (/^cancelled$/i.test(msg)) {
+      if (/(^|: )cancelled$/i.test(msg)) {
         // Superseded by a session change the backend saw first — quiet drop.
+        // Two shapes: the bare sentinel, and preview_parts's wrapped
+        // "cr3 preview: cancelled" (bundle.rs:184 + cr3.rs:684).
+      } else if (GRID_THUMB_PENDING_RE.test(msg)) {
+        // TRANSIENT: another producer holds the backend's shared MidGen claim
+        // (the opportunistic mid generator and the whole-shoot idle sweep use
+        // the same pending set). Ordinary backoff — NEVER the latch, or a grid
+        // scroll that raced the sweep would strand those cells on the soft
+        // THMB for the rest of the session.
+        this.noteTierError(this.gridThumbErrors, path, msg);
       } else if (GRID_THUMB_UNAVAILABLE_RE.test(msg)) {
-        // Not a failure: this file has no preview to sharpen from (or another
-        // producer holds its claim). LATCH it — the cell keeps its THMB for
-        // the session, with no shimmer, no retry and no error chip.
+        // PERMANENT, and not a failure: this file has no preview to sharpen
+        // from. LATCH it — the cell keeps its THMB for the session, with no
+        // shimmer, no retry and no error chip.
         this.gridThumbUnavailable.add(path);
       } else if (/command\s+\S*\s*not found|unknown command|no handler/i.test(msg)) {
         // A 3B frontend on an older backend: the tier stays dormant.
@@ -2491,9 +2771,15 @@ export function wantsGridThumb(cellW: number, dpr: number): boolean {
   }
 ```
 
-  **`retry(path)`** (`:955-988`): add `this.gridThumbErrors.delete(path);` beside the other four. Do **not** clear `gridThumbUnavailable` — record why in a comment: *the sentinel is a fact about the file, not a transient failure; a retry cannot change it.*
+  **`retry(path)`** (`:955-988`): add `this.gridThumbErrors.delete(path);` beside the other four, and `this.gridThumbLane.pump();` beside the two pumps at the end — without it the error-panel retry clears the cooldown but nothing re-requests until the next viewport change. Do **not** clear `gridThumbUnavailable` — record why in a comment: *the sentinel is a fact about the file, not a transient failure; a retry cannot change it. A `pending` bounce is a plain tier error and clears with the rest.*
 
-  **`debugStats()`**: add `gridThumbLoads` / `gridThumbEvicts` to the `counts` type (and to `devStats.ts`'s `counts` initialiser), and a block beside `mid`:
+  **`debugStats()`** carries an inline **return-type annotation** (`imageStore.ts:1714-1741`), so every addition lands twice. In the annotation: `gridThumbLoads: number;` and `gridThumbEvicts: number;` inside the `counts:` object type, and beside `mid`:
+
+```ts
+    gridThumb: { lane: string; cached: number; cellW: number; wanted: boolean; unavailable: number };
+```
+
+  In `devStats.ts`, add `gridThumbLoads: 0,` and `gridThumbEvicts: 0,` to the `counts` initialiser. In the returned value, beside `mid`:
 
 ```ts
       gridThumb: {
@@ -2529,34 +2815,13 @@ export function useThumb(path: string): {
 
 - [ ] **Step 8: the DPR wiring.** In `src/app/useImageStoreWiring.ts`, the `matchMedia('(resolution: Xdppx)')` handler (`:85-98`) calls `imageStore.reevaluateMid()`; add `imageStore.reevaluateGridThumbs();` beside it and extend the comment: *"…and the grid tier: the same cell can cross the (cellW − 18) × DPR > 160 rule in either direction when only the DPR moves."*
 
-- [ ] **Step 9: the lane-parity net.** In `src/image/imageStore.test.ts`, add a fifth entry to `LANES` (`:1417-1451`):
+- [ ] **Step 9: the lane-parity net.** The grid lane does **not** join the `LANES` array (`imageStore.test.ts:1417-1451`): every entry there is driven per PATH, and this lane is driven by RANGE, because the store owns the request so that the rule, the tombstone check and the sentinel latch live in one place. **Ruling:** it gets its own `describe` covering the same three invariants plus the four things only it has. Place that `describe` **inside** `describe("lane parity net (Phase 8 TierLane collapse)")` — `laneDeferreds` is defined in that scope, not at module scope — directly after the `for (const lane of LANES)` loop:
 
 ```ts
-    {
-      name: "grid thumb",
-      cmd: "read_grid_thumb",
-      cap: 1, // network .gridThumbConcurrency
-      buf: () => makeGridThumbBuf(),
-      setup: (s) => {
-        s.setGridCellW(400); // (400 − 18) × 1 = 382 > 160 — the rule is on
-      },
-      drive: (s, p) => {
-        // The store owns the request: reporting a range containing `p` IS the
-        // drive. The lane is pumped by the range report.
-        const i = 0;
-        void p;
-        s.setGridRange(i, i);
-      },
-      isReady: (s, p) => s.snapshot(p).gridThumbUrl !== undefined,
-    },
-```
-
-  **This does not fit the shared harness as written** — the other four lanes are driven per path, and `setGridRange` is driven by index. **Ruling:** give the grid lane its own three tests rather than bending the shared loop. Write them beside the `for (const lane of LANES)` block, modelled on it exactly:
-
-```ts
-  // The grid lane joins the parity net but is driven by RANGE, not by path:
-  // the store owns the request so the rule, the tombstone check and the
-  // sentinel latch live in one place. Same three invariants as every lane.
+  // The grid lane's parity tests. Driven by RANGE, not by path — the store
+  // owns the request, so the rule, the tombstone check and the two sentinels
+  // live in one place. Same three invariants as every other lane, plus the
+  // four that are this lane's alone.
   describe("grid thumb", () => {
     function makeGridThumbBuf(): ArrayBuffer {
       const header = JSON.stringify({ gridLen: 3, width: 512, height: 341 });
@@ -2630,7 +2895,7 @@ export function useThumb(path: string): {
       expect(deferreds).toHaveLength(0);
     });
 
-    it("the sentinel latches per path: one miss, then never again", async () => {
+    it("the UNAVAILABLE sentinel latches per path: one miss, then never again", async () => {
       const store = await armed(["/net/noprvw.cr3"]);
       const deferreds = laneDeferreds("read_grid_thumb");
       store.setGridRange(0, 0);
@@ -2645,6 +2910,31 @@ export function useThumb(path: string): {
       expect(store.snapshot("/net/noprvw.cr3").gridThumbUrl).toBeUndefined();
       // The THMB underneath is untouched — the cell simply keeps showing it.
       expect(store.snapshot("/net/noprvw.cr3").stage).toBe("shimmer");
+    });
+
+    it("the PENDING sentinel does NOT latch: it is a plain cooldown, then asked again", async () => {
+      // The backend's MidGen pending set is shared with the whole-shoot mid
+      // sweep, so this bounce is common. Latching it would strand the cell on
+      // the soft THMB for the session — the bug this sentinel exists to avoid.
+      const store = await armed(["/net/busy.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].reject(new Error("grid thumb pending"));
+      await flush();
+
+      // Inside the backoff: no re-fetch (a cooldown, not a latch).
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+
+      // retry() clears the tier error — the path is NOT in the unavailable set,
+      // so the very next range report asks again.
+      store.retry("/net/busy.cr3");
+      store.setGridRange(0, 0);
+      await vi.waitUntil(() => deferreds.length === 2, { timeout: 2000 });
+      deferreds[1].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot("/net/busy.cr3").gridThumbUrl !== undefined);
     });
 
     it("eviction follows the GRID RANGE, and leaving the grid frees everything", async () => {
@@ -2786,6 +3076,8 @@ describe("the grid cell layers the sharp tier over the THMB", () => {
 
   (match `Img`'s real shape from `src/types/image.ts` when writing the fixture; the cast above is a placeholder for whatever fields it requires.)
 
+  **Re-read `GridView`'s prop type before writing this fixture.** Task 6 owns `GridView.tsx` and runs first, so a required prop added there would break the render. Today's required set — verified at `GridView.tsx:50-100` — is `images`, `visibleIndices`, `currentIndex`, `cols`, `contentWidth`, `ratings`, `onPick`, `containerRef`, `onViewportChange`; everything else (`metadata`, `selectedIndices`, `suggestions`, `bursts`, `similar`, `scrubSpeed`) is optional.
+
 - [ ] **Step 2: `GridCell`.** Replace the `useThumb` call and the `url ? … : …` block:
 
 ```tsx
@@ -2867,7 +3159,7 @@ describe("the grid cell layers the sharp tier over the THMB", () => {
   }, [gridVisible, compareMode, gridContentW, gridCols]);
 ```
 
-  `imageStore` is already imported in `App.tsx` (it is used for pins and `pendingMetaFor`) — confirm, and import it if not.
+  `imageStore` is already imported in `App.tsx` (`:75`). `gridCellWidth` arrives with Task 6's `import { gridCellWidth, gridColsFor, stepGridSize } from "./utils/gridSize";` — nothing new to add here.
 
 - [ ] **Step 5: `DevHud.tsx`.** One row after the `mid` row:
 
@@ -2965,17 +3257,19 @@ describe("the grid cell layers the sharp tier over the THMB", () => {
     rc.globalAlpha = ALPHA;
     rc.drawImage(img, 0, 0, W, h);
 
-    // 32×32 sample grid, per-channel absolute difference.
-    const bc = baked.getContext("2d");
+    // 32×32 sample grid, per-channel absolute difference. TWO whole-canvas
+    // reads, not 2,048 single-pixel ones — same numbers, a fraction of the
+    // time inside the virtual-time budget.
+    const A = baked.getContext("2d").getImageData(0, 0, W, h).data;
+    const B = rc.getImageData(0, 0, W, h).data;
     let sum = 0, max = 0, n = 0;
     for (let gy = 0; gy < 32; gy++) {
       for (let gx = 0; gx < 32; gx++) {
         const x = Math.floor(((gx + 0.5) / 32) * W);
         const y = Math.floor(((gy + 0.5) / 32) * h);
-        const a = bc.getImageData(x, y, 1, 1).data;
-        const b = rc.getImageData(x, y, 1, 1).data;
+        const i = (y * W + x) * 4;
         for (let c = 0; c < 3; c++) {
-          const d = Math.abs(a[c] - b[c]);
+          const d = Math.abs(A[i + c] - B[i + c]);
           sum += d;
           if (d > max) max = d;
           n++;
@@ -2995,7 +3289,7 @@ describe("the grid cell layers the sharp tier over the THMB", () => {
 
 - [ ] **Step 3: `scripts/bake-backdrop.mjs`.** Node built-ins only. It serves `scripts/bake-backdrop/` (the page) and `scripts/bake-backdrop/sources/` (the images), spawns the browser once per asset, parses `#out` and `#diff` out of the dumped DOM, prints the diff JSON, and writes `src/assets/<name>.jpg`. Give it a header comment stating the recipe, the 2560 width, the q it shipped with, and the re-run command. Refuse to write if `maxAbsDiff > 8` unless `--force` is passed, and print why.
 - [ ] **Step 4: run it** for both assets and record the numbers. Target ≤ 320 kB per file; if q 0.82 overshoots, step q down by 0.02 until it fits and record the final q in the script header.
-- [ ] **Step 5: the CSS.** In `src/styles/chrome.css` `.cull-chrome::before` and `src/styles/empty-state.css` `.cull-empty-state--desert::before`, delete the `filter:` and `opacity:` declarations and keep everything else. Replace each rule's comment tail with:
+- [ ] **Step 5: the CSS.** Read each rule in full before touching it — confirm nothing else depends on the `opacity` you are about to delete (an `opacity` below 1 creates a stacking context, and `.cull-chrome::before` sits at `z-index: -1` inside a parent with `isolation: isolate`; the parent's isolation is what contains it, so removing `opacity` is safe — verify that is still true, and report if a rule has drifted). Then in `src/styles/chrome.css` `.cull-chrome::before` and `src/styles/empty-state.css` `.cull-empty-state--desert::before`, delete the `filter:` and `opacity:` declarations and keep everything else. Replace each rule's comment tail with:
 
 ```css
   /* The tone is BAKED into the JPEG (scripts/bake-backdrop.mjs): grayscale +
@@ -3049,10 +3343,33 @@ describe("the backdrops", () => {
 
   and a line under the table: `Ctrl + wheel` over the contact sheet steps the grid size too. Also add "Grid size" to the `## Settings` list.
 - [ ] **Step 4: `TESTING.md`.** Add a short section, **Stylesheet guards**, describing the pattern this phase leaned on hardest: a test reads a stylesheet with the `?raw` glob and asserts that a number the JS also knows (`strip/metrics.ts`, `gridThumbRule.ts`'s `GRID_CELL_PADDING`) matches the rule that draws it, and that each picked breakpoint exists at its picked width. Name `src/styles/layout.test.ts`, `src/components/strip/metrics.test.ts` and `src/image/gridThumbRule.test.ts`. If nothing in the "Reading source files in tests" section changed, say so and leave it.
-- [ ] **Step 5: final gate** — `pnpm typecheck && pnpm typecheck:tests && pnpm lint && pnpm lint:css && pnpm test && pnpm build && pnpm css:census`, plus the Rust three from `src-tauri/`. `css:census` is a starting list, not a verdict: reconcile any new name by hand and report it.
-- [ ] **Step 6:** commit: `docs: Phase 3B — scale, layout and the grid tier`.
+- [ ] **Step 5: the implementation note.** Append an `## Implementation note` section to THIS plan file, in the shape Phase 3A's has (what shipped · where the plan was wrong and what was ruled instead · verification · Oliver's walk · left for later). Its first paragraph is the **Pre-flight** one already written below under `## Pre-flight corrections (2026-09-20)` — move it into the note verbatim and add a line for every further correction the implementers hit, one line each.
+- [ ] **Step 6: final gate** — `pnpm typecheck && pnpm typecheck:tests && pnpm lint && pnpm lint:css && pnpm test && pnpm build && pnpm css:census`, plus the Rust three from `src-tauri/`. `css:census` is a starting list, not a verdict: reconcile any new name by hand and report it.
+- [ ] **Step 7:** commit: `docs: Phase 3B — scale, layout and the grid tier`.
 
 ---
+
+## Pre-flight corrections (2026-09-20)
+
+Two fresh reviewers fact-checked this plan against the code before any of it was executed; every finding below was applied here, so an implementer reads only corrected text. Recorded so the record survives even if the session is interrupted — Task 14 moves this paragraph into the implementation note.
+
+- **Two footer CSS rules named the wrong file.** `.cull-statusbar__chip` and `.cull-statusbar__multi` live in `statusbar.css` (`:43`, `:53`), not `chrome.css`. Task 2 Step 5 now splits the edits by file, and names `.cull-statusbar__unsaved` as the one left-cluster child with no `flex-shrink`.
+- **The compact rail would have stolen the compare rail's padding.** `ExifRail.tsx:314` renders both classes and a media query adds no specificity, so Task 3's block is now `.cull-exif-rail:not(.cull-exif-rail--compare)`.
+- **Two appended test blocks used `test(` in files that import only `it`.** Task 2's snippets are `it(`, with the exact imports to add.
+- **The grid-size callbacks used an updater form that does not exist.** `useSettings` returns `(next: Settings) => void` (`useSettings.ts:87`, `:115`); Task 6's code block spreads `settings` and lists it in the deps, and the identity consequence (the wheel effect re-attaches, the keymap rebuilds, on any settings write) is stated.
+- **The footer budget was wrong by ~50 px.** `"4194 photos missing"` is 19 characters = 143 px, not 97, and the scrub cluster is 58, not 54. Corrected table, corrected CSS comment: the worst case leaves 28 px for the filename stem, which ellipses — the structural "nothing is clipped" guarantee is unchanged, the "fits with room" claim was false and is gone.
+- **`display: none` on the save chip's tail would have shortened its accessible name.** Ruled: a new one-off `.visually-hidden` in `base.css`, with the same declarations repeated in the `< 1200` rule (a media query cannot add a class). The name stays whole at every width.
+- **The help sheet's five-cap row overflows the 132 px key column** (139 px inside one `nowrap` combo). Ruled: keep the spec's 132 and split any row of four or more caps into two combos so the column can wrap; a test pins that all five caps still render in order.
+- **The `gridSize` Settings help string was written twice, contradictorily.** One `modCombo("0")` template, with the import named.
+- **`mod gridthumb;` cannot pass `clippy -D warnings` before its caller exists.** Task 8 adds `#[cfg_attr(not(test), allow(dead_code))]` (precedent: `phash.rs:50`), Task 10 deletes it — which makes 8 → 10 strictly serial on `lib.rs`.
+- **One sentinel would have permanently stranded cells.** `MidGen`'s pending set is shared with the opportunistic mid generator and the whole-shoot idle sweep, so a `try_begin` bounce is common — folding it into the latching sentinel meant a grid scroll racing the sweep left those cells soft forever. Split into `"grid thumb unavailable"` (latches) and `"grid thumb pending"` (cooldown only), on both sides, with a test for each behaviour.
+- **The spec's "the grid path must NOT fill the preview cache" was overridden on a false premise** and is reinstated: the grid visits frames the loupe never opens, so it genuinely would push ~2.2 GB through a 2 GiB cap. `preview_parts_opt(…, put_on_miss)` now holds the one copy of the acquisition logic; `preview_parts` is the `true` wrapper (navigation unchanged) and `read_grid_thumb` passes `false`. A prvw cache HIT still serves the grid at zero source I/O. Two Rust tests: an ungated hit-path test, and the corpus-gated miss-path assertion that the prvw store stays empty.
+- **The plan told the implementer to write `grid_thumb_error` twice.** It is defined once, in Step 2, and both `map_err` sites call it.
+- **A claimed safety net in `pressureProfile.test.ts` does not exist** — both levels spread `...base`, so an unclamped knob passes the whole-profile loop. The explicit grid-tier case is the only net, and the plan now says so.
+- **A dead `LANES` entry** for the grid lane (immediately overruled by the plan's own ruling, and calling a helper defined later) is deleted; the lane's own `describe` is placed inside the parity-net `describe`, where `laneDeferreds` is in scope.
+- **`debugStats()` has an inline return-type annotation**, so the new `gridThumb` block and the two counters land twice; the plan now says both places.
+- **Smaller:** `retry()` gains `gridThumbLane.pump()`; the cancelled-shape regex becomes `/(^|: )cancelled$/i` (`preview_parts` wraps it as `"cr3 preview: cancelled"`); the oversized-put test binds its buffer; Task 12 re-reads `GridView`'s prop type after Task 6; the bake page does two whole-canvas reads instead of 2,048 single-pixel ones; Task 13 reads each backdrop rule in full before deleting its `opacity`; `modName` is confirmed dead after Task 7 and deleted; the icons allowlist is exactly five entries.
+- **One finding rejected:** a reviewer placed `GridView.tsx`'s `GRID_CELL_TARGET` doc block at `:20`. It is `:21-25` with the export at `:26` (`:20` is blank), so Task 6's `:21-26` stands.
 
 ## Not in this plan
 
@@ -3067,7 +3384,7 @@ describe("the backdrops", () => {
 - **The grid tier keeps no recency LRU.** Its windowed eviction is the whole policy. `THUMB_LRU_CAP`'s mechanism is deliberately NOT reused (it has no recency tracking at all).
 - **`thumbDisplayUrl` is not a three-way choice.** Ruled in Task 11: layering preserves the 8-away-flash invariant; switching would reintroduce it.
 - **The filmstrip stays on the THMB.** 104 CSS px at DPR 1.5 is 156 device px — still a downscale of 160. The grid tier is never requested for a strip cell.
-- **The prvw cache is not forked for the grid path.** Ruled in Task 10, with the request rule as the guard that keeps the read count bounded; the escape hatch, if it ever thrashes, is a larger prvw cap.
+- **The grid path does not write the prvw cache** (spec §"the sharper grid thumbnail"). Ruled in Task 10: the reader is *split*, not forked — `preview_parts_opt(…, put_on_miss)` is the one copy of the acquisition logic, `preview_parts` is its `true` wrapper so navigation is unchanged, and `read_grid_thumb` passes `false`. A prvw cache HIT still serves the grid at zero source I/O; only the write-back on a miss is suppressed. The cost accepted in exchange is one ~2 MiB head read per grid thumb whose frame the loupe has not visited — bounded by the request rule, which only asks for cells inside the visible grid range.
 - **No ICC / colour management.** An AdobeRGB frame renders slightly flatter than its THMB in the grid, exactly as it already does in the mid tier. Pre-existing, unchanged, out of scope.
 - **The verdict-word and save-tail sheds are new** (Task 2) — an extension of spec §3B taken under its own "say what else sheds" instruction, not a silent reinterpretation.
 
@@ -3079,9 +3396,9 @@ The controller runs implementers in parallel **only** on disjoint file sets. Wav
 | --- | --- | --- | --- | --- |
 | 1 | **1** Window, tokens, title bar | `src-tauri/tauri.conf.json`, `styles/tokens.css`, `styles/statusbar.css`, `styles/chrome.css`, `styles/help.css`, **creates** `styles/layout.test.ts` | — (owns `tokens.css`; every other token task queues behind it) | — |
 | 1 | **5** Strip metrics | `components/strip/*`, `styles/strip.css`, `styles/tokens.css`† | 8, 9 | — |
-| 1 | **8** Rust generator | `src-tauri/src/gridthumb.rs`, `src-tauri/src/lib.rs`‡ | 5, 9 | — |
+| 1 | **8** Rust generator | `src-tauri/src/gridthumb.rs`, `src-tauri/src/lib.rs`‡ | 5, 9 | — (never with 10) |
 | 1 | **9** Rust cache tier | `src-tauri/src/tier_cache.rs` | 5, 8 | — |
-| 2 | **2** Footer sheds | `components/StatusBar.tsx`, `utils/path.ts`, `utils/saveStatusCopy.ts`, `styles/chrome.css`, `styles/statusbar.css`, `styles/stage.css`, `styles/layout.test.ts` | 6 | 1 |
+| 2 | **2** Footer sheds | `components/StatusBar.tsx`, `utils/path.ts`, `utils/saveStatusCopy.ts`, `styles/base.css`, `styles/chrome.css`, `styles/statusbar.css`, `styles/stage.css`, `styles/layout.test.ts` | 6 | 1 |
 | 2 | **3** Compact rail | `styles/exif-rail.css`, `styles/tokens.css`, `styles/layout.test.ts` | — (shares `tokens.css` + `layout.test.ts` with 2 and 4) | 1 |
 | 2 | **4** Home at 2000 | `styles/home.css`, `styles/tokens.css`, `styles/layout.test.ts` | — (same two shared files) | 1 |
 | 2 | **6** Grid size | `utils/gridSize.ts`, `types/settings.ts`, `types/index.ts`, `hooks/useSettings.ts`, `components/GridView.tsx`, `App.tsx`, `app/useCullKeymap.ts`, `components/SettingsDialog.tsx` | 2 | — |
@@ -3094,6 +3411,6 @@ The controller runs implementers in parallel **only** on disjoint file sets. Wav
 
 † Task 5 touches `tokens.css` only to re-comment the three strip tokens and correct `--strip-h` 82 → 83. If the controller runs it alongside Task 1, hand Task 1 that edit instead and say so.
 
-‡ Tasks 8 and 10 both add a line to `src-tauri/src/lib.rs` (a `mod` and a handler). They are in different waves, so there is no conflict; if the controller reorders them, they become serial.
+‡ Tasks 8 and 10 are **strictly serial** on `src-tauri/src/lib.rs`, not merely in different waves: Task 8 adds `mod gridthumb;` *with* `#[cfg_attr(not(test), allow(dead_code))]` (that attribute is what lets its own clippy gate pass with no caller yet), and Task 10 *deletes* that attribute in the same file when it registers the command. Running them concurrently would lose one edit or the other.
 
-**Serial chains to respect:** 1 → {2, 3, 4}; 6 → 7; {8, 9} → 10 → 11; {6, 11} → 12; everything → 14. **Never parallel:** 6 and 11 (`types/settings.ts`); 2, 3, 4 and 13 (`styles/layout.test.ts`); 6 and 12 (`GridView.tsx`, `App.tsx`); 2 and 13 (`chrome.css`).
+**Serial chains to respect:** 1 → {2, 3, 4}; 6 → 7; 8 → 10 and 9 → 10, then 10 → 11; {6, 11} → 12; everything → 14. **Never parallel:** 8 and 10 (`lib.rs`, see ‡); 6 and 11 (`types/settings.ts`); 2, 3, 4 and 13 (`styles/layout.test.ts`); 6 and 12 (`GridView.tsx`, `App.tsx`); 2 and 13 (`chrome.css`). Task 2 is the only owner of `styles/base.css`, so that file adds no new overlap.
