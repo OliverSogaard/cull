@@ -19,10 +19,11 @@ type Props = {
 
 /** The close-request guard: shown while ratings are still being written (auto-closes
  *  when they land) or when writes exhausted their retries (explicit choice, never
- *  silent loss). When every failure is a photo that wasn't at its path, the way back
- *  is the footer's "check again" once the drive is up — not a retry from in here,
- *  which would fire against the same outage — so the guard says so and leaves the
- *  choice at keep culling / close anyway. */
+ *  silent loss). When every failure is a photo that wasn't at its path, "Check
+ *  again" re-attempts the same writes the footer's chip would: if the drive or
+ *  folder is back, the writes land and the guard's own auto-close finishes the
+ *  job, same as "Retry saving" does for an ordinary failure; if not, the choice
+ *  is still keep culling / close anyway. */
 export function QuitGuardOverlay({
   failedCount,
   missingCount,
@@ -41,10 +42,10 @@ export function QuitGuardOverlay({
               <TriangleAlert className="dialog__title-icon" {...ICON.lg} aria-hidden />
               {missingPhotosLabel(missingCount)}
             </div>
-            {/* Fact → what closing costs → how to recover. Nothing in this
-                dialog can clear the guard while the photos are unreachable, so
-                the last clause is the only way out that keeps the rating — it
-                must be on screen, not just in the other dialog. */}
+            {/* Fact → what closing costs → how to recover. "Check again" below
+                is that recovery, on screen rather than only in the footer, so
+                the last clause matters only if the user closes without
+                pressing it. */}
             <div className="dialog__body">
               {missingFailureSentence(missingCount)} Closing now loses{" "}
               {missingCount > 1 ? "them" : "it"}. {missingRecovery(missingCount)}
@@ -52,6 +53,9 @@ export function QuitGuardOverlay({
             <div className="dialog__actions">
               <button className="btn btn--primary" onClick={onKeepCulling}>
                 Keep culling
+              </button>
+              <button className="btn" onClick={retryFailed}>
+                Check again
               </button>
               <button className="btn cull-quitguard__danger" onClick={onCloseAnyway}>
                 Close anyway
