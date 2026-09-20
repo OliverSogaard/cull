@@ -1611,13 +1611,23 @@ export default function App() {
     </div>
   );
 
+  // While the help sheet is open, the loupe and compare panes get no overlay
+  // props at all — hiding the toggle STATE would also reset it, so closing
+  // help wouldn't restore what was showing. Gating only the props passed
+  // down keeps the toggles themselves untouched.
+  const overlaysShown = !helpVisible;
+
   // Analysis-overlay pixels for the displayed frame, read from the service's
   // bounded LRUs (the useSyncExternalStore subscription above re-renders this
   // component when one lands, so plain reads here stay fresh).
   const currentClipMask =
-    clippingVisible && current ? overlayService.get("clip", current.path) : undefined;
+    overlaysShown && clippingVisible && current
+      ? overlayService.get("clip", current.path)
+      : undefined;
   const currentPeakMask =
-    peakingVisible && current ? overlayService.get("peak", current.path) : undefined;
+    overlaysShown && peakingVisible && current
+      ? overlayService.get("peak", current.path)
+      : undefined;
   const currentHistogram =
     exifVisible && current ? overlayService.get("histogram", current.path) : undefined;
 
@@ -1693,7 +1703,7 @@ export default function App() {
                 }
                 clipMaskUrl={currentClipMask}
                 peakingMaskUrl={currentPeakMask}
-                showComposition={compositionVisible}
+                showComposition={overlaysShown && compositionVisible}
                 measureContainerRef={stageRef}
                 onRectChange={setImgRect}
               />
@@ -1868,9 +1878,9 @@ export default function App() {
             }
             ratings={ratings}
             exifVisible={exifVisible}
-            clippingVisible={clippingVisible}
-            peakingVisible={peakingVisible}
-            compositionVisible={compositionVisible}
+            clippingVisible={overlaysShown && clippingVisible}
+            peakingVisible={overlaysShown && peakingVisible}
+            compositionVisible={overlaysShown && compositionVisible}
             isZooming={isZooming}
             zoomLevel={zoomLevel}
             panOffset={panOffset}
