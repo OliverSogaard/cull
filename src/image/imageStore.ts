@@ -241,6 +241,10 @@ export class ImageStore {
    *  flight for a gone path still passes its landing site's generation check;
    *  these tombstones are what stops it re-creating the path's records, on the
    *  success AND the error landing of all four tiers.
+   *  The four request entry points (requestThumbFor, registerWantFull,
+   *  requestZoomFull, requestMid) and rearm() consult it too, so a
+   *  tombstoned path can never take a lane slot ahead of the frame the user
+   *  is looking at, before OR after its in-flight read settles.
    *  Cleared by reset()/hardReset(). */
   private forgotten = new Set<string>();
   // ── Session generation counter (cancellation) ─────────────────────────
