@@ -2,7 +2,7 @@ import { useCallback, useEffect, type Dispatch, type RefObject, type SetStateAct
 import type { ImageMetadata, Phase } from "../types";
 import { PERFORMANCE_PROFILES, type StorageMode } from "../types/settings";
 import { imageStore } from "../image/imageStore";
-import { mergeMeta } from "../utils/mergeMeta";
+import { applyMetaBatch } from "../utils/mergeMeta";
 
 /**
  * Image loading via imageStore — the App-side wiring, verbatim from App
@@ -105,9 +105,11 @@ export function useImageStoreWiring({
   // bundle no longer reads the sidecar per navigation; phash: only the thumb
   // path ever computes it, so a later preview/full read with phash: null
   // must not wipe the standing near-duplicate signal Similar groups chain on).
+  // Deliveries arrive batched, at most one per 100 ms — see MetaBatcher, which
+  // explains why that window is a fixed time and not an animation frame.
   useEffect(() => {
-    imageStore.setMetaSink((path, meta) => {
-      setMetadata((m) => ({ ...m, [path]: mergeMeta(m[path], meta) }));
+    imageStore.setMetaSink((batch) => {
+      setMetadata((m) => applyMetaBatch(m, batch));
     });
     return () => imageStore.setMetaSink(undefined);
   }, [setMetadata]);

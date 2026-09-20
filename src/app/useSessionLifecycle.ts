@@ -23,6 +23,7 @@ import type {
   Settings,
   UndoAction,
 } from "../types";
+import { EMPTY_METADATA } from "../types";
 import type { ScanFailure } from "../components/ScanFailureCard";
 import { recentKey, type RecentEntry } from "../hooks/useRecents";
 import { normalizeRejectedSubfolder, type PerformanceProfile } from "../types/settings";
@@ -31,35 +32,8 @@ import { imageStore } from "../image/imageStore";
 import { overlayService } from "../overlays/overlayService";
 import { omitIds, pruneGone, pruneHistory, remapNavStack } from "../utils/pruneSession";
 import { summarizeAnalyzeWarnings, type AnalyzeWarning } from "../utils/analyzeWarnings";
+import { renderMeter } from "../utils/renderMeter";
 import { writeLocalStorage } from "../utils/storage";
-
-/**
- * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
- * before the per-image bundle read fills in real EXIF — kept centralized (and
- * frozen) so adding a metadata field only touches one place, not every seed.
- */
-const EMPTY_METADATA: ImageMetadata = Object.freeze({
-  capturedAt: null,
-  subSecMs: null,
-  camera: null,
-  lens: null,
-  focalLengthMm: null,
-  aperture: null,
-  shutterSeconds: null,
-  iso: null,
-  gpsLat: null,
-  gpsLon: null,
-  afXPct: null,
-  afYPct: null,
-  exposureBias: null,
-  whiteBalance: null,
-  driveMode: null,
-  pixelWidth: null,
-  pixelHeight: null,
-  fileSize: null,
-  lrcRating: null,
-  phash: null,
-});
 
 /**
  * Session lifecycle, verbatim from App (grand cleanup Phase 6): staging
@@ -474,6 +448,7 @@ export function useSessionLifecycle({
       // full-res blobs, keep thumbs, and kick off background thumb fill in
       // cursor-outward / grid-viewport order. Same array we just set.
       imageStore.reset(sorted.map((im) => im.path));
+      renderMeter.reset();
       // Same-session folder switch: drop overlays computed for the previous
       // set (resetSession isn't on this path; the store generation just moved).
       overlayService.reset();
@@ -538,9 +513,9 @@ export function useSessionLifecycle({
   // the live session in place. Every cursor is remapped through functional
   // setState from its LIVE value — this runs after an await, and the dialog
   // can be dismissed mid-move, so closure values may be stale. The undo/redo
-  // history loses the moved frames' changes, and the image store forgets them
-  // WITHOUT a generation bump (survivors keep their tiers and the mounted
-  // panes keep their registrations). A stale cell for a moved photo used to
+  // history loses the moved frames' changes, and the image store + overlay
+  // cache forget them WITHOUT a generation bump (survivors keep their tiers,
+  // rasters and registrations). A stale cell for a moved photo used to
   // write a real, orphaned sidecar into the old folder.
   const pruneMoved = useCallback(
     (gone: readonly string[]) => {
@@ -563,7 +538,9 @@ export function useSessionLifecycle({
       setSelectionAnchor(null);
       undoStack.current = pruneHistory(undoStack.current, goneIds);
       redoStack.current = pruneHistory(redoStack.current, goneIds);
-      imageStore.forget(new Set(gone));
+      const goneSet = new Set(gone);
+      imageStore.forget(goneSet);
+      overlayService.forget(goneSet);
       if (survivors.length === 0) {
         // Nothing left to compare or grid: the compare branch has no
         // empty-session guard, and an empty grid is just the "no images" loupe.

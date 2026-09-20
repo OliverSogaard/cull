@@ -1,5 +1,5 @@
 // src/components/CompareStrip.tsx
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { Img, ImageMetadata } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
@@ -15,8 +15,11 @@ const NOOP = () => {};
  * slot as a grayed, unselectable ghost wearing the champion tag, and the
  * challenger wearing its own tag. No pinned reference cell — the strip IS
  * the timeline.
+ *
+ * `memo`, for the same reason as {@link ThumbStrip}: every prop App passes is
+ * identity-stable, so compare-mode zoom/pan/flash churn stops here.
  */
-export function CompareStrip({
+export const CompareStrip = memo(function CompareStrip({
   images,
   stripIndices,
   championIndex,
@@ -83,4 +86,4 @@ export function CompareStrip({
       }}
     />
   );
-}
+});

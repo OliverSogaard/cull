@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { reduceTooltipVisibility, initialTooltipVisibility } from "../utils/tooltipVisibility";
 
 /** How long after the last activity (filter cycle or hover) the tooltip
@@ -55,9 +55,16 @@ export function useChipsTooltipVisibility() {
 
   useEffect(() => clearIdleTimer, [clearIdleTimer]);
 
-  return {
-    visible: state.visible,
-    pulse,
-    hoverProps: { onPointerEnter, onPointerLeave },
-  };
+  // Both objects are memoized because this value rides whole inside App's
+  // `statusFilter` group: a fresh `hoverProps` (or a fresh wrapper) on every
+  // App render would defeat StatusBar's `memo` no matter what else is stable.
+  const hoverProps = useMemo(
+    () => ({ onPointerEnter, onPointerLeave }),
+    [onPointerEnter, onPointerLeave],
+  );
+
+  return useMemo(
+    () => ({ visible: state.visible, pulse, hoverProps }),
+    [state.visible, pulse, hoverProps],
+  );
 }

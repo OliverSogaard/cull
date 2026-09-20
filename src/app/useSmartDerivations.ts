@@ -6,6 +6,7 @@ import { groupSimilar } from "../smart/groupSimilar";
 import { buildBurstInputs, buildSimilarInputs } from "../smart/burstInputs";
 import { capFavorites } from "../smart/capFavorites";
 import { deriveVerdict, keepEligible, type Suggestion } from "../smart/deriveVerdict";
+import { renderMeter } from "../utils/renderMeter";
 
 /**
  * Smart culling (advisory) — the pure derivation chain, verbatim from App
@@ -54,10 +55,11 @@ export function useSmartDerivations({
   // grouping inputs come from the EXIF metadata every frame's thumbnail
   // already delivered, upgraded in place by scores (which add the mtime
   // fallback and the sharpness that determines a winner) when the pass runs.
-  const burstData = useMemo(
-    () => buildBurstInputs(images, qualityScores, metadata),
-    [images, qualityScores, metadata],
-  );
+  const burstData = useMemo(() => {
+    // dev meter: one tick per full re-derivation (an integer increment; see renderMeter)
+    renderMeter.bumpDerive();
+    return buildBurstInputs(images, qualityScores, metadata);
+  }, [images, qualityScores, metadata]);
   // Winner candidacy is SMART CULLING's call: a member must clear the active
   // keep threshold to be pickable, and with the feature off nothing wins —
   // burst detection/boxes stay factual, the "best frame" is advisory. Shared

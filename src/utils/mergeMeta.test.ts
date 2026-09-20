@@ -1,32 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ImageMetadata } from "../types";
-import { mergeMeta } from "./mergeMeta";
+import { EMPTY_METADATA, type ImageMetadata } from "../types";
+import { applyMetaBatch, mergeMeta } from "./mergeMeta";
 
 /** All-null template so each test only sets the fields it cares about. */
-const meta = (over: Partial<ImageMetadata> = {}): ImageMetadata =>
-  ({
-    capturedAt: null,
-    subSecMs: null,
-    camera: null,
-    lens: null,
-    focalLengthMm: null,
-    aperture: null,
-    shutterSeconds: null,
-    iso: null,
-    gpsLat: null,
-    gpsLon: null,
-    afXPct: null,
-    afYPct: null,
-    exposureBias: null,
-    whiteBalance: null,
-    driveMode: null,
-    pixelWidth: null,
-    pixelHeight: null,
-    fileSize: null,
-    lrcRating: null,
-    phash: null,
-    ...over,
-  });
+const meta = (over: Partial<ImageMetadata> = {}): ImageMetadata => ({
+  ...EMPTY_METADATA,
+  ...over,
+});
 
 describe("mergeMeta", () => {
   it("carries the previous phash forward when the incoming delivery has none", () => {
@@ -86,5 +66,26 @@ describe("mergeMeta", () => {
     const merged = mergeMeta(undefined, incoming);
 
     expect(merged).toEqual(incoming);
+  });
+});
+
+describe("applyMetaBatch", () => {
+  it("returns the same object for an empty batch", () => {
+    const prev = { "/a.CR3": meta() };
+    expect(applyMetaBatch(prev, new Map())).toBe(prev);
+  });
+
+  it("merges each entry against the previous map, carrying lrcRating forward", () => {
+    const prev = { "/a.CR3": meta({ lrcRating: 4 }) };
+    const next = applyMetaBatch(
+      prev,
+      new Map([
+        ["/a.CR3", meta()],
+        ["/b.CR3", meta()],
+      ]),
+    );
+    expect(next).not.toBe(prev);
+    expect(next["/a.CR3"].lrcRating).toBe(4);
+    expect(Object.keys(next)).toEqual(["/a.CR3", "/b.CR3"]);
   });
 });

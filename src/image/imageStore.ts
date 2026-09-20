@@ -23,6 +23,8 @@
  *  8–10. zoom tier (reset/hardReset, fetchZoomInto stale/replace, zoomLane.evictAround)
  *  11–12. mid tier (Phase 8): reset/hardReset + fetchMidInto stale/replace (11),
  *     midLane.evictAround window eviction (12)
+ *  13. all four fetch*Into landing sites: a path forgotten mid-flight (Move
+ *     rejects) revokes its just-created blob, exactly as a stale generation does
  *
  * Concurrency-correctness invariants (mechanics enforced by TierLane.run —
  * see tierLane.ts):
@@ -62,8 +64,8 @@ import {
 } from "./tierErrors";
 import { MidSweep } from "./midSweep";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
+import { MetaBatcher, type FlushScheduler, type MetaBatchSink } from "./metaBatcher";
 import type { ImageDims } from "../utils/bundle";
-import type { ImageMetadata } from "../types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -87,6 +89,9 @@ export type ImageStoreOptions = {
   /** Decode-ahead pool element factory (Phase 5) — tests inject fakes; the
    *  default uses `new Image()` and disables the pool when no DOM exists. */
   poolImageFactory?: () => PoolImage;
+  /** Flush-window scheduler for the metadata batcher (tests inject a manual
+   *  one so the window closes on demand). */
+  flushScheduler?: FlushScheduler;
 };
 
 // ── ImageStore ─────────────────────────────────────────────────────────────
@@ -230,6 +235,13 @@ export class ImageStore {
   // ordering is pure cursor-distance until a grid range is set.
   private gridStart = -1;
   private gridEnd = -1;
+  /** Paths removed by forget() this session — the OTHER cancellation channel.
+   *  forget() deliberately does not bump the generation, so a read already in
+   *  flight for a gone path still passes its landing site's generation check;
+   *  these tombstones are what stops it re-creating the path's records, on the
+   *  success AND the error landing of all four tiers.
+   *  Cleared by reset()/hardReset(). */
+  private forgotten = new Set<string>();
   // ── Session generation counter (cancellation) ─────────────────────────
   private generation = 0;
   // ── Performance profile ────────────────────────────────────────────────
@@ -241,10 +253,12 @@ export class ImageStore {
   // ── Metadata sink ──────────────────────────────────────────────────────
   // The full-res bundle read also returns the image's EXIF metadata (camera /
   // lens / AF point / pixel dims). The store doesn't own metadata state — it
-  // hands each freshly-read `meta` to this callback so App can merge it into
-  // its `metadata` map (consumed by the EXIF rail, AF-point zoom origin, and
-  // the status-bar MP). Set once via `setMetaSink`.
-  private metaSink: ((path: string, meta: ImageMetadata) => void) | undefined;
+  // hands each freshly-read `meta` to the batcher, which coalesces a
+  // META_FLUSH_MS window's worth of deliveries into ONE sink call so App can
+  // merge them into its `metadata` map (consumed by the EXIF rail, AF-point
+  // zoom origin, and the status-bar MP) with one clone per window. Sink set
+  // via `setMetaSink`.
+  private readonly metaBatcher: MetaBatcher;
   // ── Tunables ─────────────────────────────────────────────────────────────
   private readonly thumbLruCap: number;
 
@@ -408,6 +422,7 @@ export class ImageStore {
     const poolFactory =
       opts.poolImageFactory ?? (typeof Image !== "undefined" ? () => new Image() : undefined);
     this.pool = poolFactory ? new DecodePool(poolFactory) : null;
+    this.metaBatcher = new MetaBatcher(opts.flushScheduler);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────
@@ -510,12 +525,13 @@ export class ImageStore {
   }
 
   /**
-   * Register the metadata sink. The store calls it with (path, meta) whenever a
-   * full-res bundle read yields EXIF metadata. App uses this to keep its
-   * `metadata` map fed.
+   * Register the metadata sink. The store calls it at most once per
+   * META_FLUSH_MS window, with every path whose thumb / full-res bundle read
+   * yielded EXIF metadata during it. App uses this to keep its `metadata` map
+   * fed.
    */
-  setMetaSink(sink: ((path: string, meta: ImageMetadata) => void) | undefined): void {
-    this.metaSink = sink;
+  setMetaSink(sink: MetaBatchSink | undefined): void {
+    this.metaBatcher.setSink(sink);
   }
 
   /**
@@ -537,6 +553,14 @@ export class ImageStore {
     this.navLane.reset();
     this.zoomLane.reset();
     this.midLane.reset();
+    // NOT this.metaBatcher.clear(): thumbs survive reset(), and a thumb that
+    // already landed is never re-fetched — dropping its pending delivery would
+    // lose that frame's phash for the rest of the session (hardReset, which
+    // revokes the thumbs too, does clear it).
+
+    // A re-stage re-admits every path it lists, so the prune tombstones die
+    // with the session that created them.
+    this.forgotten.clear();
     this.wantFull.clear();
     this.pendingZoom.clear();
     // Revoke all zoom full-res blob URLs — REVOKE SITE 8 (they are the
@@ -615,8 +639,11 @@ export class ImageStore {
    * path (`reset()` would revoke every nav preview and clear `wantFull`, and
    * the mounted loupe/compare consumers — whose paths did not change — would
    * never re-register). Gone paths have their blobs revoked and every
-   * per-path record removed. A read still in flight for a gone path lands as
-   * a stray entry that the next cursor-driven eviction sweeps.
+   * per-path record removed. A read still in flight for a gone path is
+   * DROPPED when it lands, on BOTH landings — a success revokes its blob and
+   * caches nothing, an error (the likely one: the file is gone) records no
+   * failure and schedules no retry — so no record is ever re-created and
+   * nothing is left for a later sweep.
    */
   forget(gone: ReadonlySet<string>): void {
     if (gone.size === 0) return;
@@ -626,7 +653,13 @@ export class ImageStore {
     for (const lane of [this.thumbLane, this.bgLane, this.navLane, this.zoomLane, this.midLane]) {
       lane.queue = lane.queue.filter((p) => !gone.has(p));
     }
-    for (const p of gone) this.dropPath(p);
+    // Drop each gone path's records AND tombstone it, so a read still in
+    // flight for it cannot re-create them when it lands (fetch*Into).
+    for (const p of gone) {
+      this.dropPath(p);
+      this.forgotten.add(p);
+    }
+    this.metaBatcher.forget(gone);
     this.gridStart = -1;
     this.gridEnd = -1;
     const at = cursorPath === undefined ? -1 : this.indexOf(cursorPath);
@@ -709,6 +742,8 @@ export class ImageStore {
     this.navLane.reset();
     this.zoomLane.reset();
     this.midLane.reset();
+    this.metaBatcher.clear();
+    this.forgotten.clear();
     this.wantFull.clear();
     this.pendingZoom.clear();
     this.revokeReadyBlobs(this.zoomFulls); // REVOKE SITE 8
@@ -1075,6 +1110,12 @@ export class ImageStore {
         URL.revokeObjectURL(result.url);
         return;
       }
+      if (this.forgotten.has(path)) {
+        // The frame left the session while in-flight (Move rejects) — same
+        // drop as a stale generation, REVOKE SITE 13.
+        URL.revokeObjectURL(result.url);
+        return;
+      }
       const dims: ImageDims = {
         w: result.width ?? UNKNOWN_DIMS.w,
         h: result.height ?? UNKNOWN_DIMS.h,
@@ -1086,7 +1127,7 @@ export class ImageStore {
       // Metadata fast path (Phase 3): fresh thumb parses carry the complete
       // Cr3Meta, so the EXIF rail / status-bar MP populate when the THUMB
       // lands — the bg sweep guarantees that for every frame eventually.
-      if (result.meta) this.metaSink?.(path, result.meta);
+      if (result.meta) this.metaBatcher.push(path, result.meta);
       this.stats.counts.thumbLoads++;
       this.thumbErrors.delete(path);
       this.enforceThumbLru(path);
@@ -1096,16 +1137,23 @@ export class ImageStore {
       // so the path CAN re-arm (backoff expiry, folder revisit, manual retry),
       // and re-join the bg sweep, which skips it until nextRetryAt. Terminal
       // after MAX_TIER_ATTEMPTS. Only act for the current generation.
-      if (this.generation === gen) {
-        const msg = e instanceof Error ? e.message : String(e);
-        const te = this.noteTierError(this.thumbErrors, path, msg);
-        this.requestedThumb.delete(path);
-        if (te.attempts < MAX_TIER_ATTEMPTS && !this.trouble.isTroubled) {
-          if (!this.bgLane.queue.includes(path)) this.bgLane.queue.push(path);
-          setTimeout(() => {
-            if (this.generation === gen && !this.trouble.isTroubled) this.bgLane.pump();
-          }, backoffMs(te.attempts));
-        }
+      if (this.generation !== gen) return;
+      // …and only for a path still IN the session. A moved file's read ends in
+      // ENOENT, so this is the landing it usually reaches: recording the
+      // failure would re-create the error state dropPath() just cleared AND
+      // re-queue real reads of a file that is gone — four of those go terminal
+      // and falsely latch the "folder unreachable" chip after an ordinary
+      // Move rejects. Nothing is left dangling: dropPath already removed the
+      // request marker and the error entry this branch would otherwise touch.
+      if (this.forgotten.has(path)) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      const te = this.noteTierError(this.thumbErrors, path, msg);
+      this.requestedThumb.delete(path);
+      if (te.attempts < MAX_TIER_ATTEMPTS && !this.trouble.isTroubled) {
+        if (!this.bgLane.queue.includes(path)) this.bgLane.queue.push(path);
+        setTimeout(() => {
+          if (this.generation === gen && !this.trouble.isTroubled) this.bgLane.pump();
+        }, backoffMs(te.attempts));
       }
     }
   }
@@ -1186,6 +1234,11 @@ export class ImageStore {
         URL.revokeObjectURL(result.previewUrl);
         return;
       }
+      if (this.forgotten.has(path)) {
+        // Forgotten mid-flight (Move rejects) — REVOKE SITE 13.
+        URL.revokeObjectURL(result.previewUrl);
+        return;
+      }
       this.stats.noteNavTiming(path, ms);
       // Zoom-tier plumbing from the preview header: the exact-range hint +
       // orientation (echoed to read_fullres), and the NATIVE display dims
@@ -1211,7 +1264,7 @@ export class ImageStore {
       this.fulls.set(path, { status: "ready", url: result.previewUrl, dims });
       this.fullErrors.delete(path);
       // Surface EXIF metadata to App (camera / lens / AF point / pixel dims).
-      if (result.meta) this.metaSink?.(path, result.meta);
+      if (result.meta) this.metaBatcher.push(path, result.meta);
       // A zoom request deferred on this path's missing hint can fire now —
       // the hint (and orientation echo) just landed above.
       if (this.pendingZoom.delete(path)) this.requestZoomFull(path);
@@ -1225,6 +1278,11 @@ export class ImageStore {
       this.refreshPool();
     } catch (e) {
       if (this.generation !== gen) return;
+      // Forgotten mid-flight: the error state, the fullErrors entry and
+      // scheduleFullRetry below would all resurrect a moved frame (its
+      // wantFull refcount survives forget(), so the retry WOULD fire).
+      // dropPath already cleared the markers this branch deletes.
+      if (this.forgotten.has(path)) return;
       const msg = e instanceof Error ? e.message : String(e);
       this.fulls.set(path, { status: "error", error: msg });
       // Phase 1 retry model (P6): clear the request marker so the path CAN
@@ -1304,6 +1362,10 @@ export class ImageStore {
         URL.revokeObjectURL(result.url); // REVOKE SITE 9 (stale session)
         return;
       }
+      if (this.forgotten.has(path)) {
+        URL.revokeObjectURL(result.url); // REVOKE SITE 13 (forgotten mid-flight)
+        return;
+      }
       const existing = this.zoomFulls.get(path);
       if (existing?.status === "ready") URL.revokeObjectURL(existing.url);
       this.zoomFulls.set(path, {
@@ -1327,6 +1389,9 @@ export class ImageStore {
       if (this.evaluateMidEngaged()) this.scheduleMidReprobe(path, gen);
     } catch (e) {
       if (this.generation !== gen) return;
+      // Forgotten mid-flight — dropPath already deleted requestedZoom and the
+      // zoomFulls entry this branch would rewrite as an error.
+      if (this.forgotten.has(path)) return;
       const msg = e instanceof Error ? e.message : String(e);
       this.requestedZoom.delete(path);
       if (/^cancelled$/i.test(msg)) {
@@ -1422,6 +1487,10 @@ export class ImageStore {
         URL.revokeObjectURL(result.url); // REVOKE SITE 11 (stale session)
         return;
       }
+      if (this.forgotten.has(path)) {
+        URL.revokeObjectURL(result.url); // REVOKE SITE 13 (forgotten mid-flight)
+        return;
+      }
       const existing = this.mids.get(path);
       if (existing?.status === "ready") URL.revokeObjectURL(existing.url);
       this.mids.set(path, { status: "ready", url: result.url });
@@ -1432,6 +1501,12 @@ export class ImageStore {
       this.midLane.evictAround(this.cursor);
     } catch (e) {
       if (this.generation !== gen) return;
+      // Forgotten mid-flight — dropPath already deleted requestedMid, the mids
+      // entry, midUncached and midReprobed. Skipping also spares the
+      // midUnsupported latch a false positive: a moved file's ENOENT can read
+      // as "not found" and would otherwise dormant the whole tier for the
+      // session.
+      if (this.forgotten.has(path)) return;
       const msg = e instanceof Error ? e.message : String(e);
       this.requestedMid.delete(path);
       this.mids.delete(path);

@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { PERFORMANCE_PROFILES } from "../types/settings";
+import { makeSink, manualScheduler } from "./__fixtures__/metaBatching";
 
 // ── Mock @tauri-apps/api/core before importing imageStore ──────────────────
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -53,9 +54,14 @@ afterEach(() => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Build a minimal ArrayBuffer that fetchThumbnail parses: u32 LE header-len,
- *  JSON header, then `jpegLen` bytes of fake JPEG. */
-function makeThumbnailBuf(w: number, h: number): ArrayBuffer {
-  const header = JSON.stringify({ width: w, height: h, jpegLen: 3 });
+ *  JSON header, then `jpegLen` bytes of fake JPEG. `meta` rides the header on
+ *  fresh parses (the Phase 3 metadata fast path). */
+function makeThumbnailBuf(
+  w: number,
+  h: number,
+  meta: Record<string, unknown> | null = null,
+): ArrayBuffer {
+  const header = JSON.stringify({ width: w, height: h, jpegLen: 3, meta });
   const headerBytes = new TextEncoder().encode(header);
   const buf = new ArrayBuffer(4 + headerBytes.length + 3);
   const dv = new DataView(buf);
@@ -88,6 +94,18 @@ function makePreviewBuf(orientation = 1, fullOffset = 1000, fullLen = 5000): Arr
     fullOffset,
     fullLen,
   });
+  const headerBytes = new TextEncoder().encode(header);
+  const buf = new ArrayBuffer(4 + headerBytes.length + 3);
+  const dv = new DataView(buf);
+  dv.setUint32(0, headerBytes.length, true);
+  new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
+  new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
+  return buf;
+}
+
+/** read_mid-shaped frame: { midLen, width, height } header + 3 JPEG bytes. */
+function makeMidBuf(): ArrayBuffer {
+  const header = JSON.stringify({ midLen: 3, width: 2560, height: 1707 });
   const headerBytes = new TextEncoder().encode(header);
   const buf = new ArrayBuffer(4 + headerBytes.length + 3);
   const dv = new DataView(buf);
@@ -1026,18 +1044,6 @@ describe("Phase 5 — direction-biased prefetch + decode pool", () => {
 // ── Mid tier (Phase 8): display-adaptive needPx selection ───────────────────
 
 describe("mid tier (Phase 8)", () => {
-  /** read_mid-shaped frame: { midLen, width, height } header + 3 JPEG bytes. */
-  function makeMidBuf(): ArrayBuffer {
-    const header = JSON.stringify({ midLen: 3, width: 2560, height: 1707 });
-    const headerBytes = new TextEncoder().encode(header);
-    const buf = new ArrayBuffer(4 + headerBytes.length + 3);
-    const dv = new DataView(buf);
-    dv.setUint32(0, headerBytes.length, true);
-    new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
-    new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
-    return buf;
-  }
-
   /** Route invoke by command; records calls. Unrouted commands resolve to a
    *  valid frame of their kind so background machinery never poisons a test. */
   function routeMidInvoke(overrides: Record<string, (args: unknown) => Promise<unknown>> = {}) {
@@ -1602,5 +1608,272 @@ describe("forget (frames that left the session after Move rejects)", () => {
     // forget() must drop the pool's decoded rasters itself.
     store.forget(new Set(paths));
     expect(poolImages.every((i) => i.src === "")).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metadata batching (Phase 2 Optimize, Task 2). Every landed thumb used to hand
+// React its own delivery; the store now coalesces a 100 ms window's worth into one
+// sink call. These build their OWN ImageStore with a manual flush scheduler so
+// the window closes on demand — the singleton-based tests above are untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("imageStore — metadata batching", () => {
+  /** Two paths whose thumbs land with metadata, the flush window still open. */
+  async function twoLandedThumbs() {
+    vi.mocked(invoke).mockImplementation((cmd) =>
+      cmd === "extract_thumbnail"
+        ? Promise.resolve(makeThumbnailBuf(800, 600, { iso: 100 }))
+        : Promise.resolve(new ArrayBuffer(0)),
+    );
+    const { scheduler, flushWindow } = manualScheduler();
+    const Store = await getStoreClass();
+    const store = new Store({ flushScheduler: scheduler });
+    const sink = makeSink();
+    store.setMetaSink(sink);
+    const paths = ["/m/a.cr3", "/m/b.cr3"];
+    store.reset(paths);
+    for (const p of paths) store.requestThumbFor(p);
+    await vi.waitUntil(() => paths.every((p) => store.snapshot(p).stage === "thumb"));
+    await flush();
+    return { store, sink, flushWindow, paths };
+  }
+
+  it("coalesces two thumb landings into one sink call, only once the window closes", async () => {
+    const { sink, flushWindow, paths } = await twoLandedThumbs();
+
+    expect(sink).not.toHaveBeenCalled();
+    flushWindow();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
+  });
+
+  it("hardReset drops the pending batch — the sink never sees the old session", async () => {
+    const { store, sink, flushWindow } = await twoLandedThumbs();
+
+    store.hardReset();
+    flushWindow();
+
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("forget drops the pending delivery for a path that left the session", async () => {
+    const { store, sink, flushWindow, paths } = await twoLandedThumbs();
+
+    store.forget(new Set([paths[0]]));
+    flushWindow();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect([...sink.mock.calls[0][0].keys()]).toEqual([paths[1]]);
+  });
+
+  it("reset KEEPS the pending batch — thumbs survive it, so their metadata must too", async () => {
+    const { store, sink, flushWindow, paths } = await twoLandedThumbs();
+
+    store.reset(paths);
+    flushWindow();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tombstones (Phase 2 Optimize, Task 3). `forget()` prunes a moved frame from
+// the live session without a generation bump, so a tier read already in flight
+// for it still matched the lane's generation and LANDED: it re-created the
+// tier record (a stray blob waiting for the next eviction sweep) and pushed the
+// moved path's metadata back into React. Each landing site now checks the
+// tombstone set and drops the arrival the way a stale generation does — on the
+// SUCCESS path and, since the moved file is gone, on the ERROR path too (which
+// is the likelier landing: the read ends in ENOENT).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("imageStore — reads in flight for a forgotten path", () => {
+  const PATH = "/t/a.cr3";
+
+  // The error-landing tests drive the retry backoff, so they run on fake
+  // timers; restore real ones whatever the test did.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The frame that survives the prune in the tests that need one. */
+  const SURVIVOR = "/t/b.cr3";
+
+  /** A session with every read deferred and the metadata flush manual.
+   *  One path unless a test needs a survivor to check the tier on. */
+  async function stagedStore(paths: string[] = [PATH]) {
+    const deferreds = deferredInvoke(vi.mocked(invoke));
+    const { scheduler, flushWindow } = manualScheduler();
+    const Store = await getStoreClass();
+    const store = new Store({ flushScheduler: scheduler });
+    const sink = makeSink();
+    store.setMetaSink(sink);
+    // Network profile: no local mid-generation sweep firing extra reads.
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(paths);
+    return { store, sink, flushWindow, deferreds };
+  }
+
+  /** Backend reads of one command issued so far — a re-read of a moved file
+   *  is the harm the error-landing tombstone prevents. */
+  const readsOf = (cmd: string) => vi.mocked(invoke).mock.calls.filter((c) => c[0] === cmd).length;
+
+  it("drops a thumb landing: blob revoked, no cache entry, no metadata delivery", async () => {
+    const { store, sink, flushWindow, deferreds } = await stagedStore();
+    store.requestThumbFor(PATH);
+    expect(deferreds).toHaveLength(1); // the read is in flight
+
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makeThumbnailBuf(800, 600, { iso: 100 }));
+    await flush();
+
+    expect(liveUrls.size).toBe(0); // the freshly created blob was revoked
+    expect(store.debugStats().caches.thumbs).toBe(0);
+    expect(store.snapshot(PATH).thumbUrl).toBeUndefined();
+    flushWindow();
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("drops a nav landing: preview blob revoked, no cache entry, no metadata delivery", async () => {
+    const { store, sink, flushWindow, deferreds } = await stagedStore();
+    store.registerWantFull(PATH);
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makePreviewBuf());
+    await flush();
+
+    expect(liveUrls.size).toBe(0);
+    expect(store.debugStats().caches.previews).toBe(0);
+    expect(store.snapshot(PATH).url).toBeUndefined();
+    flushWindow();
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("drops a zoom landing: the ~10 MB blob is revoked, not cached", async () => {
+    const { store, deferreds } = await stagedStore();
+    store.requestZoomFull(PATH);
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makeFullresBuf());
+    await flush();
+
+    expect(liveUrls.size).toBe(0);
+    expect(store.debugStats().caches.zoomFulls).toBe(0);
+  });
+
+  it("drops a mid landing: the blob is revoked, not cached", async () => {
+    const { store, deferreds } = await stagedStore();
+    store.setNeedPxProvider(() => 1860); // 4K-class stage — the mid tier engages
+    store.maybeRequestMid(PATH);
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makeMidBuf());
+    await flush();
+
+    expect(liveUrls.size).toBe(0);
+    expect(store.snapshot(PATH).mid).toBeUndefined();
+  });
+
+  it("drops a thumb ERROR landing: no failure recorded, no bg re-queue, no re-read", async () => {
+    vi.useFakeTimers();
+    const { store, deferreds } = await stagedStore();
+    const trouble = vi.fn();
+    store.setTroubleSink(trouble);
+    store.requestThumbFor(PATH);
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].reject(new Error("ENOENT: no such file or directory"));
+    await flush();
+    // Long past the 1 s first backoff: the bg retry would re-read a file the
+    // Move already took away.
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(readsOf("extract_thumbnail")).toBe(1);
+    expect(store.debugStats().counts.errors).toBe(0);
+    expect(trouble).not.toHaveBeenCalled();
+  });
+
+  it("drops a nav ERROR landing: no error state, no scheduled retry, no re-read", async () => {
+    vi.useFakeTimers();
+    const { store, deferreds } = await stagedStore();
+    store.registerWantFull(PATH); // the wantFull that scheduleFullRetry checks
+    expect(deferreds).toHaveLength(1);
+
+    store.forget(new Set([PATH]));
+    deferreds[0].reject(new Error("ENOENT: no such file or directory"));
+    await flush();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(readsOf("read_preview")).toBe(1);
+    expect(store.snapshot(PATH).error).toBeUndefined();
+    expect(store.debugStats().counts.errors).toBe(0);
+  });
+
+  it("drops a mid ERROR landing: a moved file's 'not found' never dormants the tier", async () => {
+    const { store, deferreds } = await stagedStore([PATH, SURVIVOR]);
+    store.setNeedPxProvider(() => 1860); // 4K-class stage — the mid tier engages
+    store.maybeRequestMid(PATH);
+    expect(readsOf("read_mid")).toBe(1);
+
+    store.forget(new Set([PATH]));
+    // What a moved file's mid read really reports. Untombstoned, "not found"
+    // reads as "this backend has no read_mid" and latches midUnsupported —
+    // one Move would leave every survivor on preview for the session.
+    deferreds[0].reject(new Error("read_mid failed: not found"));
+    await flush();
+
+    store.maybeRequestMid(SURVIVOR);
+    expect(readsOf("read_mid")).toBe(2); // the tier is still live
+    expect(store.debugStats().counts.errors).toBe(0);
+  });
+
+  it("a whole rejected batch failing at once never latches the folder-unreachable chip", async () => {
+    vi.useFakeTimers();
+    const deferreds = deferredInvoke(vi.mocked(invoke));
+    const Store = await getStoreClass();
+    const store = new Store();
+    const trouble = vi.fn();
+    store.setTroubleSink(trouble);
+    // 4 distinct paths — exactly the folder-trouble threshold, i.e. an
+    // ordinary "Move rejects" of four frames.
+    const paths = Array.from({ length: 4 }, (_, i) => `/t/r${i}.cr3`);
+    store.reset(paths);
+    for (const p of paths) store.requestThumbFor(p);
+
+    store.forget(new Set(paths));
+    // Reject every attempt the backoff schedule makes, the way a moved file
+    // really would, until the store stops asking (bounded so a regression
+    // can't spin here).
+    for (let round = 0; round < 12 && deferreds.length > 0; round++) {
+      for (const d of deferreds.splice(0)) d.reject(new Error("ENOENT"));
+      await flush();
+      await vi.advanceTimersByTimeAsync(40_000); // past the 30 s backoff cap
+    }
+
+    expect(trouble).not.toHaveBeenCalled();
+    expect(store.debugStats().counts.errors).toBe(0);
+  });
+
+  it("reset() clears the tombstones — a re-staged path loads normally again", async () => {
+    const { store, deferreds } = await stagedStore();
+    store.requestThumbFor(PATH);
+    store.forget(new Set([PATH]));
+    deferreds[0].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+    expect(store.debugStats().caches.thumbs).toBe(0);
+
+    store.reset([PATH]); // the folder is re-staged
+    store.requestThumbFor(PATH);
+    expect(deferreds).toHaveLength(2);
+    deferreds[1].resolve(makeThumbnailBuf(800, 600));
+    await flush();
+
+    expect(store.snapshot(PATH).thumbUrl).toBeDefined();
+    expect(store.debugStats().caches.thumbs).toBe(1);
   });
 });

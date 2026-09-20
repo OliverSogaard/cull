@@ -1,24 +1,39 @@
 import { useEffect, useState } from "react";
 import { imageStore } from "../image/imageStore";
+import { renderMeter } from "../utils/renderMeter";
 
 /**
  * Dev-only performance HUD (docs/history/IMAGE_PIPELINE_PLAN.md Phase 3): per-nav fetch
- * timings, lane/queue utilization, cache sizes, eviction/error counters, and
- * the decoded-memory estimate. Enable with `localStorage["cull:devhud"]="1"`
- * in devtools + reload. Every later profile-tuning claim cites these numbers,
- * not feel — this is also where the pending Windows raw-IPC measurement
- * (Phase 2 decision gate) gets read off.
+ * timings, lane/queue utilization, cache sizes, eviction/error counters, the
+ * decoded-memory estimate, and the `react` row — the render meter's commit
+ * count, total/max commit cost, burst re-derivations and seconds since the
+ * cull began (`utils/renderMeter.ts`; React's production build never calls the
+ * Profiler, so commits and costs read zero in a release build).
+ *
+ * Enable with `localStorage["cull:devhud"]="1"` in devtools + reload, or, in a
+ * dev build, `VITE_CULL_DEVHUD=1` in the environment (see `main.tsx`). Every
+ * later profile-tuning claim cites these numbers, not feel — this is also
+ * where the pending Windows raw-IPC measurement (Phase 2 decision gate) gets
+ * read off. TESTING.md's "Measuring render cost" is the recipe.
  */
 export function DevHud() {
   const [stats, setStats] = useState(() => imageStore.debugStats());
+  const [meter, setMeter] = useState(() => renderMeter.snapshot());
   useEffect(() => {
-    const id = window.setInterval(() => setStats(imageStore.debugStats()), 500);
+    const id = window.setInterval(() => {
+      setStats(imageStore.debugStats());
+      setMeter(renderMeter.snapshot());
+    }, 500);
     return () => window.clearInterval(id);
   }, []);
   return (
     <div className="cull-devhud" aria-hidden>
       <div className="cull-devhud__row cull-devhud__row--head">
         nav avg {stats.navMsAvg}ms · ~{stats.decodedMB}MB decoded
+      </div>
+      <div className="cull-devhud__row">
+        react&nbsp; commits {meter.commits} · Σ {meter.totalMs}ms · max {meter.maxMs}ms · derive{" "}
+        {meter.derives} · {meter.elapsedS}s
       </div>
       <div className="cull-devhud__row">
         lanes&nbsp; prvw {stats.lanes.preview} · zoom {stats.lanes.zoom} · thumb {stats.lanes.thumb}{" "}

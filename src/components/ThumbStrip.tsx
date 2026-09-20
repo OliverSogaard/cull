@@ -1,5 +1,5 @@
 // src/components/ThumbStrip.tsx
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { Img, ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
@@ -11,8 +11,12 @@ import { PhotoStrip } from "./strip/PhotoStrip";
  * rating dots, filter dimming, and smart-culling ghost suggestions on the
  * cells. Burst boxes and virtualization live in PhotoStrip (shared with the
  * compare strip, so the two always match).
+ *
+ * `memo`: App re-renders on every cursor move, pan mouse-move, feedback flash
+ * and save-pill change; all of this strip's props are identity-stable, so it
+ * only re-renders when the frames, ratings, filter or cursor actually move.
  */
-export function ThumbStrip({
+export const ThumbStrip = memo(function ThumbStrip({
   images,
   currentIndex,
   ratings,
@@ -69,4 +73,4 @@ export function ThumbStrip({
       )}
     />
   );
-}
+});

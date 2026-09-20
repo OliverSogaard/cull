@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { stripExt } from "../utils/path";
 import type { ImageMetadata, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
@@ -23,8 +23,12 @@ import { hasLrcRating } from "../utils/ratingColor";
  *
  * The rail mounts as a sibling of the photo stage so the photo area shrinks when
  * info is on, rather than floating over the photo.
+ *
+ * `memo`: the rail's inputs only change when the cursor lands on another frame
+ * (or its metadata/histogram arrives), so App's zoom/pan/flash/save churn stops
+ * here rather than re-deriving every formatted row.
  */
-export function ExifRail({
+export const ExifRail = memo(function ExifRail({
   metadata,
   histogramUrl,
   cullRating,
@@ -179,7 +183,7 @@ export function ExifRail({
       )}
     </aside>
   );
-}
+});
 
 function RailRow({ k, v }: { k: string; v: string }) {
   return (
