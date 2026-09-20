@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import type { Filter } from "../types";
 import { topOf } from "../utils/filterModes";
-import { modGlyph } from "../utils/platform";
 import { pickSmartEmptyState } from "../utils/smartEmptyState";
+import { KeyCombo } from "./KeyCombo";
 
 /**
  * Shared markup for the two true "no match" empty states (not-analyzed and
@@ -78,8 +78,7 @@ export function EmptyFilter({
             title="Smart culling is turned off"
             hint={
               <>
-                <kbd className="kbd">{modGlyph} ,</kbd> for Settings · <kbd className="kbd">1</kbd>{" "}
-                for all
+                <KeyCombo keys={["mod", ","]} /> for Settings · <kbd className="kbd">1</kbd> for all
               </>
             }
           />

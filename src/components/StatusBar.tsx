@@ -2,6 +2,7 @@ import { memo, type Dispatch, type SetStateAction } from "react";
 import type { Filter, Rating } from "../types";
 import type { useChipsTooltipVisibility } from "../hooks/useChipsTooltipVisibility";
 import { cycleFilter, topOf } from "../utils/filterModes";
+import { modCombo } from "../utils/platform";
 import { verdictGlyph } from "./verdictGlyph";
 
 type ChipsTooltip = ReturnType<typeof useChipsTooltipVisibility>;
@@ -53,12 +54,11 @@ export type StatusBarFilter = {
   visibleCount: number;
 };
 
-/** The act-on-the-cull chip and the platform modifier glyph it prints. */
+/** The act-on-the-cull chip. */
 export type StatusBarSession = {
   openActions: () => void;
   actionsOpen: boolean;
   rejectedCount: number;
-  keyhint: string;
 };
 
 export type StatusBarProps = {
@@ -391,8 +391,8 @@ export const StatusBar = memo(function StatusBar({
             title="finish the cull · move rejects / copy keeps"
           >
             {filter.stats.unrated === 0 && filter.stats.total > 0
-              ? `All ${filter.stats.total} rated · ${session.keyhint}E finish`
-              : `${session.keyhint}E · ${totalKeeps} keeps`}
+              ? `All ${filter.stats.total} rated · ${modCombo("E")} finish`
+              : `${modCombo("E")} · ${totalKeeps} keeps`}
           </button>
         )}
       </div>

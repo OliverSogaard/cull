@@ -20,3 +20,12 @@
   border: none;
   color: inherit;
 }
+
+/* Wrapper for a KeyCombo (src/components/KeyCombo.tsx): one keycap per key,
+   side by side, never wrapping onto a second line. Keycap geometry itself
+   is a later task's concern. */
+.keycombo {
+  display: inline-flex;
+  gap: 3px;
+  white-space: nowrap;
+}

@@ -196,8 +196,13 @@
   font-size: var(--fs-2);
   background: var(--surface);
   padding: 3px 7px;
-  margin-right: 8px;
   letter-spacing: 0.04em;
+}
+
+/* The margin was a single cap's own spacing before the label that follows it;
+   moved to the combo wrapper so two side-by-side caps don't double it. */
+.cull-hero__how .keycombo {
+  margin-right: 8px;
 }
 
 @keyframes cull-hero-in {
@@ -294,4 +299,3 @@
   line-height: 1.5;
   color: var(--text-2);
 }
-

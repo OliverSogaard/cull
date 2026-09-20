@@ -7,7 +7,7 @@ import { LEVEL_THRESHOLD } from "../smart/deriveVerdict";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { sanitizeFolderName } from "../utils/path";
-import { modGlyph } from "../utils/platform";
+import { KeyCombo } from "./KeyCombo";
 
 /**
  * Settings modal. Opens with `Ctrl + ,` or the settings cog in the top-right
@@ -289,8 +289,7 @@ export function SettingsDialog({
         </div>
 
         <div className="eyebrow cull-settings__foot">
-          <kbd className="kbd">esc</kbd> to close · <kbd className="kbd">{modGlyph} ,</kbd> to
-          reopen
+          <kbd className="kbd">esc</kbd> to close · <KeyCombo keys={["mod", ","]} /> to reopen
         </div>
       </div>
     </div>

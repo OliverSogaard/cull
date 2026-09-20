@@ -31,6 +31,7 @@ import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
+import { KeyCombo } from "./components/KeyCombo";
 import { QuitGuardOverlay } from "./components/QuitGuardOverlay";
 import { RecentFolders } from "./components/RecentFolders";
 import { SaveStatusPill } from "./components/SaveStatusPill";
@@ -81,7 +82,6 @@ import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
 import { basename } from "./utils/path";
-import { modGlyph } from "./utils/platform";
 import { writeLocalStorage } from "./utils/storage";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
@@ -1380,7 +1380,6 @@ export default function App() {
       openActions: () => setActionsOpen(true),
       actionsOpen,
       rejectedCount: rejectedPaths.length,
-      keyhint: modGlyph,
     }),
     [actionsOpen, rejectedPaths.length],
   );
@@ -1440,7 +1439,7 @@ export default function App() {
                   disabled={pickerBusy}
                 >
                   {pickerBusy ? "opening…" : "Open folders"}
-                  <span className="kbd kbd--tint cull-hero__cta-key">{modGlyph} O</span>
+                  <KeyCombo keys={["mod", "O"]} className="kbd--tint cull-hero__cta-key" />
                 </button>
                 <span className="cull-hero__drop-hint">or drop folders anywhere</span>
               </div>
@@ -1454,7 +1453,7 @@ export default function App() {
               {scanFailures && <ScanFailureCard failures={scanFailures} />}
               <div className="cull-hero__how">
                 <span>
-                  <span className="kbd cull-hero__how-key">{modGlyph} ,</span>
+                  <KeyCombo keys={["mod", ","]} className="cull-hero__how-key" />
                   settings
                 </span>
               </div>
@@ -1538,7 +1537,8 @@ export default function App() {
                 )}
               </div>
               <div className="cull-staged__hint">
-                drop folders anywhere to add more · {modGlyph} O · esc to start over
+                drop folders anywhere to add more · <KeyCombo keys={["mod", "O"]} /> · esc to start
+                over
               </div>
             </>
           )}
