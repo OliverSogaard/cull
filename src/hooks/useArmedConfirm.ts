@@ -37,10 +37,18 @@ import {
  * `useFocusTrap`, whose `focusout` handler only re-homes focus via
  * `requestAnimationFrame` — strictly later than any layout effect in the
  * same commit.
+ *
+ * Because that focus move happens the instant the confirm appears, the ref
+ * callback also guards the button against the keypress that armed it — see
+ * `ignoreHeldEnter` at the foot of this file.
  */
 export function useArmedConfirm(
   disarmMs = 4000,
-): [boolean, Dispatch<SetStateAction<boolean>>, (node: HTMLElement | null) => void] {
+): [
+  boolean,
+  Dispatch<SetStateAction<boolean>>,
+  (node: HTMLElement | null) => (() => void) | undefined,
+] {
   const [armed, setArmed] = useState(false);
   const nodeRef = useRef<HTMLElement | null>(null);
   const isFirstRenderRef = useRef(true);
@@ -63,7 +71,32 @@ export function useArmedConfirm(
 
   const armedRef = useCallback((node: HTMLElement | null) => {
     nodeRef.current = node;
+    if (node === null) return;
+    node.addEventListener("keydown", ignoreHeldEnter);
+    // React 19 ref cleanup: it runs when this node is detached (and before the
+    // ref is called with the node that replaces it), so the listener lives
+    // exactly as long as the button it guards.
+    return () => {
+      node.removeEventListener("keydown", ignoreHeldEnter);
+      if (nodeRef.current === node) nodeRef.current = null;
+    };
   }, []);
 
   return [armed, setArmed, armedRef];
+}
+
+/**
+ * Arming focuses the confirm button (above), and Chromium activates a focused
+ * button on Enter KEYDOWN — so the very Enter that armed it is still down when
+ * it arrives, and the OS's auto-repeat of that keypress fires the real action
+ * about 300 ms later. Holding Enter on "Move rejects" therefore moved the
+ * rejects without the user ever confirming.
+ *
+ * Cancelling the repeated keydown suppresses the click Chromium would
+ * synthesize from it: a confirm needs a press the user made after seeing the
+ * question. Enter only — a repeat is the normal, wanted behaviour of every
+ * other held key (Tab opens the help sheet while held, arrows navigate).
+ */
+function ignoreHeldEnter(e: KeyboardEvent): void {
+  if (e.repeat && e.key === "Enter") e.preventDefault();
 }

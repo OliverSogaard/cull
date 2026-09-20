@@ -27,11 +27,23 @@ afterAll(() => {
  * the trigger and the "Yes" button, since whichever one mounts next (arming
  * or disarming) is the one that should take focus.
  */
-function Harness({ disarmMs = 4000 }: { disarmMs?: number }) {
+function Harness({
+  disarmMs = 4000,
+  onConfirm,
+}: {
+  disarmMs?: number;
+  onConfirm?: () => void;
+}) {
   const [armed, setArmed, confirmRef] = useArmedConfirm(disarmMs);
   return armed ? (
     <div>
-      <button ref={confirmRef} onClick={() => setArmed(false)}>
+      <button
+        ref={confirmRef}
+        onClick={() => {
+          setArmed(false);
+          onConfirm?.();
+        }}
+      >
         Yes, move
       </button>
       <button onClick={() => setArmed(false)}>Cancel</button>
@@ -41,6 +53,19 @@ function Harness({ disarmMs = 4000 }: { disarmMs?: number }) {
       Move rejects
     </button>
   );
+}
+
+/**
+ * Chromium's activation behaviour for a focused button, as much of it as this
+ * test needs: Enter fires on KEYDOWN (not keyup), and the click is synthesized
+ * only if nothing called `preventDefault` on that keydown. `repeat: true` is
+ * the auto-repeat of a key that is still held down — the real bug was that the
+ * Enter which armed the confirm was still down when the confirm button took
+ * focus, so its next repeat activated it.
+ */
+function pressEnter(node: HTMLElement, repeat = false): void {
+  const activates = fireEvent.keyDown(node, { key: "Enter", repeat });
+  if (activates) fireEvent.click(node);
 }
 
 /** Same harness, but rendered inside a real focus-trap root — proves our
@@ -131,6 +156,44 @@ describe("useArmedConfirm", () => {
     fireEvent.click(stage1);
 
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Yes, move" }));
+  });
+
+  it("a held Enter cannot arm and confirm in one keypress", () => {
+    const onConfirm = vi.fn();
+    render(<Harness onConfirm={onConfirm} />);
+    const stage1 = screen.getByRole("button", { name: "Move rejects" });
+    stage1.focus();
+
+    pressEnter(stage1); // arms — focus lands on the confirm button
+    const yes = screen.getByRole("button", { name: "Yes, move" });
+    expect(document.activeElement).toBe(yes);
+
+    // Still the same keypress, ~300ms in: the OS starts repeating it.
+    pressEnter(yes, true);
+    pressEnter(yes, true);
+
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Yes, move" })).toBeTruthy();
+  });
+
+  it("confirms on a fresh Enter, which is the press the user meant", () => {
+    const onConfirm = vi.fn();
+    render(<Harness onConfirm={onConfirm} />);
+    fireEvent.click(screen.getByRole("button", { name: "Move rejects" }));
+
+    pressEnter(screen.getByRole("button", { name: "Yes, move" }));
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms on a click, which the guard never sees", () => {
+    const onConfirm = vi.fn();
+    render(<Harness onConfirm={onConfirm} />);
+    fireEvent.click(screen.getByRole("button", { name: "Move rejects" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Yes, move" }));
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
   it("returns focus to the stage-1 button after auto-disarm", () => {
