@@ -178,14 +178,14 @@
   display: inline-flex;
   align-items: baseline;
   gap: 0;
-  min-width: 0;
   /* The 240px budget is for the WHOLE filename (stem + extension) — it lived
      on the stem alone until the extension became its own element, which let
      a long name render up to 240px plus the extension's width on top. The
-     stem is the only child that shrinks (flex-shrink: 1 below, min-width: 0,
-     ellipsis); the extension is flex: 0 0 auto, so it is what the stem gives
-     way to first as this container is squeezed toward its cap. */
+     stem is the only child that shrinks (it alone carries flex-shrink and
+     the ellipsis); the extension is flex: 0 0 auto, so it is what the stem
+     gives way to first as this container is squeezed toward its cap. */
   max-width: 240px;
+  min-width: 0;
   flex-shrink: 1;
 }
 
