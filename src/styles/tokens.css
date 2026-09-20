@@ -78,8 +78,14 @@
   --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
   /* Rule: --ring extends 4px past the element edge, so any control with
      less than 4px to its neighbour (or to a window/viewport edge) takes
-     --ring-inset instead, or the outer ring overlaps the neighbour. */
-  --ring-inset: inset 0 0 0 2px var(--accent);
+     --ring-inset instead, or the outer ring overlaps the neighbour.
+     Mirrors --ring's accent-ring + page-colour-buffer pairing, just inward:
+     a 2px accent line at the very edge, then a 4px --bg band behind it. On a
+     dark control the accent line shows and the --bg band disappears into its
+     own background; on an accent-filled control (e.g. an active segmented
+     option) the accent line disappears into the fill and the dark --bg band
+     shows instead — so the ring reads against any fill. */
+  --ring-inset: inset 0 0 0 2px var(--accent), inset 0 0 0 4px var(--bg);
   --halo: 0 0 0 1.5px rgba(0, 0, 0, 0.6);
 
   /* motion */
