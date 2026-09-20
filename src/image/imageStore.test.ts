@@ -1726,6 +1726,21 @@ describe("imageStore — metadata batching", () => {
     expect(sink).toHaveBeenCalledTimes(1);
     expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
   });
+
+  it("pendingMetaFor delegates to the batcher's peek (the zoom-origin read only)", async () => {
+    const { store, paths } = await twoLandedThumbs();
+
+    expect(store.pendingMetaFor(paths[0])).toMatchObject({ iso: 100 });
+    expect(store.pendingMetaFor("/m/nope.cr3")).toBeUndefined();
+  });
+
+  it("pendingMetaFor still sees the entry after reset() — reset deliberately keeps the queue", async () => {
+    const { store, paths } = await twoLandedThumbs();
+
+    store.reset(paths);
+
+    expect(store.pendingMetaFor(paths[0])).toMatchObject({ iso: 100 });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

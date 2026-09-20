@@ -86,6 +86,15 @@ export class MetaBatcher {
     for (const p of gone) this.pending.delete(p);
   }
 
+  /** Peek at a path's not-yet-flushed metadata WITHOUT flushing the window —
+   *  for the zoom-origin AF-point read only (App.tsx / CompareView.tsx), so a
+   *  zoom engaged inside the up-to-100ms window can still land on the AF
+   *  point instead of falling back to dead-centre. Not a general way around
+   *  the batch window: every other consumer still waits for the sink call. */
+  peek(path: string): ImageMetadata | undefined {
+    return this.pending.get(path);
+  }
+
   clear(): void {
     this.pending.clear();
     this.cancelFlush();

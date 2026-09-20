@@ -1574,9 +1574,17 @@ export default function App() {
   // unconditionally near the top of the component: it carries the
   // stage/url/dims/error for the loupe.
   const currentMeta = current ? metadata[current.path] : undefined;
+  // A zoom engaged inside the up-to-100ms metadata batch window would
+  // otherwise see no AF point yet and fall back to dead-centre — peek the
+  // delivery still waiting in the batcher (pendingMetaFor is for this read
+  // only, never a general way around the batch window).
+  const originMeta =
+    currentMeta?.afXPct != null
+      ? currentMeta
+      : ((current ? imageStore.pendingMetaFor(current.path) : undefined) ?? currentMeta);
 
   // Zoom transform-origin = AF point (display coords) + pan, clamped to image.
-  const { x: originX, y: originY } = afZoomOrigin(currentMeta, panOffset);
+  const { x: originX, y: originY } = afZoomOrigin(originMeta, panOffset);
 
   // The pane owns the real zoom geometry (hi-res transform, frame dims);
   // this mirror of its zoomZ exists only for the mouse-drag pan factor, via

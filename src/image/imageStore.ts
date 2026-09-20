@@ -66,6 +66,7 @@ import { MidSweep } from "./midSweep";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
 import { MetaBatcher, type FlushScheduler, type MetaBatchSink } from "./metaBatcher";
 import type { ImageDims } from "../utils/bundle";
+import type { ImageMetadata } from "../types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -532,6 +533,15 @@ export class ImageStore {
    */
   setMetaSink(sink: MetaBatchSink | undefined): void {
     this.metaBatcher.setSink(sink);
+  }
+
+  /** Thin delegate to the batcher's peek — for the zoom-origin AF-point read
+   *  only (App.tsx / CompareView.tsx), so a zoom engaged inside the
+   *  up-to-100ms flush window can still land on the AF point instead of
+   *  falling back to dead-centre. Not a general way around the batch window:
+   *  every other consumer still waits for setMetaSink's delivery. */
+  pendingMetaFor(path: string): ImageMetadata | undefined {
+    return this.metaBatcher.peek(path);
   }
 
   /**
