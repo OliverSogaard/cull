@@ -160,8 +160,10 @@ export const GRID_THUMB_UNAVAILABLE_RE = /grid thumb unavailable/i;
 /** TRANSIENT: another producer holds this path's generation claim on the
  *  backend's shared MidGen gate (the opportunistic mid generator and the
  *  whole-shoot idle sweep use the same pending set, so a grid scroll racing
- *  the sweep hits this often). Must NOT latch — ordinary backoff only, and the
- *  next viewport report asks again. */
+ *  the sweep hits this often). Must NOT latch — ordinary backoff only. The
+ *  store asks again by itself once that backoff expires (it arms one timer per
+ *  wave of bounces), so the cell recovers without the user scrolling; a new
+ *  viewport report asks again too. */
 export const GRID_THUMB_PENDING_RE = /grid thumb pending/i;
 
 /** Grid-tier read (Phase 3B): the generated 512px JPEG from the disk cache,

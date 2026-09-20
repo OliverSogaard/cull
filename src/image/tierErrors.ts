@@ -43,8 +43,12 @@ export function recordTierError(map: Map<string, TierError>, path: string, msg: 
 }
 
 /**
- * The folder-trouble latch: tracks paths whose thumb or full reached
- * MAX_TIER_ATTEMPTS this session, and latches once the distinct count crosses
+ * The folder-trouble latch: tracks paths whose thumb, full or grid-tier read
+ * reached MAX_TIER_ATTEMPTS this session (every tier that routes its failures
+ * through the store's noteTierError — the grid tier's `pending` bounce
+ * deliberately does not, since it is a race with the backend's own generator
+ * rather than a sign the folder is unreachable), and latches once the distinct
+ * count crosses
  * the threshold — the folder itself is almost certainly unreachable (NAS
  * unmount / sleep-wake). While latched the store stops all auto-retries + the
  * bg sweep until the user retries (App re-runs the scan → reset()) or
