@@ -873,6 +873,9 @@ export class ImageStore {
   registerWantFull(path: string): void {
     if (!path) return;
     this.wantFull.inc(path);
+    // Tombstoned (Move rejected it) — keep the refcount balanced for the
+    // consumer's eventual unregister, but never start a new read for it.
+    if (this.forgotten.has(path)) return;
     if (!this.requestedFull.has(path)) {
       // Failed earlier? Respect the backoff instead of hammering: the
       // scheduled retry (or the manual retry affordance) re-queues. Terminal
@@ -991,6 +994,10 @@ export class ImageStore {
     this.midReprobed.clear();
     this.trouble.reset();
     for (const p of this.wantFull.keys()) {
+      // A path forgotten mid-flight (Move rejects) can settle AFTER the
+      // tombstone with its request markers clear — without this it would
+      // take a nav-lane slot ahead of the frame the user is looking at.
+      if (this.forgotten.has(p)) continue;
       if (
         this.fulls.get(p)?.status !== "ready" &&
         !this.requestedFull.has(p) &&
@@ -1008,6 +1015,7 @@ export class ImageStore {
 
   requestThumbFor(path: string): void {
     if (!path) return;
+    if (this.forgotten.has(path)) return;
     if (this.requestedThumb.has(path) || this.thumbs.has(path)) return;
     // Cooling down or terminal → don't queue; the bg-sweep retry (re-added to
     // bgQueue on failure) picks it up when the backoff expires, and the cell
@@ -1343,6 +1351,7 @@ export class ImageStore {
    */
   requestZoomFull(path: string): void {
     if (!path) return;
+    if (this.forgotten.has(path)) return;
     const existing = this.zoomFulls.get(path);
     if (existing?.status === "ready" || existing?.status === "loading") return;
     if (this.requestedZoom.has(path) || this.zoomInFlightPaths.has(path)) return;
@@ -1466,6 +1475,7 @@ export class ImageStore {
 
   private requestMid(path: string): void {
     if (!path || this.midUnsupported) return;
+    if (this.forgotten.has(path)) return;
     const existing = this.mids.get(path);
     if (existing?.status === "ready" || existing?.status === "loading") return;
     if (this.requestedMid.has(path) || this.midInFlightPaths.has(path)) return;

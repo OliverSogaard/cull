@@ -1859,6 +1859,45 @@ describe("imageStore — reads in flight for a forgotten path", () => {
     expect(store.debugStats().counts.errors).toBe(0);
   });
 
+  it("a forgotten path's registerWantFull never starts a read_preview — it must not steal a nav-lane slot from the frame the user is on", async () => {
+    const { store, deferreds } = await stagedStore();
+
+    store.forget(new Set([PATH]));
+    store.registerWantFull(PATH);
+    await flush();
+
+    expect(deferreds).toHaveLength(0);
+    expect(readsOf("read_preview")).toBe(0);
+  });
+
+  it("a forgotten path's requestThumbFor never starts a thumb read", async () => {
+    const { store, deferreds } = await stagedStore();
+
+    store.forget(new Set([PATH]));
+    store.requestThumbFor(PATH);
+    await flush();
+
+    expect(deferreds).toHaveLength(0);
+    expect(readsOf("extract_thumbnail")).toBe(0);
+  });
+
+  it("rearm() does not re-queue a forgotten path whose in-flight read settled after the tombstone, but still re-queues a surviving wanted one", async () => {
+    const { store, deferreds } = await stagedStore([PATH, SURVIVOR]);
+    store.registerWantFull(PATH);
+    store.registerWantFull(SURVIVOR);
+    expect(deferreds).toHaveLength(2); // both nav reads in flight
+
+    store.forget(new Set([PATH])); // Move rejects mid-flight — PATH is tombstoned
+    deferreds[0].reject(new Error("ENOENT: no such file or directory")); // PATH's read lands after the tombstone
+    deferreds[1].reject(new Error("ENOENT: no such file or directory")); // SURVIVOR fails normally, still wanted
+    await flush();
+
+    store.rearm();
+
+    // Without the tombstone check, rearm() would re-arm PATH too (4 reads).
+    expect(readsOf("read_preview")).toBe(3);
+  });
+
   it("reset() clears the tombstones — a re-staged path loads normally again", async () => {
     const { store, deferreds } = await stagedStore();
     store.requestThumbFor(PATH);
