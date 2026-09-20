@@ -77,27 +77,27 @@ const ALLOWLIST: AllowedGlyph[] = [
   },
   {
     file: "src/components/HelpOverlay.tsx",
-    line: '["space (hold)", "1:1 zoom · ←↑↓→ pan · rating carries zoom to the next frame"],',
-    reason: "Names the arrow KEYS being pressed — key names, like the ← → on the row above.",
+    line: 'desc: "1:1 zoom · ←↑↓→ pan · rating carries zoom to the next frame",',
+    reason: "Names the arrow KEYS being pressed — key names, like the caps on the row above.",
   },
   {
     file: "src/components/HelpOverlay.tsx",
-    line: '["space (hold)", "1:1 zoom · ←↑↓→ pan · deciding carries zoom"],',
-    reason: "Names the arrow KEYS being pressed — key names, like the ← → on the row above.",
+    line: '{ keys: ["Space"], hold: true, desc: "1:1 zoom · ←↑↓→ pan · deciding carries zoom" },',
+    reason: "Names the arrow KEYS being pressed — key names, like the caps on the row above.",
   },
   {
     file: "src/components/HelpOverlay.tsx",
-    line: '["↑ ↓", "Row up / down"],',
-    reason: "The key cap itself — this row IS the up/down arrow keys.",
+    line: '{ keys: ["↑", "↓"], desc: "Row up / down" },',
+    reason: "The key cap itself — this row IS the arrow keys.",
   },
   {
     file: "src/components/HelpOverlay.tsx",
-    line: '["⇧+← → ↑ ↓", "Grow selection"],',
-    reason: "The key cap itself — this row IS the shifted arrow keys.",
+    line: '{ keys: ["Shift", "←", "→", "↑", "↓"], desc: "Grow selection" },',
+    reason: "The key cap itself — this row IS the arrow keys.",
   },
   {
     file: "src/components/HelpOverlay.tsx",
-    line: '["f", "Keep both · challenger ★"],',
+    line: '{ keys: ["F"], desc: "Keep both · challenger ★" },',
     reason: "Prose describing what the f key does; the help table is text, not chrome.",
   },
 ];

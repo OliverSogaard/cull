@@ -56,7 +56,7 @@
 
 .cull-help__row {
   display: grid;
-  grid-template-columns: 110px 1fr;
+  grid-template-columns: 132px 1fr;
   gap: 12px;
   align-items: baseline;
   font-size: var(--fs-4);
@@ -65,11 +65,22 @@
 }
 
 .cull-help__key {
-  font-family: var(--font-mono);
-  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+/* The en dash inside a range — a separator between two caps, not a key. */
+.cull-help__range {
+  color: var(--muted);
+}
+
+/* "hold" stands beside the caps, never inside one: it is an instruction about
+   the key, not part of its name. */
+.cull-help__hold {
+  color: var(--muted);
   font-size: var(--fs-3);
-  letter-spacing: 0.04em;
-  font-weight: 400;
 }
 
 .cull-help__desc {
