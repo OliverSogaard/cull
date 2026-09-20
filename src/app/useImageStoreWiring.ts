@@ -81,11 +81,15 @@ export function useImageStoreWiring({
   }, [phase, compareMode, gridVisible, stageRef]);
   // 3) DPR flips (window dragged 4K ↔ 1440p) — tier choice flips without a
   //    restart. matchMedia('(resolution: Xdppx)') fires ONCE when the DPR
-  //    leaves the armed value, so the handler re-arms at the new DPR.
+  //    leaves the armed value, so the handler re-arms at the new DPR. This
+  //    re-runs the mid tier's choice — and the grid tier: the same cell can
+  //    cross the (cellW − 18) × DPR > 160 rule in either direction when only
+  //    the DPR moves.
   useEffect(() => {
     let mql: MediaQueryList | null = null;
     const onChange = () => {
       imageStore.reevaluateMid();
+      imageStore.reevaluateGridThumbs();
       arm();
     };
     const arm = () => {

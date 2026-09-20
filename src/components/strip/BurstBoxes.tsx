@@ -1,5 +1,5 @@
 import { cellX } from "./computeWindow";
-import { CELL_STRIDE, CELL_W } from "./metrics";
+import type { StripMetrics } from "./metrics";
 import type { BurstSegment } from "./burstSegments";
 
 /**
@@ -10,8 +10,9 @@ import type { BurstSegment } from "./burstSegments";
 export function burstBoxOverlays(
   segs: readonly BurstSegment[],
   prefix: number[] | undefined,
+  m: StripMetrics,
 ): React.ReactNode[] {
-  const x = (i: number) => cellX(i, CELL_STRIDE, prefix);
+  const x = (i: number) => cellX(i, m.stride, prefix);
   return segs.map((s) => (
     <fieldset
       key={`${s.kind}-${s.group}-${s.start}`}
@@ -20,7 +21,7 @@ export function burstBoxOverlays(
         // 4px air from cell edge to the line's INNER face on both sides
         // (box-sizing: border-box; 2px border ⇒ ±6 outside the cells).
         left: x(s.start) - 6,
-        width: x(s.end) - x(s.start) + CELL_W + 12,
+        width: x(s.end) - x(s.start) + m.cellW + 12,
       }}
       aria-hidden
     >

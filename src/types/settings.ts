@@ -34,12 +34,14 @@ export type StorageMode = "network" | "local";
  * to (it never auto-exports without a prompt). `pinned` always exports under the
  * same fixed root, no prompt.
  */
-export type ExportFolderMode =
-  | { mode: "remember" }
-  | { mode: "pinned"; path: string };
+export type ExportFolderMode = { mode: "remember" } | { mode: "pinned"; path: string };
 
 /** Where the loupe / compare thumbnail strip sits relative to the photo. */
 export type ThumbsPosition = "bottom" | "top";
+
+/** Contact-sheet cell size. Drives the column-target maths in utils/gridSize;
+ *  `medium` is today's grid at every window size. */
+export type GridSize = "small" | "medium" | "large";
 
 export type Settings = {
   // — Storage —
@@ -60,6 +62,8 @@ export type Settings = {
   defaultCompositionVisible: boolean;
   /** Where the loupe / compare thumbnail strip sits (bottom or top). */
   thumbsPosition: ThumbsPosition;
+  /** Contact-sheet cell size. +/− in the grid, Ctrl+0 back to medium. */
+  gridSize: GridSize;
 
   // — File operations —
   /** Subfolder name that "move rejects" creates inside the cull folder. */
@@ -104,6 +108,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultPeakingVisible: false,
   defaultCompositionVisible: false,
   thumbsPosition: "bottom",
+  gridSize: "medium",
 
   rejectedSubfolder: "_rejected",
   exportFolder: { mode: "remember" },
@@ -180,6 +185,14 @@ export type PerformanceProfile = {
    *  same 1 network / 2 local numbers). Generation is ~250–400 ms of CPU per
    *  image, so this is a CPU knob, not an I/O one. */
   midGenConcurrency: number;
+  /** Grid-tier (Phase 3B) concurrency: the store's `read_grid_thumb` lane cap.
+   *  A 512px resize from an already-cached preview is ~20 ms of CPU, so this
+   *  is a CPU knob like midGenConcurrency, not an I/O one. */
+  gridThumbConcurrency: number;
+  /** Grid-tier blobs kept each side of the VISIBLE GRID RANGE (not the
+   *  cursor). ~35 KB on disk but ~0.7 MB decoded each, so the window is what
+   *  bounds the tier's memory; displayRefs additionally protect a mounted cell. */
+  gridThumbKeep: number;
 };
 
 export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
@@ -197,6 +210,8 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     decodedPoolPreviews: 9,
     decodedPoolFulls: 1,
     midGenConcurrency: 1,
+    gridThumbConcurrency: 1,
+    gridThumbKeep: 120,
   },
   local: {
     previewConcurrency: 12,
@@ -212,5 +227,7 @@ export const PERFORMANCE_PROFILES: Record<StorageMode, PerformanceProfile> = {
     decodedPoolPreviews: 18,
     decodedPoolFulls: 2,
     midGenConcurrency: 2,
+    gridThumbConcurrency: 4,
+    gridThumbKeep: 120,
   },
 };

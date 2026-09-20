@@ -3,13 +3,16 @@ import { ArrowRight, Check, Star, TriangleAlert, X as XIcon } from "lucide-react
 import type { Filter, Rating } from "../types";
 import type { useChipsTooltipVisibility } from "../hooks/useChipsTooltipVisibility";
 import { cycleFilter, topOf } from "../utils/filterModes";
+import { extOf, stripExt } from "../utils/path";
 import { modCombo } from "../utils/platform";
 import {
+  MISSING_ACTION_TAIL,
   MISSING_PHOTO_TITLE,
+  UNSAVED_ACTION_TAIL,
   UNSAVED_TITLE,
-  missingCheckAgainLabel,
+  missingPhotosLabel,
   saveFailureKind,
-  unsavedLabel,
+  unsavedCountLabel,
 } from "../utils/saveStatusCopy";
 import { ICON } from "./icons";
 import { verdictGlyph } from "./verdictGlyph";
@@ -125,7 +128,8 @@ export const StatusBar = memo(function StatusBar({
       <div className="cull-statusbar__left">
         {frame.filename && (
           <span className="cull-statusbar__filename">
-            <span className="cull-statusbar__filename-name">{frame.filename}</span>
+            <span className="cull-statusbar__filename-name">{stripExt(frame.filename)}</span>
+            <span className="cull-statusbar__filename-ext">{extOf(frame.filename)}</span>
           </span>
         )}
         {frame.rating && (
@@ -136,18 +140,19 @@ export const StatusBar = memo(function StatusBar({
             <span className="cull-statusbar__verdict-glyph" aria-hidden>
               {verdictGlyph(frame.rating, 9)}
             </span>
-            {verdictLabel[frame.rating]}
+            <span className="cull-statusbar__verdict-label">{verdictLabel[frame.rating]}</span>
           </span>
         )}
         {frame.isZooming && (
           <span className="chip chip--soft chip--accent cull-statusbar__chip">
-            zoom {frame.zoomLevel}:1
+            <span className="cull-statusbar__chip-label">zoom</span>
+            <span className="cull-statusbar__chip-value">{frame.zoomLevel}:1</span>
           </span>
         )}
         {frame.scrubbing && (
           <span className="cull-statusbar__scrub" aria-label="scrubbing">
             <ArrowRight className="cull-statusbar__scrub-arrow" {...ICON.sm} aria-hidden />
-            Scrubbing
+            <span className="cull-statusbar__scrub-label">Scrubbing</span>
             {frame.scrubSpeed > 1 && (
               <span className="chip chip--soft chip--accent cull-statusbar__scrubspeed">
                 {frame.scrubSpeed}×
@@ -238,11 +243,26 @@ export const StatusBar = memo(function StatusBar({
             }
           >
             {failureKind !== "none" && <TriangleAlert {...ICON.sm} aria-hidden />}
-            {failureKind === "missing"
-              ? missingCheckAgainLabel(save.missingCount)
-              : failureKind === "retry"
-                ? unsavedLabel(save.failedCount)
-                : `Saving ${save.savingCount}…`}
+            {failureKind === "missing" ? (
+              <>
+                {missingPhotosLabel(save.missingCount)}
+                {/* The explicit space is load-bearing: the tail span is an
+                    inline element, and the accessible-name algorithm trims
+                    each subtree's own leading/trailing whitespace before
+                    joining, so a leading space living only inside the span
+                    is silently dropped from the button's computed name
+                    (though it stays in the span's own textContent, which
+                    the CSS and StatusBar.shed.test both rely on). */}{" "}
+                <span className="cull-statusbar__unsaved-tail">{MISSING_ACTION_TAIL}</span>
+              </>
+            ) : failureKind === "retry" ? (
+              <>
+                {unsavedCountLabel(save.failedCount)}{" "}
+                <span className="cull-statusbar__unsaved-tail">{UNSAVED_ACTION_TAIL}</span>
+              </>
+            ) : (
+              `Saving ${save.savingCount}…`
+            )}
           </button>
         )}
       </div>
@@ -436,9 +456,12 @@ export const StatusBar = memo(function StatusBar({
             onClick={session.openActions}
             title="Finish the cull · move rejects / copy keeps"
           >
-            {filter.stats.unrated === 0 && filter.stats.total > 0
-              ? `All ${filter.stats.total} rated · ${modCombo("E")} finish`
-              : `${modCombo("E")} · ${totalKeeps} keeps`}
+            <span className="cull-statusbar__finish-long">
+              {filter.stats.unrated === 0 && filter.stats.total > 0
+                ? `All ${filter.stats.total} rated · ${modCombo("E")} finish`
+                : `${modCombo("E")} · ${totalKeeps} keeps`}
+            </span>
+            <span className="cull-statusbar__finish-short">Finish</span>
           </button>
         )}
       </div>

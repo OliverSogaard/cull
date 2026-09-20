@@ -118,6 +118,21 @@
   background: var(--matte);
 }
 
+/* The sharp 512px grid tier, layered over the THMB. It is absolutely
+   positioned so both images occupy the same box, and it starts transparent:
+   an undecoded layer would flash. Opacity only — a fade is not motion, so
+   reduced motion leaves it alone (see styles/motion.css's policy). */
+.cull-grid__img--hi {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.cull-grid__img--hi.is-on {
+  opacity: 1;
+}
+
 /* Skeleton shimmer placeholder. The light sweep is a compositor-driven
    translateX on the ::after band (see cull-shimmer-sweep) so it keeps animating
    while the main thread is busy. position:relative establishes the stacking /

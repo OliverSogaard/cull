@@ -9,6 +9,7 @@ import { hasLrcRating } from "../utils/ratingColor";
 import { useThumb } from "../image/useThumb";
 import { computeScrollIndicator } from "../utils/scrollIndicator";
 import { computeGridAutoScrollTop, computeGridWindow } from "./gridWindow";
+import { gridCellWidth } from "../utils/gridSize";
 
 /** Visible rows above and below the viewport that we still render. */
 const GRID_BUFFER_ROWS = 2;
@@ -18,12 +19,6 @@ const GRID_BUFFER_ROWS = 2;
  *  scrub bar, which lingers briefly after a hold releases before fading. */
 const SCROLL_INDICATOR_IDLE_MS = 500;
 
-/**
- * Target cell width — App's outer ResizeObserver picks `cols = floor(width /
- * GRID_CELL_TARGET)`, so cells fall between ~140 and ~210 px depending on
- * window size.
- */
-export const GRID_CELL_TARGET = 168;
 /** .cull-grid's vertical padding total (20px top + 20px bottom) — the scroll
  *  range includes it, so indicator geometry must too. */
 const GRID_V_PADDING = 40;
@@ -182,7 +177,7 @@ export const GridView = memo(function GridView({
     };
   }, []);
 
-  const cellW = contentWidth > 0 ? Math.floor(contentWidth / cols) : GRID_CELL_TARGET;
+  const cellW = gridCellWidth(contentWidth, cols);
   const rowH = cellW; // square cells — accommodate landscape AND portrait
   const totalRows = Math.ceil(visibleIndices.length / cols);
   const totalH = totalRows * rowH;
@@ -450,7 +445,12 @@ const GridCell = memo(function GridCell({
   // mount (and prioritises by the reported grid viewport) and re-renders this
   // cell when it lands. `shimmer` → placeholder; otherwise show the thumb.
   // Thumbnail + pinned shimmer phase, shared with the strip's ThumbCell.
-  const { url, shimmerDelayMs, probeOnLoad } = useThumb(img.path);
+  const { url, gridUrl, shimmerDelayMs, probeOnLoad } = useThumb(img.path);
+  // The sharp 512px tier fades in OVER the THMB once it has decoded. Never
+  // instead of it: swapping a live <img src> blanks the cell while the engine
+  // decodes (the 8-away flash), and a grid cell has no error state — if the
+  // sharp layer never loads, the THMB underneath is simply what stays.
+  const [hiLoaded, setHiLoaded] = useState<string | undefined>(undefined);
   const isReject = rating === "reject";
   const showLrc = hasLrcRating(lrcRating);
   const cellClass = [
@@ -476,11 +476,24 @@ const GridCell = memo(function GridCell({
           aren't invisible just because their thumb hasn't arrived. */}
       <div className="cull-grid__frame">
         {url ? (
-          // decoding="sync": tiny JPEG — decode with layout/paint once loaded.
-          // It does NOT make a fresh mount paint same-frame (the blob fetch is
-          // still async) — see ThumbCell's fuller note; visibility is covered
-          // by mounting rows in the overscan buffer + same-frame windowing.
-          <img className="cull-grid__img" src={url} alt="" decoding="sync" onLoad={probeOnLoad} />
+          <>
+            {/* decoding="sync": tiny JPEG — decode with layout/paint once
+                loaded. See ThumbCell's fuller note; visibility is covered by
+                mounting rows in the overscan buffer + same-frame windowing. */}
+            <img className="cull-grid__img" src={url} alt="" decoding="sync" onLoad={probeOnLoad} />
+            {gridUrl && (
+              <img
+                key={gridUrl}
+                className={`cull-grid__img cull-grid__img--hi${
+                  hiLoaded === gridUrl ? " is-on" : ""
+                }`}
+                src={gridUrl}
+                alt=""
+                decoding="async"
+                onLoad={() => setHiLoaded(gridUrl)}
+              />
+            )}
+          </>
         ) : (
           <div
             className="shimmer cull-grid__placeholder"

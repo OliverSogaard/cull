@@ -51,6 +51,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Every ImageStore a test builds (see getStoreClass), torn down after it.
+ *
+ *  `reset()` arms a 2 s background-fill fallback, and the local profile runs
+ *  real background sweeps. This file's tests take ~4 s in total, so a store
+ *  left alive keeps issuing reads into whichever test happens to be running
+ *  two seconds later — which showed up as intermittent, order-dependent read
+ *  counts in the tombstone tests near the end of the file. `hardReset()`
+ *  bumps the generation, so every pending timer and in-flight read bails.
+ *  Registered after the mock-restoring hook above so it runs BEFORE it
+ *  (Vitest unwinds afterEach hooks in reverse registration order) and the
+ *  revokes it performs still land on the mocked URL functions. */
+const liveStores: { hardReset: () => void }[] = [];
+afterEach(() => {
+  for (const s of liveStores.splice(0)) {
+    s.hardReset();
+  }
+});
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Build a minimal ArrayBuffer that fetchThumbnail parses: u32 LE header-len,
@@ -140,7 +158,14 @@ async function getStore() {
  *  (fresh generation/counters, optional small LRU cap). */
 async function getStoreClass() {
   const mod = await import("./imageStore");
-  return mod.ImageStore;
+  // Every instance registers itself for teardown (see liveStores) — the store
+  // owns wall-clock timers that outlive the test that built it.
+  return class TrackedStore extends mod.ImageStore {
+    constructor(...args: ConstructorParameters<typeof mod.ImageStore>) {
+      super(...args);
+      liveStores.push(this);
+    }
+  };
 }
 
 // ── Deferred fetch control ──────────────────────────────────────────────────
@@ -1530,6 +1555,469 @@ describe("lane parity net (Phase 8 TierLane collapse)", () => {
       await vi.waitUntil(() => lane.isReady(store, path), { timeout: 2000 });
     });
   }
+
+  // The grid lane's parity tests. Driven by RANGE, not by path — the store
+  // owns the request, so the rule, the tombstone check and the two sentinels
+  // live in one place. Same three invariants as every other lane, plus the
+  // four that are this lane's alone.
+  describe("grid thumb", () => {
+    function makeGridThumbBuf(): ArrayBuffer {
+      const header = JSON.stringify({ gridLen: 3, width: 512, height: 341 });
+      const headerBytes = new TextEncoder().encode(header);
+      const buf = new ArrayBuffer(4 + headerBytes.length + 3);
+      new DataView(buf).setUint32(0, headerBytes.length, true);
+      new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
+      new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
+      return buf;
+    }
+
+    /** Records every invoke and defers ONLY `read_grid_thumb`; every other
+     *  command answers with a valid frame, so the local profile's background
+     *  machinery (thumb sweep, mid sweep) runs for real around the lane. */
+    function sweepHarness() {
+      const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+      const gridDeferreds: Deferred[] = [];
+      vi.mocked(invoke).mockImplementation((cmd: unknown, args?: unknown) => {
+        calls.push({ cmd: cmd as string, args: (args ?? {}) as Record<string, unknown> });
+        if (cmd === "read_grid_thumb") {
+          return new Promise<ArrayBuffer>((resolve, reject) => {
+            gridDeferreds.push({ resolve, reject });
+          });
+        }
+        if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
+        if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(60, 40));
+        if (cmd === "read_mid") return Promise.resolve(makeMidBuf());
+        if (cmd === "generate_mid") return Promise.resolve(true);
+        return Promise.resolve(new ArrayBuffer(0));
+      });
+      const gens = () => calls.filter((c) => c.cmd === "generate_mid");
+      return { calls, gridDeferreds, gens };
+    }
+
+    it("the idle mid sweep stands down for grid work and resumes when the lane drains", async () => {
+      // The sweep holds both generation permits in ~450 ms jobs. While the
+      // user is scrolling the contact sheet that starves the tier they are
+      // actually looking at (~8 cells/s instead of ~50).
+      const { gridDeferreds, gens } = sweepHarness();
+      const StoreClass = await getStoreClass();
+      const store = new StoreClass();
+      store.setProfile(PERFORMANCE_PROFILES.local); // the sweep is local-only
+      const paths = Array.from({ length: 6 }, (_, i) => `/s/${i}.cr3`);
+      store.reset(paths);
+      store.setNeedPxProvider(() => 1860); // 4K-class stage — the mid tier engages
+      for (const p of paths) store.registerDisplay(p);
+      store.registerWantFull(paths[0]); // its landing starts the background sweeps
+      await flush();
+      store.reevaluateMid();
+
+      store.setGridCellW(400);
+      store.setGridRange(0, 5); // 4 in flight (local cap), 2 queued
+      await flush();
+      expect(gridDeferreds.length).toBeGreaterThan(0);
+      expect(gens()).toHaveLength(0);
+
+      // Drain the lane — each landing pumps the sweep, which may now run.
+      for (let i = 0; i < 10 && gridDeferreds.length > 0; i++) {
+        for (const d of gridDeferreds.splice(0)) d.resolve(makeGridThumbBuf());
+        await flush();
+      }
+      await vi.waitUntil(() => gens().length > 0, { timeout: 4000 });
+    });
+
+    /** A network-profile store with the grid open at a cell width the rule
+     *  wants. `mount` registers a display ref for every path: the store only
+     *  asks for cells that are actually MOUNTED (what a rendered GridCell
+     *  does through useImage's effect), so a test that expects a fetch has to
+     *  mount its cells. The window tests pass false and mount their own. */
+    async function armed(paths: string[], mount = true) {
+      const StoreClass = await getStoreClass();
+      const store = new StoreClass();
+      store.setProfile(PERFORMANCE_PROFILES.network); // gridThumbConcurrency 1
+      store.reset(paths);
+      if (mount) for (const p of paths) store.registerDisplay(p);
+      store.setGridCellW(400); // (400 − 18) × 1 = 382 > 160
+      return store;
+    }
+
+    /** The paths `read_grid_thumb` was called for, in call order. */
+    const askedFor = () =>
+      vi
+        .mocked(invoke)
+        .mock.calls.filter((c) => c[0] === "read_grid_thumb")
+        .map((c) => (c[1] as { path: string }).path);
+
+    it("asks only for cells that are actually mounted — a filtered range is mostly holes", async () => {
+      // Under a filter GridView reports the min..max ABSOLUTE index of the
+      // cells it rendered, so a 300-of-2,726 filter spans ~1,000 indices that
+      // render nothing. Requesting those costs a head read and a generation
+      // each, for frames nobody can see.
+      vi.useFakeTimers();
+      try {
+        const paths = Array.from({ length: 10 }, (_, i) => `/f/${i}.cr3`);
+        const StoreClass = await getStoreClass();
+        const store = new StoreClass();
+        store.setProfile(PERFORMANCE_PROFILES.local); // cap 4 — all three may start
+        store.reset(paths);
+        store.setGridCellW(400);
+        laneDeferreds("read_grid_thumb");
+        for (const i of [0, 4, 9]) store.registerDisplay(paths[i]);
+
+        store.setGridRange(0, 9);
+        await flush();
+        expect(askedFor()).toEqual([paths[0], paths[4], paths[9]]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a new range REPLACES the queue: a scrollbar drag never serves the cells it flew past", async () => {
+      const paths = Array.from({ length: 20 }, (_, i) => `/q/${i}.cr3`);
+      const store = await armed(paths); // network profile: one at a time
+      const deferreds = laneDeferreds("read_grid_thumb");
+
+      store.setGridRange(0, 4);
+      await flush();
+      expect(askedFor()).toEqual([paths[0]]); // one in flight, the rest queued
+
+      store.setGridRange(10, 14); // the drag moves on before any of those start
+      await flush();
+      deferreds[0].resolve(makeGridThumbBuf()); // the in-flight cell lands
+      await flush();
+      // The next read is a cell on screen, not one the user scrolled past.
+      expect(askedFor()[1]).toBe(paths[10]);
+
+      // And leaving the grid stops the tier dead: no landing can arrive for a
+      // cell that is no longer mounted anywhere.
+      store.clearGridRange();
+      for (const d of deferreds.splice(1)) d.resolve(makeGridThumbBuf());
+      await flush();
+      expect(askedFor()).toHaveLength(2);
+    });
+
+    it("single-flight — re-reporting the same range never duplicates the fetch", async () => {
+      const store = await armed(["/net/a.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      deferreds[0].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot("/net/a.cr3").gridThumbUrl !== undefined);
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+    });
+
+    it("stale completion is gen-scoped — nothing leaks, the blob is revoked", async () => {
+      const store = await armed(["/old/0.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      store.hardReset();
+      deferreds[0].resolve(makeGridThumbBuf());
+      await flush();
+      expect(store.snapshot("/old/0.cr3").gridThumbUrl).toBeUndefined();
+      expect(liveUrls.size).toBe(0);
+    });
+
+    it("error → cooldown blocks re-requests → retry() re-arms", async () => {
+      const store = await armed(["/net/err.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].reject(new Error("boom"));
+      await flush();
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      // retry() alone must re-arm: the failed read left the lane's queue and
+      // its request marker behind it, so the range is deliberately NOT
+      // re-reported here — a bare pump() would find nothing to do.
+      store.retry("/net/err.cr3");
+      await vi.waitUntil(() => deferreds.length === 2, { timeout: 2000 });
+      deferreds[1].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot("/net/err.cr3").gridThumbUrl !== undefined);
+    });
+
+    it("the rule gates the lane: a cell the THMB already covers asks for nothing", async () => {
+      const store = await armed(["/net/a.cr3"]);
+      store.setGridCellW(120); // (120 − 18) × 1 = 102 ≤ 160
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(0);
+    });
+
+    it("the UNAVAILABLE sentinel latches per path: one miss, then never again", async () => {
+      const store = await armed(["/net/noprvw.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].reject(new Error("grid thumb unavailable (no preview)"));
+      await flush();
+      // No error recorded, no cooldown to expire, and no second request ever.
+      store.setGridRange(0, 0);
+      store.setGridCellW(500);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      expect(store.snapshot("/net/noprvw.cr3").gridThumbUrl).toBeUndefined();
+      // The THMB underneath is untouched — the cell simply keeps showing it.
+      expect(store.snapshot("/net/noprvw.cr3").stage).toBe("shimmer");
+
+      // THE BITE: a cooldown would also have blocked the re-reports above, so
+      // discriminate the LATCH — retry() wipes every tier cooldown and
+      // re-requests the visible range, and this path must still not be asked
+      // for. The sentinel is a fact about the file; no retry can change it.
+      store.retry("/net/noprvw.cr3");
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      expect(store.debugStats().gridThumb.unavailable).toBe(1);
+    });
+
+    it("the PENDING sentinel does NOT latch: a cooldown, then the tier asks again by itself", async () => {
+      // The backend's MidGen pending set is shared with the whole-shoot mid
+      // sweep, so this bounce is common. Latching it would strand the cell on
+      // the soft THMB for the session — the bug this sentinel exists to avoid.
+      vi.useFakeTimers();
+      try {
+        const store = await armed(["/net/busy.cr3"]);
+        const deferreds = laneDeferreds("read_grid_thumb");
+        store.setGridRange(0, 0);
+        await flush();
+        deferreds[0].reject(new Error("grid thumb pending"));
+        await flush();
+
+        // Inside the backoff: no re-fetch (a cooldown, not a latch).
+        store.setGridRange(0, 0);
+        await flush();
+        expect(deferreds).toHaveLength(1);
+
+        // And nobody has to scroll for it: the bounce armed ONE timer for its
+        // own backoff, which re-runs the visible range when it fires.
+        await vi.advanceTimersByTimeAsync(2000);
+        await flush();
+        expect(deferreds).toHaveLength(2);
+        deferreds[1].resolve(makeGridThumbBuf());
+        await flush();
+        expect(store.snapshot("/net/busy.cr3").gridThumbUrl).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("staggered pending bounces are BOTH re-asked: the timer re-arms for the next one due", async () => {
+      // One deduped timer armed on the FIRST bounce is not enough: B bounces
+      // later, so its cooldown outlives that timer, and the fire that saves A
+      // skips B. Nothing then asks for B until the user happens to scroll.
+      vi.useFakeTimers();
+      try {
+        const paths = ["/net/a.cr3", "/net/b.cr3"];
+        const StoreClass = await getStoreClass();
+        const store = new StoreClass();
+        store.setProfile(PERFORMANCE_PROFILES.local); // cap 4: both read at once
+        store.reset(paths);
+        for (const p of paths) store.registerDisplay(p);
+        store.setGridCellW(400);
+        const deferreds = laneDeferreds("read_grid_thumb");
+        store.setGridRange(0, 1);
+        await flush();
+        expect(deferreds).toHaveLength(2);
+        // A bounces now; B bounces 600 ms later, so its backoff ends later too.
+        deferreds[0].reject(new Error("grid thumb pending"));
+        await flush();
+        await vi.advanceTimersByTimeAsync(600);
+        deferreds[1].reject(new Error("grid thumb pending"));
+        await flush();
+
+        // No range is EVER re-reported from here on — the store must recover
+        // both cells on its own.
+        await vi.advanceTimersByTimeAsync(5000);
+        await flush();
+        const asked = askedFor();
+        expect(asked.filter((p) => p === "/net/a.cr3").length).toBeGreaterThanOrEqual(2);
+        expect(asked.filter((p) => p === "/net/b.cr3").length).toBeGreaterThanOrEqual(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a pending bounce never goes terminal: a cell that loses four races still recovers", async () => {
+      // recordTierError bumps `attempts`, and at MAX_TIER_ATTEMPTS inCooldown
+      // is true forever. For a real failure that is the point; for a pending
+      // bounce it would strand the cell on the soft THMB for the session.
+      vi.useFakeTimers();
+      try {
+        const store = await armed(["/net/busy.cr3"]);
+        const deferreds = laneDeferreds("read_grid_thumb");
+        store.setGridRange(0, 0);
+        await flush();
+        // Five bounces — one more than MAX_TIER_ATTEMPTS (4).
+        for (let i = 0; i < 5; i++) {
+          expect(deferreds).toHaveLength(i + 1);
+          deferreds[i].reject(new Error("grid thumb pending"));
+          await flush();
+          await vi.advanceTimersByTimeAsync(40_000); // past the backoff cap
+          await flush();
+        }
+        // Still asking, and a success still lands.
+        expect(deferreds).toHaveLength(6);
+        deferreds[5].resolve(makeGridThumbBuf());
+        await flush();
+        expect(store.snapshot("/net/busy.cr3").gridThumbUrl).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("nothing is fetched after reset()/hardReset(), however long the pending timer waits", async () => {
+      // Honest note: this pins the CONTRACT, it does not discriminate one
+      // guard. Three independent things hold it — the teardown disarms the
+      // timer, the callback re-checks the generation, and the range it would
+      // re-run is -1/-1 after a session change. Removing any one (or even
+      // two) still leaves nothing fetched. Kept because the contract is what
+      // a future change must not break.
+      vi.useFakeTimers();
+      try {
+        for (const teardown of ["reset", "hardReset"] as const) {
+          const store = await armed(["/net/busy.cr3"]);
+          const deferreds = laneDeferreds("read_grid_thumb");
+          store.setGridRange(0, 0);
+          await flush();
+          deferreds[0].reject(new Error("grid thumb pending"));
+          await flush();
+
+          if (teardown === "reset") store.reset(["/net/busy.cr3"]);
+          else store.hardReset();
+          await vi.advanceTimersByTimeAsync(10_000);
+          await flush();
+          expect(deferreds).toHaveLength(1);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a pending bounce never counts as an error or trips the folder-unreachable chip", async () => {
+      // On the local profile the idle mid sweep holds the same generation
+      // claim, so a scrolling user bounces off it constantly. Routed through
+      // noteTierError those bounces would count errors and — four terminal
+      // paths later — raise "folder unreachable" on a perfectly healthy
+      // folder, from a tier that shows no errors at all.
+      vi.useFakeTimers();
+      try {
+        const paths = Array.from({ length: 4 }, (_, i) => `/net/p${i}.cr3`);
+        const store = await armed(paths);
+        const trouble = vi.fn();
+        store.setTroubleSink(trouble);
+        const deferreds = laneDeferreds("read_grid_thumb");
+        // Bounce every path its full MAX_TIER_ATTEMPTS (4) — exactly the shape
+        // that latches the chip when a tier reports real failures. Bounded so
+        // a regression cannot spin here.
+        for (let round = 0; round < 40; round++) {
+          store.setGridRange(0, paths.length - 1);
+          await flush();
+          const batch = deferreds.splice(0);
+          if (batch.length === 0) break;
+          for (const d of batch) d.reject(new Error("grid thumb pending"));
+          await flush();
+          await vi.advanceTimersByTimeAsync(40_000); // past the backoff cap
+        }
+
+        expect(trouble).not.toHaveBeenCalled();
+        expect(store.debugStats().counts.errors).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // Both landing tests run on fake timers: reset() arms a 2 s background-fill
+    // fallback, and a store left holding a REAL one keeps issuing thumb reads
+    // into whichever test is running two seconds later (it polluted this
+    // file's later read counts). Neither test needs the wall clock.
+    it("a path forgotten mid-flight drops its landing: the fresh blob is revoked, nothing cached", async () => {
+      vi.useFakeTimers();
+      try {
+        const store = await armed(["/net/a.cr3", "/net/b.cr3"]);
+        const deferreds = laneDeferreds("read_grid_thumb");
+        store.setGridRange(0, 1);
+        await flush();
+        // The read is already in flight when the Move takes the frame away —
+        // the entry guard cannot help here; the landing site has to.
+        store.forget(new Set(["/net/a.cr3"]));
+        deferreds[0].resolve(makeGridThumbBuf());
+        await flush();
+        expect(liveUrls.size).toBe(0);
+        expect(store.snapshot("/net/a.cr3").gridThumbUrl).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a forgotten path's ERROR landing records nothing: no tier error, no latch, no trouble", async () => {
+      vi.useFakeTimers();
+      try {
+        const store = await armed(["/net/a.cr3", "/net/b.cr3"]);
+        const trouble = vi.fn();
+        store.setTroubleSink(trouble);
+        const deferreds = laneDeferreds("read_grid_thumb");
+        store.setGridRange(0, 1);
+        await flush();
+        store.forget(new Set(["/net/a.cr3"]));
+        // A moved file's read usually ends here, and "no preview" is exactly
+        // what a gone file looks like — latching it would be a lie about a
+        // frame that no longer exists.
+        deferreds[0].reject(new Error("grid thumb unavailable (no preview)"));
+        await flush();
+        expect(store.debugStats().counts.errors).toBe(0);
+        expect(store.debugStats().gridThumb.unavailable).toBe(0);
+        expect(trouble).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("eviction follows the GRID RANGE, and leaving the grid frees everything", async () => {
+      const paths = Array.from({ length: 400 }, (_, i) => `/win/${i}.cr3`);
+      const store = await armed(paths, false); // mount cell 0 only, by hand
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.registerDisplay(paths[0]);
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot(paths[0]).gridThumbUrl !== undefined);
+      // The cell scrolls off and unmounts, which is what makes its blob
+      // evictable at all — a mounted one is protected (the next test).
+      store.unregisterDisplay(paths[0]);
+
+      store.setGridRange(100, 110); // inside gridThumbKeep (120) — survives
+      expect(store.snapshot(paths[0]).gridThumbUrl).toBeDefined();
+      store.setGridRange(300, 310); // far outside — evicted
+      expect(store.snapshot(paths[0]).gridThumbUrl).toBeUndefined();
+      expect(liveUrls.size).toBe(0);
+    });
+
+    it("a mounted cell's displayRef protects its blob even outside the window", async () => {
+      const paths = Array.from({ length: 400 }, (_, i) => `/win/${i}.cr3`);
+      const store = await armed(paths, false);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      // The one mounted cell: the same ref that makes it fetchable is the one
+      // that protects its blob once the window has moved on.
+      store.registerDisplay(paths[0]);
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot(paths[0]).gridThumbUrl !== undefined);
+      store.setGridRange(300, 310);
+      expect(store.snapshot(paths[0]).gridThumbUrl).toBeDefined();
+      store.unregisterDisplay(paths[0]);
+      store.setGridRange(301, 311);
+      expect(store.snapshot(paths[0]).gridThumbUrl).toBeUndefined();
+    });
+  });
 
   // Windowed eviction parity for the three cursor-windowed lanes (the thumb
   // LRU's protection is pinned by the existing displayRef test above). Each

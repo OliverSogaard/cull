@@ -29,7 +29,7 @@ import { ConfirmHomeDialog } from "./components/ConfirmHomeDialog";
 import { EmptyFilter } from "./components/EmptyFilter";
 import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
-import { GridView, GRID_CELL_TARGET } from "./components/GridView";
+import { GridView } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { ICON, ICON_DISPLAY_STROKE } from "./components/icons";
 import { KeyCombo } from "./components/KeyCombo";
@@ -79,6 +79,13 @@ import type { AnalyzeWarning } from "./utils/analyzeWarnings";
 import { passesFilter } from "./utils/filter";
 import { topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
+import {
+  DEFAULT_GRID_SIZE,
+  gridCellWidth,
+  gridColsFor,
+  stepGridSize,
+  wheelStepDue,
+} from "./utils/gridSize";
 import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
@@ -438,13 +445,105 @@ export default function App() {
       const padR = parseFloat(cs.paddingRight) || 0;
       const w = Math.max(0, el.clientWidth - padL - padR);
       setGridContentW(w);
-      setGridCols(Math.max(2, Math.floor(w / GRID_CELL_TARGET)));
+      setGridCols(gridColsFor(w, settings.gridSize));
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [gridVisible, compareMode, gridHasCells]);
+  }, [gridVisible, compareMode, gridHasCells, settings.gridSize]);
+
+  // Grid size: the setting is the source of truth, so + / − / Ctrl+0 and the
+  // Settings row all write the same field and all persist. useSettings's
+  // setter takes a WHOLE Settings, not an updater, so these close over the
+  // current object and change identity on any settings write. Both bail on a
+  // no-op step — holding + at Large (OS key repeat) or repeat-pressing Ctrl+0
+  // already at Medium must not commit App, JSON.stringify, and write
+  // localStorage tens of times a second for a change that never happens.
+  const stepGridSizeBy = useCallback(
+    (dir: 1 | -1) => {
+      const next = stepGridSize(settings.gridSize, dir);
+      if (next !== settings.gridSize) setSettings({ ...settings, gridSize: next });
+    },
+    [settings, setSettings],
+  );
+  const resetGridSize = useCallback(() => {
+    if (settings.gridSize !== DEFAULT_GRID_SIZE)
+      setSettings({ ...settings, gridSize: DEFAULT_GRID_SIZE });
+  }, [settings, setSettings]);
+
+  // Render-phase mirror of `settings`, read by the wheel handler below — same
+  // idiom as zoomZRef elsewhere in this file: a pure function of state, same
+  // value every render, no tearing concern. The wheel listener is attached
+  // once (its effect's deps are deliberately minimal, see below) and must
+  // still read the LIVE settings at event time rather than whatever was in
+  // scope when it was attached, or it would forever act on a stale size.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  // Same idiom, for the help sheet: `.cull-help`'s scrim is
+  // `pointer-events: none` so a ctrl+wheel over the grid still reaches this
+  // listener while help is showing. Read through a ref rather than adding
+  // `helpVisible` to the effect's deps, which would tear the listener down
+  // and re-attach it on every Tab press.
+  const helpVisibleRef = useRef(helpVisible);
+  helpVisibleRef.current = helpVisible;
+  // Wall-clock timestamp of the last COMMITTED wheel step (not React state —
+  // updating it must never itself trigger a render). A precision-touchpad
+  // pinch fires dozens of ctrl+wheel events 5-10ms apart; this is what
+  // `wheelStepDue` measures against to cap the grid at one step per
+  // GRID_WHEEL_COOLDOWN_MS instead of racing straight to an end.
+  const lastWheelStepRef = useRef(-Infinity);
+
+  // Ctrl + wheel over the grid steps the size, at most once every
+  // GRID_WHEEL_COOLDOWN_MS. NON-PASSIVE on purpose: the preventDefault is what
+  // stops the grid scrolling under the gesture (and, belt and braces, any
+  // webview zoom — WebView2's zoom hotkeys are already off, since
+  // tauri.conf.json leaves `zoomHotkeysEnabled` at its `false` default and
+  // that maps to IsZoomControlEnabled) — it fires for EVERY ctrl+wheel event
+  // in the grid, whether or not that event is inside the cooldown. No rAF
+  // coalescing: this display runs at 240 Hz, so a rAF-throttled step would
+  // drop most of a fast gesture's events instead of spacing them; the
+  // explicit millisecond cooldown is the throttle. Deps are deliberately
+  // minimal (no `settings`, no `stepGridSizeBy`) so the listener is not torn
+  // down and re-attached on every settings write — settingsRef above is what
+  // lets it still read the current size.
+  useEffect(() => {
+    if (!gridVisible || compareMode) return;
+    const el = gridContainerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      // preventDefault fires for every ctrl+wheel in the grid regardless of
+      // the help sheet, or the webview would scroll/zoom under the gesture.
+      e.preventDefault();
+      if (helpVisibleRef.current) return;
+      if (e.deltaY === 0) return;
+      const now = performance.now();
+      if (!wheelStepDue(now, lastWheelStepRef.current)) return;
+      const current = settingsRef.current.gridSize;
+      const next = stepGridSize(current, e.deltaY < 0 ? 1 : -1);
+      // Only a step that actually changes the size stamps the cooldown — a
+      // clamped step (wheel up at Large, wheel down at Small) must not start
+      // the 160ms window, or an immediate reversal is swallowed.
+      if (next === current) return;
+      lastWheelStepRef.current = now;
+      setSettings({ ...settingsRef.current, gridSize: next });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [gridVisible, compareMode, gridHasCells, setSettings]);
+
+  // The grid's cell width decides whether the sharp tier is worth fetching
+  // ((cellW − 18) × DPR > 160). 0 while the grid is closed, which lets the
+  // store's window eviction free every grid blob — and also 0 before the
+  // ResizeObserver's first measurement, so the store is never told
+  // `gridCellWidth`'s 168px pre-measurement placeholder as if it were the
+  // grid's real cell width.
+  useEffect(() => {
+    imageStore.setGridCellW(
+      gridVisible && !compareMode && gridContentW > 0 ? gridCellWidth(gridContentW, gridCols) : 0,
+    );
+  }, [gridVisible, compareMode, gridContentW, gridCols]);
 
   // Compare-mode candidates: every UNRATED frame except the champion (which the
   // strip shows separately as its grayed in-track ghost). The challenger is
@@ -1222,6 +1321,8 @@ export default function App() {
     redo,
     gridVisible,
     gridCols,
+    stepGridSizeBy,
+    resetGridSize,
     advance,
     selectAllInGrid,
     growGridSelection,

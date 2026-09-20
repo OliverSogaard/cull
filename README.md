@@ -186,6 +186,8 @@ Cheat sheet:
 | `u`        | unrate              | —                    | unrate             |
 | `← →`      | prev / next (hold to scrub) | pick challenger (hold) | prev / next (hold to traverse) |
 | `↑ ↓`      | —                   | —                    | row up / down      |
+| `+` `−`    | —                   | —                    | bigger / smaller cells |
+| `Ctrl+0`   | —                   | —                    | medium cells       |
 | `space`    | 1:1 zoom (hold)     | 1:1 zoom (hold)      | —                  |
 | `shift+space` | 2:1 zoom         | 2:1 zoom             | —                  |
 | `l` `c` `g` | switch view (current view's key is a no-op) | | |
@@ -199,6 +201,8 @@ Cheat sheet:
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo | undo / redo | undo / redo |
 | `Ctrl+E`   | finish actions (move rejects / copy keeps) | same | same |
 | `Ctrl+,`   | settings (also from the home screen) | same | same |
+
+`Ctrl` + wheel over the contact sheet steps the grid size too.
 
 ## Rating model
 
@@ -232,6 +236,8 @@ Open with **Ctrl+,** or the gear icon on the home screen.
   above).
 - **When you start a cull** — default filter, default overlays (info,
   clipping, peaking, thirds), default thumbnail strip.
+- **Grid size** — Small / Medium / Large contact-sheet cells (also `+` / `−`
+  / `Ctrl+wheel` / `Ctrl+0` in the grid; see "Keyboard reference" above).
 - **File operations** — name of the rejected-subfolder created by
   "move rejects", default destination for "copy keeps" (ask each time or
   use a pinned folder).

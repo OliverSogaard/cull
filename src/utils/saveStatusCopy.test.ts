@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  MISSING_ACTION_TAIL,
   MISSING_PHOTO_TITLE,
+  UNSAVED_ACTION_TAIL,
   UNSAVED_TITLE,
   missingCheckAgainLabel,
   missingFailureSentence,
   missingPhotosLabel,
   missingRecovery,
   saveFailureKind,
+  unsavedCountLabel,
   unsavedLabel,
 } from "./saveStatusCopy";
 
@@ -101,5 +104,12 @@ describe("the retryable wording", () => {
     // title carries no "(n will be skipped)" caveat and needs no count at all.
     expect(UNSAVED_TITLE).toBe("Ratings failed to save · click to retry");
     expect(UNSAVED_TITLE).not.toContain("skip");
+  });
+});
+
+describe("the footer's short forms", () => {
+  it("the count phrase plus the action tail is the full label, character for character", () => {
+    expect(unsavedCountLabel(3) + UNSAVED_ACTION_TAIL).toBe(unsavedLabel(3));
+    expect(missingPhotosLabel(2) + MISSING_ACTION_TAIL).toBe(missingCheckAgainLabel(2));
   });
 });

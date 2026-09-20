@@ -58,3 +58,17 @@ describe("coerceSettings — defaultFilter migration", () => {
     );
   });
 });
+
+describe("coerceSettings — gridSize", () => {
+  it("defaults to medium on a blob that predates the field", () => {
+    expect(coerceSettings({}).gridSize).toBe("medium");
+    expect(DEFAULT_SETTINGS.gridSize).toBe("medium");
+  });
+
+  it("keeps a valid stored value and rejects anything else", () => {
+    expect(coerceSettings({ gridSize: "large" }).gridSize).toBe("large");
+    expect(coerceSettings({ gridSize: "small" }).gridSize).toBe("small");
+    expect(coerceSettings({ gridSize: "huge" }).gridSize).toBe("medium");
+    expect(coerceSettings({ gridSize: 256 }).gridSize).toBe("medium");
+  });
+});

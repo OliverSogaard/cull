@@ -1,7 +1,7 @@
 /* ── EXIF rail (right side of loupe / compare body) ───────── */
 .cull-exif-rail {
-  flex: 0 0 290px;
-  width: 290px;
+  flex: 0 0 var(--rail-w);
+  width: var(--rail-w);
   background: var(--bg);
   border-left: 1px solid var(--border);
   padding: 40px 32px;
@@ -14,8 +14,8 @@
 
 /* Compare rail is wider (two columns of values). */
 .cull-exif-rail--compare {
-  flex: 0 0 340px;
-  width: 340px;
+  flex: 0 0 var(--rail-w-compare);
+  width: var(--rail-w-compare);
   padding: 32px 24px;
   gap: 28px;
 }
@@ -115,7 +115,7 @@
    each row has three slots: key (90px) + champion value + challenger value. */
 .cull-cr-rail__head {
   display: grid;
-  grid-template-columns: 90px 1fr 1fr;
+  grid-template-columns: var(--rail-col-k) 1fr 1fr;
   gap: 12px;
   align-items: baseline;
   padding-bottom: 10px;
@@ -136,7 +136,7 @@
 
 .cull-cr-rail__row {
   display: grid;
-  grid-template-columns: 90px 1fr 1fr;
+  grid-template-columns: var(--rail-col-k) 1fr 1fr;
   gap: 12px;
   align-items: baseline;
   padding: 5px 0;
@@ -184,4 +184,28 @@
   border-radius: 50%;
   background: currentcolor;
   color: var(--accent);
+}
+
+/* ── compact rail below 1200px of window width ────────────────
+   The loupe rail gives 58px back to the photo (290 → 232) by tightening its
+   own padding and gap, not by dropping a row: nothing inside it wraps at
+   232. The compare rail follows in proportion (340 → 288) and its fixed key
+   column with it (90 → 76), so the two value columns keep their share. */
+@media (width < 1200px) {
+  :root {
+    --rail-w: 232px;
+    --rail-w-compare: 288px;
+    --rail-col-k: 76px;
+  }
+
+  /* :not(--compare) is load-bearing. ExifRail renders the compare rail as
+     `cull-exif-rail cull-exif-rail--compare` (ExifRail.tsx:314), and a media
+     query adds no specificity — a bare `.cull-exif-rail` here would sit at
+     the end of the file at the same (0,1,0) weight as the `--compare` rule
+     above and steal its 32px/24px padding. Spec §4B narrows the compare
+     rail's WIDTH only. */
+  .cull-exif-rail:not(.cull-exif-rail--compare) {
+    padding: 28px 20px;
+    gap: 28px;
+  }
 }

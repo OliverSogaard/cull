@@ -87,12 +87,12 @@
   right: 0;
   z-index: var(--z-wincontrols);
   display: flex;
-  height: 36px;
+  height: var(--bar-h);
 }
 
 .cull-winbtn {
-  width: 44px;
-  height: 36px;
+  width: var(--winbtn-w);
+  height: var(--bar-h);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -128,8 +128,19 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  flex-shrink: 0;
   white-space: nowrap;
+}
+
+/* The right cluster never shrinks; the left cluster does, so the filename
+   stem (its only shrinkable child) is what gives way as the window narrows —
+   see the breakpoints at the end of statusbar.css. */
+.cull-statusbar__left {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.cull-statusbar__right {
+  flex-shrink: 0;
 }
 
 .cull-statusbar__brandblock {
@@ -166,8 +177,16 @@
   letter-spacing: 0.02em;
   display: inline-flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 0;
+  /* The 240px budget is for the WHOLE filename (stem + extension) — it lived
+     on the stem alone until the extension became its own element, which let
+     a long name render up to 240px plus the extension's width on top. The
+     stem is the only child that shrinks (it alone carries flex-shrink and
+     the ellipsis); the extension is flex: 0 0 auto, so it is what the stem
+     gives way to first as this container is squeezed toward its cap. */
+  max-width: 240px;
   min-width: 0;
+  flex-shrink: 1;
 }
 
 .cull-statusbar__filename-name {
@@ -175,7 +194,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 240px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.cull-statusbar__filename-ext {
+  flex: 0 0 auto;
+  color: var(--text-2);
 }
 
 .cull-statusbar__spacer {
@@ -232,6 +257,13 @@
 
 .cull-statusbar__verdict--fav .cull-statusbar__verdict-glyph {
   background: var(--fav);
+}
+
+/* Exists so the narrow-window media query has something to hide (the glyph
+   alone still carries the pill's meaning; the wrapper's aria-label keeps it
+   for AT). */
+.cull-statusbar__verdict-label {
+  flex: 0 0 auto;
 }
 
 /* Overlay cluster — five circular i / h / p / o / t toggle chips. Each is
@@ -552,8 +584,10 @@
   z-index: -1;
   pointer-events: none;
   background: url("../assets/backdrop.jpg") center / cover no-repeat;
-  filter: grayscale(1) brightness(0.85) contrast(1.05);
-  opacity: 0.11;
+  /* The tone is BAKED into the JPEG (scripts/bake-backdrop.mjs): grayscale +
+     brightness .85 + contrast 1.05, composited at .11 over --bg, at 2560px
+     wide. Only the vignette stays here — it is sized to the WINDOW, not the
+     image, so baking it would fix the falloff at one aspect ratio. */
   -webkit-mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
   mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
 }
@@ -721,6 +755,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  flex-shrink: 0;
 }
 
 .cull-statusbar__unsaved:hover {

@@ -29,6 +29,15 @@ display demand (`needPx` = stage rect height × devicePixelRatio, evaluated
 fresh per request with ~100 px of hysteresis around ~1700) exceeds what the
 preview can show sharply; the fallback chain mid → preview always renders.
 An evicted nav blob falls back to its thumb, never back to shimmer.
+
+The **grid tier** (Phase 3B) is NOT a fourth display stage — `resolveStage`
+never sees it. It exists only inside the contact sheet: a second `<img>`
+layered, absolutely positioned, over the cell's THMB and faded in on `load`
+once it decodes, so a soft THMB never flashes to blank while the sharper
+frame loads. Loupe and compare never request it. The sharp layer is requested
+only while its cell is mounted, and only when the measured cell width times
+DPR beats the THMB — so closing the grid, or narrowing the cells past the
+rule, stops the tier entirely.
 `src/image/stage.ts` is the pure heart of this: `resolveStage(ImageState) →
 Resolved { stage, url, dims, error, full, mid }` (`full`/`mid` = the ready
 zoom/mid blobs, whatever the nav stage). It has no I/O and no React, so the
@@ -40,7 +49,7 @@ via `useSyncExternalStore` in `src/image/useImage.ts`:
 ```
 view → useImage(path, { wantFull })
   ↓ subscribe + request
-imageStore (priority queues, bounded lanes: preview / zoom-full / thumb / bg)
+imageStore (priority queues, bounded lanes: preview / zoom-full / mid / thumb / grid / bg)
   ↓ on-demand reads preempt book-order background fill
 fetchThumbnail / fetchNav / fetchFullres → IoGate permit + timeout
   → spawn_blocking → cr3 / tier_cache
@@ -79,6 +88,27 @@ race, which makes scrubbing through prefetched neighbourhoods SHARP.
   consumers' displayRefs additionally protect a shown mid). Memory stays flat
   across an arbitrarily long session. Eviction is cursor-driven, so parking
   on a frame recenters the windows even when nothing new loads.
+- **Grid-windowed thumb cache** — the sixth lane, `gridThumbLane`, is the one
+  window that does NOT follow the cursor: the grid scrolls independently of
+  the loupe cursor, so its blobs are kept within `gridThumbKeep` cells of the
+  reported grid RANGE (start/end of what's visible) and evicted outside it.
+  Leaving the grid sets the range to none, which frees every grid blob no
+  cell still displays. Requests enter through ONE path,
+  `requestGridThumbsInRange`, driven by the reported range and nothing else:
+  the lane's queue is REBUILT on every range report rather than appended to
+  (a scrollbar drag would otherwise spend the lane on the thousand cells the
+  user flew past), and only paths with a mounted display ref are asked for —
+  the reported range is the min..max ABSOLUTE index of the rendered cells,
+  so under a filter it spans every hidden frame in between. Queued paths
+  carry no request marker (the lane marks a path when it STARTS it), so
+  emptying the queue leaks nothing and a read already in flight still
+  finishes. Leaving the grid clears the queue and disarms the pending
+  self-retry. A `pending` bounce — the backend's shared generation claim
+  already held — is pure backoff, never an error: it never feeds the
+  folder-trouble latch and is capped one below the terminal attempt count,
+  so such a cell is always askable again; a single deduped timer re-arms for
+  the soonest cell still in cooldown and re-runs the visible range, so a
+  cell that lost a race never waits for the user to scroll.
 - **Generation-based cancellation** — `reset(paths)` (folder change) keeps
   thumbs but revokes all fulls and bumps a generation counter; `hardReset()`
   (session end) revokes everything. In-flight reads from a superseded
@@ -110,8 +140,12 @@ cache in the OS cache dir: `thumb/` (500 MB) behind `extract_thumbnail`,
 `mid/` (4 GB) behind `read_mid` (Phase 8) — filled opportunistically from
 zoom reads' in-memory bytes on every profile, by `read_mid` misses on the
 local profile, and by the local idle sweep (`generate_mid`); the NAS profile
-NEVER fetches a full solely to generate. The format `VERSION` byte is shared
-across all tiers, so any bump regenerates every tier's entries once; v2 → v3
+NEVER fetches a full solely to generate. `grid/` (512 MB, Phase 3B) sits
+behind `read_grid_thumb`, the sharp 512 px contact-sheet tier, filled on a
+miss from the already-cached PRVW preview — a new tier byte (`Grid` = 3) in
+its own disjoint subdir, so it left the shared `VERSION` byte unchanged; that
+byte is shared across all tiers, so any bump regenerates every tier's entries
+once; v2 → v3
 (2026-07-06) happened when the perceptual hash started riding the thumbnail
 pipeline — cached thumb headers now carry `phash`, so pre-change entries had
 to regenerate. Each entry stores dual validators —
@@ -291,7 +325,10 @@ flips via a matchMedia listener, so dragging the window between a 4K and a
 jitter). On 1440p-class displays the mid is never requested. Generation is
 profile-aware: the local profile generates on `read_mid` misses and runs a
 budgeted idle sweep (paused whenever any on-demand lane has work or the
-cursor moved recently); the network profile only ever serves the cache —
+cursor moved recently — the grid tier counts as on-demand, since its cells
+are what the user is looking at and the sweep holds the same generation
+permits in ~450 ms jobs; draining the last grid cell is what lets the sweep
+run again); the network profile only ever serves the cache —
 mids appear there as a free by-product of zoom reads (the bytes are already
 in memory; CPU only). The presenter treats the mid as one more upgrade tier
 between preview and full; mid-scrub it is never offered.
@@ -503,6 +540,97 @@ conventions instead of per-component one-offs:
   only count that disables the move/copy actions — a missing photo is warned
   about but never blocks finishing the cull, since blocking on a failure the
   session cannot clear would leave no way out of it at all.
+
+### Scale and layout (Phase 3B)
+
+The app had one `@media` rule (reduced motion) and no responsive behaviour
+otherwise. This phase wired the layout tokens that already existed but were
+never referenced — `--bar-h`, `--winbtn-w`, `--rail-w`, `--rail-w-compare`,
+`--strip-h`, `--cell-w`, `--cell-h` — to their use sites, and added the
+responsive steps on top of that wiring. That wiring takes two different
+forms, not one: the info rail's breakpoint redefines its tokens (plus a
+literal `padding`/`gap`) inside `:root`; the strip's `--cell-w` / `--cell-h`
+/ `--strip-h` are never touched by a media query at all — they are set
+INLINE on `.cull-strip-wrap` by `PhotoStrip`, straight from `StripMetrics`,
+and the strip's own breakpoint lives in JS (`useStripMetrics`'s `matchMedia`
+query), not CSS; and the footer's three breakpoints redefine no token at
+all — they hide spans (`display: none`) or clip a tail (`clip-path`) on
+plain classes. The rule that survives it: **a responsive step never touches
+a scattered literal in the layout it doesn't own** — every consumer already
+reads a token or a class, so nothing needs to know a breakpoint exists.
+
+Six breakpoints, on two independent axes (window width and window height —
+there is still no DPR-driven layout, no `zoom`, no user font-size setting):
+
+- **1120 px window width** — the footer's ORDINARY finish label ("Ctrl+E ·
+  N keeps") sheds to "Finish" — the tighter of the footer's two finish
+  breakpoints, since the ordinary label is shorter than the all-rated one.
+- **1200 px window width** — the info rail's own, unrelated breakpoint
+  (`exif-rail.css`): the loupe rail narrows 290 → 232 px and the compare
+  rail 340 → 288 px (its fixed key column 90 → 76 in proportion), through
+  the `--rail-w` / `--rail-w-compare` / `--rail-col-k` tokens.
+- **1240 px window width** — the footer's three remaining cosmetic words go:
+  the zoom/scrub chip's word ("zoom 1:1" → "1:1") and the verdict pill's
+  word. This was 1220 through fix round 3; fix round 4 moved it to 1240 for
+  margin, since the sums it rests on are estimated glyph advances rather
+  than a measured render. It is deliberately NOT the info rail's 1200 — the
+  footer's own worst-case arithmetic (below) needs the extra margin before
+  this shed can help it fit, and the two breakpoints are unrelated decisions
+  that happen to live near each other.
+- **1360 px window width** — the footer's key hint disappears, the save
+  chip's action tail sheds (the largest single item on the left; the
+  button's own title still says what the click does), the filename
+  extension sheds (fix round 4 — every file in a cull is a .CR3, so the
+  1240 tier above never has to price it in), and (only when the finish
+  button already carries `is-done`) the ALL-RATED finish label sheds from
+  "All N rated · Ctrl+E finish" to "Finish"; the button's brightened fill
+  and one-time breathe animation (`stage.css`) still carry the moment
+  without the longest label.
+- **2000 px window width** — the home screen scales up: hero/recents column
+  620 → 780 px, title 56 → 72 px, sub 17 → 19 px (its own max-width 500 →
+  620 px), recents path 14 → 15 px with deeper row padding. Below 2000 the
+  default 1600 × 1000 window is untouched — the same left-aligned editorial
+  layout just grows.
+- **1200 px window height** — the filmstrip steps from its standard cell
+  (76 × 54) to a larger one (104 × 74) on a tall window (a maximized 1440p
+  or 4K screen); see `StripMetrics` below.
+
+Stylelint enforces range notation for every one of these (`@media (width <
+1360px)`, never `max-width`) — a leftover `max-width` rule fails lint,
+which is what keeps a future breakpoint from silently drifting out of this
+convention.
+
+**`StripMetrics`** (`src/components/strip/metrics.ts`) is the filmstrip's
+single source of truth, read by FilmStrip, the virtualizer math, the burst
+overlays, AND the stylesheet: `PhotoStrip` pushes `cellW` / `cellH` /
+`stripH` onto the strip wrapper as `--cell-w` / `--cell-h` / `--strip-h`
+custom properties, so JS and CSS can never disagree about a cell's size.
+One `matchMedia("(min-height: 1200px)")` subscription (`useStripMetrics.ts`,
+its `MediaQueryList` created lazily on first use and cached for the module's
+lifetime) picks between two plain module-level objects, `STRIP_SMALL`
+(76×54) and `STRIP_LARGE` (104×74) — nothing freezes them; they are handed
+out by reference and stay identity-stable simply because nothing ever
+constructs a new one — never a resize listener, since this machine paints
+at 240 Hz and a per-frame listener would fire hundreds of times for one
+drag. `metrics.test.ts` reads `strip.css` raw and fails if its numbers ever
+drift from `metrics.ts`'s. The scrub-speed chip that rides the strip's
+position bar is anchored at `bottom: calc(var(--cell-h) + 7px)`
+(`strip.css`) — expressed in `--cell-h` rather than a literal — so it clears
+the cells' top edge by 2 px at both steps instead of sitting on the
+thumbnails' lower edge, over the rating dots and badges, as it did at the
+strip's real (83/103 px) box before fix round 4.
+
+The footer's guiding contract is **nothing is ever clipped — the filename
+stem ellipses last**: at the 1024 px minimum window, with every shed
+already applied, the worst realistic combination (an all-missing save chip,
+mid-scrub, an active overlay cluster) still leaves the filename stem ~28 px
+to render before it ellipses; ordinary states get its full 240 px
+max-width. The arithmetic behind every breakpoint above — including why the
+cosmetic shed sits at 1240 and not 1200 — is worked in full in
+`src/styles/statusbar.css`'s comment above the `@media (width < 1360px)`
+rule; `layout.test.ts` pins the breakpoints themselves and the shrink
+guards (min-width/flex-shrink), not the paddings, gaps or glyph-advance
+sums the arithmetic is built from.
 
 ## Modules
 

@@ -20,6 +20,10 @@ export type ImageState = {
    *  view on high-DPI stages. Errors are tracked in the store's midErrors
    *  (never displayed — the fallback chain mid→preview always renders). */
   mid?: { status: "loading" } | { status: "ready"; url: string };
+  /** Grid tier (Phase 3B): the generated 512px contact-sheet JPEG. Errors are
+   *  tracked in the store's gridThumbErrors and NEVER displayed — a grid cell
+   *  has no error state; its THMB is the fallback and it is already painted. */
+  gridThumb?: { status: "loading" } | { status: "ready"; url: string };
   /** Session-lifetime dims cache entry (orientation-adjusted display dims).
    *  Present even after the thumb/full blobs are evicted, so a revisited
    *  frame's matte keeps its true aspect instead of flashing neutral-square. */
@@ -45,6 +49,10 @@ export type Resolved = {
    *  blanks the cell while WebKit decodes the 1620×1080 preview (the
    *  "8-away flash", thumb-flash-report). Undefined until the thumb exists. */
   thumbUrl: string | undefined;
+  /** The grid tier, exposed INDEPENDENTLY like `thumbUrl`. The grid cell
+   *  layers this OVER the THMB; it never replaces the value `thumbDisplayUrl`
+   *  returns, because swapping a live <img src> is the 8-away flash. */
+  gridThumbUrl: string | undefined;
   /** The zoom tier's error while it is in the error state — the pane shows a
    *  "full-res failed · retry" chip instead of an endless loading ring. */
   fullError: string | undefined;
@@ -56,6 +64,7 @@ export function resolveStage(s: ImageState): Resolved {
     s.zoomFull?.status === "ready" ? { url: s.zoomFull.url, dims: s.zoomFull.dims } : undefined;
   const mid = s.mid?.status === "ready" ? { url: s.mid.url } : undefined;
   const thumbUrl = s.thumb?.url;
+  const gridThumbUrl = s.gridThumb?.status === "ready" ? s.gridThumb.url : undefined;
   const fullError = s.zoomFull?.status === "error" ? s.zoomFull.error : undefined;
   if (s.full?.status === "ready") {
     // The full can land BEFORE the thumb (big scrub jump): the store freezes
@@ -75,6 +84,7 @@ export function resolveStage(s: ImageState): Resolved {
       full,
       mid,
       thumbUrl,
+      gridThumbUrl,
       fullError,
     };
   }
@@ -87,6 +97,7 @@ export function resolveStage(s: ImageState): Resolved {
       full,
       mid,
       thumbUrl,
+      gridThumbUrl,
       fullError,
     };
   return {
@@ -97,6 +108,7 @@ export function resolveStage(s: ImageState): Resolved {
     full,
     mid,
     thumbUrl,
+    gridThumbUrl,
     fullError,
   };
 }

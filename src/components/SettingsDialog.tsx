@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Star } from "lucide-react";
-import type { Filter, Settings, SmartLevel, StorageMode, ThumbsPosition } from "../types";
+import type { Filter, GridSize, Settings, SmartLevel, StorageMode, ThumbsPosition } from "../types";
 import { ICON } from "./icons";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import { LEVEL_THRESHOLD } from "../smart/deriveVerdict";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { sanitizeFolderName } from "../utils/path";
+import { modCombo } from "../utils/platform";
 import { KeyCombo } from "./KeyCombo";
 
 /**
@@ -148,6 +149,20 @@ export function SettingsDialog({
                       { value: "top", label: "Top" },
                     ]}
                     onChange={(v) => set("thumbsPosition", v)}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label="Grid size"
+                  help={`Contact-sheet cell size. + / − in the grid, ${modCombo("0")} for medium.`}
+                >
+                  <SegmentToggle<GridSize>
+                    value={settings.gridSize}
+                    options={[
+                      { value: "small", label: "Small" },
+                      { value: "medium", label: "Medium" },
+                      { value: "large", label: "Large" },
+                    ]}
+                    onChange={(v) => set("gridSize", v)}
                   />
                 </SettingRow>
               </>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   basename,
+  extOf,
   isReservedFolderName,
   joinPath,
   truncatePathDisplay,
@@ -43,6 +44,18 @@ describe("stripExt", () => {
   });
 });
 
+describe("extOf", () => {
+  it("returns the extension with its dot, complementing stripExt", () => {
+    expect(extOf("IMG_0001.CR3")).toBe(".CR3");
+    expect(stripExt("IMG_0001.CR3") + extOf("IMG_0001.CR3")).toBe("IMG_0001.CR3");
+  });
+  it("handles a dotted stem and a bare name", () => {
+    expect(extOf("a.b.CR3")).toBe(".CR3");
+    expect(extOf("README")).toBe("");
+    expect(stripExt("README") + extOf("README")).toBe("README");
+  });
+});
+
 describe("joinPath", () => {
   it("uses backslash when the root is a Windows path", () => {
     expect(joinPath("C:\\Exports", "Reception-keeps")).toBe("C:\\Exports\\Reception-keeps");
@@ -60,7 +73,7 @@ describe("joinPath", () => {
 
 describe("sanitizeFolderName", () => {
   it("strips Windows-illegal characters", () => {
-    expect(sanitizeFolderName("a<b>c:d\"e/f\\g|h?i*j")).toBe("abcdefghij");
+    expect(sanitizeFolderName('a<b>c:d"e/f\\g|h?i*j')).toBe("abcdefghij");
   });
 
   it("caps the result at 32 chars", () => {

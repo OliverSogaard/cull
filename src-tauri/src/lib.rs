@@ -6,14 +6,15 @@
 //! |---------------|---------------------------------------------------------|
 //! | [`cr3`]       | Pure-Rust CR3 parser: preview + EXIF + thumbnail bytes. |
 //! | [`meta`]      | [`meta::ImageMetadata`] for the UI + `From<cr3::Cr3Meta>`. |
-//! | [`bundle`]    | `read_preview` / `read_fullres` / `read_mid` / `generate_mid` + `extract_thumbnail` Tauri commands. |
+//! | [`bundle`]    | `read_preview` / `read_fullres` / `read_mid` / `generate_mid` / `read_grid_thumb` + `extract_thumbnail` Tauri commands. |
 //! | [`io_gate`]   | Read-permit backstop (IoGate), session gen + mtime table (SessionGate), `begin_session` / `set_io_profile`. |
 //! | [`midtier`]   | Phase 8 mid-tier generation: decode → SIMD resize ≤2560 → q80 encode + the MidGen concurrency gate. |
 //! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
 //! | [`jpeg_rgb`]  | The shared JPEG → validated-RGB8 decode ritual.          |
-//! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid), format v3 (`tier_cache::VERSION`). |
+//! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid/grid), format v3 (`tier_cache::VERSION`). |
 //! | [`xmp`]       | XMP sidecar I/O: `write_xmp_rating` / `clear_xmp_rating` + the parser the analyze step uses to restore ratings. |
 //! | [`file_ops`]  | Post-cull file operations: `move_rejects_to_subfolder` / `copy_keeps_to_export`. |
+//! | [`gridthumb`] | Phase 3B grid tier: PRVW → SIMD resize ≤512 → q82 encode + orientation splice. |
 //!
 //! ## Invariants
 //!
@@ -55,6 +56,7 @@ mod embed;
 #[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
 mod faces;
 mod file_ops;
+mod gridthumb;
 mod io_gate;
 mod jpeg_rgb;
 mod memory_pressure;
@@ -205,6 +207,7 @@ pub fn run() {
             bundle::read_fullres,
             bundle::read_mid,
             bundle::generate_mid,
+            bundle::read_grid_thumb,
             bundle::extract_thumbnail,
             bundle::clear_thumb_cache,
             bundle::thumb_cache_size,

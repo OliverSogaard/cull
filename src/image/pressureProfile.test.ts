@@ -14,9 +14,7 @@ describe("clampProfileForPressure — memory-pressure shedding", () => {
     expect(p.previewKeep).toBeLessThan(base.previewKeep);
     expect(p.decodedPoolPreviews).toBeLessThan(base.decodedPoolPreviews);
     expect(p.decodedPoolFulls).toBeLessThanOrEqual(1);
-    expect(p.backgroundFillConcurrency).toBeLessThanOrEqual(
-      base.backgroundFillConcurrency,
-    );
+    expect(p.backgroundFillConcurrency).toBeLessThanOrEqual(base.backgroundFillConcurrency);
     // Read concurrency is I/O, not memory: untouched.
     expect(p.previewConcurrency).toBe(base.previewConcurrency);
   });
@@ -29,6 +27,16 @@ describe("clampProfileForPressure — memory-pressure shedding", () => {
     expect(p.previewPrefetchBehind).toBe(0);
     expect(p.backgroundFillConcurrency).toBe(0);
     expect(p.previewKeep).toBeGreaterThanOrEqual(4); // the working set survives
+  });
+
+  // The whole-profile loop below cannot catch an unclamped knob: both levels
+  // are built as { ...base, … }, so a forgotten field simply equals base and
+  // passes its own `toBeLessThanOrEqual(base[k])`. This is the net.
+  it("sheds the grid tier: its window first, then the lane entirely", () => {
+    expect(clampProfileForPressure(base, "warn").gridThumbKeep).toBe(40);
+    expect(clampProfileForPressure(base, "warn").gridThumbConcurrency).toBe(1);
+    expect(clampProfileForPressure(base, "critical").gridThumbKeep).toBe(0);
+    expect(clampProfileForPressure(base, "critical").gridThumbConcurrency).toBe(0);
   });
 
   it("never raises any value above the base", () => {

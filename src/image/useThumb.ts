@@ -51,12 +51,20 @@ export function thumbDisplayUrl(img: Resolved): string | undefined {
  */
 export function useThumb(path: string): {
   url: string | undefined;
+  /** The sharp grid tier, when it has landed. Layered OVER `url`, never
+   *  instead of it — see the 8-away flash note. */
+  gridUrl: string | undefined;
   shimmerDelayMs: number;
   probeOnLoad: (() => void) | undefined;
 } {
   const img = useImage(path, { wantFull: false });
   const url = thumbDisplayUrl(img);
-   
+  // The sharp grid tier is LAYERED over `url` by GridCell, never swapped into
+  // it: `thumbDisplayUrl` must stay identical across foreign-tier landings
+  // (the 8-away flash). Undefined everywhere but the grid, which is the only
+  // surface whose cells are large enough for the store to request it.
+  const gridUrl = img.gridThumbUrl;
+
   const shimmerDelayMs = useMemo(() => shimmerPhaseMs(), []);
 
   // ── dlog probes (thumb-flash) — free when the flag is off ────────────────
@@ -81,5 +89,5 @@ export function useThumb(path: string): {
     [path, mountTs],
   );
 
-  return { url, shimmerDelayMs, probeOnLoad };
+  return { url, gridUrl, shimmerDelayMs, probeOnLoad };
 }

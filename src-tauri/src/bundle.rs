@@ -23,6 +23,7 @@ use tauri::ipc::Response;
 use tauri::State;
 
 use crate::cr3;
+use crate::gridthumb;
 use crate::io_gate::{IoGate, SessionGate, Tier};
 use crate::meta::ImageMetadata;
 use crate::midtier::{self, MidGen};
@@ -164,16 +165,46 @@ pub(crate) async fn read_preview(
     .await
 }
 
-/// The one prvw acquisition path (shared by [`read_preview`] and
-/// [`fetch_decoded_preview`], so cache/read behavior can never drift):
-/// validated cache hit returns the stored wire header + payload VERBATIM;
-/// a miss is ONE head read whose result piggy-backs into the cache.
+/// Write a prvw-miss result back to the tier, or don't — the ONE place that
+/// decision is made, so [`preview_parts_opt`]'s `put_on_miss` flag is pinned
+/// by a plain unit test instead of only by the corpus-gated acquisition test
+/// (a cache-HIT test alone can't distinguish `true` from `false`: both return
+/// before this function is ever called).
+fn put_prvw_on_miss(
+    put: bool,
+    cache: &TierCache,
+    path: &str,
+    stat: Option<(i64, u64)>,
+    header: &[u8],
+    jpeg: &[u8],
+) {
+    if !put {
+        return;
+    }
+    if let Some((ms, size)) = stat {
+        cache.put(CacheTier::Prvw, path, ms, size, header, jpeg);
+    }
+}
+
+/// The one prvw acquisition path (shared by [`read_preview`],
+/// [`fetch_decoded_preview`] and [`read_grid_thumb`], so cache/read behavior
+/// can never drift): validated cache hit returns the stored wire header +
+/// payload VERBATIM; a miss is ONE head read.
+///
+/// `put_on_miss` decides whether that miss is written back to the prvw tier.
+/// Navigation says yes — it is the tier's own filler. The GRID says no: it
+/// visits frames the loupe never opens, and writing every one of them would
+/// push ~2.2 GB through a 2 GiB cap and evict the previews the user is
+/// actually navigating (spec: "the grid path must NOT fill the preview
+/// cache"). A cache HIT still serves the grid, at zero source I/O.
+///
 /// Returns `(header_json, preview_jpeg, was_cache_hit)`.
-fn preview_parts(
+fn preview_parts_opt(
     path: &str,
     session: &SessionGate,
     cache: &TierCache,
     cancelled: &dyn Fn() -> bool,
+    put_on_miss: bool,
 ) -> Result<(Vec<u8>, Vec<u8>, bool), String> {
     let stat = resolve_stat(session, path);
     if let Some((ms, size)) = stat {
@@ -192,10 +223,19 @@ fn preview_parts(
         full_len: b.full_hint.map(|h| h.1),
     };
     let header_json = serde_json::to_vec(&header).map_err(|e| format!("preview header: {e}"))?;
-    if let Some((ms, size)) = stat {
-        cache.put(CacheTier::Prvw, path, ms, size, &header_json, &b.preview);
-    }
+    put_prvw_on_miss(put_on_miss, cache, path, stat, &header_json, &b.preview);
     Ok((header_json, b.preview, false))
+}
+
+/// The navigation form: a miss piggy-backs into the prvw cache, as it always
+/// has. `read_preview` and `fetch_decoded_preview` call this and are unchanged.
+fn preview_parts(
+    path: &str,
+    session: &SessionGate,
+    cache: &TierCache,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<u8>, Vec<u8>, bool), String> {
+    preview_parts_opt(path, session, cache, cancelled, true)
 }
 
 /// Smart culling's per-file fetch (docs/history/SMART_CULLING_PLAN.md Phase 1): the same
@@ -629,6 +669,179 @@ pub(crate) async fn generate_mid(
     result.map(|()| true)
 }
 
+// ── Grid tier (Phase 3B): the sharp contact-sheet thumbnail ────────────────
+
+/// Minimal deserialization target for a CACHED prvw header: the grid tier
+/// needs nothing from it but the orientation to splice into the resized JPEG.
+/// Deliberately NOT the full [`PreviewHeader`] — serde ignores unknown/extra
+/// fields by default, so a header widened by an unrelated future field (or
+/// carrying an oddly-typed `meta`) still serves the grid instead of latching
+/// the cell as unavailable for the rest of the session. `orientation` shares
+/// [`PreviewHeader`]'s field name and casing (`rename_all = "camelCase"`
+/// leaves `orientation` unchanged either way, but the attribute is kept here
+/// so the two structs can never drift if that ever stops being true).
+/// `#[serde(default)]` covers a hypothetical stored entry that omits the
+/// field entirely: identity orientation (no rotation) is the same safe
+/// fallback [`full_with_orientation`] uses for a hintless read, never a
+/// silently-wrong rotation.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OrientationOnly {
+    #[serde(default = "identity_orientation")]
+    orientation: u32,
+}
+
+/// The no-rotation EXIF orientation value — [`OrientationOnly`]'s fallback
+/// when a cached header has no parseable orientation field at all.
+fn identity_orientation() -> u32 {
+    1
+}
+
+/// Header for [`read_grid_thumb`]: JPEG length + the thumb's (unrotated) pixel
+/// dims. Stored VERBATIM in the tier cache (the bump-VERSION-on-header-change
+/// contract applies to this shape from now on).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GridThumbHeader {
+    grid_len: u32,
+    width: u32,
+    height: u32,
+}
+
+/// PERMANENT: this file will never have a grid thumb (no PRVW, an undecodable
+/// one, or one already ≤512px). The frontend latches it per path and leaves
+/// the cell on its THMB — never a shimmer, never a retry loop, never an error
+/// chip (grid cells have no error state).
+const GRID_THUMB_UNAVAILABLE: &str = "grid thumb unavailable";
+
+/// TRANSIENT: another producer holds this path's [`MidGen`] claim. NOT the
+/// quiet sentinel — the pending set is SHARED with the opportunistic mid
+/// generator and the whole-shoot idle sweep, so this bounce is common, and
+/// latching it would strand a cell on the soft THMB for the session.
+const GRID_THUMB_PENDING: &str = "grid thumb pending";
+
+/// Map a generation failure onto the wire. Permanent causes become the ONE
+/// quiet sentinel the frontend latches; a cancellation stays itself so the
+/// frontend drops it silently; anything else is a real error with backoff.
+fn grid_thumb_error(e: String) -> String {
+    if e == "cancelled" || e.ends_with(": cancelled") {
+        e
+    } else if e.contains("no PRVW") {
+        format!("{GRID_THUMB_UNAVAILABLE} (no preview)")
+    } else if e.contains("not larger") || e.starts_with("grid thumb ") {
+        format!("{GRID_THUMB_UNAVAILABLE} ({e})")
+    } else {
+        e
+    }
+}
+
+/// Generate the grid thumb from an in-memory PRVW and publish it to the cache.
+/// Returns (header JSON, jpeg) exactly as cached — `read_grid_thumb` frames them.
+fn generate_and_cache_grid_thumb(
+    cache: &TierCache,
+    path: &str,
+    stat: (i64, u64),
+    preview_jpeg: &[u8],
+    orientation: u32,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let g = gridthumb::generate_grid_thumb_jpeg(preview_jpeg, orientation, cancelled)?;
+    let header = GridThumbHeader {
+        grid_len: g.jpeg.len() as u32,
+        width: g.width,
+        height: g.height,
+    };
+    let header_json = serde_json::to_vec(&header).map_err(|e| format!("grid thumb header: {e}"))?;
+    cache.put(CacheTier::Grid, path, stat.0, stat.1, &header_json, &g.jpeg);
+    Ok((header_json, g.jpeg))
+}
+
+/// The grid's sharp thumbnail (Phase 3B). Serves the generated 512px JPEG from
+/// the `grid/` disk cache; a hit costs ZERO source-file round-trips and replays
+/// the stored wire header verbatim. On a miss it acquires the PRVW through
+/// [`preview_parts_opt`] with `put_on_miss: false` — a prvw cache hit is used,
+/// but a miss's head read is NOT written back, because the grid visits frames
+/// the loupe never opens and would evict the previews navigation depends on
+/// (spec: "the grid path must NOT fill the preview cache") — then resizes it
+/// under a [`MidGen`] permit.
+///
+/// A source that has no PRVW, whose PRVW will not decode, or whose PRVW is not
+/// larger than the tier answers [`GRID_THUMB_UNAVAILABLE`]: the frontend
+/// latches it and the cell keeps the THMB it is already showing. A path whose
+/// generation claim is held elsewhere answers [`GRID_THUMB_PENDING`], which the
+/// frontend must NOT latch.
+#[tauri::command]
+pub(crate) async fn read_grid_thumb(
+    path: String,
+    gen: u64,
+    cache: State<'_, Arc<TierCache>>,
+    gate: State<'_, Arc<IoGate>>,
+    session: State<'_, Arc<SessionGate>>,
+    midgen: State<'_, Arc<MidGen>>,
+) -> Result<Response, String> {
+    let cache = Arc::clone(&cache);
+    let session = Arc::clone(&session);
+    let label = format!("read_grid_thumb({path})");
+    // Stage 1 — cache probe (app-cache disk, cheap).
+    let (hit, stat) = {
+        let (cache, session, path) = (Arc::clone(&cache), Arc::clone(&session), path.clone());
+        gated(&gate, Tier::Small, label.clone(), move || {
+            let stat = resolve_stat(&session, &path);
+            let hit = stat.and_then(|(ms, size)| cache.get(CacheTier::Grid, &path, ms, size));
+            Ok((hit, stat))
+        })
+        .await?
+    };
+    if let Some((header, payload)) = hit {
+        return Ok(Response::new(frame(header, &payload)));
+    }
+    let Some(stat) = stat else {
+        return Err(format!("{label}: source stat failed"));
+    };
+    // Claim the path against a concurrent mid/grid generation on the SAME
+    // shared gate (the opportunistic generator and the idle sweep use it too,
+    // so this bounce is common). TRANSIENT sentinel — the frontend must keep
+    // its THMB but stay free to ask again.
+    if !midgen.try_begin(&path) {
+        return Err(GRID_THUMB_PENDING.to_string());
+    }
+    let permit = midgen.acquire().await;
+    let result = {
+        let (cache, session, path) = (Arc::clone(&cache), Arc::clone(&session), path.clone());
+        gated(&gate, Tier::Small, label.clone(), move || {
+            let _permit = permit;
+            let start = Instant::now();
+            let cancelled = || session.is_cancelled(gen);
+            // put_on_miss: false — a prvw HIT is used (zero source I/O), but a
+            // miss is not written back. See preview_parts_opt.
+            let (header_json, prvw, _hit) =
+                preview_parts_opt(&path, &session, &cache, &cancelled, false)
+                    .map_err(grid_thumb_error)?;
+            let header: OrientationOnly = serde_json::from_slice(&header_json)
+                .map_err(|e| grid_thumb_error(format!("grid thumb prvw header parse: {e}")))?;
+            let (out_header, payload) = generate_and_cache_grid_thumb(
+                &cache,
+                &path,
+                stat,
+                &prvw,
+                header.orientation,
+                &cancelled,
+            )
+            .map_err(grid_thumb_error)?;
+            dlog!(
+                "[cull] read_grid_thumb({}): generated {}B in {:?}",
+                path,
+                payload.len(),
+                start.elapsed()
+            );
+            Ok(frame(out_header, &payload))
+        })
+        .await
+    };
+    midgen.end(&path);
+    result.map(Response::new)
+}
+
 // ── Thumbnail ────────────────────────────────────────────────────────────────
 
 /// Binary frame returned by [`extract_thumbnail`]: a small JSON header
@@ -757,6 +970,214 @@ mod tests {
     fn thumb_phash_none_on_undecodable_bytes() {
         assert_eq!(thumb_phash(b"not a jpeg"), None);
         assert_eq!(thumb_phash(&[]), None);
+    }
+
+    #[test]
+    fn grid_thumb_errors_map_onto_the_right_sentinel() {
+        for permanent in [
+            "cr3 preview: no PRVW".to_string(),
+            "source not larger than grid tier (400x300)".to_string(),
+            "grid thumb invalid jpeg".to_string(),
+            // A cached prvw header that fails to deserialize (corrupt/foreign
+            // entry) is permanent for that path, not a transient I/O failure —
+            // it must latch, or the frontend backs off and re-asks forever.
+            "grid thumb prvw header parse: EOF while parsing a value".to_string(),
+        ] {
+            assert!(
+                grid_thumb_error(permanent.clone()).starts_with(GRID_THUMB_UNAVAILABLE),
+                "should latch: {permanent}"
+            );
+        }
+        // A cancellation is not a failure and must not latch anything — in
+        // either of its two shapes (`preview_parts_opt` wraps `cr3::cancelled_err`'s
+        // "cancelled" sentinel as "cr3 preview: cancelled").
+        assert_eq!(grid_thumb_error("cancelled".into()), "cancelled");
+        assert_eq!(
+            grid_thumb_error("cr3 preview: cancelled".into()),
+            "cr3 preview: cancelled"
+        );
+        // A real I/O failure stays a real failure (backoff + retry apply) and
+        // must NOT be confusable with either sentinel.
+        let io = "read_grid_thumb(x): read timed out after 8s".to_string();
+        assert_eq!(grid_thumb_error(io.clone()), io);
+        assert!(!io.contains(GRID_THUMB_UNAVAILABLE) && !io.contains(GRID_THUMB_PENDING));
+        // The two sentinels must never prefix-match each other, or the
+        // frontend's latch test would catch the transient one.
+        assert!(!GRID_THUMB_PENDING.starts_with(GRID_THUMB_UNAVAILABLE));
+        assert!(!GRID_THUMB_UNAVAILABLE.starts_with(GRID_THUMB_PENDING));
+    }
+
+    /// A cached prvw header that some OTHER field has widened, or that carries
+    /// an oddly-typed `meta` no longer shaped like `ImageMetadata`, must not
+    /// strand the grid cell on its THMB for the rest of the session — only a
+    /// header with no parseable orientation at all should. `OrientationOnly`
+    /// (not the full `PreviewHeader`) is what makes that true: serde ignores
+    /// unknown/extra fields, and a wrong-typed `meta` next to a fine
+    /// `orientation` field simply never gets looked at.
+    #[test]
+    fn orientation_only_ignores_unrelated_fields() {
+        let json = br#"{
+            "orientation": 6,
+            "meta": {"unexpectedShape": true, "nested": [1, 2, 3]},
+            "previewLen": "not even a number",
+            "somethingBrandNew": null
+        }"#;
+        let header: OrientationOnly = serde_json::from_slice(json).expect("must still parse");
+        assert_eq!(header.orientation, 6);
+    }
+
+    /// A header entirely missing the field falls back to identity orientation
+    /// (no rotation) rather than failing — the same safe default
+    /// `full_with_orientation` uses for a hintless read.
+    #[test]
+    fn orientation_only_defaults_when_the_field_is_absent() {
+        let header: OrientationOnly = serde_json::from_slice(b"{}").expect("default must apply");
+        assert_eq!(header.orientation, 1);
+    }
+
+    /// A header with no parseable orientation AT ALL (wrong type, not just
+    /// absent) still fails to deserialize, and — routed through
+    /// `grid_thumb_error` exactly as `read_grid_thumb` does — still latches as
+    /// the permanent sentinel rather than bouncing the frontend forever.
+    #[test]
+    fn orientation_only_parse_failure_still_latches_via_grid_thumb_error() {
+        let bad = br#"{"orientation": "north"}"#;
+        let err = serde_json::from_slice::<OrientationOnly>(bad).unwrap_err();
+        let mapped = grid_thumb_error(format!("grid thumb prvw header parse: {err}"));
+        assert!(
+            mapped.starts_with(GRID_THUMB_UNAVAILABLE),
+            "should latch: {mapped}"
+        );
+    }
+
+    /// A temp dir + a real TierCache, the shape tier_cache.rs's own tests use.
+    fn grid_tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("cull-gridprvw-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Ungated: a prvw cache HIT still serves the grid, at zero source I/O —
+    /// `put_on_miss: false` suppresses the write-back, never the read.
+    #[test]
+    fn grid_acquisition_uses_a_prvw_hit_without_writing_anything() {
+        let work = grid_tmp("hit");
+        let cache = TierCache::new(work.join("tiers"));
+        let session = SessionGate::new();
+        // Any file will do: the cache validates against ITS stat, and a hit
+        // returns before cr3 parsing is ever reached.
+        let src = work.join("a.cr3");
+        std::fs::write(&src, b"not really a cr3").unwrap();
+        let src = src.to_string_lossy().to_string();
+        let (ms, size) = resolve_stat(&session, &src).expect("stat");
+        cache.put(
+            CacheTier::Prvw,
+            &src,
+            ms,
+            size,
+            b"{\"orientation\":1}",
+            b"\xFF\xD8prvw",
+        );
+
+        let before = cache.size_bytes();
+        let (header, payload, hit) =
+            preview_parts_opt(&src, &session, &cache, &|| false, false).expect("hit");
+        assert!(hit, "a current prvw entry must be served");
+        assert_eq!(payload.as_slice(), b"\xFF\xD8prvw");
+        assert_eq!(header.as_slice(), b"{\"orientation\":1}");
+        assert_eq!(cache.size_bytes(), before, "a hit writes nothing");
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Pins `put_prvw_on_miss`'s flag directly, ungated: `false` writes
+    /// nothing and a subsequent `get` still misses; `true` grows the store and
+    /// a subsequent `get` hits with the exact bytes given. This is the test
+    /// that actually distinguishes the two `put_on_miss` values — the cache-
+    /// HIT acquisition test above returns before this function is ever
+    /// called, and the only other coverage was the `CULL_TEST_CR3_DIR`-gated
+    /// corpus test below, which CI never runs.
+    #[test]
+    fn put_prvw_on_miss_writes_only_when_told_to() {
+        let work = grid_tmp("put-flag");
+        let cache = TierCache::new(work.join("tiers"));
+        let session = SessionGate::new();
+        let src = work.join("b.cr3");
+        std::fs::write(&src, b"not really a cr3").unwrap();
+        let src = src.to_string_lossy().to_string();
+        let stat = resolve_stat(&session, &src);
+
+        put_prvw_on_miss(
+            false,
+            &cache,
+            &src,
+            stat,
+            b"{\"orientation\":1}",
+            b"\xFF\xD8jpeg",
+        );
+        assert_eq!(cache.size_bytes(), 0, "false must write nothing");
+        let (ms, size) = stat.expect("stat");
+        assert!(
+            cache.get(CacheTier::Prvw, &src, ms, size).is_none(),
+            "false must leave the store missing this entry"
+        );
+
+        put_prvw_on_miss(
+            true,
+            &cache,
+            &src,
+            stat,
+            b"{\"orientation\":1}",
+            b"\xFF\xD8jpeg",
+        );
+        assert!(cache.size_bytes() > 0, "true must write the entry");
+        let (header, payload) = cache
+            .get(CacheTier::Prvw, &src, ms, size)
+            .expect("true must leave the store holding this entry");
+        assert_eq!(header.as_slice(), b"{\"orientation\":1}");
+        assert_eq!(payload.as_slice(), b"\xFF\xD8jpeg");
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// The real assertion, corpus-gated like every other test here that needs
+    /// pixels: a grid-tier acquisition on a prvw MISS reads the file and
+    /// leaves the prvw store empty, while the navigation form fills it.
+    /// `CULL_TEST_CR3_DIR=path cargo test -- --nocapture`.
+    #[test]
+    fn grid_acquisition_never_fills_the_prvw_cache_on_a_miss() {
+        let Ok(dir) = std::env::var("CULL_TEST_CR3_DIR") else {
+            eprintln!("skip: set CULL_TEST_CR3_DIR to a folder of .CR3 files");
+            return;
+        };
+        let src = std::fs::read_dir(&dir)
+            .expect("read dir")
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cr3")))
+            .expect("a CR3 under CULL_TEST_CR3_DIR")
+            .to_string_lossy()
+            .to_string();
+
+        let work = grid_tmp("miss");
+        let cache = TierCache::new(work.join("tiers"));
+        let session = SessionGate::new();
+
+        // The grid's form: reads the preview, caches nothing.
+        let (_, prvw, hit) =
+            preview_parts_opt(&src, &session, &cache, &|| false, false).expect("grid read");
+        assert!(!hit, "cold store must be a miss");
+        assert!(!prvw.is_empty(), "the preview really was read");
+        assert_eq!(
+            cache.size_bytes(),
+            0,
+            "the grid path must not write the prvw tier"
+        );
+
+        // The navigation form, same file, same store: fills it.
+        let (_, _, hit2) = preview_parts(&src, &session, &cache, &|| false).expect("nav read");
+        assert!(!hit2);
+        assert!(cache.size_bytes() > 0, "navigation still fills prvw");
+        let _ = std::fs::remove_dir_all(&work);
     }
 
     // Real-corpus check: every THMB in a folder of real CR3s decodes to a

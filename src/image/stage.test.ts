@@ -106,6 +106,20 @@ describe("resolveStage", () => {
     expect(s.url).toBe("f");
   });
 
+  // Phase 3B: the grid cell LAYERS the sharp grid tier over the THMB, so it
+  // needs its own field — the value `thumbDisplayUrl` returns must not change
+  // when this lands (that swap is the 8-away flash).
+  it("the grid tier is exposed independently of the nav stage", () => {
+    const withGrid: ImageState = { ...base, gridThumb: { status: "ready", url: "blob:g" } };
+    expect(resolveStage(withGrid).gridThumbUrl).toBe("blob:g");
+    expect(resolveStage(withGrid).stage).toBe("shimmer");
+    expect(resolveStage(base).gridThumbUrl).toBeUndefined();
+    // Loading is not ready — a half-arrived tier must not be offered.
+    expect(
+      resolveStage({ ...base, gridThumb: { status: "loading" } }).gridThumbUrl,
+    ).toBeUndefined();
+  });
+
   it("exposes the zoom tier's error as fullError, cleared once it is ready", () => {
     const thumb = { url: "t", dims: { w: 6, h: 4 } };
     const errored = resolveStage({

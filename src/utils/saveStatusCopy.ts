@@ -43,12 +43,24 @@ export function missingPhotosLabel(count: number): string {
 
 /** The all-missing chip label — the count phrase plus what clicking it does. */
 export function missingCheckAgainLabel(count: number): string {
-  return `${missingPhotosLabel(count)} · check again`;
+  return `${missingPhotosLabel(count)}${MISSING_ACTION_TAIL}`;
 }
+
+/** The retryable chip's count phrase WITHOUT its action tail: "3 unsaved".
+ *  The footer drops the tail below 1360px of window width — the button's
+ *  title still says what clicking it does, and it is the only button there. */
+export function unsavedCountLabel(failedCount: number): string {
+  return `${failedCount} unsaved`;
+}
+
+/** The action tails the narrow footer drops. Kept beside the full labels so
+ *  the two halves can never drift (saveStatusCopy.test asserts they compose). */
+export const UNSAVED_ACTION_TAIL = " · retry";
+export const MISSING_ACTION_TAIL = " · check again";
 
 /** The retryable chip label, unchanged: "3 unsaved · retry". */
 export function unsavedLabel(failedCount: number): string {
-  return `${failedCount} unsaved · retry`;
+  return `${unsavedCountLabel(failedCount)}${UNSAVED_ACTION_TAIL}`;
 }
 
 /**

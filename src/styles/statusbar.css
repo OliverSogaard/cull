@@ -18,10 +18,10 @@
 /* The top chrome row — brand + window controls. 36px, sits above
    the cull view, with border-bottom (status bar is at the bottom). */
 .cull-statusbar--top {
-  flex: 0 0 36px;
+  flex: 0 0 var(--bar-h);
   border-top: 0;
   border-bottom: 1px solid var(--border);
-  padding: 0 148px 0 14px;
+  padding: 0 var(--winbtn-reserve) 0 14px;
   font-size: var(--fs-4);
   letter-spacing: 0.04em;
 }
@@ -41,10 +41,20 @@
    The zoom indicator is the bar's only chip and has always rendered in
    accent ink, so the `--zoom` modifier is now just `chip--accent`. */
 .cull-statusbar__chip {
+  display: inline-flex;
+  align-items: center;
+  /* Reproduces the space the old flat text node ("zoom 2:1") used to have
+     between the word and the value: a mono space character advances by
+     0.6em, plus this chip's own 0.16em letter-spacing (applied per
+     character, the space included) = 0.76em. An arbitrary px gap here
+     would visibly re-space the chip at every width, including ≥1360 where
+     the word/value split is meant to change nothing at all. */
+  gap: 0.76em;
   padding: 1px 8px;
   background: var(--surface-2);
   letter-spacing: 0.16em;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* "N selected" multi-select counter chip — pinned next to the position
@@ -59,5 +69,187 @@
   background: var(--accent-soft);
   color: var(--accent);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
+/* ── the footer sheds as the window narrows ───────────────────
+   Pure CSS on the window width — the webview's viewport IS the window, so
+   no resize listener is needed. Every label below is rendered in both forms
+   by StatusBar; only one is ever displayed.
+
+   Three breakpoints below 1360, each hiding a fixed set of pieces:
+
+   1360 — the save chip's tail sheds (a full "4194 photos missing · check
+   again" tail costs ~93px, the single biggest item on the left; its
+   wrapper's title already says what the click does), the ALL-RATED finish
+   label sheds to "Finish" (scoped to `.is-done`; the button already carries
+   the brightened fill + one-time breathe animation from stage.css, so the
+   moment still reads without "All 4194 rated · Ctrl+E finish"'s ~244px),
+   the key hint disappears, AND — fix round 4 — the filename extension
+   (".CR3") goes too: every file in a cull is a .CR3, and shedding it here
+   means the cosmetic tier below never has to count it. It used to shed
+   alongside the other cosmetic words at 1220 while still being priced as if
+   it were already gone; moving it up here is what closes the overflow band
+   described below. The ORDINARY finish label ("Ctrl+E · N keeps") is
+   untouched at this breakpoint — it keeps its own tier at 1120 (the design
+   board said 1100; the sums below are why it moved 20px).
+
+   1240 — the three remaining cosmetic words go: the zoom/scrub chip's word
+   ("zoom 1:1" → "1:1" / "Scrubbing" → gone) and the verdict pill's word
+   ("REJECT" → gone, glyph only). This was 1220 through fix round 3; fix
+   round 4 moves it up 20px because the sums below rest on estimated glyph
+   advances, not a measured render, and the 1220 siting left as little as
+   2px of slack at its own tightest point once the extension is priced in
+   properly (see the arithmetic below) — a wider margin costs nothing, since
+   nothing else in this tier changed. The info rail's own, unrelated 1200px
+   breakpoint (exif-rail.css) is a different decision and stays exactly
+   where it is.
+
+   1120 — the ordinary finish label sheds to "Finish", unchanged by any of
+   this.
+
+   The arithmetic, restated in full with EVERY always-shown piece counted —
+   fix round 3 priced the worst case WITHOUT the extension even though the
+   extension was still shown at 1220–1359 at the time, which is exactly the
+   ~1220–1245px band that could still overflow. Building blocks (real CSS
+   numbers, not an estimate of the whole sum):
+
+     right cluster — pos counter (12ch mono) 79, two 14px gaps, filter tabs
+     at their widest ("SMART · 4194") 347, and the finish button: ordinary
+     long "Ctrl+E · 4194 keeps" 163, short "Finish" 66.
+       R-ordinary = 79 + 14 + 347 + 14 + 163 = 617
+       R-short    = 79 + 14 + 347 + 14 +  66 = 520
+
+     The 347 above is the tabs' measured advance; if it excludes their own
+     4px side margins, take 8 off every slack figure below — each stays
+     positive.
+
+     left cluster, the binding (NOT-all-rated) case, the two mutually
+     exclusive pairs collapsed to their larger member (zoom XOR scrub;
+     overlay cluster XOR "N selected") — verdict glyph 14 + gap 7 +
+     "REJECT" 47 = 68 (or 14 alone once the word sheds); scrub icon 12 +
+     two 4px gaps + "Scrubbing" 67 + ×10 chip 42 + that chip's own
+     `margin-left: 8px` = 137 (or 66 once the word sheds); the overlay cluster 133; the all-missing chip with its tail
+     already gone, "4194 photos missing", 143; four 14px gaps between the
+     five rendered items (filename included, even at zero width) = 56.
+       L-full   (cosmetic words shown) = 68 + 137 + 133 + 143 + 56 = 537
+       L-shrunk (cosmetic words hidden) = 14 +  66 + 133 + 143 + 56 = 412
+
+     filename — the stem ellipses toward zero in the worst case
+     (min-width: 0); the extension (".CR3") costs ~27px whenever it is
+     shown, 0 below 1360 now that it sheds there too.
+
+     overhead — the bar's own `padding: 0 18px` (36) plus the two 18px gaps
+     either side of the filename block (36) = 72, added once below.
+
+   Six pinned widths — the top and the tightest point of each of the three
+   states the footer can be in below 1360 (cosmetic shown; cosmetic hidden,
+   finish ordinary; cosmetic hidden, finish short) — every one clears with
+   slack to spare:
+
+     1359px (cosmetic shown, finish ordinary, extension already hidden):
+       537 + 0 + 617 + 72 = 1226 needed, 1359 available → 133px slack.
+     1240px (same state, this tier's own tightest width):
+       1226 needed, 1240 available → 14px slack.
+     1239px (cosmetic just hidden, finish still ordinary, extension hidden):
+       412 + 0 + 617 + 72 = 1101 needed, 1239 available → 138px slack.
+     1120px (same state, this tier's own tightest width):
+       1101 needed, 1120 available → 19px slack (at 1100, the design board's number, this state
+       would be 1px short — which is why the tier sits at 1120).
+     1119px (cosmetic hidden, finish just shed to short, extension hidden):
+       412 + 0 + 520 + 72 = 1004 needed, 1119 available → 115px slack.
+     1024px (the app's minimum window width, same state):
+       1004 needed, 1024 available → 20px slack — the filename stem's
+       worst-case headroom (all-missing chip + scrub + overlay cluster at
+       once); the stem ellipses there and nothing clips. In every ordinary
+       state the stem has its full 240px max-width.
+
+   Every pinned width clears its requirement. The band that used to overflow
+   (~1220–1245px, when the extension was still shown but never priced into
+   the sum) no longer exists, because the extension now sheds at 1360,
+   before the cosmetic tier is ever reached. Ordinary states (no scrub,
+   nothing missing, no smart suggestions) are nowhere near any of this. */
+@media (width < 1360px) {
+  .cull-statusbar__keyhint {
+    display: none;
+  }
+
+  /* The save chip's tail sheds here, a breakpoint earlier than the other
+     cosmetic words below — see the arithmetic above. It is hidden VISUALLY,
+     not removed: `display: none` would drop it from the button's
+     accessible name, and the button would stop announcing what clicking it
+     does. A media query cannot add a class, so this is the same clip-path
+     recipe inlined rather than shared through one. */
+  .cull-statusbar__unsaved-tail {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Only the ALL-RATED finish label sheds this early — "All 4194 rated ·
+     Ctrl+E finish" is ~244px, the single biggest thing on the right, and the
+     button already carries `is-done` (brightened fill + the one-time
+     breathe animation, stage.css), so "Finish" alone still reads as the
+     same moment. The ORDINARY label ("Ctrl+E · N keeps", ~163px at worst)
+     is far smaller and keeps shedding at its own 1120 tier — see
+     the arithmetic above; it is now the tighter of the two, not this one.
+     Three classes deep, this pair outranks the plain finish-short rule
+     below it (one class) on specificity alone, regardless of which comes
+     first in the file. */
+  .cull-statusbar__finish.is-done .cull-statusbar__finish-long {
+    display: none;
+  }
+
+  .cull-statusbar__finish.is-done .cull-statusbar__finish-short {
+    display: inline;
+  }
+
+  /* The name is enough; every file in a cull is a .CR3. Fix round 4 moved
+     this out of the cosmetic tier below (it used to shed at 1220 alongside
+     the other cosmetic words) so the cosmetic tier's own arithmetic never
+     has to price it in — see the comment above this whole rule block. */
+  .cull-statusbar__filename-ext {
+    display: none;
+  }
+}
+
+@media (width < 1240px) {
+  /* 1240, not the info rail's 1200 (exif-rail.css) — the rail's number is
+     its own decision; this one is the footer's worst-of-worst arithmetic
+     above needing those extra margins to fit before this shed can help it.
+     Fix round 3 sited it at 1220; fix round 4 moved it to 1240 for a wider
+     safety margin, since the sums it rests on are estimated glyph advances,
+     not a measured render. */
+  /* "zoom 1:1" → "1:1". */
+  .cull-statusbar__chip-label,
+  /* aria-label="scrubbing" on the wrapper keeps the word for AT. */
+  .cull-statusbar__scrub-label,
+  /* aria-label on the pill keeps the word for AT. */
+  .cull-statusbar__verdict-label {
+    display: none;
+  }
+}
+
+@media (width < 1120px) {
+  .cull-statusbar__finish-long {
+    display: none;
+  }
+}
+
+/* The short finish label is the exception: hidden by default, shown only
+   under 1120 (the reverse of every rule above). */
+.cull-statusbar__finish-short {
+  display: none;
+}
+
+@media (width < 1120px) {
+  .cull-statusbar__finish-short {
+    display: inline;
+  }
+}

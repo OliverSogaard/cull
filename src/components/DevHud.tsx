@@ -56,6 +56,15 @@ export function DevHud() {
         {stats.mid.engaged ? "ENGAGED" : "off"} · gen {stats.counts.midLoads}+{stats.counts.midGens}{" "}
         · evict {stats.counts.midEvicts} · sweep {stats.mid.sweepLeft}
       </div>
+      {/* Phase 3B: the grid tier. `cellW` and `want` are the request rule's
+          two inputs, so a grid that looks soft can be diagnosed without a
+          debugger: want=off means the THMB still covers the cell. */}
+      <div className="cull-devhud__row">
+        grid&nbsp; {stats.gridThumb.lane} · cache {stats.gridThumb.cached} · cellW{" "}
+        {stats.gridThumb.cellW} {stats.gridThumb.wanted ? "WANT" : "off"} · load{" "}
+        {stats.counts.gridThumbLoads} · evict {stats.counts.gridThumbEvicts} · n/a{" "}
+        {stats.gridThumb.unavailable}
+      </div>
       {stats.navTimings.map((t, i) => (
         <div className="cull-devhud__row cull-devhud__row--dim" key={i}>
           {t.ms}ms&nbsp;{t.name}
