@@ -1655,7 +1655,7 @@ export default function App() {
               <pre className="cull-message__body">{cur.error}</pre>
               <button
                 type="button"
-                className="btn cull-message__retry"
+                className="btn btn--sm cull-message__retry"
                 onClick={() => current && imageStore.retry(current.path)}
               >
                 retry

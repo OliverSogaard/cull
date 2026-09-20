@@ -297,8 +297,11 @@
   white-space: nowrap;
 }
 
-/* Rides `.btn` for the skeleton; everything below is what makes it the
-   footer's accent-outline mono pill rather than a dialog button. */
+/* Rides `btn btn--sm` for the skeleton and the size; everything below is what
+   makes it the footer's accent-outline mono pill rather than a dialog button.
+   The 10px mono label stays its own: sm unifies height and padding, and
+   uppercase mono at the sm 12px would widen the pill past the footer's
+   breathing room. */
 .cull-statusbar__finish {
   border-color: var(--accent);
   border-radius: var(--r-1);
@@ -307,7 +310,6 @@
   font-size: var(--fs-2);
   letter-spacing: var(--track-label);
   text-transform: uppercase;
-  padding: 5px 14px; /* off-scale */
   transition:
     background var(--dur-fast) ease,
     color var(--dur-fast) ease;
@@ -380,14 +382,15 @@
 }
 
 /* Retry affordance on the preview-failed panel (errored reads back off and
-   eventually go terminal — this re-queues the frame immediately). */
+   eventually go terminal — this re-queues the frame immediately). Size comes
+   from `btn--sm`; the 11px mono label stays its own, so the button keeps
+   speaking in the panel's voice rather than the dialogs'. */
 .cull-message__retry {
   font: inherit; /* mono + 1.7 line-height off .cull-message */
   font-size: var(--fs-3);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   background: var(--surface-2);
-  padding: 6px 18px; /* off-scale */
 }
 
 .cull-message__retry:hover:not(:disabled) {

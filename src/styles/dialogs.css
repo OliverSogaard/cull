@@ -360,14 +360,13 @@
   }
 }
 
-/* Reset button — a `.btn` in danger ink, two-state (outline → filled).
-   Both hovers restate ink because the base `.btn` hover is equally
-   specific and would otherwise grey it out. */
+/* Reset button — a `btn btn--sm` in danger ink, two-state (outline → filled).
+   Size and 12px type come from `--sm` like every other settings-row button;
+   only the ink is this rule's business. Both hovers restate that ink because
+   the base `.btn` hover is equally specific and would otherwise grey it out. */
 .cull-settings__reset {
   border-color: var(--bad);
-  padding: 7px 16px; /* off-scale */
   color: var(--bad);
-  font-size: var(--fs-4);
   letter-spacing: 0;
   transition:
     background var(--dur-fast) ease,
@@ -731,16 +730,18 @@
 }
 
 /* Outline-danger "close anyway". Kept as a surface modifier rather than a
-   `.btn--danger`: it is the only outline-danger button, and its :hover is
-   one specificity step below `.btn:hover:not(:disabled)` — as it was below the
-   old pick-button hover before — so the neutral hover still wins. Folding it
-   would have changed that pixel. */
+   `.btn--danger`: `--danger` is a solid fill, and this is deliberately the
+   app's one OUTLINE danger button — the escape hatch reads as a warning
+   without shouting from across the dialog.
+   The hover has to match `.btn:hover:not(:disabled)` exactly — same
+   specificity, later in the cascade — or the neutral hover greys the red
+   away and this rule never paints. */
 .cull-quitguard__danger {
   border-color: var(--bad);
   color: var(--bad);
 }
 
-.cull-quitguard__danger:hover {
+.cull-quitguard__danger:hover:not(:disabled) {
   background: var(--bad);
   border-color: var(--bad);
   color: var(--on-bad);

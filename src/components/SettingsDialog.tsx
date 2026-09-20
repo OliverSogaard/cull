@@ -449,7 +449,7 @@ function PinnedRootControl({ path, onPick }: { path: string; onPick: (next: stri
       <span className="cull-settings__pinned-path" title={path || "(No folder picked)"}>
         {path || "(No folder picked)"}
       </span>
-      <button type="button" className="btn" onClick={pick} disabled={picking}>
+      <button type="button" className="btn btn--sm" onClick={pick} disabled={picking}>
         {picking ? "Opening…" : "Change"}
       </button>
     </div>
@@ -534,7 +534,7 @@ function ThumbCacheRow() {
       label="Image cache"
       help={`Cached previews for faster re-opens. Safe to clear.${mbLabel}`}
     >
-      <button type="button" className="btn" onClick={handleClear} disabled={clearing}>
+      <button type="button" className="btn btn--sm" onClick={handleClear} disabled={clearing}>
         {clearing ? "Clearing…" : "Clear"}
       </button>
     </SettingRow>
@@ -562,7 +562,7 @@ function ResetRow({ onReset }: { onReset: () => void }) {
             <span className="cull-settings__reset-msg">Sure?</span>
             <button
               type="button"
-              className="btn cull-settings__reset is-armed"
+              className="btn btn--sm cull-settings__reset is-armed"
               onClick={() => {
                 onReset();
                 setArmed(false);
@@ -572,7 +572,11 @@ function ResetRow({ onReset }: { onReset: () => void }) {
             </button>
           </div>
         ) : (
-          <button type="button" className="btn cull-settings__reset" onClick={() => setArmed(true)}>
+          <button
+            type="button"
+            className="btn btn--sm cull-settings__reset"
+            onClick={() => setArmed(true)}
+          >
             Reset
           </button>
         )}
