@@ -541,9 +541,7 @@ export default function App() {
   // grid's real cell width.
   useEffect(() => {
     imageStore.setGridCellW(
-      gridVisible && !compareMode && gridContentW > 0
-        ? gridCellWidth(gridContentW, gridCols)
-        : 0,
+      gridVisible && !compareMode && gridContentW > 0 ? gridCellWidth(gridContentW, gridCols) : 0,
     );
   }, [gridVisible, compareMode, gridContentW, gridCols]);
 
