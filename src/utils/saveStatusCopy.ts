@@ -47,7 +47,7 @@ export function missingCheckAgainLabel(count: number): string {
 }
 
 /** The retryable chip's count phrase WITHOUT its action tail: "3 unsaved".
- *  The footer drops the tail below 1200px of window width — the button's
+ *  The footer drops the tail below 1360px of window width — the button's
  *  title still says what clicking it does, and it is the only button there. */
 export function unsavedCountLabel(failedCount: number): string {
   return `${failedCount} unsaved`;

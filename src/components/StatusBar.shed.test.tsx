@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
+import type { SetStateAction } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { StatusBar, type StatusBarProps } from "./StatusBar";
+import type { Filter } from "../types";
 
 /**
- * Below 1360 / 1200 / 1100 px of window width the footer sheds, in CSS. jsdom
+ * Below 1360 / 1240 / 1100 px of window width the footer sheds, in CSS. jsdom
  * has no layout and evaluates no media query, so what is testable here is the
  * CONTRACT the CSS needs: every shed label is rendered in BOTH forms, each in
  * its own element, and nothing the accessible name is built from moved.
@@ -40,7 +42,7 @@ function props(over: Partial<StatusBarProps["frame"]> = {}): StatusBarProps {
     },
     filter: {
       filter: "all",
-      setFilter: vi.fn(),
+      setFilter: vi.fn((_v: SetStateAction<Filter>): void => {}),
       stats: { total: 4194, unrated: 0, keeps: 4194 },
       qualityAnalyzing: false,
       qualityProgress: null,
@@ -50,7 +52,10 @@ function props(over: Partial<StatusBarProps["frame"]> = {}): StatusBarProps {
       chipsTooltip: {
         visible: false,
         pulse: vi.fn((): void => {}),
-        hoverProps: { onPointerEnter: vi.fn(), onPointerLeave: vi.fn() },
+        hoverProps: {
+          onPointerEnter: vi.fn((): void => {}),
+          onPointerLeave: vi.fn((): void => {}),
+        },
       },
       positionInFilter: 0,
       visibleCount: 4194,
