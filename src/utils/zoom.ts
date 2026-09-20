@@ -17,3 +17,24 @@ export function afZoomOrigin(
     y: Math.max(0, Math.min(100, afY + pan.y)),
   };
 }
+
+/**
+ * Picks the metadata `afZoomOrigin` should read for a frame's zoom origin.
+ * The committed metadata (App's `metadata` map / CompareView's `metadata`
+ * prop) wins whenever it already carries an AF point. Only when it doesn't —
+ * most often because a zoom engaged inside the metadata batcher's up-to-100ms
+ * flush window, before the committed delivery landed — does this fall back to
+ * `pending`, so a zoom still lands on the AF point instead of dead-centre.
+ * `pending` is a thunk so the (store-read) lookup only happens when it's
+ * actually needed, never on the far more common path where committed already
+ * has what it needs. If pending's own metadata has no AF point either, it's
+ * not worth preferring over committed, so committed wins by default.
+ */
+export function zoomOriginMeta(
+  committed: ImageMetadata | undefined,
+  pending: () => ImageMetadata | undefined,
+): ImageMetadata | undefined {
+  if (committed?.afXPct != null) return committed;
+  const pendingMeta = pending();
+  return pendingMeta?.afXPct != null ? pendingMeta : committed;
+}

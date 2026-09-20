@@ -215,22 +215,35 @@ export const StatusBar = memo(function StatusBar({
             {selection.selectedCount} selected
           </span>
         )}
-        {failureKind !== "none" ? (
+        {/* One <button> for every state (failed / missing / saving), so a
+            retry that lands never swaps the element type under the user's
+            keyboard focus — see saveStatusCopy and StatusBar.saveChip.test.
+            Saving is aria-disabled rather than actually disabled: a disabled
+            button drops focus in Chromium. */}
+        {(failureKind !== "none" || save.savingCount > 0) && (
           <button
             type="button"
             className="cull-statusbar__unsaved"
-            onClick={save.retryFailed}
-            title={failureKind === "missing" ? MISSING_PHOTO_TITLE : UNSAVED_TITLE}
+            aria-disabled={failureKind === "none" || undefined}
+            onClick={() => {
+              if (failureKind === "none") return;
+              save.retryFailed();
+            }}
+            title={
+              failureKind === "missing"
+                ? MISSING_PHOTO_TITLE
+                : failureKind === "retry"
+                  ? UNSAVED_TITLE
+                  : undefined
+            }
           >
-            <TriangleAlert {...ICON.sm} aria-hidden />
+            {failureKind !== "none" && <TriangleAlert {...ICON.sm} aria-hidden />}
             {failureKind === "missing"
               ? missingCheckAgainLabel(save.missingCount)
-              : unsavedLabel(save.failedCount)}
+              : failureKind === "retry"
+                ? unsavedLabel(save.failedCount)
+                : `Saving ${save.savingCount}…`}
           </button>
-        ) : (
-          save.savingCount > 0 && (
-            <span className="cull-statusbar__saving">Saving {save.savingCount}…</span>
-          )
         )}
       </div>
       <div className="cull-statusbar__spacer" />

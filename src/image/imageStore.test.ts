@@ -1133,6 +1133,56 @@ describe("mid tier (Phase 8)", () => {
     expect(midCalls(calls)).toHaveLength(1);
   });
 
+  it("a per-file 'not found' from read_mid is an ordinary tier error — it does not latch the tier off for other paths", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const calls = routeMidInvoke({
+      read_mid: (args) => {
+        const p = (args as Record<string, unknown>).path;
+        return p === "/p/a.cr3"
+          ? Promise.reject(new Error("read_mid(/p/a.cr3): file not found"))
+          : Promise.resolve(makeMidBuf());
+      },
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(["/p/a.cr3", "/p/b.cr3"]);
+    store.setNeedPxProvider(() => 1860);
+
+    store.maybeRequestMid("/p/a.cr3");
+    await flush();
+    expect(midCalls(calls)).toHaveLength(1);
+    expect(store.snapshot("/p/a.cr3").mid).toBeUndefined();
+
+    // A live path's own "not found" must not dormant the tier for the rest
+    // of the session — only a missing read_mid COMMAND does that.
+    store.maybeRequestMid("/p/b.cr3");
+    await vi.waitUntil(() => store.snapshot("/p/b.cr3").mid !== undefined, { timeout: 2000 });
+    expect(midCalls(calls)).toHaveLength(2);
+    expect(store.snapshot("/p/b.cr3").mid?.url).toMatch(/^blob:/);
+  });
+
+  it("'Command read_mid not found' latches the mid tier off for the session", async () => {
+    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+    const calls = routeMidInvoke({
+      read_mid: () => Promise.reject(new Error("Command read_mid not found")),
+    });
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    store.reset(["/p/a.cr3", "/p/b.cr3"]);
+    store.setNeedPxProvider(() => 1860);
+
+    store.maybeRequestMid("/p/a.cr3");
+    await flush();
+    expect(midCalls(calls)).toHaveLength(1);
+
+    // The whole tier stays dormant — a second path never even tries.
+    store.maybeRequestMid("/p/b.cr3");
+    await flush();
+    expect(midCalls(calls)).toHaveLength(1);
+  });
+
   it("a mid wanted mid-nav defers until the hint lands, then carries it", async () => {
     const { PERFORMANCE_PROFILES } = await import("../types/settings");
     let releaseNav: ((buf: ArrayBuffer) => void) | undefined;
@@ -1676,6 +1726,21 @@ describe("imageStore — metadata batching", () => {
     expect(sink).toHaveBeenCalledTimes(1);
     expect([...sink.mock.calls[0][0].keys()]).toEqual(paths);
   });
+
+  it("pendingMetaFor delegates to the batcher's peek (the zoom-origin read only)", async () => {
+    const { store, paths } = await twoLandedThumbs();
+
+    expect(store.pendingMetaFor(paths[0])).toMatchObject({ iso: 100 });
+    expect(store.pendingMetaFor("/m/nope.cr3")).toBeUndefined();
+  });
+
+  it("pendingMetaFor still sees the entry after reset() — reset deliberately keeps the queue", async () => {
+    const { store, paths } = await twoLandedThumbs();
+
+    store.reset(paths);
+
+    expect(store.pendingMetaFor(paths[0])).toMatchObject({ iso: 100 });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1857,6 +1922,68 @@ describe("imageStore — reads in flight for a forgotten path", () => {
 
     expect(trouble).not.toHaveBeenCalled();
     expect(store.debugStats().counts.errors).toBe(0);
+  });
+
+  it("a forgotten path's registerWantFull never starts a read_preview — it must not steal a nav-lane slot from the frame the user is on", async () => {
+    const { store, deferreds } = await stagedStore();
+
+    store.forget(new Set([PATH]));
+    store.registerWantFull(PATH);
+    await flush();
+
+    expect(deferreds).toHaveLength(0);
+    expect(readsOf("read_preview")).toBe(0);
+  });
+
+  it("a forgotten path's requestThumbFor never starts a thumb read", async () => {
+    const { store, deferreds } = await stagedStore();
+
+    store.forget(new Set([PATH]));
+    store.requestThumbFor(PATH);
+    await flush();
+
+    expect(deferreds).toHaveLength(0);
+    expect(readsOf("extract_thumbnail")).toBe(0);
+  });
+
+  it("a forgotten path's requestZoomFull never starts a read_fullres invoke", async () => {
+    const { store, deferreds } = await stagedStore();
+
+    store.forget(new Set([PATH]));
+    store.requestZoomFull(PATH);
+    await flush();
+
+    expect(deferreds).toHaveLength(0);
+    expect(readsOf("read_fullres")).toBe(0);
+  });
+
+  it("a forgotten path's requestMid never starts a read_mid invoke", async () => {
+    const { store, deferreds } = await stagedStore();
+    store.setNeedPxProvider(() => 1860); // 4K-class stage — the mid tier engages
+
+    store.forget(new Set([PATH]));
+    store.maybeRequestMid(PATH);
+    await flush();
+
+    expect(deferreds).toHaveLength(0);
+    expect(readsOf("read_mid")).toBe(0);
+  });
+
+  it("rearm() does not re-queue a forgotten path whose in-flight read settled after the tombstone, but still re-queues a surviving wanted one", async () => {
+    const { store, deferreds } = await stagedStore([PATH, SURVIVOR]);
+    store.registerWantFull(PATH);
+    store.registerWantFull(SURVIVOR);
+    expect(deferreds).toHaveLength(2); // both nav reads in flight
+
+    store.forget(new Set([PATH])); // Move rejects mid-flight — PATH is tombstoned
+    deferreds[0].reject(new Error("ENOENT: no such file or directory")); // PATH's read lands after the tombstone
+    deferreds[1].reject(new Error("ENOENT: no such file or directory")); // SURVIVOR fails normally, still wanted
+    await flush();
+
+    store.rearm();
+
+    // Without the tombstone check, rearm() would re-arm PATH too (4 reads).
+    expect(readsOf("read_preview")).toBe(3);
   });
 
   it("reset() clears the tombstones — a re-staged path loads normally again", async () => {

@@ -30,6 +30,7 @@ import { normalizeRejectedSubfolder, type PerformanceProfile } from "../types/se
 import { basename } from "../utils/path";
 import { imageStore } from "../image/imageStore";
 import { overlayService } from "../overlays/overlayService";
+import { seedLrcMeta } from "../utils/mergeMeta";
 import { omitIds, pruneGone, pruneHistory, remapNavStack } from "../utils/pruneSession";
 import { summarizeAnalyzeWarnings, type AnalyzeWarning } from "../utils/analyzeWarnings";
 import { renderMeter } from "../utils/renderMeter";
@@ -429,8 +430,12 @@ export function useSessionLifecycle({
       // we just did. The grid renders before per-image bundles arrive, so this
       // lets the corner ★ badge appear immediately for any image that already
       // had an .xmp sidecar. The bundle read later fills in the rest of meta
-      // (camera/lens/EXIF); this seed is the ONLY source of lrcRating — the
-      // metaSink merge carries it forward when bundle meta lands without one.
+      // (camera/lens/EXIF); on a fresh folder this seed is the ONLY source of
+      // lrcRating and the metaSink merge carries it forward when bundle meta
+      // lands without one. On a same-session re-stage, `prev` may already hold
+      // an entry for a path (full EXIF, `lrcRating: null`) from before this
+      // pass — seedLrcMeta backfills only that null star and never touches the
+      // existing EXIF or an existing star.
       const seededMeta: Record<string, ImageMetadata> = {};
       const lrcRatings = result.lrcRatings ?? [];
       lrcRatings.forEach((lrc, origIdx) => {
@@ -443,7 +448,7 @@ export function useSessionLifecycle({
       setImages(sorted);
       setRatings(restoredRatings);
       setAnalyzeWarning(summarizeAnalyzeWarnings(result));
-      setMetadata((prev) => ({ ...seededMeta, ...prev }));
+      setMetadata((prev) => seedLrcMeta(prev, seededMeta));
       // Point the image store at the (sorted) culling set: revoke any prior
       // full-res blobs, keep thumbs, and kick off background thumb fill in
       // cursor-outward / grid-viewport order. Same array we just set.

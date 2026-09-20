@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Img, ImageMetadata } from "../types";
 import type { PaneRect } from "../components/pane/paneGeometry";
+import { imageStore } from "../image/imageStore";
+import { zoomOriginMeta } from "../utils/zoom";
 
 const PAN_LIMIT = 40; // max % offset from the AF point
 
@@ -126,7 +128,12 @@ export function usePaneZoom({
   useEffect(() => {
     if (!mouseZooming) return;
     const curImg = images[currentIndex];
-    const meta = curImg ? metadata[curImg.path] : undefined;
+    // Same AF read as the origin (App): a zoom inside the 100 ms metadata
+    // batch window must see the pending AF point too, or pan and origin
+    // disagree and the zoom lands off the cursor.
+    const meta = curImg
+      ? zoomOriginMeta(metadata[curImg.path], () => imageStore.pendingMetaFor(curImg.path))
+      : undefined;
     const afX = meta?.afXPct ?? 50;
     const afY = meta?.afYPct ?? 50;
     const onMove = (e: MouseEvent) => {
@@ -175,7 +182,9 @@ export function usePaneZoom({
       const py = ((e.clientY - sr.top - imgRect.top) / imgRect.height) * 100;
       if (px < 0 || px > 100 || py < 0 || py > 100) return;
       const curImg = images[currentIndex];
-      const meta = curImg ? metadata[curImg.path] : undefined;
+      const meta = curImg
+        ? zoomOriginMeta(metadata[curImg.path], () => imageStore.pendingMetaFor(curImg.path))
+        : undefined;
       e.preventDefault();
       lastMouseRef.current = { x: e.clientX, y: e.clientY };
       // origin = AF + pan, so this pan puts the origin exactly under the cursor.

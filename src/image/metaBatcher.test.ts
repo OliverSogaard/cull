@@ -34,6 +34,53 @@ describe("MetaBatcher", () => {
     expect(sink.mock.calls[0][0].get("/a.CR3")).toMatchObject({ phash: "abc", iso: 400 });
   });
 
+  test("peek returns the pending entry before a flush, and undefined once the flush delivered it", () => {
+    const { scheduler, flushWindow } = manualScheduler();
+    const sink = makeSink();
+    const b = new MetaBatcher(scheduler);
+    b.setSink(sink);
+    b.push("/a.CR3", meta({ afXPct: 30 }));
+    expect(b.peek("/a.CR3")).toMatchObject({ afXPct: 30 });
+    flushWindow();
+    expect(b.peek("/a.CR3")).toBeUndefined();
+  });
+
+  test("peek returns undefined for a path forget() dropped", () => {
+    const { scheduler } = manualScheduler();
+    const sink = makeSink();
+    const b = new MetaBatcher(scheduler);
+    b.setSink(sink);
+    b.push("/a.CR3", meta({ afXPct: 30 }));
+    b.forget(new Set(["/a.CR3"]));
+    expect(b.peek("/a.CR3")).toBeUndefined();
+  });
+
+  test("peek returns undefined after clear (hardReset)", () => {
+    const { scheduler } = manualScheduler();
+    const sink = makeSink();
+    const b = new MetaBatcher(scheduler);
+    b.setSink(sink);
+    b.push("/a.CR3", meta({ afXPct: 30 }));
+    b.clear();
+    expect(b.peek("/a.CR3")).toBeUndefined();
+  });
+
+  // imageStore.reset() deliberately never calls forget()/clear() on the
+  // batcher (thumbs survive reset()) — that reset-survival property is
+  // covered at the imageStore level by imageStore.test.ts's "pendingMetaFor
+  // still sees the entry after reset() — reset deliberately keeps the
+  // queue". This test only covers the batcher's own contract: peek is keyed
+  // per path, so an unrelated delivery cannot disturb it.
+  test("an unrelated delivery does not disturb a pending entry", () => {
+    const { scheduler } = manualScheduler();
+    const sink = makeSink();
+    const b = new MetaBatcher(scheduler);
+    b.setSink(sink);
+    b.push("/a.CR3", meta({ afXPct: 30 }));
+    b.push("/b.CR3", meta({ afXPct: 70 })); // an unrelated delivery must not disturb it
+    expect(b.peek("/a.CR3")).toMatchObject({ afXPct: 30 });
+  });
+
   test("forget drops pending entries for gone paths", () => {
     const { scheduler, flushWindow } = manualScheduler();
     const sink = makeSink();

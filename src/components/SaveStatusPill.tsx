@@ -16,7 +16,9 @@ import {
  *               is usually a drive that dropped out, so it offers the re-check
  *               in the same words as the bottom bar's chip
  *  - failed   → red pill, a real button, same retry path as the bottom bar
- *  - saving   → champagne dot pulsing, "saving…" text, not a control
+ *  - saving   → champagne dot pulsing, "saving…" text; still a real button
+ *               (aria-disabled, not clickable) so a retry that lands mid-flight
+ *               doesn't drop keyboard focus to the page
  *  - idle     → muted dot, "saved" text (default)
  *
  * A failure wins over saving so an in-flight retry doesn't visually mask the
@@ -45,6 +47,7 @@ export function SaveStatusPill({
   // Quiet when there's nothing to say: a standing "saved" on a fresh home
   // screen reads as noise. The pill exists for in-flight and failed writes.
   if (state === "idle") return null;
+  const isSaving = state === "saving";
   const className = `chip cull-save-status cull-save-status--${state}`;
   const body = (
     <>
@@ -58,22 +61,26 @@ export function SaveStatusPill({
       </span>
     </>
   );
-  if (state === "saving") {
-    return (
-      <span
-        className={className}
-        title={`Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`}
-      >
-        {body}
-      </span>
-    );
-  }
+  // One <button> for every non-idle state (mirrors the status-bar chip): a
+  // retry that lands and flips this straight to "saving" must not swap the
+  // element type out from under keyboard focus. aria-disabled, not the
+  // `disabled` attribute — a disabled button drops focus in Chromium.
   return (
     <button
       type="button"
       className={className}
-      onClick={onRetry}
-      title={state === "missing" ? MISSING_PHOTO_TITLE : UNSAVED_TITLE}
+      aria-disabled={isSaving || undefined}
+      onClick={() => {
+        if (isSaving) return;
+        onRetry();
+      }}
+      title={
+        isSaving
+          ? `Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
+          : state === "missing"
+            ? MISSING_PHOTO_TITLE
+            : UNSAVED_TITLE
+      }
     >
       {body}
     </button>

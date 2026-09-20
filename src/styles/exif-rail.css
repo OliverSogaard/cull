@@ -160,11 +160,11 @@
 /* Layout-bearing tracking: the key column is a fixed 90px track, so the
    eyebrow's .2em would wrap "LrC rating" (+ the is-diff dot). Keep the
    old .06em here rather than in the primitive.
-   The is-diff marker is a Lucide Dot rendered in this cell by ExifRail's
+   The is-diff marker is a plain 4px dot rendered in this cell by ExifRail's
    CompareRow. `align-items: baseline` (not center) is deliberate: the cell is
    a grid item in a baseline-aligned row, and only the key TEXT can supply the
    baseline the row aligns on — centring everything would leave the browser
-   synthesising one from the icon and drop the key off the value columns' line.
+   synthesising one from the dot and drop the key off the value columns' line.
    The dot centres itself instead. */
 .cull-cr-rail__row .cull-cr-rail__k {
   letter-spacing: 0.06em;
@@ -172,10 +172,16 @@
   align-items: baseline;
 }
 
-/* No gap before the key text: the icon's own box already carries more space
-   than the 90px track can spare. */
+/* No gap before the key text: the dot's own box already carries more space
+   than the 90px track can spare. Sized to match the Phase 3A bullet it
+   replaced (a Lucide Dot glyph painted too small to read as a mark at
+   14px — see Task 4b) rather than scaled off the icon grid. */
 .cull-cr-rail__diff-dot {
   align-self: center;
   flex-shrink: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentcolor;
   color: var(--accent);
 }

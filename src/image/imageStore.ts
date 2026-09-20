@@ -66,6 +66,7 @@ import { MidSweep } from "./midSweep";
 import { resolveStage, type ImageState, type Resolved } from "./stage";
 import { MetaBatcher, type FlushScheduler, type MetaBatchSink } from "./metaBatcher";
 import type { ImageDims } from "../utils/bundle";
+import type { ImageMetadata } from "../types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -240,6 +241,10 @@ export class ImageStore {
    *  flight for a gone path still passes its landing site's generation check;
    *  these tombstones are what stops it re-creating the path's records, on the
    *  success AND the error landing of all four tiers.
+   *  The four request entry points (requestThumbFor, registerWantFull,
+   *  requestZoomFull, requestMid) and rearm() consult it too, so a
+   *  tombstoned path can never take a lane slot ahead of the frame the user
+   *  is looking at, before OR after its in-flight read settles.
    *  Cleared by reset()/hardReset(). */
   private forgotten = new Set<string>();
   // ── Session generation counter (cancellation) ─────────────────────────
@@ -532,6 +537,15 @@ export class ImageStore {
    */
   setMetaSink(sink: MetaBatchSink | undefined): void {
     this.metaBatcher.setSink(sink);
+  }
+
+  /** Thin delegate to the batcher's peek — for the zoom-origin AF-point read
+   *  only (App.tsx / CompareView.tsx), so a zoom engaged inside the
+   *  up-to-100ms flush window can still land on the AF point instead of
+   *  falling back to dead-centre. Not a general way around the batch window:
+   *  every other consumer still waits for setMetaSink's delivery. */
+  pendingMetaFor(path: string): ImageMetadata | undefined {
+    return this.metaBatcher.peek(path);
   }
 
   /**
@@ -873,6 +887,9 @@ export class ImageStore {
   registerWantFull(path: string): void {
     if (!path) return;
     this.wantFull.inc(path);
+    // Tombstoned (Move rejected it) — keep the refcount balanced for the
+    // consumer's eventual unregister, but never start a new read for it.
+    if (this.forgotten.has(path)) return;
     if (!this.requestedFull.has(path)) {
       // Failed earlier? Respect the backoff instead of hammering: the
       // scheduled retry (or the manual retry affordance) re-queues. Terminal
@@ -991,6 +1008,10 @@ export class ImageStore {
     this.midReprobed.clear();
     this.trouble.reset();
     for (const p of this.wantFull.keys()) {
+      // A path forgotten mid-flight (Move rejects) can settle AFTER the
+      // tombstone with its request markers clear — without this it would
+      // take a nav-lane slot ahead of the frame the user is looking at.
+      if (this.forgotten.has(p)) continue;
       if (
         this.fulls.get(p)?.status !== "ready" &&
         !this.requestedFull.has(p) &&
@@ -1008,6 +1029,7 @@ export class ImageStore {
 
   requestThumbFor(path: string): void {
     if (!path) return;
+    if (this.forgotten.has(path)) return;
     if (this.requestedThumb.has(path) || this.thumbs.has(path)) return;
     // Cooling down or terminal → don't queue; the bg-sweep retry (re-added to
     // bgQueue on failure) picks it up when the backoff expires, and the cell
@@ -1343,6 +1365,7 @@ export class ImageStore {
    */
   requestZoomFull(path: string): void {
     if (!path) return;
+    if (this.forgotten.has(path)) return;
     const existing = this.zoomFulls.get(path);
     if (existing?.status === "ready" || existing?.status === "loading") return;
     if (this.requestedZoom.has(path) || this.zoomInFlightPaths.has(path)) return;
@@ -1466,6 +1489,7 @@ export class ImageStore {
 
   private requestMid(path: string): void {
     if (!path || this.midUnsupported) return;
+    if (this.forgotten.has(path)) return;
     const existing = this.mids.get(path);
     if (existing?.status === "ready" || existing?.status === "loading") return;
     if (this.requestedMid.has(path) || this.midInFlightPaths.has(path)) return;
@@ -1523,8 +1547,12 @@ export class ImageStore {
           this.midReprobed.add(path);
           this.scheduleMidReprobe(path, gen);
         }
-      } else if (/not found|unknown command|no handler/i.test(msg)) {
-        // Phase-8 frontend on an older backend: the tier stays dormant.
+      } else if (/command\s+\S*\s*not found|unknown command|no handler/i.test(msg)) {
+        // Phase-8 frontend on an older backend: the tier stays dormant. Narrowed
+        // to the command-missing shapes (Tauri's own "Command read_mid not
+        // found") — a per-file "not found" (a real file, or a moved one still
+        // untombstoned) must go to the ordinary per-path error path instead of
+        // dormanting the whole tier for the session.
         this.midUnsupported = true;
       } else {
         this.noteTierError(this.midErrors, path, msg);

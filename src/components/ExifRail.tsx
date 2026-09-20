@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { Dot, Star } from "lucide-react";
+import { Star } from "lucide-react";
 import { ICON } from "./icons";
 import { stripExt } from "../utils/path";
 import type { ImageMetadata, Rating } from "../types";
@@ -378,9 +378,7 @@ function CompareRow({ k, a, b }: { k: string; a: string; b: string }) {
   return (
     <div className={`cull-cr-rail__row${diff ? " is-diff" : ""}`}>
       <span className="eyebrow cull-cr-rail__k">
-        {diff && (
-          <Dot className="cull-cr-rail__diff-dot" {...ICON.md} fill="currentColor" aria-hidden />
-        )}
+        {diff && <span className="cull-cr-rail__diff-dot" aria-hidden />}
         {k}
       </span>
       <span className="cull-cr-rail__v">{a}</span>

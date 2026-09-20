@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_METADATA, type ImageMetadata } from "../types";
-import { applyMetaBatch, mergeMeta } from "./mergeMeta";
+import { applyMetaBatch, mergeMeta, seedLrcMeta } from "./mergeMeta";
 
 /** All-null template so each test only sets the fields it cares about. */
 const meta = (over: Partial<ImageMetadata> = {}): ImageMetadata => ({
@@ -87,5 +87,62 @@ describe("applyMetaBatch", () => {
     expect(next).not.toBe(prev);
     expect(next["/a.CR3"].lrcRating).toBe(4);
     expect(Object.keys(next)).toEqual(["/a.CR3", "/b.CR3"]);
+  });
+});
+
+describe("seedLrcMeta", () => {
+  it("backfills a null star onto a full-EXIF entry without touching its other fields", () => {
+    // Bundle read already landed (full EXIF) before the star arrived from the
+    // sidecar pass — the re-stage case this task exists for.
+    const prev = {
+      "/a.CR3": meta({ camera: "Canon R5", lens: "RF 24-105mm", iso: 400, lrcRating: null }),
+    };
+    const seeded = { "/a.CR3": meta({ lrcRating: 4 }) };
+
+    const next = seedLrcMeta(prev, seeded);
+
+    expect(next["/a.CR3"].lrcRating).toBe(4);
+    expect(next["/a.CR3"].camera).toBe("Canon R5");
+    expect(next["/a.CR3"].lens).toBe("RF 24-105mm");
+    expect(next["/a.CR3"].iso).toBe(400);
+  });
+
+  it("keeps an existing star instead of overwriting it with the seed's", () => {
+    const prev = { "/a.CR3": meta({ lrcRating: 2 }) };
+    const seeded = { "/a.CR3": meta({ lrcRating: 5 }) };
+
+    const next = seedLrcMeta(prev, seeded);
+
+    expect(next["/a.CR3"].lrcRating).toBe(2);
+  });
+
+  it("adds a seeded path that has no prev entry as-is", () => {
+    const prev = {};
+    const seeded = { "/a.CR3": meta({ lrcRating: 3 }) };
+
+    const next = seedLrcMeta(prev, seeded);
+
+    expect(next["/a.CR3"]).toEqual(seeded["/a.CR3"]);
+  });
+
+  it("leaves a prev path absent from seeded untouched", () => {
+    const prev = { "/a.CR3": meta({ camera: "Canon R5", lrcRating: 3 }) };
+    const seeded = {};
+
+    const next = seedLrcMeta(prev, seeded);
+
+    expect(next["/a.CR3"]).toEqual(prev["/a.CR3"]);
+  });
+
+  it("mutates neither input object", () => {
+    const prev = { "/a.CR3": meta({ camera: "Canon R5", lrcRating: null }) };
+    const seeded = { "/a.CR3": meta({ lrcRating: 4 }) };
+    const prevSnapshot = JSON.parse(JSON.stringify(prev)) as unknown;
+    const seededSnapshot = JSON.parse(JSON.stringify(seeded)) as unknown;
+
+    seedLrcMeta(prev, seeded);
+
+    expect(prev).toEqual(prevSnapshot);
+    expect(seeded).toEqual(seededSnapshot);
   });
 });

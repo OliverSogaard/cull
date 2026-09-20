@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
 import { ICON } from "./icons";
@@ -19,10 +20,11 @@ type Props = {
 
 /** The close-request guard: shown while ratings are still being written (auto-closes
  *  when they land) or when writes exhausted their retries (explicit choice, never
- *  silent loss). When every failure is a photo that wasn't at its path, the way back
- *  is the footer's "check again" once the drive is up — not a retry from in here,
- *  which would fire against the same outage — so the guard says so and leaves the
- *  choice at keep culling / close anyway. */
+ *  silent loss). When every failure is a photo that wasn't at its path, "Check
+ *  again" re-attempts the same writes the footer's chip would: if the drive or
+ *  folder is back, the writes land and the guard's own auto-close finishes the
+ *  job, same as "Retry saving" does for an ordinary failure; if not, the choice
+ *  is still keep culling / close anyway. */
 export function QuitGuardOverlay({
   failedCount,
   missingCount,
@@ -32,6 +34,21 @@ export function QuitGuardOverlay({
   onCloseAnyway,
 }: Props): ReactNode {
   const failure = saveFailureKind(failedCount, missingCount);
+  // "Keep culling" carries key="keep" in every branch below, so it is the
+  // SAME DOM node across a branch change (React reconciles dialog__actions'
+  // children by key, not position) — this ref always points at whichever
+  // one is currently mounted, with no re-attach needed on the transition.
+  const keepCullingRef = useRef<HTMLButtonElement>(null);
+
+  // Move focus to "Keep culling" before firing the retry: it is the one
+  // control every branch renders, so focus survives into whichever branch
+  // follows (most often "saving") instead of falling to <body> when the
+  // pressed button's key disappears from the next render.
+  function focusKeepCullingThenRetry(): void {
+    keepCullingRef.current?.focus();
+    retryFailed();
+  }
+
   return (
     <div className="dialog">
       <div className="dialog__box">
@@ -41,19 +58,28 @@ export function QuitGuardOverlay({
               <TriangleAlert className="dialog__title-icon" {...ICON.lg} aria-hidden />
               {missingPhotosLabel(missingCount)}
             </div>
-            {/* Fact → what closing costs → how to recover. Nothing in this
-                dialog can clear the guard while the photos are unreachable, so
-                the last clause is the only way out that keeps the rating — it
-                must be on screen, not just in the other dialog. */}
+            {/* Fact → what closing costs → how to recover. The "Check again"
+                button below IS the recovery's first half; the second half —
+                put the photo back and rate it again — is what has to happen
+                first if the photo was actually moved or deleted, since no
+                amount of re-checking saves a write whose photo is gone. */}
             <div className="dialog__body">
               {missingFailureSentence(missingCount)} Closing now loses{" "}
               {missingCount > 1 ? "them" : "it"}. {missingRecovery(missingCount)}
             </div>
             <div className="dialog__actions">
-              <button className="btn btn--primary" onClick={onKeepCulling}>
+              <button
+                key="keep"
+                ref={keepCullingRef}
+                className="btn btn--primary"
+                onClick={onKeepCulling}
+              >
                 Keep culling
               </button>
-              <button className="btn cull-quitguard__danger" onClick={onCloseAnyway}>
+              <button key="check" className="btn" onClick={focusKeepCullingThenRetry}>
+                Check again
+              </button>
+              <button key="close" className="btn cull-quitguard__danger" onClick={onCloseAnyway}>
                 Close anyway
               </button>
             </div>
@@ -69,13 +95,13 @@ export function QuitGuardOverlay({
               write kept failing). Closing now will lose {failedCount > 1 ? "them" : "it"}.
             </div>
             <div className="dialog__actions">
-              <button className="btn btn--primary" onClick={retryFailed}>
+              <button key="retry" className="btn btn--primary" onClick={focusKeepCullingThenRetry}>
                 Retry saving
               </button>
-              <button className="btn" onClick={onKeepCulling}>
+              <button key="keep" ref={keepCullingRef} className="btn" onClick={onKeepCulling}>
                 Keep culling
               </button>
-              <button className="btn cull-quitguard__danger" onClick={onCloseAnyway}>
+              <button key="close" className="btn cull-quitguard__danger" onClick={onCloseAnyway}>
                 Close anyway
               </button>
             </div>
@@ -89,7 +115,7 @@ export function QuitGuardOverlay({
               The app will close on its own the moment your ratings are safely on disk.
             </div>
             <div className="dialog__actions">
-              <button className="btn" onClick={onKeepCulling}>
+              <button key="keep" ref={keepCullingRef} className="btn" onClick={onKeepCulling}>
                 Keep culling
               </button>
             </div>
