@@ -46,6 +46,38 @@ component test that side-effect-imports a stylesheet (e.g. via `App.tsx`
 importing `styles/index.css`) still gets the cheap default stub, since its
 import has no `?raw` query.
 
+## Stylesheet guards
+
+Phase 3B leaned on the `?raw` glob pattern above harder than anything before
+it — the "Reading source files in tests" mechanism itself didn't change, but
+three new test files use it to keep a CSS number and the JS constant that
+computes against it from drifting apart:
+
+- **`src/styles/layout.test.ts`** — reads the app's stylesheets raw and
+  checks that every layout token (`--bar-h`, `--winbtn-w`, `--rail-w`,
+  `--rail-w-compare`, `--strip-h`, `--cell-w`, `--cell-h`) is actually
+  referenced somewhere, and that the footer's, rail's and home screen's
+  picked window-WIDTH breakpoints (1360 / 1220 / 1200 / 1100 / 2000 px)
+  exist in the stylesheet at the exact width each was picked for.
+- **`src/components/strip/metrics.test.ts`** — asserts `STRIP_SMALL` /
+  `STRIP_LARGE` are the numbers the design board picked, and that `strip.css`'s
+  `.cull-thumbs` rule agrees with `metrics.ts`'s arithmetic for `stripH`. The
+  filmstrip's own window-HEIGHT breakpoint (1200 px) lives in
+  `useStripMetrics.ts`'s `matchMedia` query, a JS string rather than a
+  stylesheet rule, so it falls outside this raw-CSS pattern entirely.
+- **`src/image/gridThumbRule.test.ts`** — asserts `GRID_CELL_PADDING` (the
+  constant the request-rule math uses) equals the padding `grid.css` actually
+  draws on `.cull-grid__cell`.
+
+The rule this pattern exists to enforce: **a regex over raw CSS text must not
+be satisfiable by a comment.** A rule like `/--strip-h:\s*83px/` matches a
+`/* --strip-h: 83px */` explanation just as happily as the real declaration,
+so a test asserting a token's value has to anchor on the selector the
+declaration lives under (see `ruleBody`/`px` helpers in the files above),
+never a bare property-name search across the whole stylesheet — otherwise the
+guard can pass green while the CSS and the JS constant have already
+diverged.
+
 ## Env-var-gated corpus tests
 
 Real Canon CR3 files are not committed (see `.gitignore`'s `sample_cr3s`
