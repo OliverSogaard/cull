@@ -682,8 +682,8 @@
   margin-top: 8px;
 }
 
-/* The "add more" affordance lives in this hint now (drop or ⌃O) — the staged
-   screen no longer has a dedicated button for it. */
+/* The "add more" affordance lives in this hint now (drop or Ctrl+O, ⌘O on
+   macOS) — the staged screen no longer has a dedicated button for it. */
 .cull-staged__hint {
   margin-top: 14px;
   font-family: var(--font-mono);

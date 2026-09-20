@@ -160,7 +160,7 @@ export function useCullKeymap({
         return;
       }
       // Ctrl/Cmd+O → open a folder, from the home or staged screens (matches the
-      // "⌃ O" hint on the open button).
+      // "Ctrl" "O" keycap hint on the open button, "⌘" "O" on macOS).
       if (
         (e.ctrlKey || e.metaKey) &&
         (e.key === "o" || e.code === "KeyO") &&

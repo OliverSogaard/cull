@@ -1186,7 +1186,7 @@ export default function App() {
 
   // Ctrl/Cmd+A — select everything the current filter shows. Rating keys then
   // act on the whole set (one undo entry): the sanctioned bulk-apply path, e.g.
-  // Smart ✕ filter → grid → ⌘A → Backspace clears every suggested reject.
+  // Smart ✕ filter → grid → Ctrl/Cmd+A → Backspace clears every suggested reject.
   const selectAllInGrid = useCallback(() => {
     if (visibleIndices.length === 0) return;
     setSelectedIndices(new Set(visibleIndices));
