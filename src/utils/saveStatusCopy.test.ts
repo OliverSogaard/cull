@@ -82,9 +82,9 @@ describe("the missing-photo wording", () => {
     // retry started re-attempting missing writes; pinned here so no surface can
     // quietly go back to telling the user there is nothing to do.
     for (const count of [1, 2, 7]) {
-      expect(missingRecovery(count).startsWith("Check again once the drive or folder is back")).toBe(
-        true,
-      );
+      expect(
+        missingRecovery(count).startsWith("Check again once the drive or folder is back"),
+      ).toBe(true);
       expect(missingRecovery(count)).not.toContain("cannot help");
     }
   });

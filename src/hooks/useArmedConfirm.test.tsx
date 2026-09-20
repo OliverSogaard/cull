@@ -27,13 +27,7 @@ afterAll(() => {
  * the trigger and the "Yes" button, since whichever one mounts next (arming
  * or disarming) is the one that should take focus.
  */
-function Harness({
-  disarmMs = 4000,
-  onConfirm,
-}: {
-  disarmMs?: number;
-  onConfirm?: () => void;
-}) {
+function Harness({ disarmMs = 4000, onConfirm }: { disarmMs?: number; onConfirm?: () => void }) {
   const [armed, setArmed, confirmRef] = useArmedConfirm(disarmMs);
   return armed ? (
     <div>
