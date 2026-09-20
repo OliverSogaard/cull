@@ -32,6 +32,33 @@ export function mergeMeta(prev: ImageMetadata | undefined, incoming: ImageMetada
   return merged;
 }
 
+/**
+ * Folds a same-session analyze-pass seed (LrC stars only, `EMPTY_METADATA`
+ * otherwise) into the metadata map without discarding an already-staged
+ * entry's EXIF or its own star. A whole-entry override (`{...seeded, ...prev}`
+ * or the reverse) is wrong either way: one direction wipes camera/lens with
+ * the seed's nulls, the other throws the star away whenever `prev` already
+ * has an entry with `lrcRating: null` (the re-stage case this exists for).
+ *
+ * Per path with a `prev` entry, `mergeMeta` runs with the seed as `prev` and
+ * the existing entry as `incoming`: the existing entry's fields win via the
+ * spread, and only its `lrcRating` (when null) is back-filled from the seed —
+ * exactly `mergeMeta`'s own contract, just pointed at the seed instead of an
+ * older delivery. A seeded path with no `prev` entry is added as-is; a `prev`
+ * path absent from the seed is left untouched.
+ */
+export function seedLrcMeta(
+  prev: Record<string, ImageMetadata>,
+  seeded: Record<string, ImageMetadata>,
+): Record<string, ImageMetadata> {
+  const next = { ...prev };
+  for (const [path, seed] of Object.entries(seeded)) {
+    const existing = prev[path];
+    next[path] = existing ? mergeMeta(seed, existing) : seed;
+  }
+  return next;
+}
+
 /** Applies one flush window's worth of deliveries (see MetaBatcher) to the
  *  metadata map: one clone per 100 ms window instead of one per image. */
 export function applyMetaBatch(
