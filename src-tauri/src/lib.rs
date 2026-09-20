@@ -14,6 +14,7 @@
 //! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid), format v3 (`tier_cache::VERSION`). |
 //! | [`xmp`]       | XMP sidecar I/O: `write_xmp_rating` / `clear_xmp_rating` + the parser the analyze step uses to restore ratings. |
 //! | [`file_ops`]  | Post-cull file operations: `move_rejects_to_subfolder` / `copy_keeps_to_export`. |
+//! | [`gridthumb`] | Phase 3B grid tier: PRVW → SIMD resize ≤512 → q82 encode + orientation splice. |
 //!
 //! ## Invariants
 //!
@@ -55,6 +56,10 @@ mod embed;
 #[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
 mod faces;
 mod file_ops;
+// Consumed by `bundle::read_grid_thumb` (Task 10); until that lands the
+// module's only callers are its own tests.
+#[cfg_attr(not(test), allow(dead_code))]
+mod gridthumb;
 mod io_gate;
 mod jpeg_rgb;
 mod memory_pressure;
