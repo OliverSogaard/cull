@@ -1,5 +1,5 @@
 /* ── save-status pill (top chrome) ────────────────────────────
-   XMP save indicator next to the brand block. Three states driven
+   XMP save indicator next to the brand block. Four states driven
    purely from the existing savingCount / failedWrites state. */
 .cull-save-status {
   display: inline-flex;
@@ -35,13 +35,20 @@
   animation: cull-save-pulse 0.9s infinite;
 }
 
-.cull-save-status--failed {
+/* --missing shares the failed pill's alarm but not its affordance: the photo
+   is gone, so there is no retry to click. */
+.cull-save-status--failed,
+.cull-save-status--missing {
   color: var(--bad);
   background: rgba(200, 127, 127, 0.12);
+}
+
+.cull-save-status--failed {
   cursor: pointer;
 }
 
-.cull-save-status--failed .cull-save-status__dot {
+.cull-save-status--failed .cull-save-status__dot,
+.cull-save-status--missing .cull-save-status__dot {
   background: var(--bad);
   opacity: 1;
 }
@@ -709,3 +716,10 @@
   text-decoration: underline;
 }
 
+/* A missing photo's chip is a statement, not a retry button. */
+.cull-statusbar__unsaved--missing,
+.cull-statusbar__unsaved--missing:hover {
+  color: var(--bad);
+  cursor: default;
+  text-decoration: none;
+}

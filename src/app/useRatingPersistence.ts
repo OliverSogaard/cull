@@ -8,27 +8,42 @@ const FEEDBACK_MS = 320;
 // after the last attempt is surfaced as "unsaved" rather than silently dropped.
 const WRITE_RETRY_DELAYS = [400, 1500, 4000];
 
+/** A write that exhausted its options, and whether anything can still be done
+ *  about it. `rating === null` = an unrate (clear) that failed, so a stuck
+ *  unrate is surfaced and guarded just like a stuck rating. `missing` = the
+ *  backend refused because the photo is no longer at its path, which no retry
+ *  can fix (utils/writeFailure). */
+type FailedWrite = { rating: Rating | null; missing: boolean };
+
 /**
  * Rating-write durability + the rating feedback flash, verbatim from App
  * (grand cleanup Phase 6). Every rating writes an .xmp sidecar; we count
  * writes in flight (savingCount) and remember any that exhausted their
- * retries (failedWrites: path → the rating that didn't land) so we can show
- * them and block a quit that would lose work (see useQuitGuard, which reads
- * this hook's counts).
+ * retries (failedWrites: path → what didn't land) so we can show them and
+ * block a quit that would lose work (see useQuitGuard, which reads this
+ * hook's counts).
+ *
+ * Failures come in two kinds and the chrome must tell them apart: `failedCount`
+ * is every failure (so the quit guard and the leave-to-home warning still
+ * refuse to lose one silently), `missingCount` is the permanent subset whose
+ * photo is gone. What is left — `failedCount - missingCount` — is what a retry
+ * could still save, and the only thing that blocks finishing the cull.
  */
 export function useRatingPersistence() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
 
   const [savingCount, setSavingCount] = useState(0);
-  // path → the rating that didn't land. `null` = an unrate (clear) that failed,
-  // so a stuck unrate is surfaced and guarded just like a stuck rating.
-  const [failedWrites, setFailedWrites] = useState<Record<string, Rating | null>>({});
+  // path → the failure. One record rather than a second parallel set of missing
+  // paths: the two could drift apart (a missingCount above failedCount would
+  // make the retryable remainder go negative), and they never have to.
+  const [failedWrites, setFailedWrites] = useState<Record<string, FailedWrite>>({});
   // Mirrors of the above for the (once-registered) close-request handler, which
   // would otherwise capture stale values.
   const savingRef = useRef(0);
   const failedCountRef = useRef(0);
   const failedCount = Object.keys(failedWrites).length;
+  const missingCount = Object.values(failedWrites).filter((write) => write.missing).length;
 
   const flashFeedback = useCallback((rating: Rating, imageId: number) => {
     setFeedback({ rating, imageId, ts: Date.now() });
@@ -110,8 +125,9 @@ export function useRatingPersistence() {
         // (successful) write already cleared.
         if (isLatest()) {
           console.error(`${cmd} failed permanently`, path, e);
+          const missing = isPermanentWriteError(e);
           setFailedWrites((f) => {
-            const next = { ...f, [path]: rating };
+            const next = { ...f, [path]: { rating, missing } };
             failedCountRef.current = Object.keys(next).length;
             return next;
           });
@@ -121,9 +137,14 @@ export function useRatingPersistence() {
   }, []);
 
   // Re-attempt every rating that exhausted its retries (triggered from the unsaved
-  // indicator or the quit guard).
+  // indicator or the quit guard). A missing photo is skipped: the backend would
+  // refuse the write again, and clearing then re-stamping its failure would only
+  // make the chrome flicker.
   const retryFailed = useCallback(() => {
-    Object.entries(failedWrites).forEach(([path, rating]) => persistRating(path, rating));
+    Object.entries(failedWrites).forEach(([path, write]) => {
+      if (write.missing) return;
+      persistRating(path, write.rating);
+    });
   }, [failedWrites, persistRating]);
 
   // savingRef / failedCountRef are maintained SYNCHRONOUSLY inside persistRating
@@ -145,6 +166,7 @@ export function useRatingPersistence() {
     retryFailed,
     savingCount,
     failedCount,
+    missingCount,
     savingRef,
     failedCountRef,
   };

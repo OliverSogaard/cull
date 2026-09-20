@@ -7,6 +7,7 @@ import { ICON } from "./icons";
 import { normalizeRejectedSubfolder } from "../types/settings";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { missingFailureSentence, missingSkippedNote } from "../utils/saveStatusCopy";
 import {
   isReservedFolderName,
   joinPath,
@@ -48,6 +49,7 @@ export function FinishDialog({
   keepsCount,
   savingCount,
   failedCount,
+  missingCount,
   actionBusy,
   moveResult,
   copyResult,
@@ -65,6 +67,7 @@ export function FinishDialog({
   keepsCount: number;
   savingCount: number;
   failedCount: number;
+  missingCount: number;
   actionBusy: "move" | "copy" | null;
   moveResult: FileOpResult | null;
   copyResult: FileOpResult | null;
@@ -73,6 +76,11 @@ export function FinishDialog({
   onCopyKeeps: (dest: string) => void;
   onClose: () => void;
 }) {
+  // Only a failure a retry could still fix may block the cull from being
+  // finished. A rating whose photo is gone can never be written, so blocking on
+  // it would leave the session with no way out at all — it warns instead.
+  const retryableFailedCount = Math.max(0, failedCount - missingCount);
+
   const pinnedMode = settings.exportFolder.mode === "pinned";
   const pinnedRoot = settings.exportFolder.mode === "pinned" ? settings.exportFolder.path : "";
   // Default the editable subfolder to <source-basename>-keeps. If the user opens
@@ -175,7 +183,7 @@ export function FinishDialog({
     keptPaths.length === 0 ||
     actionBusy !== null ||
     savingCount > 0 ||
-    failedCount > 0 ||
+    retryableFailedCount > 0 ||
     (pinnedMode && (subInvalid || !pinnedRoot || rootMissing));
 
   const pickDestination = async () => {
@@ -271,12 +279,21 @@ export function FinishDialog({
 
         {(savingCount > 0 || failedCount > 0) && (
           <div className={`note cull-actions__pending${failedCount > 0 ? " note--bad" : ""}`}>
-            {failedCount > 0 ? (
+            {retryableFailedCount > 0 ? (
               <>
                 <TriangleAlert {...ICON.md} aria-hidden />
                 <span>
                   {failedCount} rating{failedCount > 1 ? "s" : ""} haven't saved · actions disabled
                   until resolved (status bar · retry)
+                  {missingCount > 0 && ` ${missingSkippedNote(missingCount)}`}
+                </span>
+              </>
+            ) : failedCount > 0 ? (
+              <>
+                <TriangleAlert {...ICON.md} aria-hidden />
+                <span>
+                  {missingFailureSentence(missingCount)} Retrying cannot help, so the actions below
+                  stay available.
                 </span>
               </>
             ) : (
@@ -291,7 +308,7 @@ export function FinishDialog({
             folder={folder}
             actionBusy={actionBusy}
             savingCount={savingCount}
-            failedCount={failedCount}
+            retryableFailedCount={retryableFailedCount}
             moveResult={moveResult}
             settings={settings}
             onMoveRejects={onMoveRejects}
@@ -379,7 +396,7 @@ export function FinishDialog({
                   keptPaths.length === 0 ||
                   actionBusy !== null ||
                   savingCount > 0 ||
-                  failedCount > 0 ||
+                  retryableFailedCount > 0 ||
                   picking
                 }
                 onClick={pickDestination}
@@ -406,7 +423,7 @@ export function FinishDialog({
                     keptPaths.length === 0 ||
                     actionBusy !== null ||
                     savingCount > 0 ||
-                    failedCount > 0
+                    retryableFailedCount > 0
                   }
                   onClick={commitCopy}
                 >
@@ -445,7 +462,7 @@ function MoveRejectsRow({
   folder,
   actionBusy,
   savingCount,
-  failedCount,
+  retryableFailedCount,
   moveResult,
   settings,
   onMoveRejects,
@@ -454,7 +471,7 @@ function MoveRejectsRow({
   folder: string | null;
   actionBusy: "move" | "copy" | null;
   savingCount: number;
-  failedCount: number;
+  retryableFailedCount: number;
   moveResult: FileOpResult | null;
   settings: Settings;
   onMoveRejects: (dest: "subfolder" | "trash") => void;
@@ -465,7 +482,11 @@ function MoveRejectsRow({
   const [dest, setDest] = useState<"subfolder" | "trash">("subfolder");
 
   const disabled =
-    !folder || rejectedCount === 0 || actionBusy !== null || savingCount > 0 || failedCount > 0;
+    !folder ||
+    rejectedCount === 0 ||
+    actionBusy !== null ||
+    savingCount > 0 ||
+    retryableFailedCount > 0;
 
   return (
     <div className="cull-actions__row">

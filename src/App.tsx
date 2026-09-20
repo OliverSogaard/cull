@@ -283,6 +283,7 @@ export default function App() {
     retryFailed,
     savingCount,
     failedCount,
+    missingCount,
     savingRef,
     failedCountRef,
   } = useRatingPersistence();
@@ -1278,6 +1279,7 @@ export default function App() {
   const quitGuardOverlay = quitGuard && (
     <QuitGuardOverlay
       failedCount={failedCount}
+      missingCount={missingCount}
       savingCount={savingCount}
       retryFailed={retryFailed}
       onKeepCulling={() => setQuitGuard(false)}
@@ -1345,8 +1347,8 @@ export default function App() {
     [gridVisible, selectedIndices.size],
   );
   const statusSave = useMemo<StatusBarSave>(
-    () => ({ savingCount, failedCount, retryFailed }),
-    [savingCount, failedCount, retryFailed],
+    () => ({ savingCount, failedCount, missingCount, retryFailed }),
+    [savingCount, failedCount, missingCount, retryFailed],
   );
   const statusFilter = useMemo<StatusBarFilter>(
     () => ({
@@ -1412,6 +1414,7 @@ export default function App() {
             </span>
             <SaveStatusPill
               failedCount={failedCount}
+              missingCount={missingCount}
               savingCount={savingCount}
               onRetry={retryFailed}
             />
@@ -1961,6 +1964,7 @@ export default function App() {
       {confirmHome && (
         <ConfirmHomeDialog
           failedCount={failedCount}
+          missingCount={missingCount}
           onLeave={leaveToHome}
           onStay={() => setConfirmHome(false)}
         />
@@ -1977,6 +1981,7 @@ export default function App() {
           keepsCount={stats.keeps}
           savingCount={savingCount}
           failedCount={failedCount}
+          missingCount={missingCount}
           actionBusy={actionBusy}
           moveResult={moveResult}
           copyResult={copyResult}

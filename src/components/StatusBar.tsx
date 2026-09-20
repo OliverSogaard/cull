@@ -4,6 +4,13 @@ import type { Filter, Rating } from "../types";
 import type { useChipsTooltipVisibility } from "../hooks/useChipsTooltipVisibility";
 import { cycleFilter, topOf } from "../utils/filterModes";
 import { modCombo } from "../utils/platform";
+import {
+  MISSING_PHOTO_TITLE,
+  missingPhotosLabel,
+  saveFailureKind,
+  unsavedLabel,
+  unsavedTitle,
+} from "../utils/saveStatusCopy";
 import { ICON } from "./icons";
 import { verdictGlyph } from "./verdictGlyph";
 
@@ -37,8 +44,14 @@ export type StatusBarOverlays = {
 
 export type StatusBarSelection = { gridVisible: boolean; selectedCount: number };
 
-/** XMP write durability: in-flight writes, failed writes, and the retry. */
-export type StatusBarSave = { savingCount: number; failedCount: number; retryFailed: () => void };
+/** XMP write durability: in-flight writes, failed writes (`missingCount` = the
+ *  permanent subset whose photo is gone), and the retry. */
+export type StatusBarSave = {
+  savingCount: number;
+  failedCount: number;
+  missingCount: number;
+  retryFailed: () => void;
+};
 
 /** The filter tabs and what they print. `smartCulling` is the SETTING (it gates the
  *  lazy `startAnalysis()`), not the analysis state; `chipsTooltip` is passed whole. */
@@ -102,6 +115,9 @@ export const StatusBar = memo(function StatusBar({
     favorite: "cull-statusbar__verdict--fav",
   };
   const totalKeeps = filter.stats.keeps; // includes favorites
+  // A write that failed because the photo is gone gets a statement, not a
+  // retry button — the retry could never succeed (see utils/saveStatusCopy).
+  const failureKind = saveFailureKind(save.failedCount, save.missingCount);
   return (
     <footer className="cull-statusbar">
       <div className="cull-statusbar__left">
@@ -197,14 +213,22 @@ export const StatusBar = memo(function StatusBar({
             {selection.selectedCount} selected
           </span>
         )}
-        {save.failedCount > 0 ? (
+        {failureKind === "missing" ? (
+          <span
+            className="cull-statusbar__unsaved cull-statusbar__unsaved--missing"
+            title={MISSING_PHOTO_TITLE}
+          >
+            <TriangleAlert {...ICON.sm} aria-hidden />
+            {missingPhotosLabel(save.missingCount)}
+          </span>
+        ) : failureKind === "retry" ? (
           <span
             className="cull-statusbar__unsaved"
             onClick={save.retryFailed}
-            title="Ratings failed to save · click to retry"
+            title={unsavedTitle(save.missingCount)}
           >
             <TriangleAlert {...ICON.sm} aria-hidden />
-            {save.failedCount} unsaved · retry
+            {unsavedLabel(save.failedCount)}
           </span>
         ) : (
           save.savingCount > 0 && (
