@@ -5,7 +5,7 @@ import type { Suggestion } from "../smart/deriveVerdict";
 import { RatingDot } from "./RatingDot";
 import { useImage } from "../image/useImage";
 import { imageStore } from "../image/imageStore";
-import { afZoomOrigin } from "../utils/zoom";
+import { afZoomOrigin, zoomOriginMeta } from "../utils/zoom";
 import { PhotoPane } from "./pane/PhotoPane";
 
 /**
@@ -84,13 +84,10 @@ export const CompareView = memo(function CompareView({
 
   const championMeta = metadata[champion.path];
   // A zoom engaged inside the up-to-100ms metadata batch window would
-  // otherwise see no AF point yet and fall back to dead-centre — peek the
-  // delivery still waiting in the batcher (pendingMetaFor is for this read
-  // only, never a general way around the batch window).
-  const originMeta =
-    championMeta?.afXPct != null
-      ? championMeta
-      : (imageStore.pendingMetaFor(champion.path) ?? championMeta);
+  // otherwise see no AF point yet and fall back to dead-centre — fall back to
+  // the delivery still waiting in the batcher (pendingMetaFor is for this
+  // read only, never a general way around the batch window).
+  const originMeta = zoomOriginMeta(championMeta, () => imageStore.pendingMetaFor(champion.path));
   const { x: originX, y: originY } = afZoomOrigin(originMeta, panOffset);
 
   return (

@@ -84,7 +84,7 @@ import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
 import { basename } from "./utils/path";
 import { writeLocalStorage } from "./utils/storage";
-import { afZoomOrigin } from "./utils/zoom";
+import { afZoomOrigin, zoomOriginMeta } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
 import type { ScrubSpeed } from "./utils/scrubAccel";
 
@@ -1575,13 +1575,12 @@ export default function App() {
   // stage/url/dims/error for the loupe.
   const currentMeta = current ? metadata[current.path] : undefined;
   // A zoom engaged inside the up-to-100ms metadata batch window would
-  // otherwise see no AF point yet and fall back to dead-centre — peek the
-  // delivery still waiting in the batcher (pendingMetaFor is for this read
-  // only, never a general way around the batch window).
-  const originMeta =
-    currentMeta?.afXPct != null
-      ? currentMeta
-      : ((current ? imageStore.pendingMetaFor(current.path) : undefined) ?? currentMeta);
+  // otherwise see no AF point yet and fall back to dead-centre — fall back to
+  // the delivery still waiting in the batcher (pendingMetaFor is for this
+  // read only, never a general way around the batch window).
+  const originMeta = zoomOriginMeta(currentMeta, () =>
+    current ? imageStore.pendingMetaFor(current.path) : undefined,
+  );
 
   // Zoom transform-origin = AF point (display coords) + pan, clamped to image.
   const { x: originX, y: originY } = afZoomOrigin(originMeta, panOffset);
