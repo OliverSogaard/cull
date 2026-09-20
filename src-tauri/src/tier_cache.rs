@@ -3,7 +3,8 @@
 //! Generalizes the v1 thumbnail cache to per-tier subdirs — `thumb/` (THMB
 //! JPEGs), `prvw/` (1620×1080 PRVW JPEGs, filled by piggyback on
 //! `read_preview` misses ONLY — never a standalone NAS sweep), `mid/`
-//! (the generated mid tier — Phase 8, shipped).
+//! (the generated mid tier — Phase 8, shipped), `grid/` (the generated 512px
+//! contact-sheet tier — Phase 3B).
 //!
 //! ## Entry format (little-endian)
 //!
@@ -46,6 +47,9 @@ const MAGIC: &[u8; 4] = b"CUL2";
 /// `get()` checks it before the tier byte; accepted, same one-time silent
 /// regeneration as the v1→v2 bump.
 const VERSION: u8 = 3;
+/* Phase 3B added CacheTier::Grid additively: a new tier byte cannot collide
+with an existing entry (the subdirs are disjoint and the byte is checked), so
+no bump. */
 /// magic + version + tier + mtime_ms + file_size + header_len
 const PRELUDE: usize = 4 + 1 + 1 + 8 + 8 + 4;
 
@@ -60,6 +64,10 @@ pub enum CacheTier {
     /// Generated ≤2560px tier (Phase 8) — written by `read_mid` misses, the
     /// opportunistic generator, and the local-profile idle sweep.
     Mid,
+    /// Generated 512px contact-sheet tier (Phase 3B) — written by
+    /// `read_grid_thumb` misses. Small entries, many of them: a 2,726-frame
+    /// shoot is ~95 MB, so the total cap is sized to hold several shoots.
+    Grid,
 }
 
 impl CacheTier {
@@ -68,6 +76,7 @@ impl CacheTier {
             CacheTier::Thumb => 0,
             CacheTier::Prvw => 1,
             CacheTier::Mid => 2,
+            CacheTier::Grid => 3,
         }
     }
     fn subdir(self) -> &'static str {
@@ -75,6 +84,7 @@ impl CacheTier {
             CacheTier::Thumb => "thumb",
             CacheTier::Prvw => "prvw",
             CacheTier::Mid => "mid",
+            CacheTier::Grid => "grid",
         }
     }
     /// (total cap, per-entry ceiling) — the plan's table. Per-entry refusal:
@@ -85,6 +95,7 @@ impl CacheTier {
             CacheTier::Thumb => (500 * 1024 * 1024, 256 * 1024),
             CacheTier::Prvw => (2 * 1024 * 1024 * 1024, 2 * 1024 * 1024),
             CacheTier::Mid => (4 * 1024 * 1024 * 1024, 4 * 1024 * 1024),
+            CacheTier::Grid => (512 * 1024 * 1024, 512 * 1024),
         }
     }
 }
@@ -402,7 +413,7 @@ impl TierStore {
 }
 
 pub struct TierCache {
-    stores: [TierStore; 3],
+    stores: [TierStore; 4],
 }
 
 impl TierCache {
@@ -416,6 +427,7 @@ impl TierCache {
                 store(CacheTier::Thumb),
                 store(CacheTier::Prvw),
                 store(CacheTier::Mid),
+                store(CacheTier::Grid),
             ],
         }
     }
@@ -535,6 +547,10 @@ mod tests {
         // Mid never written → miss.
         assert!(cache
             .get(CacheTier::Mid, &src, 1_700_000_000_123, 3)
+            .is_none());
+        // Grid never written → miss.
+        assert!(cache
+            .get(CacheTier::Grid, &src, 1_700_000_000_123, 3)
             .is_none());
         let _ = std::fs::remove_dir_all(&work);
     }
@@ -697,11 +713,13 @@ mod tests {
         let src = src_file(&work, "a.cr3", b"cr3");
         cache.put(CacheTier::Thumb, &src, 1000, 3, b"{}", b"t");
         cache.put(CacheTier::Prvw, &src, 1000, 3, b"{}", b"p");
+        cache.put(CacheTier::Grid, &src, 1000, 3, b"{}", b"g");
         assert!(cache.size_bytes() > 0);
         cache.clear();
         assert_eq!(cache.size_bytes(), 0);
         assert!(cache.get(CacheTier::Thumb, &src, 1000, 3).is_none());
         assert!(cache.get(CacheTier::Prvw, &src, 1000, 3).is_none());
+        assert!(cache.get(CacheTier::Grid, &src, 1000, 3).is_none());
         let _ = std::fs::remove_dir_all(&work);
     }
 
@@ -733,6 +751,41 @@ mod tests {
         cache.put(CacheTier::Mid, &src, 2000, 4, b"{}", &huge);
         assert_eq!(cache.size_bytes(), before, "oversized put must be a no-op");
         assert!(cache.get(CacheTier::Mid, &src, 2000, 4).is_none());
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Phase 3B: the grid tier roundtrips through the REAL production caps,
+    /// is INDEPENDENT of every other tier (its own subdir + tier byte), and
+    /// refuses an entry past its 512 KiB per-entry ceiling.
+    #[test]
+    fn grid_tier_roundtrips_independently_and_refuses_oversized_entries() {
+        let work = tmp("grid");
+        std::fs::create_dir_all(&work).unwrap();
+        let cache = TierCache::new(work.join("tiers"));
+        let src = src_file(&work, "a.cr3", b"cr3");
+        let jpeg = vec![0xFFu8; 40_000]; // a realistic q82 512px payload
+        cache.put(
+            CacheTier::Grid,
+            &src,
+            1000,
+            3,
+            b"{\"gridLen\":40000}",
+            &jpeg,
+        );
+        let (h, p) = cache.get(CacheTier::Grid, &src, 1000, 3).expect("grid hit");
+        assert_eq!(h.as_slice(), b"{\"gridLen\":40000}");
+        assert_eq!(p.len(), jpeg.len());
+        // A grid entry can never serve another tier's request, and vice versa.
+        assert!(cache.get(CacheTier::Thumb, &src, 1000, 3).is_none());
+        assert!(cache.get(CacheTier::Mid, &src, 1000, 3).is_none());
+        // Over the 512 KiB cap → refused outright (put bails before the disk).
+        // Bound first, like the mid tier's test does — an inline `&vec![…]`
+        // reads worse and invites a clippy argument nobody needs to have.
+        let huge = vec![0u8; 512 * 1024];
+        let before = cache.size_bytes();
+        cache.put(CacheTier::Grid, &src, 2000, 4, b"{}", &huge);
+        assert_eq!(cache.size_bytes(), before, "oversized put must be a no-op");
+        assert!(cache.get(CacheTier::Grid, &src, 2000, 4).is_none());
         let _ = std::fs::remove_dir_all(&work);
     }
 
