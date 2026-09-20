@@ -77,32 +77,52 @@
    no resize listener is needed. Every label below is rendered in both forms
    by StatusBar; only one is ever displayed.
 
-   Two tiers below 1360, not one: the save chip's tail sheds FIRST, at 1360,
-   because it is the single biggest item on the left (a full "4194 photos
-   missing · check again" tail costs ~93px) and its wrapper's title already
-   says what the click does — nothing is lost by dropping it early. The four
-   cosmetic words (extension, zoom/scrub word, verdict word) stay at 1200
-   exactly as the owner saw them on the design board; they are NOT moved.
+   Three tiers below 1360, not one: the save chip's tail sheds FIRST, at
+   1360, because it is the single biggest item on the left (a full "4194
+   photos missing · check again" tail costs ~93px) and its wrapper's title
+   already says what the click does. The ALL-RATED finish label ("All 4194
+   rated · Ctrl+E finish", ~244px, the single biggest thing on the RIGHT)
+   sheds to "Finish" at the same 1360 breakpoint — the button already
+   carries `is-done` there (brightened fill + the one-time breathe
+   animation, stage.css), so the moment still reads without its longest
+   label. The ORDINARY finish label ("Ctrl+E · N keeps") and the four
+   cosmetic words (extension, zoom/scrub word, verdict word) stay at their
+   original 1200 / 1100 breakpoints exactly as the owner saw them on the
+   design board; they are NOT moved.
 
-   Worst case just above 1200 (tail already gone, cosmetic words NOT yet —
-   real filter tabs at their widest "SMART · 4194", finish still in its long
-   form since that only shortens below 1100): right cluster = 79 (pos, 12ch)
-   + 14 (gap) + 347 (filter tabs) + 14 (gap) + 244 ("All 4194 rated ·
-   Ctrl+E finish", 30 chars @ 10px mono + 0.14em track + 22px btn--sm
-   padding/border) = 698. Left cluster, the two mutually exclusive pairs
+   Worst case just above 1200 (tail and the all-rated label both already
+   gone; cosmetic words NOT yet; real filter tabs at their widest "SMART ·
+   4194"): the binding case is now NOT-all-rated (is-done false), because
+   that is the finish state nothing sheds before 1100 — right cluster = 79
+   (pos, 12ch) + 14 (gap) + 347 (filter tabs) + 14 (gap) + 163 ("Ctrl+E ·
+   4194 keeps", 19 chars @ 10px mono + 0.14em track + 22px btn--sm
+   padding/border) = 617. (The all-rated state, now shedding to "Finish" at
+   66px, sums to only 520 here and is no longer the constraint.) Left
+   cluster, unchanged by this fix, the two mutually exclusive pairs
    collapsed to their larger member (zoom XOR scrub; overlay cluster XOR "N
    selected") = 68 (verdict: glyph 14 + gap 7 + "REJECT" 47) + 129 (scrub:
    icon 12 + two 4px gaps + "Scrubbing" 67 + ×10 chip 42) + 133 (overlay
    cluster) + 143 ("4194 photos missing", tail already hidden) + 56 (four
-   14px gaps) = 529. Right + left = 1227 of content with the filename stem
-   already at zero, needing 1227 + 72 (bar padding + the two 18px spacer
-   gaps) = 1299px of window at minimum for this fully-loaded combination —
-   down from ~1392px before this fix (moving the tail here recovers exactly
-   its own ~93px), but the individual pieces above only finish shedding at
-   their own 1200 / 1100 breakpoints, so a window between about 1201 and
-   1299 can still clip the right end in this specific worst-of-worst-cases
-   pileup. Ordinary states (no scrub, nothing missing, no smart suggestions)
-   are nowhere near this tight.
+   14px gaps) = 529. Right + left = 1146 of content with the filename stem
+   already at zero, needing 1146 + 72 (bar padding + the two 18px spacer
+   gaps) = 1218px of window at minimum for this combination — down from
+   1299px before this fix (the all-rated shed recovers 81px here, not the
+   full 178px its own label lost, because the smaller ordinary label
+   becomes the new bottleneck the moment the bigger one sheds).
+
+   A band still remains: at 1218px this fits exactly with the stem at zero;
+   below that, down to 1201px, the shortfall is at most 1218 − 1201 = 17px —
+   real, but an order of magnitude smaller than the 99px gap this fix
+   closes. It is caused by the state above (NOT all-rated, so the ordinary
+   "Ctrl+E · N keeps" label is showing at its longest, together with a full
+   4-digit missing chip, scrub, and every overlay chip at once) — not by
+   the all-rated state this task targeted, which now sums to 1121px and is
+   nowhere near tight. At 1359px (the top of this band) there is 141px of
+   slack even with every one of these worst-case items present. Closing the
+   remaining ~17px would mean shedding a fifth thing (most likely the
+   ordinary finish label, or the "SMART · 4194" suggestion count) — left for
+   a future call rather than invented here. Ordinary states (no scrub,
+   nothing missing, no smart suggestions) are nowhere near any of this.
 
    Budget at the 1024px minimum, every shed already applied (tail AND the
    four cosmetic words gone, finish short): 1024 − 36 (bar padding) − 36
@@ -136,6 +156,24 @@
     clip-path: inset(50%);
     white-space: nowrap;
     border: 0;
+  }
+
+  /* Only the ALL-RATED finish label sheds this early — "All 4194 rated ·
+     Ctrl+E finish" is ~244px, the single biggest thing on the right, and the
+     button already carries `is-done` (brightened fill + the one-time
+     breathe animation, stage.css), so "Finish" alone still reads as the
+     same moment. The ORDINARY label ("Ctrl+E · N keeps", ~163px at worst)
+     is far smaller and keeps shedding at 1100 as on the design board — see
+     the arithmetic above; it is now the tighter of the two, not this one.
+     Three classes deep, this pair outranks the plain finish-short rule
+     below it (one class) on specificity alone, regardless of which comes
+     first in the file. */
+  .cull-statusbar__finish.is-done .cull-statusbar__finish-long {
+    display: none;
+  }
+
+  .cull-statusbar__finish.is-done .cull-statusbar__finish-short {
+    display: inline;
   }
 }
 

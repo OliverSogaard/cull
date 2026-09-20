@@ -80,6 +80,35 @@ describe("the footer's breakpoints", () => {
     expect(block(1100)).toContain(".cull-statusbar__finish-long");
   });
 
+  test("only the ALL-RATED finish label sheds at 1360 — the ordinary one waits for 1100", () => {
+    // Fix round 2: the all-rated form ("All N rated · Ctrl+E finish", the
+    // biggest thing on the right) sheds to "Finish" at 1360, scoped to
+    // `.is-done` so the ordinary form ("Ctrl+E · N keeps", far smaller)
+    // keeps shedding at 1100, unchanged. ruleBody's exact "selector {"
+    // match is used (not the block()/toContain() substring pair above) so
+    // a comment merely mentioning these classes can't fake a pass — the
+    // fix-round-1 report found exactly that kind of false positive once.
+    const tier = statusbar.slice(
+      statusbar.indexOf("@media (width < 1360px) {"),
+      statusbar.indexOf("@media (width < 1200px) {"),
+    );
+    expect(
+      ruleBody(tier, ".cull-statusbar__finish.is-done .cull-statusbar__finish-long"),
+    ).toMatch(/display:\s*none/);
+    expect(
+      ruleBody(tier, ".cull-statusbar__finish.is-done .cull-statusbar__finish-short"),
+    ).toMatch(/display:\s*inline/);
+
+    // The plain (unscoped) finish-long shed must still live ONLY at 1100 —
+    // exactly one occurrence of its selector in the 1360 tier, and that one
+    // occurrence must be the `.is-done`-scoped pair above, not a bare copy.
+    const needle = ".cull-statusbar__finish-long {";
+    const occurrences = tier.split(needle).length - 1;
+    expect(occurrences, "exactly the one is-done-scoped rule, no bare duplicate").toBe(1);
+    const at = tier.indexOf(needle);
+    expect(tier.slice(at - 9, at), "must be the .is-done-scoped rule").toBe(".is-done ");
+  });
+
   test("only the filename may shrink, so nothing else can be squeezed into a clip", () => {
     const chrome = sheet("./chrome.css");
     // The guarantee rests on THREE things staying min-width: 0 (so the flex
