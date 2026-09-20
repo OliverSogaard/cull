@@ -3,11 +3,24 @@
    The one block that honours the OS "reduce motion" setting.
 
    POLICY: decorative and attention motion stops; motion that means
-   "working" stays, slowed. The verdict flash still tints and the rating
-   pop still pops — they arrive whole instead of animating in, and hold
-   for exactly as long as they always did — while the spinner and the
-   indeterminate bar keep turning, because a frozen spinner reads as a
-   hung app, which is worse than the motion it saved.
+   "working" stays, slowed. Four distinctions do the work.
+
+   1. A pulse or throb that sits beside a word already saying what is
+      happening ("saving", "checking folder…") is attention, not
+      information — it stops, and the word carries the state. A moving
+      indicator with no words of its own beside it is the only thing
+      saying "working" — it keeps moving at roughly half speed, because
+      a frozen spinner reads as a hung app, which is worse than the
+      motion it saved.
+   2. A flash or a pop is a confirmation, not motion. It stops animating
+      but stays fully visible for exactly as long as it always did.
+   3. A fade is not motion. Opacity-only transitions are left alone, and
+      where one transition string mixes transform with opacity, only the
+      transform half is removed. What goes is travel across the screen:
+      the zoom glide, the slide-in, the sweeping band.
+   4. Not everything spelled as an animation IS motion. A 1ms opacity
+      step behind a delay is a debounce; it is left alone (see
+      cull-spinner-reveal at the foot of this file).
 
    This sheet is imported LAST (index.css), but last only wins
    SPECIFICITY TIES, so every rule below repeats verbatim the selector it
@@ -51,13 +64,15 @@
     border-color: var(--accent);
   }
 
-  /* Attention pulses and breathes. Each sits beside a word that already says
-     what is happening ("saving", "checking folder…", "moving N…"), so the
-     throb is decoration and the resting frame is the honest state.
-     reviewed: cull-save-pulse, cull-trouble-pulse, cull-finish-progress-breathe */
+  /* Attention pulses (distinction 1). Each throbs beside a word that already
+     says what is happening — "saving" on the pill itself, "checking folder…"
+     inside the chip — so the pulse is attention, not information, and the
+     resting frame is the honest state: a solid accent dot (its `background`
+     and `opacity: 1` are declared on the rule itself, so they survive) and a
+     plainly visible chip.
+     reviewed: cull-save-pulse, cull-trouble-pulse */
   .cull-save-status--saving .cull-save-status__dot,
-  .cull-trouble-chip[data-state="checking"],
-  .cull-finish__progress-fill {
+  .cull-trouble-chip[data-state="checking"] {
     animation: none;
   }
 
@@ -92,18 +107,11 @@
     animation: none;
   }
 
-  /* The photo-frame spinner hides itself for 150ms and is revealed BY its
-     animation, so this is the one place the visible end state has to be
-     restored by hand. The spinner now appears as soon as it mounts.
-     reviewed: cull-spinner-reveal */
-  .cull-photo-frame__spinner-wrap {
-    animation: none;
-    opacity: 1;
-  }
-
-  /* Kept, slowed — these two are the app saying "working", and nothing else
-     in their corner of the UI says it. Only the duration is overridden; the
-     rest of each shorthand stands.
+  /* Kept, slowed (distinction 1) — these three are the app saying "working",
+     and nothing beside them says it in words: a wordless ring, a wordless
+     sliding bar, and a fill whose row says "moving N…" but shows no progress
+     of its own (it is a fixed 60% width, so frozen it would read as stuck at
+     60%). Only the duration is overridden; the rest of each shorthand stands.
      reviewed: cull-spin */
   .spinner {
     animation-duration: 1.6s;
@@ -114,16 +122,43 @@
     animation-duration: 2.4s;
   }
 
-  /* Zoom and pan glide. This transition is an inline style (App's zoomGlide,
-     shared by every layer that scales with zoom, plus the hi-res layer's own
-     string), so only `!important` can reach it. Zoom still happens — it lands
-     instantly rather than gliding, and it is the one large full-frame
-     movement in the app. A transition, not an animation: no keyframe to
-     review. */
+  /* reviewed: cull-finish-progress-breathe */
+  .cull-finish__progress-fill {
+    animation-duration: 3.6s;
+  }
+
+  /* Zoom and pan glide — the one large, full-frame movement in the app, and
+     the only place in this file that needs `!important`. The transition is an
+     INLINE style written from JS: App.tsx builds `zoomGlide` (a transform-only
+     string, `transform 300ms` zooming / `transform 200ms` releasing) and hands
+     it to PresentLayers.tsx:49 for the two presenter layers and to
+     PhotoPane.tsx:356 (`overlayStyle`) for the two masks. Nothing but
+     `!important` reaches an inline style, and the transform is all that is
+     being removed here — zoom still happens, it lands instead of gliding. */
   .cull-image,
   .cull-cmp-img,
   .cull-clip-overlay,
   .cull-peaking-overlay {
     transition: none !important;
   }
+
+  /* The hi-res layer is the exception (distinction 3). HiResLayer.tsx:96
+     composes its inline string as `<zoomGlide>, opacity 100ms ease-out`, so
+     the blanket rule above would take the cross-fade with it and make the
+     sharp raster pop in. A cross-fade is not vestibular motion, so it is
+     restored verbatim from that line while the transform half stays gone.
+     Same specificity as the rule above and declared after it, so it wins the
+     tie; `!important` for the same inline-style reason. */
+  .cull-image--hires {
+    transition: opacity 100ms ease-out !important;
+  }
+
+  /* NO CHANGE, deliberately. `.cull-photo-frame__spinner-wrap` runs its
+     reveal as `1ms linear 150ms forwards` — a debounce spelled as an
+     animation (distinction 4). The 1ms opacity step carries no motion; the
+     150ms delay in front of it is what stops fast, cached loads from
+     flashing a spinner at all. Overriding it would remove the debounce
+     rather than any motion, and leave reduced-motion users with MORE
+     visual churn than everyone else. Ruled on, then left alone.
+     reviewed: cull-spinner-reveal */
 }
