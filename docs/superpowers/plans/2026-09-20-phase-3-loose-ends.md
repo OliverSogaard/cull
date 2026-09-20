@@ -142,3 +142,40 @@ Ruling: add it. When the re-check succeeds, the guard's existing auto-close (`us
 - The help sheet renders every shortcut as plain text while the rest of the chrome uses keycaps. Converting it changes the data shape (`[string, string]` rows with composite keys like `space (hold)` and `1 – 4`) and is a visual decision — it goes on the Phase 3B design board.
 - `"source not larger than mid tier"` retries four times although it is permanent for that file — noted, not fixed here.
 - The class ↔ rule CSS census (3B), test citation cleanup (Phase 4), `useStatusBarGroups()` extraction (refactor).
+
+---
+
+## Implementation note (2026-09-20)
+
+Four fresh implementers ran in parallel on disjoint files, each followed by a fresh reviewer (two on the stronger model: the image store and the save controls). All four passed; two took a follow-up round from their reviewer's minors. A whole-branch review on the strongest model returned READY with no Critical or Important finding; its one actionable minor was fixed by the controller. Gates at the tip: 661 tests in 68 files (621 before), lint, lint:css, typecheck, typecheck:tests, build. No Rust changes.
+
+### What shipped
+
+- A re-staged frame keeps its Lightroom star (`seedLrcMeta`, a per-path fold through `mergeMeta`; the spread order was never flipped — that would wipe EXIF).
+- Paths moved away by Move rejects no longer start requests or get re-armed to the front of the nav lane. Refcounts stay balanced: the `wantFull` increment still runs before the guard.
+- Only a missing `read_mid` command turns the mid tier off for the session. Checked against Tauri 2.11.5's real strings (`Command read_mid not found`, and the ACL form); no per-file error matches.
+- A zoom inside the 100 ms metadata window lands on the AF point: `MetaBatcher.peek` → `imageStore.pendingMetaFor` → `zoomOriginMeta` (`src/utils/zoom.ts`), used by the loupe origin, the compare origin and the mouse-zoom pan. It is read lazily and nothing flushes on demand.
+- The save chip and the save pill are one `<button>` through failed → saving → failed (`aria-disabled`, not `disabled`), so pressing retry no longer drops keyboard focus.
+- The quit guard offers "Check again" when photos are missing. Its buttons are keyed, and "Retry saving" / "Check again" hand focus to "Keep culling" before the write starts.
+- With reduced motion on, un-zoom no longer waits 240 ms for a glide that is not played (`unzoomRetreatMs(prefersReducedMotion())`, read when the timer is armed).
+- The compare rail's "differs" mark is a 4 px CSS dot again (the Lucide `Dot` painted about 2.2 px).
+
+### Rulings
+
+- The quit guard's "Check again": a successful re-check lets the guard close the window, exactly as "Retry saving" already did — the user had pressed close.
+- The chip and pill still unmount when the save LANDS, so focus returns to the body then. Accepted: nothing is left to show, and body focus is the normal culling state.
+- After "Retry saving" focus sits on "Keep culling", so a second Enter dismisses the guard rather than retrying again. Accepted as the safer default; on main the pressed button was silently re-labelled "Keep culling", so a second Enter already did this.
+- The fix rounds got no separate re-review; the whole-branch review examined them by name.
+- A focused footer button does not steal Space or Enter from culling: the window-level keymap prevents the default on keydown, which is what a button's activation depends on. Reasoned from the code, not run.
+
+### Verification
+
+Tests and static gates only. Nothing here was seen running. For Oliver's walk: press the footer's "unsaved · retry" chip with the keyboard (focus should stay put while it says saving); zoom with the mouse the instant a frame appears; with Windows animations off, un-zoom should sharpen at once; the compare rail's dot.
+
+### Still open
+
+- The help sheet renders shortcuts as plain text while the rest of the chrome uses keycaps — a data-shape and visual decision, on the Phase 3B design board.
+- `"source not larger than mid tier"` is permanent for that file but retries four times.
+- A focus ring may appear on the save chip after click-then-type (Chromium's `:focus-visible` heuristic); the other footer buttons already behave this way.
+- `usePaneZoom` has no test of its own; its AF read is covered only through `zoomOriginMeta`.
+- The Phase 0 live check on a scratch copy is still owed.
