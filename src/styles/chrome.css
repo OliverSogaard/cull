@@ -350,7 +350,7 @@
   appearance: none;
   background: transparent;
   border: none;
-  color: var(--muted);
+  color: var(--text-2);
   padding: 4px 12px;
   font-family: var(--font-mono);
   font-size: var(--fs-2);
@@ -399,7 +399,7 @@
 }
 
 .cull-filter-tabs button:hover:not(.is-active) {
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .cull-filter-tabs button.is-active {

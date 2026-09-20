@@ -78,7 +78,7 @@
 }
 
 .cull-exif-rail__lrc-dim {
-  color: var(--surface-2);
+  color: color-mix(in srgb, var(--text-2) 58%, var(--bg));
 }
 
 .cull-exif-rail__hist {

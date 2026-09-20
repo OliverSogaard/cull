@@ -18,12 +18,12 @@
   --accent-soft: rgba(212, 175, 106, 0.15);
   --ok: #9ec5a4;
   --bad: #c87f7f;
-  --fav: #d4af6a;
+  --fav: #b9a2dc;
   --accent-cool: #7fa8c9;
 
   /* tier-2 tokens (Task 9) — semantic colour additions */
   --on-accent: #1a1408;
-  --on-bad: #fff;
+  --on-bad: var(--ink);
   --ink: #0a0a0c;
   --accent-hover: #e8c182;
   --bad-hover: #d49090;

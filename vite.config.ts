@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
@@ -28,5 +28,16 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+
+  test: {
+    // Vitest's default `css.include` is `[]`, which stubs out ALL css
+    // module content — including `?raw`/`?url` requests — regardless of
+    // the query. Unit tests read design tokens straight out of
+    // src/styles/*.css via `import.meta.glob(..., { query: "?raw" })`, so
+    // css must actually be processed for those reads to see real content.
+    // Unanchored on purpose: the module id still carries the `?raw` query
+    // (e.g. `tokens.css?raw`), so a trailing `$` would never match.
+    css: { include: [/\.css/] },
   },
 }));
