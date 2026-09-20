@@ -154,9 +154,14 @@
   box-shadow: inset 0 0 0 3px rgba(200, 127, 127, 0.7);
 }
 
+/* The favourite has its own colour (`--fav`, lilac); the champagne literal
+   this used to carry was the ACCENT, which made a favourite flash the same
+   wash as the app's chrome. Its siblings above spell `--ok` / `--bad` out as
+   rgba because they predate the token; `--fav` is newer than color-mix here,
+   so it stays a token and only the alphas (45 / 70) are shared with them. */
 .cull-photo-frame--flash-fav::after {
-  background: rgba(212, 175, 106, 0.45);
-  box-shadow: inset 0 0 0 3px rgba(212, 175, 106, 0.7);
+  background: color-mix(in srgb, var(--fav) 45%, transparent);
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--fav) 70%, transparent);
 }
 
 @keyframes cull-flash-pulse {

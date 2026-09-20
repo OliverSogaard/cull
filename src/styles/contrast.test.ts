@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-const files = import.meta.glob<string>("./tokens.css", {
+const files = import.meta.glob<string>("./**/*.css", {
   query: "?raw",
   eager: true,
   import: "default",
@@ -23,9 +23,43 @@ const ratio = (a: string, b: string): number => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
+/** The champagne accent, as it is written when a rule spells it out by hand. */
+const ACCENT_RGB = "212, 175, 106";
+
+/**
+ * One rule body, looked up by the selector that opens it. `lastIndexOf` on
+ * purpose: these three selectors each appear twice — once at the end of the
+ * grouped rule that gives all three flashes their geometry, then again on
+ * their own colour rule below it, which is the one under test.
+ */
+const ruleBody = (sheet: string, selector: string): string => {
+  const at = sheet.lastIndexOf(`${selector} {`);
+  if (at < 0) throw new Error(`no rule for \`${selector}\``);
+  return sheet.slice(at, sheet.indexOf("}", at));
+};
+
 describe("colour tokens", () => {
   test("the favourite colour is not the accent", () => {
     expect(token("fav").toLowerCase()).not.toBe(token("accent").toLowerCase());
+  });
+  test("the favourite verdict flash is drawn in --fav, not the accent", () => {
+    // The flash is the loudest favourite in the app — a full-frame wash over
+    // the photo. It sat on the champagne literal long after `--fav` existed,
+    // which made a favourite and a keep-with-accent-chrome the same colour.
+    const flash = ruleBody(files["./stage.css"], ".cull-photo-frame--flash-fav::after");
+    expect(flash).toContain("var(--fav)");
+    expect(flash).not.toContain(ACCENT_RGB);
+  });
+  test("the three verdict flashes agree on their two alphas", () => {
+    // Keep / reject / fav are one gesture in three colours: the same 45% wash
+    // and the same 70% inset ring. A flash that drifts off them reads as a
+    // different event rather than the same one about a different verdict.
+    const stage = files["./stage.css"];
+    for (const verdict of ["keep", "reject", "fav"]) {
+      const body = ruleBody(stage, `.cull-photo-frame--flash-${verdict}::after`);
+      expect(body, verdict).toMatch(/background:[^;]*(?:\b0\.45\b|\b45%)/);
+      expect(body, verdict).toMatch(/box-shadow: inset 0 0 0 3px[^;]*(?:\b0\.7\b|\b70%)/);
+    }
   });
   test("verdict and text colours clear AA on both dark surfaces", () => {
     for (const fg of ["fav", "ok", "bad", "accent", "text-2"]) {
