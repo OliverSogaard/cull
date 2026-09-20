@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 /**
  * Two-step inline confirm state: stage 1 arms (button click), stage 2 fires
@@ -9,27 +17,43 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
  * The third return, `armedRef`, is a ref callback meant to be wired onto BOTH
  * the stage-1 trigger button and the stage-2 "Yes, …" button — only one of
  * them is ever mounted at a time, so it's unambiguous which one it's attached
- * to. Whichever one mounts as a result of `armed` changing (arming OR
- * disarming, whether by confirming, cancelling, or the auto-disarm timeout)
- * takes focus. Without this, the caller's `useFocusTrap` would otherwise see
- * the previously-focused button unmount and re-home focus to the dialog root
- * instead — this wins that race because refs commit before that trap's
- * `focusout` handler runs.
+ * to. When `armed` changes, a layout effect checks whether the button that
+ * used to occupy this slot was focused and that focus fell all the way to
+ * `<body>` — the DOM's "nothing is focused" state, and also what a
+ * just-removed focused element's focus fixes up to — and ONLY THEN focuses
+ * whatever button occupies the slot now:
+ *
+ *   - it does NOT steal focus back if the user tabbed to some other control
+ *     before an auto-disarm or a cancel fires (focus isn't on <body>, so it's
+ *     left alone);
+ *   - it does NOT queue a claim that could fire on some later, unrelated
+ *     mount when this commit has no ref-bearing node at all (e.g. a
+ *     mid-operation progress row with no button) — nothing is persisted
+ *     across commits, so a later render simply doesn't reactivate anything.
+ *
+ * This runs in a `useLayoutEffect`, never during render (refs must not be
+ * written mid-render, and a discarded render must not be able to leak a
+ * stale focus claim), which keeps it ordered ahead of the caller's
+ * `useFocusTrap`, whose `focusout` handler only re-homes focus via
+ * `requestAnimationFrame` — strictly later than any layout effect in the
+ * same commit.
  */
 export function useArmedConfirm(
   disarmMs = 4000,
 ): [boolean, Dispatch<SetStateAction<boolean>>, (node: HTMLElement | null) => void] {
   const [armed, setArmed] = useState(false);
+  const nodeRef = useRef<HTMLElement | null>(null);
+  const isFirstRenderRef = useRef(true);
 
-  // Detect an `armed` change during render (before the commit that mounts/
-  // unmounts the two buttons), so the ref callback below already knows to
-  // focus whatever mounts in this slot next.
-  const prevArmedRef = useRef(armed);
-  const pendingFocusRef = useRef(false);
-  if (prevArmedRef.current !== armed) {
-    pendingFocusRef.current = true;
-    prevArmedRef.current = armed;
-  }
+  useLayoutEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
+    }
+    const active = document.activeElement;
+    const orphaned = active === null || active === document.body;
+    if (orphaned) nodeRef.current?.focus();
+  }, [armed]);
 
   useEffect(() => {
     if (!armed) return;
@@ -38,10 +62,7 @@ export function useArmedConfirm(
   }, [armed, disarmMs]);
 
   const armedRef = useCallback((node: HTMLElement | null) => {
-    if (node && pendingFocusRef.current) {
-      pendingFocusRef.current = false;
-      node.focus();
-    }
+    nodeRef.current = node;
   }, []);
 
   return [armed, setArmed, armedRef];

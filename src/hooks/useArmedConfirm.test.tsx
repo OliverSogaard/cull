@@ -1,8 +1,24 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useArmedConfirm } from "./useArmedConfirm";
 import { useFocusTrap } from "./useFocusTrap";
+
+// jsdom never computes real layout, so every element's getClientRects() comes
+// back empty — which makes useFocusTrap's "visible focusables only" filter
+// exclude every real button and fall back to focusing the trap root itself.
+// Stubbing a non-empty rect here lets the trap find real buttons in this
+// file's tests, matching what an actually laid-out browser does.
+const realGetClientRects = Element.prototype.getClientRects;
+beforeAll(() => {
+  Element.prototype.getClientRects = function () {
+    return [{}] as unknown as DOMRectList;
+  };
+});
+afterAll(() => {
+  Element.prototype.getClientRects = realGetClientRects;
+});
 
 /**
  * Two-stage confirm harness mirroring the real markup in FinishDialog's
@@ -47,6 +63,61 @@ function TrappedHarness({ disarmMs = 4000 }: { disarmMs?: number }) {
         </button>
       )}
     </div>
+  );
+}
+
+/** Harness with a sibling control OUTSIDE the armed subtree, to prove a
+ *  disarm never steals focus back from something the user deliberately
+ *  tabbed to in the meantime. */
+function HarnessWithSibling({ disarmMs = 4000 }: { disarmMs?: number }) {
+  const [armed, setArmed, confirmRef] = useArmedConfirm(disarmMs);
+  return (
+    <div>
+      <button type="button">Sibling control</button>
+      {armed ? (
+        <div>
+          <button ref={confirmRef} onClick={() => setArmed(false)}>
+            Yes, move
+          </button>
+          <button onClick={() => setArmed(false)}>Cancel</button>
+        </div>
+      ) : (
+        <button ref={confirmRef} onClick={() => setArmed(true)}>
+          Move rejects
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Mirrors FinishDialog's MoveRejectsRow three-branch shape: stage 1 → armed
+ *  → a "busy" progress branch with NO ref-bearing node (confirming fires the
+ *  real action and flips busy on) → back to stage 1 once the op resolves. */
+function BusyHarness({ disarmMs = 4000 }: { disarmMs?: number }) {
+  const [armed, setArmed, confirmRef] = useArmedConfirm(disarmMs);
+  const [busy, setBusy] = useState(false);
+  return busy ? (
+    <div>
+      <span>Moving…</span>
+      <button onClick={() => setBusy(false)}>Finish op</button>
+    </div>
+  ) : armed ? (
+    <div>
+      <button
+        ref={confirmRef}
+        onClick={() => {
+          setArmed(false);
+          setBusy(true);
+        }}
+      >
+        Yes, move
+      </button>
+      <button onClick={() => setArmed(false)}>Cancel</button>
+    </div>
+  ) : (
+    <button ref={confirmRef} onClick={() => setArmed(true)}>
+      Move rejects
+    </button>
   );
 }
 
@@ -107,5 +178,49 @@ describe("useArmedConfirm", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not steal focus back from a control the user tabbed to before auto-disarm", () => {
+    vi.useFakeTimers();
+    try {
+      render(<HarnessWithSibling disarmMs={4000} />);
+      fireEvent.click(screen.getByRole("button", { name: "Move rejects" }));
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Yes, move" }));
+
+      const sibling = screen.getByRole("button", { name: "Sibling control" });
+      sibling.focus();
+      expect(document.activeElement).toBe(sibling);
+
+      act(() => {
+        vi.advanceTimersByTime(4000);
+      });
+
+      // The user moved focus deliberately — the auto-disarm remounting
+      // "Move rejects" must not yank it back.
+      expect(document.activeElement).toBe(sibling);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not steal focus for a later stage-1 mount when the disarming commit had no ref-bearing node", () => {
+    render(<BusyHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Move rejects" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Yes, move" }));
+
+    // Confirms and moves into the busy branch in the same commit — no button
+    // in that branch is wired to the hook's ref at all.
+    fireEvent.click(screen.getByRole("button", { name: "Yes, move" }));
+    expect(screen.queryByRole("button", { name: "Move rejects" })).toBeNull();
+
+    // Something else takes focus while the op is in flight.
+    const finishButton = screen.getByRole("button", { name: "Finish op" });
+    finishButton.focus();
+    expect(document.activeElement).toBe(finishButton);
+
+    // The op resolves — `armed` never changed on this transition, but
+    // "Move rejects" remounts. It must not have inherited a stale claim.
+    fireEvent.click(finishButton);
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Move rejects" }));
   });
 });
