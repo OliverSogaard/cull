@@ -671,6 +671,32 @@ pub(crate) async fn generate_mid(
 
 // ── Grid tier (Phase 3B): the sharp contact-sheet thumbnail ────────────────
 
+/// Minimal deserialization target for a CACHED prvw header: the grid tier
+/// needs nothing from it but the orientation to splice into the resized JPEG.
+/// Deliberately NOT the full [`PreviewHeader`] — serde ignores unknown/extra
+/// fields by default, so a header widened by an unrelated future field (or
+/// carrying an oddly-typed `meta`) still serves the grid instead of latching
+/// the cell as unavailable for the rest of the session. `orientation` shares
+/// [`PreviewHeader`]'s field name and casing (`rename_all = "camelCase"`
+/// leaves `orientation` unchanged either way, but the attribute is kept here
+/// so the two structs can never drift if that ever stops being true).
+/// `#[serde(default)]` covers a hypothetical stored entry that omits the
+/// field entirely: identity orientation (no rotation) is the same safe
+/// fallback [`full_with_orientation`] uses for a hintless read, never a
+/// silently-wrong rotation.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OrientationOnly {
+    #[serde(default = "identity_orientation")]
+    orientation: u32,
+}
+
+/// The no-rotation EXIF orientation value — [`OrientationOnly`]'s fallback
+/// when a cached header has no parseable orientation field at all.
+fn identity_orientation() -> u32 {
+    1
+}
+
 /// Header for [`read_grid_thumb`]: JPEG length + the thumb's (unrotated) pixel
 /// dims. Stored VERBATIM in the tier cache (the bump-VERSION-on-header-change
 /// contract applies to this shape from now on).
@@ -791,7 +817,7 @@ pub(crate) async fn read_grid_thumb(
             let (header_json, prvw, _hit) =
                 preview_parts_opt(&path, &session, &cache, &cancelled, false)
                     .map_err(grid_thumb_error)?;
-            let header: PreviewHeader = serde_json::from_slice(&header_json)
+            let header: OrientationOnly = serde_json::from_slice(&header_json)
                 .map_err(|e| grid_thumb_error(format!("grid thumb prvw header parse: {e}")))?;
             let (out_header, payload) = generate_and_cache_grid_thumb(
                 &cache,
@@ -979,6 +1005,49 @@ mod tests {
         // frontend's latch test would catch the transient one.
         assert!(!GRID_THUMB_PENDING.starts_with(GRID_THUMB_UNAVAILABLE));
         assert!(!GRID_THUMB_UNAVAILABLE.starts_with(GRID_THUMB_PENDING));
+    }
+
+    /// A cached prvw header that some OTHER field has widened, or that carries
+    /// an oddly-typed `meta` no longer shaped like `ImageMetadata`, must not
+    /// strand the grid cell on its THMB for the rest of the session — only a
+    /// header with no parseable orientation at all should. `OrientationOnly`
+    /// (not the full `PreviewHeader`) is what makes that true: serde ignores
+    /// unknown/extra fields, and a wrong-typed `meta` next to a fine
+    /// `orientation` field simply never gets looked at.
+    #[test]
+    fn orientation_only_ignores_unrelated_fields() {
+        let json = br#"{
+            "orientation": 6,
+            "meta": {"unexpectedShape": true, "nested": [1, 2, 3]},
+            "previewLen": "not even a number",
+            "somethingBrandNew": null
+        }"#;
+        let header: OrientationOnly = serde_json::from_slice(json).expect("must still parse");
+        assert_eq!(header.orientation, 6);
+    }
+
+    /// A header entirely missing the field falls back to identity orientation
+    /// (no rotation) rather than failing — the same safe default
+    /// `full_with_orientation` uses for a hintless read.
+    #[test]
+    fn orientation_only_defaults_when_the_field_is_absent() {
+        let header: OrientationOnly = serde_json::from_slice(b"{}").expect("default must apply");
+        assert_eq!(header.orientation, 1);
+    }
+
+    /// A header with no parseable orientation AT ALL (wrong type, not just
+    /// absent) still fails to deserialize, and — routed through
+    /// `grid_thumb_error` exactly as `read_grid_thumb` does — still latches as
+    /// the permanent sentinel rather than bouncing the frontend forever.
+    #[test]
+    fn orientation_only_parse_failure_still_latches_via_grid_thumb_error() {
+        let bad = br#"{"orientation": "north"}"#;
+        let err = serde_json::from_slice::<OrientationOnly>(bad).unwrap_err();
+        let mapped = grid_thumb_error(format!("grid thumb prvw header parse: {err}"));
+        assert!(
+            mapped.starts_with(GRID_THUMB_UNAVAILABLE),
+            "should latch: {mapped}"
+        );
     }
 
     /// A temp dir + a real TierCache, the shape tier_cache.rs's own tests use.
