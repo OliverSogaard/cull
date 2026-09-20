@@ -32,12 +32,15 @@ export default defineConfig(async () => ({
 
   test: {
     // Vitest's default `css.include` is `[]`, which stubs out ALL css
-    // module content — including `?raw`/`?url` requests — regardless of
-    // the query. Unit tests read design tokens straight out of
-    // src/styles/*.css via `import.meta.glob(..., { query: "?raw" })`, so
-    // css must actually be processed for those reads to see real content.
-    // Unanchored on purpose: the module id still carries the `?raw` query
-    // (e.g. `tokens.css?raw`), so a trailing `$` would never match.
-    css: { include: [/\.css/] },
+    // module content — including `?raw` requests — regardless of the
+    // query. Unit tests read design tokens straight out of src/styles/*.css
+    // via `import.meta.glob(..., { query: "?raw" })`, so css must actually
+    // be processed for those specific reads to see real content.
+    // Scoped to only `?raw` requests (confirmed the module id shape by
+    // logging it: `.../tokens.css?raw`) so a component test that
+    // side-effect-imports a stylesheet (e.g. via App.tsx importing
+    // styles/index.css) still gets Vitest's default stub instead of paying
+    // for real CSS processing it doesn't need.
+    css: { include: [/\.css\?.*\braw\b/] },
   },
 }));
