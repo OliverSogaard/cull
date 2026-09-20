@@ -417,6 +417,76 @@ stays on `style-src` only (React writes inline styles; there is no inline
 script). If a future feature needs a new origin, widen the specific directive
 — never fall back to `null`.
 
+## Design language
+
+Phase 3A ("see and feel") gave the chrome a handful of small, load-bearing
+conventions instead of per-component one-offs:
+
+- **Favourite is its own colour.** `--fav` (lilac `#b9a2dc`, `src/styles/
+  tokens.css`) marks a favourite verdict everywhere it appears — the
+  statusbar glyph, the strip/grid dots, the EXIF-rail suggestion — and stays
+  visually distinct from `--accent` (champagne), which keeps the cursor
+  ring, selection tint, brand mark, and progress fills. A favourite reads as
+  "a kind of keep", never as "extra emphasis on the accent".
+- **One focus ring.** `--ring` (`0 0 0 2px var(--bg), 0 0 0 4px var(--accent)`,
+  `tokens.css`) is the one focus treatment in the app; a
+  `:where(button, a, summary, [role="button"][tabindex], [tabindex]:not(
+  [tabindex="-1"]))` rule at the bottom of `src/styles/base.css` applies it at
+  **zero specificity**, so it only fires as a fallback for a focusable
+  control a component author forgot to ring explicitly — any component's
+  own `:focus-visible` rule, however weak, still wins. `--ring` extends 4px past
+  the element's own edge, so any control with less than 4px to a neighbour
+  (or a window edge) takes the inset form, `--ring-inset` (`inset 0 0 0 2px
+  var(--accent), inset 0 0 0 4px var(--bg)`), instead — the accent line and
+  `--bg` buffer just point inward, so the ring still reads against a dark
+  surface or an accent-filled one alike.
+- **Two button sizes, one keycap.** `src/styles/primitives/btn.css` defines
+  `.btn` (32px, dialog actions and screen CTAs) and `.btn--sm` (26px, footer
+  and settings rows); `.btn--cta` is the one deliberate exception, the home
+  hero's own larger size. `src/styles/primitives/kbd.css` defines the single
+  `.kbd` keycap (20px tall, 11px mono, 20px min-width, `0 5px` padding, 2px
+  radius) used everywhere a shortcut is shown, plus `.keycombo` for stacking
+  keycaps side by side without doubling their gutters.
+- **One icon scale.** `src/components/icons.ts`'s `ICON` gives every Lucide
+  icon in the chrome one of three steps — `sm` 12px, `md` 14px (both stroke
+  1.75), `lg` 16px (stroke 1.5) — so a row of unrelated icons reads as one
+  set. Four families stay off-scale because their size is dictated by a
+  fixed container rather than taste: the verdict glyphs inside rating dots,
+  the LrC star badges pinned to a thumbnail corner, the 22px glyph inside the
+  48px rating-feedback pop, and the window-control icons (sized to the
+  Windows caption-button metric so the title bar matches the rest of the
+  desktop) — only their stroke width still follows the scale.
+- **Reduced motion.** `src/styles/motion.css` is the one stylesheet that
+  answers `prefers-reduced-motion: reduce`. The policy: motion that is purely
+  decorative or attention-grabbing (a pulse beside a word that already says
+  what's happening, an entrance, a sweep) stops outright, while motion that
+  is the *only* signal that something is working (spinners, the
+  indeterminate progress bar) keeps moving, just slower. `motion.test.ts`
+  enforces the discipline mechanically: every `@keyframes` under `src/styles`
+  must be named in a `reviewed:` comment in `motion.css`, so a newly added
+  keyframe fails the test until someone has ruled on what it does under
+  reduced motion.
+- **One modifier-key spelling.** `src/utils/platform.ts` exports `modLabel`
+  (`"Ctrl"` on Windows, `"⌘"` on macOS) for keycaps and `modCombo(key)` for
+  inline prose (`"Ctrl+E"` vs `"⌘E"`). `src/components/KeyCombo.tsx` renders
+  the modifier and the following key as two separate keycaps side by side —
+  the app's answer to "how is a shortcut shown", used by the home hero, the
+  staged-screen hint, the empty-filter hint, recents, and the settings
+  dialog.
+- **Write failures come in two kinds, and only one blocks finishing.**
+  `useRatingPersistence` (`src/app/useRatingPersistence.ts`) records each
+  exhausted write with a boolean `missing`: true when the CR3 is no longer at
+  its path (no retry can fix that), false when the failure is a transient one
+  a retry can still save. `src/utils/saveStatusCopy.ts`'s `saveFailureKind` turns
+  `failedCount`/`missingCount` into `"none" | "missing" | "retry"` for the
+  four surfaces that report a failure (status-bar chip, save-status pill,
+  quit guard, leave-to-home warning), so they all tell the same story instead
+  of drifting into slightly different wording. `FinishDialog`'s
+  `retryableFailedCount = failedCount - missingCount` is the only count that
+  disables the move/copy actions — a photo that's gone is warned about but
+  never blocks finishing the cull, since blocking on an unfixable failure
+  would leave no way out of the session at all.
+
 ## Modules
 
 The frontend follows a strict layering — no circular deps:
