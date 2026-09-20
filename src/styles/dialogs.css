@@ -1,0 +1,733 @@
+/* ── settings dialog ──────────────────────────────────────── */
+.cull-settings {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  width: 100%;
+  max-width: 680px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+.cull-settings__head {
+  align-items: baseline;
+}
+
+/* Two-column body: fixed nav rail left, one scrolling pane right. A stable
+   height keeps the dialog from resizing as tabs change. */
+.cull-settings__layout {
+  display: flex;
+  height: min(440px, 62vh);
+  min-height: 0;
+}
+
+.cull-settings__nav {
+  flex: 0 0 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 10px 18px 16px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.cull-settings__navitem {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-radius: 3px; /* off-scale */
+  text-align: left;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
+}
+
+.cull-settings__navitem:hover:not(.is-active) {
+  color: var(--text-2);
+}
+
+.cull-settings__navitem.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.cull-settings__navitem:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.cull-settings__pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 20px 26px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Dependent-settings group (e.g. smart-culling sub-rows): visibly present but
+   inert while the parent toggle is off — no layout jump when enabling. */
+.cull-settings__group {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  /* NO opacity transition here: animating it promotes the group to a
+     compositing layer, and WKWebView leaves a stale ghost of the last row
+     painted at its old position when the adaptive help text above shifts
+     layout in the same frame (live-reproduced, survives cold starts).
+     Dimming instantly keeps the paint atomic. Per-row color transitions are
+     fine; a group-level opacity animation is not. */
+}
+
+.cull-settings__group.is-off {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.cull-settings__foot {
+  padding: 14px 26px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.cull-settings__foot kbd {
+  margin: 0 4px;
+}
+
+.cull-settings__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: center;
+  padding: 0;
+  text-align: left;
+}
+
+.cull-settings__row-text {
+  min-width: 0;
+}
+
+.cull-settings__row-name {
+  color: var(--text);
+  font-size: 13.5px; /* off-scale */
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.cull-settings__row-help {
+  margin-top: 3px;
+  min-height: 0;
+  color: var(--muted);
+  font-size: 11.5px; /* off-scale */
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-transform: none;
+  max-width: 300px;
+}
+
+.cull-settings__row-control {
+  flex: 0 0 auto;
+}
+
+/* Chip — on/off pill for default overlay set. */
+.cull-settings__chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.cull-settings__chip {
+  appearance: none;
+  padding: 5px 9px;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-3);
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.cull-settings__chip:hover:not(.is-on) {
+  color: var(--text);
+  border-color: var(--text-2);
+}
+
+.cull-settings__chip.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.cull-settings__chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Knob-style toggle. */
+.cull-settings__toggle:disabled {
+  cursor: default;
+}
+
+.cull-settings__toggle {
+  width: 36px;
+  height: 20px;
+  background: var(--surface-2);
+  border-radius: var(--r-pill);
+  position: relative;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background 150ms;
+  padding: 0;
+  appearance: none;
+}
+
+.cull-settings__toggle::after {
+  content: "";
+  position: absolute;
+  /* Inner box is 34x18 (1px borders): translateY(-50%) self-centers the knob
+     vertically at any DPR; 2px side margins symmetric in both states. */
+  top: 50%;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transform: translateY(-50%);
+  transition:
+    transform 150ms,
+    background 150ms;
+}
+
+.cull-settings__toggle.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.cull-settings__toggle.is-on::after {
+  transform: translateY(-50%) translateX(16px);
+  background: var(--accent);
+}
+
+.cull-settings__toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Pinned-root config row — indented under the Copy keeps segment with a
+   champagne left border. */
+.cull-settings__pinned-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.cull-settings__pinned-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px; /* off-scale */
+  padding: 5px 10px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cull-settings__seg {
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px; /* off-scale */
+  padding: 2px;
+  gap: 0;
+}
+
+.cull-settings__seg-opt {
+  appearance: none;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--text-2);
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
+  font-family: Inter, sans-serif;
+  font-size: var(--fs-4);
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease;
+  white-space: nowrap;
+}
+
+.cull-settings__seg-opt:hover:not(.is-active) {
+  color: var(--text);
+}
+
+.cull-settings__seg-opt.is-active {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+}
+
+.cull-settings__seg-opt:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.cull-settings__seg.is-disabled,
+.cull-settings__seg-opt:disabled {
+  cursor: progress;
+}
+
+.cull-settings__seg.is-disabled .cull-settings__seg-opt {
+  color: var(--muted);
+}
+
+/* Text input */
+.cull-settings__text {
+  appearance: none;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px; /* off-scale */
+  padding: 6px 10px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-4);
+  letter-spacing: 0;
+  width: 200px;
+  outline: none;
+  transition:
+    border-color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
+}
+
+.cull-settings__text:focus {
+  border-color: var(--accent);
+}
+
+/* Silent failsafe states for free-text inputs: red border while empty,
+   champagne flash when blur restores the default value. */
+.cull-settings__text.is-invalid {
+  border-color: var(--bad);
+  background: rgba(200, 127, 127, 0.06);
+}
+
+.cull-settings__text.is-flash {
+  animation: cull-flash-restore 0.9s ease-out;
+}
+
+@keyframes cull-flash-restore {
+  0% {
+    background: rgba(212, 175, 106, 0.25);
+    border-color: var(--accent);
+  }
+  100% {
+    background: var(--bg);
+    border-color: var(--border);
+  }
+}
+
+/* Reset button — a `.btn` in danger ink, two-state (outline → filled).
+   Both hovers restate ink because the base `.btn` hover is equally
+   specific and would otherwise grey it out. */
+.cull-settings__reset {
+  border-color: var(--bad);
+  padding: 7px 16px; /* off-scale */
+  color: var(--bad);
+  font-size: var(--fs-4);
+  letter-spacing: 0;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease;
+  white-space: nowrap;
+}
+
+.cull-settings__reset:hover:not(:disabled) {
+  background: var(--bad-a10);
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.cull-settings__reset.is-armed {
+  background: var(--bad);
+  color: var(--on-bad);
+  border-color: var(--bad);
+}
+
+.cull-settings__reset.is-armed:hover {
+  background: var(--bad-hover);
+  border-color: var(--bad);
+  color: var(--on-bad);
+}
+
+/* Inline two-step reset confirm: "Sure?" + Yes, reset / Cancel */
+.cull-settings__reset-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.cull-settings__reset-msg {
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  color: var(--bad);
+  letter-spacing: 0.04em;
+  margin-right: 2px;
+}
+
+/* ── finish (act-on-cull) dialog ──────────────────────────── */
+.cull-actions {
+  /* Wider than the stock quit-guard box: this dialog holds a path + an
+     editable name + a button on one row (verified in a measured harness —
+     520px forces a wrap or an overflow for ordinary root paths). */
+  max-width: 560px;
+  padding: 0;
+}
+
+/* Finish dialog header — the same bar as the settings head, but its meta
+   chip is centred against the title rather than sitting on its baseline. */
+.cull-actions__head {
+  align-items: center;
+  gap: 8px;
+}
+
+/* Two-stat summary grid (keeps + rejects) */
+.cull-actions__summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  margin-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cull-actions__stat {
+  padding: 16px 20px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cull-actions__stat-label {
+  font-size: var(--fs-1);
+}
+
+.cull-actions__stat-value {
+  font-family: var(--font-mono);
+  font-size: 24px; /* off-scale */
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.cull-actions__stat-value.is-keep {
+  color: var(--ok);
+}
+
+.cull-actions__stat-value.is-reject {
+  color: var(--bad);
+}
+
+.cull-actions__stat-value.is-zero {
+  color: var(--muted);
+}
+
+.cull-actions__stat-sub {
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  color: var(--fav);
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Unrated banner — champagne left-border note */
+.cull-actions__unrated {
+  margin: 14px 26px 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cull-actions__unrated-icon {
+  color: var(--accent);
+  font-size: var(--fs-5);
+}
+
+.cull-actions__rows {
+  padding: 22px 26px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.cull-actions__row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+
+.cull-actions__row-label {
+  font-size: 13.5px; /* off-scale */
+  color: var(--text);
+}
+
+.cull-actions__row-help {
+  font-size: 11.5px; /* off-scale */
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.cull-actions__result {
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.cull-actions__result--err {
+  color: var(--bad);
+}
+
+.cull-actions__pending {
+  margin: 14px 26px 0;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+}
+
+/* Pinned-mode "folder already exists" banner. Sits between the row-help text
+   and the dest-edit input, in dim red. Only renders when path_exists returns true; the
+   primary button label also swaps to "Confirm (merge)" so the action is
+   self-explanatory. */
+.cull-finish__folder-exists {
+  margin-top: 6px;
+  padding: 8px 12px;
+  /* Alarmed surface, but the copy itself stays quiet — only the ⚠ is red. */
+  color: var(--text-2);
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.cull-finish__folder-exists-icon {
+  color: var(--bad);
+  flex-shrink: 0;
+}
+
+/* ── finish dialog: pinned-root edit row ──────────────────────
+   A single combined
+   field showing `<muted root sep><editable subfolder>` with a primary
+   Copy button trailing. Border lights up when the input has focus. */
+.cull-finish__dest-edit {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 4px;
+  /* Backstop: if root + input minimum + button ever exceed the row, the
+     button wraps below instead of overflowing the dialog. */
+  flex-wrap: wrap;
+}
+
+.cull-finish__dest-edit > :first-child,
+.cull-finish__dest-edit .cull-finish__dest-sub {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11.5px; /* off-scale */
+}
+
+.cull-finish__dest-edit:focus-within .cull-finish__dest-root,
+.cull-finish__dest-edit:focus-within .cull-finish__dest-sub {
+  border-color: var(--accent);
+}
+
+.cull-finish__dest-root {
+  display: inline-flex;
+  align-items: center;
+  border-right: 0;
+  border-radius: 3px 0 0 3px; /* off-scale */
+  padding: 7px 0 7px 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  /* The displayed text is already leading-truncated in JS
+     (truncatePathDisplay keeps the path's tail + trailing separator), so no
+     CSS clamp: text-overflow can't ellipsize a flex container's own text and
+     was hard-clipping the trailing slash. max-width stays as a backstop only. */
+  max-width: 45%;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: border-color var(--dur-fast) ease;
+}
+
+.cull-finish__dest-sub {
+  appearance: none;
+  outline: none;
+  border-left: 0;
+  border-radius: 0 3px 3px 0; /* off-scale */
+  padding: 7px 10px 7px 0;
+  color: var(--text);
+  /* Basis 0, NOT auto: WebKit won't shrink an input below its content-based
+     basis, which let this row punch through the dialog edge. From 0 it grows
+     into the free space and the min-width floor does the rest. */
+  flex: 1 1 0;
+  /* Wide enough that a long pinned root can never squeeze the name being
+     typed into a peephole. */
+  min-width: 150px;
+  transition:
+    border-color var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
+}
+
+.cull-finish__dest-sub.is-invalid {
+  color: var(--bad);
+  border-color: var(--bad);
+  background: rgba(200, 127, 127, 0.06);
+}
+
+.cull-finish__dest-sub.is-flash {
+  animation: cull-flash-restore 0.9s ease-out;
+}
+
+.cull-finish__dest-cta {
+  flex-shrink: 0;
+}
+
+/* ── finish dialog: ask-each-time stage-2 picked row ──────────
+   `WILL COPY TO  <path>  [Change]
+   [Copy keeps]`. Wraps gracefully if the path is too long. */
+.cull-finish__picked {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.cull-finish__picked-label {
+  flex-shrink: 0;
+}
+
+.cull-finish__picked-path {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px; /* off-scale */
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px; /* off-scale */
+  padding: 6px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Move-rejects inline confirm row (Sure? message + Yes / Cancel buttons). */
+.cull-finish__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.cull-finish__confirm-msg {
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  color: var(--bad);
+  letter-spacing: 0.04em;
+  margin-right: 2px;
+}
+
+/* Move-rejects progress row (label + breathing accent bar).
+   The bar is indeterminate because the backend op is
+   batched, but a "moving N…" label still gives the user feedback. */
+.cull-finish__progress {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.cull-finish__progress-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  min-width: 110px;
+  flex-shrink: 0;
+}
+
+.cull-finish__progress-label b {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.cull-finish__progress-bar {
+  flex: 1 1 auto;
+}
+
+.cull-finish__progress-fill {
+  width: 60%;
+  animation: cull-finish-progress-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes cull-finish-progress-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Outline-danger "close anyway". Kept as a surface modifier rather than a
+   `.btn--danger`: it is the only outline-danger button, and its :hover is
+   one specificity step below `.btn:hover:not(:disabled)` — as it was below the
+   old pick-button hover before — so the neutral hover still wins. Folding it
+   would have changed that pixel. */
+.cull-quitguard__danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.cull-quitguard__danger:hover {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: var(--on-bad);
+}

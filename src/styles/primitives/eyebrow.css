@@ -1,0 +1,13 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · eyebrow — the small tracked section label
+   Fourteen labels carried this recipe with nine different trackings;
+   they now share one (--track-eyebrow). Callers still set their own ink
+   and size where the label is deliberately louder or smaller.
+   ──────────────────────────────────────────────────────────── */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--muted);
+}

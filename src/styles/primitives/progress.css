@@ -1,0 +1,18 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · progress — the 4px track and its fill
+   Two bars shared this: the analyze bar on the chrome screens and the
+   move-rejects bar in the finish dialog. Width and motion belong to the
+   caller; the track geometry and ink live here.
+   ──────────────────────────────────────────────────────────── */
+.progress {
+  height: 4px;
+  background: var(--surface-2);
+  border-radius: var(--r-1);
+  overflow: hidden;
+}
+
+.progress__fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--r-1);
+}

@@ -349,7 +349,7 @@ export const GridView = memo(function GridView({
             />
             {scrubSpeed > 1 && (
               <div
-                className="cull-scrubbar__speed cull-grid__scrollbar-speed"
+                className="chip chip--soft chip--accent cull-scrubbar__speed cull-grid__scrollbar-speed"
                 style={{ top: `${(topFrac + heightFrac / 2) * 100}%` }}
               >
                 {scrubSpeed}×
@@ -483,7 +483,7 @@ const GridCell = memo(function GridCell({
           <img className="cull-grid__img" src={url} alt="" decoding="sync" onLoad={probeOnLoad} />
         ) : (
           <div
-            className="cull-grid__placeholder"
+            className="shimmer cull-grid__placeholder"
             // Snap the shimmer to a shared epoch so every cell pulses in
             // sync regardless of when it mounted. Negative animation-delay
             // = "we've already been running this long". The delay is

@@ -1,0 +1,31 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · chip — the small tracked status pill
+   Base is the pill form eleven hand-rolled recipes shared: mono,
+   --fs-2, uppercase, --track-label, --r-pill. `--soft` keeps the four
+   in-chrome chips on the squarer corner they have always had; the ink
+   modifiers set colour and border together.
+   The border is deliberately NOT in the base — three of the eleven
+   carry none, and adding a transparent one would grow their box.
+   ──────────────────────────────────────────────────────────── */
+.chip {
+  border-radius: var(--r-pill);
+  padding: var(--sp-0) 10px; /* off-scale */
+  font-family: var(--font-mono);
+  font-size: var(--fs-2);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.chip--soft {
+  border-radius: 3px; /* off-scale */
+}
+
+.chip--accent {
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.chip--bad {
+  color: var(--bad);
+  border: 1px solid var(--bad);
+}

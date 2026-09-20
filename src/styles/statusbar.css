@@ -1,0 +1,63 @@
+/* ── status bar ───────────────────────────────────────────────
+   Status bar lives at the BOTTOM of the cull views (border-top).
+   The chrome / brand row at the top is rendered separately as
+   .cull-statusbar--top — same 36px height but visually a title bar. */
+.cull-statusbar {
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  font-size: var(--fs-3);
+  color: var(--text-2);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  gap: 18px;
+}
+
+/* The top chrome row — brand + window controls. 36px, sits above
+   the cull view, with border-bottom (status bar is at the bottom). */
+.cull-statusbar--top {
+  flex: 0 0 36px;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 148px 0 14px;
+  font-size: var(--fs-4);
+  letter-spacing: 0.04em;
+}
+
+/* macOS: traffic lights occupy top-left (~14+52px); only the gear sits top-right. */
+:root[data-platform="mac"] .cull-statusbar--top {
+  padding: 0 60px 0 84px;
+}
+
+/* Native fullscreen hides the traffic lights — reclaim their reserved space
+   (back to the standard 18px) so the brand block doesn't float off a gap. */
+:root[data-platform="mac"][data-fullscreen="1"] .cull-statusbar--top {
+  padding: 0 18px;
+}
+
+/* ── status-bar chips ─────────────────────────────────────────
+   The zoom indicator is the bar's only chip and has always rendered in
+   accent ink, so the `--zoom` modifier is now just `chip--accent`. */
+.cull-statusbar__chip {
+  padding: 1px 8px;
+  background: var(--surface-2);
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+
+/* "N selected" multi-select counter chip — pinned next to the position
+   counter while the grid has a multi-selection. Champagne pill (soft accent
+   background, accent text). */
+.cull-statusbar__multi {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  margin-left: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
+}
+

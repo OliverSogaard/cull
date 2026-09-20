@@ -1,0 +1,25 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · spinner — the ring
+   Base is the 36/2px chrome-screen ring; --lg is the 42/3px one the
+   photo frame uses. The keyframes live here because both sizes ride them.
+   ──────────────────────────────────────────────────────────── */
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 2px solid var(--surface-2);
+  border-top-color: var(--accent);
+  border-radius: var(--r-pill);
+  animation: cull-spin 700ms linear infinite;
+}
+
+.spinner--lg {
+  width: 42px;
+  height: 42px;
+  border-width: 3px;
+}
+
+@keyframes cull-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

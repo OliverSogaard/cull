@@ -541,17 +541,11 @@ export class ImageStore {
     this.pendingZoom.clear();
     // Revoke all zoom full-res blob URLs — REVOKE SITE 8 (they are the
     // heaviest blobs in the app; a folder switch must drop them at once).
-    for (const [, state] of this.zoomFulls) {
-      if (state?.status === "ready") URL.revokeObjectURL(state.url);
-    }
-    this.zoomFulls.clear();
+    this.revokeReadyBlobs(this.zoomFulls);
     // Mid tier (Phase 8): same session scope as the zoom tier — REVOKE SITE 11.
     // midEngaged survives (the display didn't change); midUnsupported too
     // (the backend can't change mid-run).
-    for (const [, state] of this.mids) {
-      if (state?.status === "ready") URL.revokeObjectURL(state.url);
-    }
-    this.mids.clear();
+    this.revokeReadyBlobs(this.mids);
     this.pendingMid.clear();
     this.midUncached.clear();
     this.midReprobed.clear();
@@ -571,12 +565,7 @@ export class ImageStore {
     this.trouble.reset();
 
     // Revoke all full-res blob URLs — REVOKE SITE 5
-    for (const [, state] of this.fulls) {
-      if (state?.status === "ready") {
-        URL.revokeObjectURL(state.url);
-      }
-    }
-    this.fulls.clear();
+    this.revokeReadyBlobs(this.fulls);
 
     // Clear per-path state and snapshots
     this.states.clear();
@@ -649,6 +638,25 @@ export class ImageStore {
     this.setCursor(next); // re-centres the keep-windows, prefetch and the decode pool
   }
 
+  /** Revoke every READY blob in a tier map and empty it — the one shape both
+   *  resets share (REVOKE SITES 5, 8, 11). */
+  private revokeReadyBlobs(map: Map<string, { status: string; url?: string } | undefined>): void {
+    for (const [, state] of map) {
+      if (state?.status === "ready" && state.url) URL.revokeObjectURL(state.url);
+    }
+    map.clear();
+  }
+
+  /** Revoke every thumb blob and empty the map. ThumbEntry carries no
+   *  `status` (thumbs are always "ready" once present), so it can't share
+   *  revokeReadyBlobs's map type — REVOKE SITE 4b. */
+  private revokeThumbs(): void {
+    for (const [, entry] of this.thumbs) {
+      URL.revokeObjectURL(entry.url);
+    }
+    this.thumbs.clear();
+  }
+
   /** Remove every per-path record for `p` and revoke its blobs. Consumer-owned
    *  refcounts (wantFull / displayRefs / pinnedFulls) are left alone: the cell
    *  that displayed a gone path unmounts and decrements on its own. */
@@ -703,14 +711,8 @@ export class ImageStore {
     this.midLane.reset();
     this.wantFull.clear();
     this.pendingZoom.clear();
-    for (const [, state] of this.zoomFulls) {
-      if (state?.status === "ready") URL.revokeObjectURL(state.url); // REVOKE SITE 8
-    }
-    this.zoomFulls.clear();
-    for (const [, state] of this.mids) {
-      if (state?.status === "ready") URL.revokeObjectURL(state.url); // REVOKE SITE 11
-    }
-    this.mids.clear();
+    this.revokeReadyBlobs(this.zoomFulls); // REVOKE SITE 8
+    this.revokeReadyBlobs(this.mids); // REVOKE SITE 11
     this.pendingMid.clear();
     this.midUncached.clear();
     this.midReprobed.clear();
@@ -723,18 +725,10 @@ export class ImageStore {
     this.pathDims.clear();
 
     // Revoke all full-res blob URLs — REVOKE SITE 4a
-    for (const [, state] of this.fulls) {
-      if (state?.status === "ready") {
-        URL.revokeObjectURL(state.url);
-      }
-    }
-    this.fulls.clear();
+    this.revokeReadyBlobs(this.fulls);
 
     // Revoke all thumb blob URLs — REVOKE SITE 4b
-    for (const [, entry] of this.thumbs) {
-      URL.revokeObjectURL(entry.url);
-    }
-    this.thumbs.clear();
+    this.revokeThumbs();
 
     this.states.clear();
     this.snaps.clear();

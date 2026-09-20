@@ -37,7 +37,7 @@ export function SettingsDialog({
 
   return (
     <div
-      className="cull-quitguard cull-settings-overlay"
+      className="dialog cull-settings-overlay"
       onClick={(e) => {
         // Click on the backdrop itself (not bubbled from inside the box) closes.
         if (e.target === e.currentTarget) onClose();
@@ -51,9 +51,9 @@ export function SettingsDialog({
         aria-label="Settings"
         tabIndex={-1}
       >
-        <div className="cull-settings__head">
+        <div className="dialog__head cull-settings__head">
           <span className="cull-settings__head-title">Settings</span>
-          <span className="cull-settings__head-meta">CULL</span>
+          <span className="eyebrow">CULL</span>
         </div>
 
         <div className="cull-settings__layout">
@@ -288,8 +288,9 @@ export function SettingsDialog({
           </div>
         </div>
 
-        <div className="cull-settings__foot">
-          <kbd>esc</kbd> to close · <kbd>{modGlyph} ,</kbd> to reopen
+        <div className="eyebrow cull-settings__foot">
+          <kbd className="kbd">esc</kbd> to close · <kbd className="kbd">{modGlyph} ,</kbd> to
+          reopen
         </div>
       </div>
     </div>
@@ -367,7 +368,7 @@ function Chip({
   return (
     <button
       type="button"
-      className={`cull-settings__chip${on ? " is-on" : ""}`}
+      className={`chip cull-settings__chip${on ? " is-on" : ""}`}
       onClick={() => onChange(!on)}
       aria-pressed={on}
     >
@@ -431,7 +432,7 @@ function PinnedRootControl({ path, onPick }: { path: string; onPick: (next: stri
       <span className="cull-settings__pinned-path" title={path || "(no folder picked)"}>
         {path || "(no folder picked)"}
       </span>
-      <button type="button" className="cull-pick-button" onClick={pick} disabled={picking}>
+      <button type="button" className="btn" onClick={pick} disabled={picking}>
         {picking ? "opening…" : "Change"}
       </button>
     </div>
@@ -516,7 +517,7 @@ function ThumbCacheRow() {
       label="Image cache"
       help={`Cached previews for faster re-opens. Safe to clear.${mbLabel}`}
     >
-      <button type="button" className="cull-pick-button" onClick={handleClear} disabled={clearing}>
+      <button type="button" className="btn" onClick={handleClear} disabled={clearing}>
         {clearing ? "Clearing…" : "Clear"}
       </button>
     </SettingRow>
@@ -544,7 +545,7 @@ function ResetRow({ onReset }: { onReset: () => void }) {
             <span className="cull-settings__reset-msg">Sure?</span>
             <button
               type="button"
-              className="cull-settings__reset is-armed"
+              className="btn cull-settings__reset is-armed"
               onClick={() => {
                 onReset();
                 setArmed(false);
@@ -554,7 +555,7 @@ function ResetRow({ onReset }: { onReset: () => void }) {
             </button>
           </div>
         ) : (
-          <button type="button" className="cull-settings__reset" onClick={() => setArmed(true)}>
+          <button type="button" className="btn cull-settings__reset" onClick={() => setArmed(true)}>
             Reset
           </button>
         )}

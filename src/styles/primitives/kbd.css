@@ -1,0 +1,22 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · kbd — the keycap
+   One recipe for the six hand-rolled keycaps. Font SIZE is left to the
+   caller: every keycap either inherits its hint row's size or sets its
+   own, and they legitimately differ (9–12px across the app).
+   ──────────────────────────────────────────────────────────── */
+.kbd {
+  font-family: var(--font-mono);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  padding: var(--sp-0) var(--sp-2);
+  color: var(--text-2);
+}
+
+/* Keycap sitting INSIDE a filled accent button: a translucent scrim of the
+   button's own ink instead of a surface + border. */
+.kbd--tint {
+  background: rgba(26, 20, 8, 0.18); /* off-scale */
+  border: none;
+  color: inherit;
+}

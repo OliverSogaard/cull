@@ -1,0 +1,62 @@
+import type { ReactNode } from "react";
+
+type Props = {
+  failedCount: number;
+  savingCount: number;
+  retryFailed: () => void;
+  onKeepCulling: () => void;
+  onCloseAnyway: () => void;
+};
+
+/** The close-request guard: shown while ratings are still being written (auto-closes
+ *  when they land) or when writes failed permanently (explicit choice, never silent loss). */
+export function QuitGuardOverlay({
+  failedCount,
+  savingCount,
+  retryFailed,
+  onKeepCulling,
+  onCloseAnyway,
+}: Props): ReactNode {
+  return (
+    <div className="dialog">
+      <div className="dialog__box">
+        {failedCount > 0 ? (
+          <>
+            <div className="dialog__title dialog__title--warn">
+              ⚠ {failedCount} rating{failedCount > 1 ? "s" : ""} didn’t save
+            </div>
+            <div className="dialog__body">
+              {failedCount} {failedCount > 1 ? "ratings are" : "rating is"} not on disk (the sidecar
+              write kept failing). Closing now will lose {failedCount > 1 ? "them" : "it"}.
+            </div>
+            <div className="dialog__actions">
+              <button className="btn btn--primary" onClick={retryFailed}>
+                retry saving
+              </button>
+              <button className="btn" onClick={onKeepCulling}>
+                keep culling
+              </button>
+              <button className="btn cull-quitguard__danger" onClick={onCloseAnyway}>
+                close anyway
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="dialog__title">
+              saving {savingCount} rating{savingCount > 1 ? "s" : ""}…
+            </div>
+            <div className="dialog__body">
+              The app will close on its own the moment your ratings are safely on disk.
+            </div>
+            <div className="dialog__actions">
+              <button className="btn" onClick={onKeepCulling}>
+                keep culling
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

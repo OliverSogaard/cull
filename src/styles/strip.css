@@ -1,0 +1,292 @@
+/* ── thumbnail strip ──────────────────────────────────────── */
+.cull-thumbs {
+  flex: 0 0 auto;
+  height: 82px;
+  /* Cells are absolutely positioned inside the inner track (see FilmStrip); the
+     4px gap lives in CELL_STRIDE, not CSS. Top padding is deliberately deeper
+     (20px vs 8px): the burst run box extends 4px above the cells and its ×N
+     count sits OUTSIDE the box's top-left corner in that headroom
+     (20 + 54 + 8 = 82). Overflow clips at the padding box, so overlays drawn
+     into the padding area render fine. */
+  padding: 20px 0 8px;
+  overflow: auto hidden;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  scrollbar-width: none;
+}
+
+/* When the strip is positioned at the TOP of the loupe / compare body, swap
+   the border so the line still sits between the strip and the photo stage. */
+.cull-app[data-thumbs-pos="top"] .cull-thumbs {
+  border-top: none;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Wrapper so the scrub position bar can overlay the strip without joining
+   the horizontal scroll flow. Carries no sizing — the strip inside does. */
+.cull-strip-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrub position bar — a minimap under the cells: the strip shows a
+   screenful, this shows where that screenful sits in the whole set. Fades in
+   fast on scrub start, lingers briefly after release. */
+.cull-scrubbar {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 3px;
+  height: 2px;
+  background: var(--border);
+  border-radius: var(--r-pill);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease 0.35s;
+}
+
+.cull-scrubbar.is-on {
+  opacity: 1;
+  transition: opacity var(--dur-fast) ease 0s;
+}
+
+/* Positioner — full-width overlay the thumb + speed badge ride. Moved by
+   `transform: translateX(%)` (of its own = the bar's width) so per-step motion
+   is compositor-only; the transition that used to sit on `left` for the thumb
+   and badge lives here now, once. */
+.cull-scrubbar__pos {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: transform 80ms linear;
+}
+
+.cull-scrubbar__speed {
+  position: absolute;
+  left: 0;
+  bottom: 7px;
+  transform: translateX(-50%);
+  font-size: var(--fs-1);
+  letter-spacing: 0.08em;
+  background: rgba(8, 8, 10, 0.85);
+  border-color: rgba(212, 175, 106, 0.4);
+  padding: 0 5px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.cull-scrubbar__thumb {
+  position: absolute;
+  left: 0;
+  top: -1px;
+  width: 26px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transform: translateX(-50%);
+}
+
+.cull-thumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.cull-thumb {
+  position: relative;
+  flex: 0 0 76px;
+  height: 54px;
+  cursor: pointer;
+  transition: opacity 150ms ease-out;
+}
+
+.cull-thumb__frame {
+  position: relative;
+  width: 76px;
+  height: 54px;
+  box-sizing: border-box;
+  border-radius: 1px; /* off-scale */
+  overflow: hidden;
+}
+
+/* Current-cell outline drawn as an overlay ABOVE the cell content (like the
+   grid keeps its outline visible over a placeholder). The old inset `outline`
+   only peeked through the letterbox margin of a loaded (object-fit:contain)
+   img and was fully covered by the solid shimmer placeholder, so it vanished
+   on loading cells. An inset box-shadow on a top z-index ::after always shows,
+   without the vertical scroll-clip a positive outline-offset would hit. Colour
+   + width come from inline `--thumb-outline` / `--thumb-outline-w`. */
+.cull-thumb__frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 1px; /* off-scale */
+  box-shadow: inset 0 0 0 var(--thumb-outline-w, 1.5px)
+    var(--thumb-outline, transparent);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.cull-thumb__img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* NEVER clip — portrait shows side matte */
+  display: block;
+  background-color: var(--matte);
+}
+
+.cull-thumb__placeholder {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* Base colour under the `.shimmer` sweep band (matches the grid + loupe). */
+  background-color: var(--surface);
+}
+
+/* Verdict glyph dot — bottom right; holds a Lucide SVG icon (Check / X / Star)
+   for intrinsic centering. Unicode glyphs in system fonts varied wildly in
+   their visual centerline on Windows, so the SVG path is now load-bearing. */
+.cull-thumb__dot {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--halo);
+}
+
+/* Solid verdict colors — shared with the grid dots (grouped like the ghost
+   variants below). */
+.cull-thumb__dot--keep,
+.cull-grid__dot--keep {
+  background: var(--ok);
+}
+
+.cull-thumb__dot--reject,
+.cull-grid__dot--reject {
+  background: var(--bad);
+}
+
+.cull-thumb__dot--fav,
+.cull-grid__dot--fav {
+  background: var(--fav);
+}
+
+/* Pre-existing LrC star badge in the thumb-strip / compare-strip cell —
+   a tiny champagne ★ pinned top-left with a dark translucent pill, so the
+   user can tell at a glance which frames already carry an LrC rating. Only
+   rendered for real user ratings (ThumbCell filters out CULL's own fav 1★).
+   Star is a Lucide SVG; the badge centers it via flex (no font metrics). */
+.cull-thumb__lrc-badge {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 2px 3px;
+  border-radius: 1px; /* off-scale */
+  z-index: 2;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+/* ── smart-culling advisories (ghost dots) + burst run boxes ───────────────
+   The suggestion is itself a verdict, rendered in the SAME bottom-right slot
+   as the committed dot but styled provisional: dashed outline + hollow glyph.
+   High-contrast on purpose (near-opaque dark fill, bright glyph, dark halo) —
+   the first draft's 55%-opacity version disappeared at a glance.
+   Bursts: ONE hairline box around the whole run (drawn as a strip/grid
+   overlay so it spans the gaps between cells), ×N count riding the top-left
+   of the outline. The winner wears the ghost ✓ like any keep suggestion;
+   no per-cell tints, pills, or winner borders. */
+.cull-thumb__dot--ghost,
+.cull-grid__dot--ghost {
+  background: var(--scrim);
+  opacity: 0.95;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.7); /* dark halo lifts it off any photo */
+}
+.cull-thumb__dot--ghost-keep,
+.cull-grid__dot--ghost-keep {
+  border: 1.5px dashed var(--ok);
+  color: var(--ok);
+}
+.cull-thumb__dot--ghost-reject,
+.cull-grid__dot--ghost-reject {
+  border: 1.5px dashed var(--bad);
+  color: var(--bad);
+}
+.cull-thumb__dot--ghost-favorite,
+.cull-grid__dot--ghost-favorite {
+  border: 1.5px dashed var(--fav);
+  color: var(--fav);
+}
+
+/* One box per burst run (strip) / per run-row segment (grid, where runs wrap).
+   The box FLOATS around the run — 4px of air between the line and the photos,
+   never bordering them — and the ×N count sits OUTSIDE the top-left corner. */
+.cull-burst-box {
+  /* A real <fieldset> — the engine natively skips painting the border behind
+     the <legend>, which is exactly the "text cuts the outline" look. All
+     UA fieldset chrome reset below. */
+  position: absolute;
+  /* border-box is LOAD-BEARING: the app has no global box-sizing reset, and
+     content-box pushed the right/bottom lines out by the border width — the
+     4px air was only true on the top/left. Verified by rendered measurement:
+     4px cell-to-line air on all four sides with these insets. */
+  box-sizing: border-box;
+  top: -10px; /* the legend shifts the painted top border down ~4px */
+  bottom: -6px;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+  border: 2px solid rgba(214, 178, 120, 0.5);
+  border-radius: var(--r-2);
+  z-index: 3;
+  pointer-events: none;
+}
+.cull-burst-box--grid {
+  /* Grid variant is sized explicitly (top/height inline) — undo the inset pair. */
+  bottom: auto;
+}
+.cull-burst-box__count {
+  /* Native legend: sits in the top border's gap, tucked just past the corner. */
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 8px; /* off-scale */
+  line-height: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Similar-set boxes: same run-box language as bursts (border, radius, legend
+   gap), but a cooler hue so lookalike groups read as visually distinct from
+   camera bursts at a glance. Same alpha as the burst border (rgba .5) — only
+   the hue changes. */
+.cull-burst-box--similar {
+  border-color: rgba(127, 168, 201, 0.5);
+}
+.cull-burst-box--similar > .cull-burst-box__count {
+  color: var(--accent-cool);
+}
+
+/* ExifRail suggestion row — verdict-coloured key, dim reasons. */
+.cull-exif-rail__suggest--keep {
+  color: var(--ok);
+}
+.cull-exif-rail__suggest--reject {
+  color: var(--bad);
+}
+.cull-exif-rail__suggest--favorite {
+  color: var(--fav);
+}
+

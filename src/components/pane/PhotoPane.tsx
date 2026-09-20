@@ -394,7 +394,7 @@ export const PhotoPane = memo(function PhotoPane({
           pixels presented, old content stays during navigation (no blanking). */}
       {!snap.front.url && (
         <div
-          className="cull-photo-frame__shimmer"
+          className="shimmer cull-photo-frame__shimmer"
           aria-hidden
           style={{ ["--shimmer-delay" as string]: `-${shimmerDelayMs}ms` }}
         />
@@ -403,14 +403,14 @@ export const PhotoPane = memo(function PhotoPane({
           on disk), never mid-scrub. The 150ms CSS reveal delay still applies. */}
       {img.stage === "thumb" && !scrubbing && (
         <div className="cull-photo-frame__spinner-wrap" aria-hidden>
-          <div className="cull-loading__spinner" />
+          <div className="spinner spinner--lg cull-loading__spinner" />
         </div>
       )}
       {/* Quiet error chip (choreography "Error" row): the thumb stays up and
           the failure is non-blocking. The shimmer-stage hard error panel
           lives in the consumer (it replaces the whole frame). */}
       {img.error && img.stage === "thumb" && (
-        <div className="cull-error-chip" title={img.error}>
+        <div className="chip chip--bad cull-error-chip" title={img.error}>
           <span>read failed</span>
           <button type="button" onClick={() => imageStore.retry(path)}>
             retry
@@ -422,7 +422,7 @@ export const PhotoPane = memo(function PhotoPane({
           The 150ms CSS reveal delay keeps cached zooms ring-free. */}
       {isZooming && !hiResReady && !img.fullError && (
         <div className="cull-photo-frame__spinner-wrap" aria-hidden>
-          <div className="cull-loading__spinner" />
+          <div className="spinner spinner--lg cull-loading__spinner" />
         </div>
       )}
       {/* The 32 MP read failed while the user is judging sharpness: say so
@@ -431,7 +431,7 @@ export const PhotoPane = memo(function PhotoPane({
           clears the error state; the explicit request re-queues the read —
           the zoom effects key on path/zoom, which did not change. */}
       {isZooming && !hiResReady && img.fullError && (
-        <div className="cull-error-chip" title={img.fullError}>
+        <div className="chip chip--bad cull-error-chip" title={img.fullError}>
           <span>full-res failed</span>
           <button
             type="button"

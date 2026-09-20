@@ -1,0 +1,79 @@
+/* ── empty-state (no filter matches) ──────────────────────────
+   Loupe + Grid render this when the active filter has zero matches.
+   Eyebrow, headline with the missing filter highlighted in accent, and
+   small kbd-style key hints to switch out. Every variant (including the
+   Smart filter's disabled/analyzing/analyzed states) renders via
+   NoMatchEmptyState, so all of them get the --desert backdrop below — no
+   glyph icon circle. */
+.cull-empty-state {
+  flex: 1 1 auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-2);
+  overflow: hidden;
+  /* The backdrop's z-index:-1 must resolve against THIS box. */
+  isolation: isolate;
+}
+
+/* Desert backdrop — the "no matches" empty states sit on a faint monochrome
+   cactus illustration, ground-plane anchored to the bottom of the stage.
+   Same dim-to-texture, mask-fade treatment as .cull-chrome::before (the
+   pre-cull meadow backdrop), tuned for a transparent-background ground
+   illustration rather than a full-bleed photo: partial width, bottom-
+   anchored, blurred so its vector edges melt into texture instead of
+   reading as pasted clipart. */
+/* Desert backdrop — the EXACT meadow recipe (.cull-chrome::before), different
+   scene: full-bleed dune landscape under the no-match text. position:fixed
+   fills the whole window regardless of how the empty-state box is sized;
+   opaque chrome (status bars, strip) paints over it, so it reads as the
+   stage's own atmosphere with the text centered on top. */
+.cull-empty-state--desert::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url("../assets/desert.jpg") center / cover no-repeat;
+  filter: grayscale(1) brightness(0.85) contrast(1.05);
+  opacity: 0.11;
+  -webkit-mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
+}
+
+.cull-empty-state__eyebrow {
+  font-size: var(--fs-3);
+}
+
+.cull-empty-state__title {
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
+  font-family: Inter, sans-serif;
+  font-size: var(--fs-9);
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.cull-empty-state__title em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.cull-empty-state__hint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-4);
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.cull-empty-state__hint kbd {
+  background: var(--surface);
+  padding: 2px 7px;
+  margin: 0 2px;
+}
+

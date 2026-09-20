@@ -1,0 +1,253 @@
+/* ── contact-sheet grid (G) ───────────────────────────────── */
+/* Positioning context for the grid's rating-feedback chip; the footer is its
+   sibling, so the chip stays within the grid area and never overlaps it. The
+   inner .cull-grid (flex:1) fills it, so width/scroll behave exactly as before. */
+.cull-grid-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cull-grid {
+  flex: 1 1 auto;
+  overflow: hidden auto; /* hard-stop horizontal scrollbar */
+  min-height: 0;
+  background: var(--bg);
+  scrollbar-width: thin;
+  padding: 20px 24px;
+}
+
+.cull-grid__inner {
+  position: relative;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+/* Right-edge scroll-position indicator — the grid's answer to the loupe
+   strip's scrub position bar (.cull-scrubbar): a thin minimap showing where
+   the current viewport sits within the full grid. Sticky + zero-height so it
+   never joins the vertical scroll flow (see GridView's render comment); the
+   track's own top/height stay fixed once mounted — only the thumb inside it
+   moves, via `transform: translateY()`, and only opacity is transitioned, so
+   this never touches a layout-bound property mid-scroll. */
+.cull-grid__scrollbar {
+  position: sticky;
+  top: 0;
+  height: 0;
+  z-index: 5;
+}
+
+.cull-grid__scrollbar-track {
+  position: absolute;
+  top: 0;
+  right: -16px; /* sits in .cull-grid's own right padding gutter, clear of cells */
+  width: 3px;
+  border-radius: var(--r-pill);
+  background: var(--border);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease 0.35s;
+}
+
+.cull-grid__scrollbar-track.is-on {
+  opacity: 1;
+  transition: opacity var(--dur-fast) ease 0s;
+}
+
+.cull-grid__scrollbar-thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+/* Grid vertical-scrub speed badge — reuses .cull-scrubbar__speed's type/box
+   treatment (same visual language as the strip's badge); only the axis flips
+   for the vertical track: `top` follows the thumb (set inline, as % of the
+   track's own height) instead of `left`, and translateY replaces translateX
+   so the badge centers on that position instead of hugging a fixed offset. */
+.cull-grid__scrollbar-speed {
+  left: auto; /* base .cull-scrubbar__speed anchors left:0 for the strip's positioner */
+  bottom: auto;
+  right: 6px;
+  transform: translateY(-50%);
+}
+
+.cull-grid__cell {
+  cursor: pointer;
+  /* 9px ⇒ an 18px inter-image corridor with room for the burst boxes' 2px
+     line + on-line legend (the boxes sit 2px inside the cell bounds). */
+  padding: 9px;
+  box-sizing: border-box;
+}
+
+.cull-grid__cell.is-reject {
+  opacity: 0.5;
+}
+
+.cull-grid__cell.is-reject.is-current {
+  opacity: 1;
+}
+
+/* Frame wraps the img OR the placeholder. */
+.cull-grid__frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-1);
+  outline: 3px solid transparent;
+  outline-offset: 2px;
+  /* No transition — the outline must follow `is-current` instantly, not
+     animate. The lag was reading as the outline waiting on the image fetch. */
+  overflow: hidden;
+  background: transparent;
+}
+
+.cull-grid__cell.is-current .cull-grid__frame {
+  outline-color: var(--accent);
+}
+
+.cull-grid__img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* NEVER clip — portrait shows side matte */
+  display: block;
+  background: var(--matte);
+}
+
+/* Skeleton shimmer placeholder. The light sweep is a compositor-driven
+   translateX on the ::after band (see cull-shimmer-sweep) so it keeps animating
+   while the main thread is busy. position:relative establishes the stacking /
+   clip context for the absolutely-positioned sweep. */
+.cull-grid__placeholder {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+  background-color: var(--surface);
+}
+
+/* Only addition to the shared `.shimmer` band: the grid cell stacks a
+   filename label (z-index 1) over the sweep. */
+.cull-grid__placeholder::after {
+  z-index: 0;
+}
+
+.cull-grid__placeholder-name {
+  /* position/z-index keep the filename label above the sweep band. */
+  position: relative;
+  z-index: 1;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  letter-spacing: 0.04em;
+  text-align: left;
+  word-break: break-all;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Verdict dot in grid — 18px, holds a Lucide SVG icon (Check / X / Star).
+   See `.cull-thumb__dot` for why we don't use Unicode glyphs anymore. */
+.cull-grid__dot {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55);
+  z-index: 3;
+}
+
+/* Solid verdict colors live with the strip dots (see .cull-thumb__dot--keep
+   family — grouped like the ghost variants). */
+
+/* Pre-existing LrC star badge in the grid (champagne ★ top-left on a dark
+   translucent pill). Same idea as the strip badge, scaled up for the larger
+   grid cells. GridView / ExifRail filter out CULL's own favorite 1★.
+   Star is a Lucide SVG icon; flex centers it inside the pill. */
+.cull-grid__lrc-badge {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 3px 5px;
+  border-radius: var(--r-1);
+  z-index: 3;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+/* Multi-select tint — solid champagne overlay; the accent outline takes over
+   the cell's own outline. Reject opacity is suppressed when selected so a
+   rejected cell can still show its selection state without fading out. */
+.cull-grid__multi-tint {
+  position: absolute;
+  inset: 3px; /* match .cull-grid__cell padding so it sits inside the frame */
+  background: rgba(212, 175, 106, 0.42);
+  border-radius: var(--r-1);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.cull-grid__cell.is-multi-selected .cull-grid__frame {
+  outline-color: var(--accent);
+}
+
+.cull-grid__cell.is-multi-selected.is-reject {
+  opacity: 1;
+}
+
+/* Hover-revealed filename pill at bottom-left of each loaded grid cell. */
+.cull-grid__fn {
+  display: none;
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.78);
+  padding: 2px 6px;
+  border-radius: var(--r-1);
+  z-index: var(--z-overlay);
+  max-width: calc(100% - 36px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
+.cull-grid__cell:hover .cull-grid__fn {
+  display: block;
+}
+
+/* Keyboard nav hides the OS pointer, but the cell under it still matches
+   :hover — which left one stray filename badge lit with no visible cause.
+   While the last input was an arrow key, hover chrome stays dark; the first
+   mouse move flips the class off (GridView's kbdNav state). */
+.cull-grid.is-kbd-nav .cull-grid__cell:hover .cull-grid__fn {
+  display: none;
+}
+

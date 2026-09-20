@@ -12,7 +12,7 @@
 /** Module-load epoch (ms). All shimmers measure their phase from here. */
 const SHIMMER_EPOCH_MS = Date.now();
 
-/** Sweep duration — MUST match the `cull-shimmer-sweep` animation in App.css. */
+/** Sweep duration — MUST match the `cull-shimmer-sweep` animation in styles/primitives/shimmer.css. */
 const SHIMMER_DURATION_MS = 1400;
 
 /** Current phase offset (ms) into the shared sweep cycle. Pin at mount and pass

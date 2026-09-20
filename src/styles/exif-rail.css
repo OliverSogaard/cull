@@ -1,0 +1,158 @@
+/* ── EXIF rail (right side of loupe / compare body) ───────── */
+.cull-exif-rail {
+  flex: 0 0 290px;
+  width: 290px;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  padding: 40px 32px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  scrollbar-width: thin;
+}
+
+/* Compare rail is wider (two columns of values). */
+.cull-exif-rail--compare {
+  flex: 0 0 340px;
+  width: 340px;
+  padding: 32px 24px;
+  gap: 28px;
+}
+
+.cull-exif-rail__section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cull-exif-rail__label {
+  color: var(--accent);
+}
+
+.cull-exif-rail__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.cull-exif-rail__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: var(--fs-4);
+  line-height: 1.4;
+}
+
+.cull-exif-rail__k {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.cull-exif-rail__v {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-4);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-word;
+}
+
+.cull-exif-rail__v--dim {
+  color: var(--muted);
+}
+
+.cull-exif-rail__lrc {
+  letter-spacing: 0.04em;
+  font-size: var(--fs-5);
+  line-height: 1;
+  font-family: -apple-system, "Segoe UI Symbol", system-ui, sans-serif;
+}
+
+.cull-exif-rail__lrc-filled {
+  color: var(--accent);
+}
+
+.cull-exif-rail__lrc-dim {
+  color: var(--surface-2);
+}
+
+.cull-exif-rail__hist {
+  height: 70px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 1px; /* off-scale */
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cull-exif-rail__hist img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.cull-exif-rail__hist-placeholder {
+  position: absolute;
+  inset: 0;
+}
+
+/* Compare rail two-column comparison. Champion / Challenger heading row +
+   each row has three slots: key (90px) + champion value + challenger value. */
+.cull-cr-rail__head {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.cull-cr-rail__col {
+  font-size: var(--fs-1);
+}
+
+.cull-cr-rail__col--champion {
+  color: var(--accent);
+}
+
+.cull-cr-rail__col--challenger {
+  color: var(--text-2);
+}
+
+.cull-cr-rail__row {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 5px 0;
+}
+
+.cull-cr-rail__row .cull-cr-rail__v {
+  font-family: var(--font-mono);
+  font-size: var(--fs-4);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.cull-cr-rail__row.is-diff .cull-cr-rail__v {
+  color: var(--accent);
+}
+
+/* Layout-bearing tracking: the key column is a fixed 90px track, so the
+   eyebrow's .2em would wrap "LrC rating" (+ the is-diff bullet). Keep the
+   old .06em here rather than in the primitive. */
+.cull-cr-rail__row .cull-cr-rail__k {
+  letter-spacing: 0.06em;
+}
+
+.cull-cr-rail__row.is-diff .cull-cr-rail__k::before {
+  content: "•";
+  margin-right: 5px;
+  color: var(--accent);
+}

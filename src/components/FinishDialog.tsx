@@ -210,7 +210,7 @@ export function FinishDialog({
 
   return (
     <div
-      className="cull-quitguard"
+      className="dialog"
       onClick={(e) => {
         // Backdrop click closes, like the settings dialog: only a click on the
         // backdrop itself (not one bubbled from inside the box). Safe even
@@ -220,22 +220,22 @@ export function FinishDialog({
       }}
     >
       <div
-        className="cull-quitguard__box cull-actions"
+        className="dialog__box cull-actions"
         ref={trapRef}
         role="dialog"
         aria-modal="true"
         aria-label="Finish session"
         tabIndex={-1}
       >
-        <div className="cull-settings__title">
+        <div className="dialog__head cull-actions__head">
           <span>Finish session</span>
-          <span className="cull-settings__title-meta">{folderName || "session"}</span>
+          <span className="eyebrow">{folderName || "session"}</span>
         </div>
 
         {/* Two-stat summary — keeps (with fav sub-line) + rejects. */}
         <div className="cull-actions__summary">
           <div className="cull-actions__stat">
-            <div className="cull-actions__stat-label">Keeps</div>
+            <div className="eyebrow cull-actions__stat-label">Keeps</div>
             <div
               className={`cull-actions__stat-value is-keep${keepsCount === 0 ? " is-zero" : ""}`}
             >
@@ -248,7 +248,7 @@ export function FinishDialog({
             )}
           </div>
           <div className="cull-actions__stat">
-            <div className="cull-actions__stat-label">Rejects</div>
+            <div className="eyebrow cull-actions__stat-label">Rejects</div>
             <div
               className={`cull-actions__stat-value is-reject${rejectedPaths.length === 0 ? " is-zero" : ""}`}
             >
@@ -258,7 +258,7 @@ export function FinishDialog({
         </div>
 
         {unrated > 0 && (
-          <div className="cull-actions__unrated">
+          <div className="note cull-actions__unrated">
             <span className="cull-actions__unrated-icon">⚠</span>
             <span>
               <b>{unrated} unrated</b> will stay in the source untouched.
@@ -267,9 +267,7 @@ export function FinishDialog({
         )}
 
         {(savingCount > 0 || failedCount > 0) && (
-          <div
-            className={`cull-actions__pending${failedCount > 0 ? " cull-actions__pending--err" : ""}`}
-          >
+          <div className={`note cull-actions__pending${failedCount > 0 ? " note--bad" : ""}`}>
             {failedCount > 0
               ? `⚠ ${failedCount} rating${failedCount > 1 ? "s" : ""} haven't saved · actions disabled until resolved (status bar · retry)`
               : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`}
@@ -299,7 +297,7 @@ export function FinishDialog({
             {pinnedMode ? (
               <>
                 {rootMissing && (
-                  <div className="cull-finish__folder-exists">
+                  <div className="note note--bad cull-finish__folder-exists">
                     <span className="cull-finish__folder-exists-icon">⚠</span>
                     <span>
                       The pinned export root no longer exists. Re-pick it in <b>Settings</b> before
@@ -308,7 +306,7 @@ export function FinishDialog({
                   </div>
                 )}
                 {folderExists && (
-                  <div className="cull-finish__folder-exists">
+                  <div className="note note--bad cull-finish__folder-exists">
                     <span className="cull-finish__folder-exists-icon">⚠</span>
                     <span>
                       A folder with this name already exists at your pinned root. Rename it in the
@@ -342,7 +340,7 @@ export function FinishDialog({
                     }}
                   />
                   <button
-                    className="cull-pick-button cull-pick-button--primary cull-finish__dest-cta"
+                    className="btn btn--primary cull-finish__dest-cta"
                     disabled={copyDisabled}
                     onClick={commitCopy}
                   >
@@ -357,7 +355,7 @@ export function FinishDialog({
             ) : pickedDestination === null ? (
               // Ask each time, stage 1: a single button that opens the picker.
               <button
-                className="cull-pick-button cull-pick-button--primary"
+                className="btn btn--primary"
                 disabled={
                   keptPaths.length === 0 ||
                   actionBusy !== null ||
@@ -372,19 +370,19 @@ export function FinishDialog({
             ) : (
               // Ask each time, stage 2: confirm or change.
               <div className="cull-finish__picked">
-                <span className="cull-finish__picked-label">Will copy to</span>
+                <span className="eyebrow cull-finish__picked-label">Will copy to</span>
                 <code className="cull-finish__picked-path" title={pickedDestination}>
                   {pickedDestination}
                 </code>
                 <button
-                  className="cull-pick-button"
+                  className="btn"
                   disabled={actionBusy !== null || picking}
                   onClick={pickDestination}
                 >
                   {picking ? "opening…" : "Change"}
                 </button>
                 <button
-                  className="cull-pick-button cull-pick-button--primary"
+                  className="btn btn--primary"
                   disabled={
                     keptPaths.length === 0 ||
                     actionBusy !== null ||
@@ -402,16 +400,13 @@ export function FinishDialog({
           </div>
         </div>
 
-        <div className="cull-quitguard__actions" style={{ padding: "16px 26px" }}>
-          <button className="cull-pick-button" onClick={onClose}>
+        <div className="dialog__actions dialog__actions--flush">
+          <button className="btn" onClick={onClose}>
             close
           </button>
         </div>
-        <div
-          className="cull-quitguard__hint"
-          style={{ padding: "0 26px 16px", margin: 0, borderTop: 0 }}
-        >
-          <kbd>esc</kbd> to close
+        <div className="dialog__hint dialog__hint--flush">
+          <kbd className="kbd">esc</kbd> to close
         </div>
       </div>
     </div>
@@ -500,8 +495,8 @@ function MoveRejectsRow({
           <span className="cull-finish__progress-label">
             <b>moving</b> {rejectedCount}…
           </span>
-          <div className="cull-finish__progress-bar">
-            <div className="cull-finish__progress-fill" />
+          <div className="progress cull-finish__progress-bar">
+            <div className="progress__fill cull-finish__progress-fill" />
           </div>
         </div>
       ) : armed ? (
@@ -512,7 +507,7 @@ function MoveRejectsRow({
               : `Sure? This moves ${rejectedCount} files.`}
           </span>
           <button
-            className="cull-pick-button cull-pick-button--primary cull-finish__confirm-yes"
+            className="btn btn--primary btn--danger"
             onClick={() => {
               setArmed(false);
               onMoveRejects(dest);
@@ -520,16 +515,12 @@ function MoveRejectsRow({
           >
             Yes, move
           </button>
-          <button className="cull-pick-button" onClick={() => setArmed(false)}>
+          <button className="btn" onClick={() => setArmed(false)}>
             Cancel
           </button>
         </div>
       ) : (
-        <button
-          className="cull-pick-button cull-pick-button--primary"
-          disabled={disabled}
-          onClick={() => setArmed(true)}
-        >
+        <button className="btn btn--primary" disabled={disabled} onClick={() => setArmed(true)}>
           Move rejects
         </button>
       )}

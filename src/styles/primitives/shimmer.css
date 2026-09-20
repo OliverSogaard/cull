@@ -1,0 +1,35 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · shimmer — the skeleton sweep
+   One compositor-driven highlight band, shared by the loupe matte fill,
+   the strip cell and the grid cell (three byte-identical copies before).
+   The element it is put on must be positioned and clip its overflow; it
+   supplies its own base colour.
+   ──────────────────────────────────────────────────────────── */
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0) 35%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0) 65%
+  );
+  transform: translateX(-100%);
+  will-change: transform;
+  animation: cull-shimmer-sweep 1.4s linear infinite;
+  /* Shared phase (see utils/shimmer.ts) so every shimmer animates in sync
+     regardless of when its element mounted. */
+  animation-delay: var(--shimmer-delay, 0ms);
+}
+
+/* ~200% travel so the band fully clears the box. Transform-only, so it keeps
+   running while the main thread is saturated by hold-to-scrub. */
+@keyframes cull-shimmer-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}

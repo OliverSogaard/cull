@@ -5,10 +5,12 @@ import { snapToFilter as snapToFilterPure } from "../utils/snap";
 /**
  * Site navigation: loupe / compare / grid — verbatim from App (grand cleanup
  * Phase 6). Sites are mutually exclusive — only one renders at a time. L/C/G
- * switch sites and push the previous one onto a back-stack; ESC pops the
- * stack. Pressing the current site's key is a no-op (you can only leave via
- * another site key or ESC). Compare entries snapshot the champion/challenger
- * so ESC back into compare restores the same pair.
+ * switch sites and push the previous one onto a back-stack; the stack is
+ * consumed by `goBack`, which only the compare auto-exit flows call (ESC
+ * itself clears a grid multi-selection or opens the leave-to-home confirm —
+ * see useCullKeymap). Pressing the current site's key is a no-op. Compare
+ * entries snapshot the champion/challenger so an auto-exit back into compare
+ * restores the same pair.
  */
 export function useSiteNavigation({
   images,
@@ -88,7 +90,7 @@ export function useSiteNavigation({
   );
 
   // Build a NavEntry for the SITE WE'RE LEAVING — compare snapshots its pair
-  // so ESC back can restore it.
+  // so a later goBack can restore it.
   const buildNavEntry = useCallback(
     (from: NavSite): NavEntry =>
       from === "compare"
@@ -97,8 +99,9 @@ export function useSiteNavigation({
     [championIndex, challengerIndex],
   );
 
-  // L/C/G entry point. Pressing the current site's key is a no-op (you can
-  // only switch by pressing one of the OTHER site keys, or pop with ESC).
+  // L/C/G entry point. Pressing the current site's key is a no-op (you switch
+  // by pressing one of the OTHER site keys; the back-stack is popped only by
+  // the compare auto-exit).
   const goToSite = useCallback(
     (target: NavSite) => {
       const current: NavSite = compareMode ? "compare" : gridVisible ? "grid" : "loupe";
@@ -153,10 +156,13 @@ export function useSiteNavigation({
     ],
   );
 
-  // ESC. Pop one nav entry and navigate back. Empty stack at loupe → home
-  // confirm (the only "site above loupe" is leaving the cull entirely). Empty
-  // stack at compare/grid (shouldn't normally happen, but defends against
-  // edge cases) falls back to loupe.
+  // ESC no longer calls this: ESC clears a grid multi-selection if one exists,
+  // otherwise opens the leave-to-home confirm from any site. Only the compare
+  // auto-exit flows (last unrated challenger decided) call goBack. Pop one nav
+  // entry and navigate back. Empty stack at loupe → home confirm (the only
+  // "site above loupe" is leaving the cull entirely). Empty stack at
+  // compare/grid (shouldn't normally happen, but defends against edge cases)
+  // falls back to loupe.
   const goBack = useCallback(
     (landIndex?: number) => {
       // ESC in grid with a multi-selection clears the selection first, instead

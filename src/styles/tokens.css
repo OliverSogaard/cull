@@ -1,0 +1,107 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · design tokens
+   ──────────────────────────────────────────────────────────── */
+:root {
+  --bg: #0c0c0d;
+  --surface: #16161a;
+  --surface-2: #1d1d22;
+  --matte: #1a1a1e;
+  --border: #28282e;
+  --border-soft: rgba(40, 40, 46, 0.5);
+  --text: #ededed;
+  --text-2: #a3a3aa;
+  /* ~4.6:1 on --bg (was #6c6c74 ≈ 3.7:1): muted text often carries real
+     information (counts, tooltips, eyebrows), so it clears AA while staying
+     clearly quieter than --text-2. */
+  --muted: #7a7a84;
+  --accent: #d4af6a;
+  --accent-soft: rgba(212, 175, 106, 0.15);
+  --ok: #9ec5a4;
+  --bad: #c87f7f;
+  --fav: #d4af6a;
+  --accent-cool: #7fa8c9;
+
+  /* tier-2 tokens (Task 9) — semantic colour additions */
+  --on-accent: #1a1408;
+  --on-bad: #fff;
+  --ink: #0a0a0c;
+  --accent-hover: #e8c182;
+  --bad-hover: #d49090;
+  --accent-a10: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-a25: color-mix(in srgb, var(--accent) 25%, transparent);
+  --accent-a50: color-mix(in srgb, var(--accent) 50%, transparent);
+  --bad-a10: color-mix(in srgb, var(--bad) 10%, transparent);
+  --scrim: rgba(8, 8, 10, 0.82);
+  --scrim-modal: rgba(8, 8, 10, 0.7);
+
+  /* type */
+  /* stylelint-disable-next-line value-keyword-case */
+  --font-ui: Inter, -apple-system, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --fs-1: 9px;
+  --fs-2: 10px;
+  --fs-3: 11px;
+  --fs-4: 12px;
+  --fs-5: 13px;
+  --fs-6: 14px;
+  --fs-7: 16px;
+  --fs-8: 18px;
+  --fs-9: 22px;
+  --fs-display: 28px;
+  --fs-hero: 56px;
+  --track-label: 0.14em;
+  --track-eyebrow: 0.2em;
+  --track-tight: -0.015em;
+  --lh-tight: 1.1;
+  --lh-body: 1.5;
+
+  /* space (4-based, with 2 and 6 for chips) */
+  --sp-0: 2px;
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 20px;
+  --sp-7: 24px;
+  --sp-8: 32px;
+  --sp-9: 48px;
+
+  /* shape */
+  --r-1: 2px;
+  --r-2: 4px;
+  --r-3: 6px;
+  --r-pill: 999px;
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.6);
+  --shadow-2: 0 8px 48px rgba(0, 0, 0, 0.6);
+  --shadow-3: 0 24px 60px rgba(0, 0, 0, 0.6);
+  --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --halo: 0 0 0 1.5px rgba(0, 0, 0, 0.6);
+
+  /* motion */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* layers */
+  --z-overlay: 4;
+  --z-frame-chip: 7;
+  --z-tooltip: 20;
+  --z-feedback: 30;
+  --z-wincontrols: 60;
+  --z-hud: 80;
+  --z-modal: 100;
+  --z-help: 150;
+
+  /* layout */
+  --bar-h: 36px;
+  --winbtn-w: 44px;
+  --rail-w: 290px;
+  --rail-w-compare: 340px;
+  --strip-h: 82px;
+  --cell-w: 76px;
+  --cell-h: 54px;
+}

@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ReactNode,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -22,17 +21,30 @@ import type {
   Phase,
   Rating,
 } from "./types";
-import "./App.css";
+import "./styles/index.css";
 
 import { CompareStrip } from "./components/CompareStrip";
 import { CompareView } from "./components/CompareView";
+import { ConfirmHomeDialog } from "./components/ConfirmHomeDialog";
+import { EmptyFilter } from "./components/EmptyFilter";
 import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
-import { verdictGlyph } from "./components/verdictGlyph";
+import { QuitGuardOverlay } from "./components/QuitGuardOverlay";
+import { RecentFolders } from "./components/RecentFolders";
+import { SaveStatusPill } from "./components/SaveStatusPill";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
 import { SettingsDialog } from "./components/SettingsDialog";
+import {
+  StatusBar,
+  type StatusBarFilter,
+  type StatusBarFrame,
+  type StatusBarOverlays,
+  type StatusBarSave,
+  type StatusBarSelection,
+  type StatusBarSession,
+} from "./components/StatusBar";
 import { ThumbStrip } from "./components/ThumbStrip";
 import { useChipsTooltipVisibility } from "./hooks/useChipsTooltipVisibility";
 import { WindowControls } from "./components/WindowControls";
@@ -40,7 +52,7 @@ import { DevHud } from "./components/DevHud";
 import { PhotoPane } from "./components/pane/PhotoPane";
 import { zoomTransition } from "./components/pane/zoomTransition";
 
-import { recentKey, useRecents, type RecentEntry } from "./hooks/useRecents";
+import { recentKey, useRecents } from "./hooks/useRecents";
 import { useSettings } from "./hooks/useSettings";
 
 import { useCullKeymap } from "./app/useCullKeymap";
@@ -64,14 +76,13 @@ import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
 import type { AnalyzeWarning } from "./utils/analyzeWarnings";
 import { passesFilter } from "./utils/filter";
-import { cycleFilter, topOf } from "./utils/filterModes";
+import { topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
 import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
-import { formatFolderSet, formatRelativeTime } from "./utils/format";
+import { formatFolderSet } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
-import { pickSmartEmptyState } from "./utils/smartEmptyState";
 import { writeLocalStorage } from "./utils/storage";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
@@ -1222,6 +1233,7 @@ export default function App() {
     selectAllInGrid,
     growGridSelection,
     clearMultiSelection,
+    hasGridSelection,
     heldDirRef,
     startHold,
     stopHold,
@@ -1257,59 +1269,28 @@ export default function App() {
 
   const folderName = folder ? basename(folder) : "";
 
+  // The "close anyway" destroy handler, hoisted so it can be passed down to
+  // QuitGuardOverlay as a prop — owns destroyedRef (window.destroy() must
+  // fire at most once) and getCurrentWindow.
+  const closeAnyway = useCallback(() => {
+    if (destroyedRef.current) return;
+    destroyedRef.current = true;
+    getCurrentWindow()
+      .destroy()
+      .catch(() => {});
+  }, [destroyedRef]);
+
   // Shown (in any phase) when a close was requested while ratings are still
   // saving or have failed. Pending → auto-closes once flushed; failed → requires
   // an explicit choice so work is never silently lost.
   const quitGuardOverlay = quitGuard && (
-    <div className="cull-quitguard">
-      <div className="cull-quitguard__box">
-        {failedCount > 0 ? (
-          <>
-            <div className="cull-quitguard__title cull-quitguard__title--warn">
-              ⚠ {failedCount} rating{failedCount > 1 ? "s" : ""} didn’t save
-            </div>
-            <div className="cull-quitguard__body">
-              {failedCount} {failedCount > 1 ? "ratings are" : "rating is"} not on disk (the sidecar
-              write kept failing). Closing now will lose {failedCount > 1 ? "them" : "it"}.
-            </div>
-            <div className="cull-quitguard__actions">
-              <button className="cull-pick-button cull-pick-button--primary" onClick={retryFailed}>
-                retry saving
-              </button>
-              <button className="cull-pick-button" onClick={() => setQuitGuard(false)}>
-                keep culling
-              </button>
-              <button
-                className="cull-pick-button cull-quitguard__danger"
-                onClick={() => {
-                  if (destroyedRef.current) return;
-                  destroyedRef.current = true;
-                  getCurrentWindow()
-                    .destroy()
-                    .catch(() => {});
-                }}
-              >
-                close anyway
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="cull-quitguard__title">
-              saving {savingCount} rating{savingCount > 1 ? "s" : ""}…
-            </div>
-            <div className="cull-quitguard__body">
-              The app will close on its own the moment your ratings are safely on disk.
-            </div>
-            <div className="cull-quitguard__actions">
-              <button className="cull-pick-button" onClick={() => setQuitGuard(false)}>
-                keep culling
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+    <QuitGuardOverlay
+      failedCount={failedCount}
+      savingCount={savingCount}
+      retryFailed={retryFailed}
+      onKeepCulling={() => setQuitGuard(false)}
+      onCloseAnyway={closeAnyway}
+    />
   );
 
   // ── Chrome phases (start / loading / staged) ───────────────────────────────
@@ -1361,9 +1342,13 @@ export default function App() {
                 Lightroom-compatible XMP sidecars.
               </p>
               <div className="cull-hero__cta-row">
-                <button className="cull-hero__cta" onClick={pickFolder} disabled={pickerBusy}>
+                <button
+                  className="btn btn--primary btn--cta cull-hero__cta"
+                  onClick={pickFolder}
+                  disabled={pickerBusy}
+                >
                   {pickerBusy ? "opening…" : "Open folders"}
-                  <span className="cull-hero__cta-key">{modGlyph} O</span>
+                  <span className="kbd kbd--tint cull-hero__cta-key">{modGlyph} O</span>
                 </button>
                 <span className="cull-hero__drop-hint">or drop folders anywhere</span>
               </div>
@@ -1377,7 +1362,7 @@ export default function App() {
               {scanFailures && <ScanFailureCard failures={scanFailures} />}
               <div className="cull-hero__how">
                 <span>
-                  <span className="cull-hero__how-key">{modGlyph} ,</span>
+                  <span className="kbd cull-hero__how-key">{modGlyph} ,</span>
                   settings
                 </span>
               </div>
@@ -1386,7 +1371,7 @@ export default function App() {
 
           {phase === "loading" && (
             <>
-              <div className="cull-spinner" />
+              <div className="spinner" />
               <div className="cull-chrome__status">
                 loading{" "}
                 <span className="cull-chrome__folder">
@@ -1408,12 +1393,12 @@ export default function App() {
                     ? "sorting…"
                     : "reading capture times…"}
               </div>
-              <div className="cull-progress">
+              <div className="progress cull-progress">
                 {progress.done === 0 ? (
-                  <div className="cull-progress__indeterminate" />
+                  <div className="progress__fill cull-progress__indeterminate" />
                 ) : (
                   <div
-                    className="cull-progress__fill"
+                    className="progress__fill cull-progress__fill"
                     style={{ width: `${(progress.done / progress.total) * 100}%` }}
                   />
                 )}
@@ -1449,18 +1434,11 @@ export default function App() {
               )}
               <div className="cull-staged__actions">
                 {images.length > 0 ? (
-                  <button
-                    className="cull-pick-button cull-pick-button--primary"
-                    onClick={beginCulling}
-                  >
+                  <button className="btn btn--primary" onClick={beginCulling}>
                     begin culling →
                   </button>
                 ) : (
-                  <button
-                    className="cull-pick-button cull-pick-button--primary"
-                    onClick={pickFolder}
-                    disabled={pickerBusy}
-                  >
+                  <button className="btn btn--primary" onClick={pickFolder} disabled={pickerBusy}>
                     {pickerBusy ? "opening…" : "open folders"}
                   </button>
                 )}
@@ -1570,7 +1548,7 @@ export default function App() {
               <pre className="cull-message__body">{cur.error}</pre>
               <button
                 type="button"
-                className="cull-message__retry"
+                className="btn cull-message__retry"
                 onClick={() => current && imageStore.retry(current.path)}
               >
                 retry
@@ -1636,320 +1614,70 @@ export default function App() {
     </div>
   );
 
-  // Build the bottom status bar JSX once so it renders inside each view's
-  // flex column AFTER the thumb strip (the last row, with a border-top). The
-  // top chrome row above just holds the brand block and window controls, like
-  // a title bar.
+  // The bottom status bar renders inside each view's flex column AFTER the
+  // thumb strip (the last row, with a border-top) — built once here and placed
+  // in all three culling views. Its props are grouped by concern (see
+  // StatusBar); plain object literals, because this sits below the phase early
+  // returns (no useMemo available) and most groups change every render anyway.
   //
-  // Layout (left → right):
-  //   filename · MP  ·  verdict pill (glyph + label)
-  //   overlay cluster (i h p o t — circular toggle chips, on/off state)
-  //   <spacer>
-  //   position N / M  ·  filter tabs (loupe + grid)  ·  finish button
   // In compare mode the status bar's filename follows the CHALLENGER — the frame
   // the user is actively judging — not the current cursor (which would track the
   // champion). Single-view shows the cursor's frame.
   const statusBarImg = compareMode ? images[challengerIndex] : current;
-  const verdictLabel: Record<Rating, string> = {
-    keep: "Keep",
-    reject: "Reject",
-    favorite: "Fav",
+  const statusFrame: StatusBarFrame = {
+    filename: statusBarImg?.filename ?? null,
+    // No verdict pill in compare: two frames are under judgement at once, so
+    // there is no single "current" verdict to print.
+    rating: compareMode ? null : (currentRating ?? null),
+    isZooming,
+    zoomLevel,
+    scrubbing,
+    scrubSpeed,
+    compareMode,
+    comparePos: challengerPos,
+    compareCount: compareCandidates.length,
   };
-  const verdictCls: Record<Rating, string> = {
-    keep: "cull-statusbar__verdict--keep",
-    reject: "cull-statusbar__verdict--reject",
-    favorite: "cull-statusbar__verdict--fav",
+  const statusOverlays: StatusBarOverlays = {
+    visible: !gridVisible,
+    exif: { on: exifVisible, toggle: () => setExifVisible((v) => !v) },
+    clipping: { on: clippingVisible, toggle: () => setClippingVisible((v) => !v) },
+    peaking: { on: peakingVisible, toggle: () => setPeakingVisible((v) => !v) },
+    composition: { on: compositionVisible, toggle: () => setCompositionVisible((v) => !v) },
+    thumbs: { on: thumbsVisible, toggle: () => setThumbsVisible((v) => !v) },
   };
-  const totalKeeps = stats.keeps; // includes favorites
+  const statusSelection: StatusBarSelection = {
+    gridVisible,
+    selectedCount: selectedIndices.size,
+  };
+  const statusSave: StatusBarSave = { savingCount, failedCount, retryFailed };
+  const statusFilter: StatusBarFilter = {
+    filter,
+    setFilter,
+    stats,
+    qualityAnalyzing,
+    qualityProgress,
+    smartCulling: settings.smartCulling,
+    startAnalysis,
+    suggestionCount: liveSuggestionCount,
+    chipsTooltip,
+    positionInFilter,
+    visibleCount: visibleIndices.length,
+  };
+  const statusSession: StatusBarSession = {
+    openActions: () => setActionsOpen(true),
+    actionsOpen,
+    rejectedCount: rejectedPaths.length,
+    keyhint: modGlyph,
+  };
   const bottomStatusBar = (
-    <footer className="cull-statusbar">
-      <div className="cull-statusbar__left">
-        {statusBarImg && (
-          <span className="cull-statusbar__filename">
-            <span className="cull-statusbar__filename-name">{statusBarImg.filename}</span>
-          </span>
-        )}
-        {!compareMode && currentRating && (
-          <span
-            className={`cull-statusbar__verdict ${verdictCls[currentRating]}`}
-            aria-label={verdictLabel[currentRating]}
-          >
-            <span className="cull-statusbar__verdict-glyph" aria-hidden>
-              {verdictGlyph(currentRating, 9)}
-            </span>
-            {verdictLabel[currentRating]}
-          </span>
-        )}
-        {isZooming && (
-          <span className="cull-statusbar__chip cull-statusbar__chip--zoom">
-            zoom {zoomLevel}:1
-          </span>
-        )}
-        {scrubbing && (
-          <span className="cull-statusbar__scrub" aria-label="scrubbing">
-            Scrubbing
-            {scrubSpeed > 1 && <span className="cull-statusbar__scrubspeed">{scrubSpeed}×</span>}
-          </span>
-        )}
-        {/* Overlay cluster — five circular toggle chips. Hidden in grid (those
-            overlays don't apply there). The thumb-strip chip (t) shows in
-            loupe / compare only too. */}
-        {!gridVisible && (
-          <div className="cull-statusbar__overlay-cluster" aria-label="overlays">
-            <button
-              type="button"
-              className={`cull-statusbar__ov${exifVisible ? " is-on" : ""}`}
-              onClick={() => setExifVisible((v) => !v)}
-              title="i · info"
-              aria-pressed={exifVisible}
-            >
-              i
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${clippingVisible ? " is-on" : ""}`}
-              onClick={() => setClippingVisible((v) => !v)}
-              title="h · clipping"
-              aria-pressed={clippingVisible}
-            >
-              h
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${peakingVisible ? " is-on" : ""}`}
-              onClick={() => setPeakingVisible((v) => !v)}
-              title="p · focus peaking"
-              aria-pressed={peakingVisible}
-            >
-              p
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${compositionVisible ? " is-on" : ""}`}
-              onClick={() => setCompositionVisible((v) => !v)}
-              title="o · thirds"
-              aria-pressed={compositionVisible}
-            >
-              o
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${thumbsVisible ? " is-on" : ""}`}
-              onClick={() => setThumbsVisible((v) => !v)}
-              title="t · thumb strip"
-              aria-pressed={thumbsVisible}
-            >
-              t
-            </button>
-          </div>
-        )}
-        {gridVisible && selectedIndices.size >= 1 && (
-          <span
-            className="cull-statusbar__multi"
-            title="selection · rating keys apply to all selected"
-          >
-            {selectedIndices.size} selected
-          </span>
-        )}
-        {failedCount > 0 ? (
-          <span
-            className="cull-statusbar__unsaved"
-            onClick={retryFailed}
-            title="ratings failed to save · click to retry"
-          >
-            ⚠ {failedCount} unsaved · retry
-          </span>
-        ) : (
-          savingCount > 0 && <span className="cull-statusbar__saving">saving {savingCount}…</span>
-        )}
-      </div>
-      <div className="cull-statusbar__spacer" />
-      <div className="cull-statusbar__right">
-        <span className="cull-statusbar__keyhint" aria-hidden>
-          tab · keys
-        </span>
-        <span
-          className="cull-statusbar__pos"
-          title={
-            compareMode
-              ? "challenger position / total candidates"
-              : "current position / filtered total"
-          }
-        >
-          {compareMode ? (
-            <>
-              <b>{Math.max(0, challengerPos + 1)}</b>
-              <span className="of"> / {compareCandidates.length}</span>
-            </>
-          ) : (
-            <>
-              <b>{positionInFilter >= 0 ? positionInFilter + 1 : 0}</b>
-              <span className="of"> / {visibleIndices.length}</span>
-            </>
-          )}
-        </span>
-        {/* Filter tabs disabled in compare. */}
-        {!compareMode && (
-          <div className="cull-filter-tabs" role="tablist" aria-label="filter">
-            <button
-              type="button"
-              className={filter === "all" ? "is-active" : ""}
-              onClick={() => setFilter((f) => cycleFilter(f, "all"))}
-              data-tip={filter === "all" ? undefined : "1 · show all"}
-            >
-              All
-            </button>
-            <button
-              type="button"
-              className={filter === "unrated" ? "is-active" : ""}
-              onClick={() => setFilter((f) => cycleFilter(f, "unrated"))}
-              data-tip={filter === "unrated" ? undefined : "2 · show unrated"}
-            >
-              Unrated
-            </button>
-            <span className="cull-filter-tab-group">
-              <button
-                type="button"
-                className={topOf(filter) === "keeps" ? "is-active" : ""}
-                onClick={() => {
-                  setFilter((f) => cycleFilter(f, "keeps"));
-                  chipsTooltip.pulse();
-                }}
-                // Tip only while INACTIVE (the active tab floats the sub-chip
-                // tooltip in the same spot). data-tip renders instantly via
-                // CSS — the OS title delay made it lose the race against the
-                // neighbouring chip tooltip's fade-out.
-                data-tip={topOf(filter) === "keeps" ? undefined : "3 · show keeps"}
-                {...(topOf(filter) === "keeps" ? chipsTooltip.hoverProps : undefined)}
-              >
-                Keeps
-              </button>
-              {topOf(filter) === "keeps" && (
-                <span
-                  className={`cull-filter-tab-tooltip${chipsTooltip.visible ? " is-on" : ""}`}
-                  {...chipsTooltip.hoverProps}
-                >
-                  <button
-                    type="button"
-                    className={filter === "keeps" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("keeps");
-                      chipsTooltip.pulse();
-                    }}
-                    title="keeps and favorites"
-                  >
-                    all
-                  </button>
-                  <button
-                    type="button"
-                    className={filter === "keepsFavs" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("keepsFavs");
-                      chipsTooltip.pulse();
-                    }}
-                    title="favorites only"
-                  >
-                    ★
-                  </button>
-                </span>
-              )}
-            </span>
-            {/* Always visible — smart culling off just lands on the
-                "disabled" empty screen (see EmptyFilter) instead of a tab
-                that vanishes out from under an active filter. */}
-            <span className="cull-filter-tab-group">
-              <button
-                type="button"
-                className={topOf(filter) === "suggested" ? "is-active" : ""}
-                onClick={() => {
-                  setFilter((f) => cycleFilter(f, "suggested"));
-                  chipsTooltip.pulse();
-                  if (settings.smartCulling) {
-                    startAnalysis(); // no-op unless "analyze on open" is off and unrun
-                  }
-                }}
-                // Same inactive-only instant tip as the Keeps tab above.
-                data-tip={topOf(filter) === "suggested" ? undefined : "4 · show suggestions"}
-                {...(topOf(filter) === "suggested" ? chipsTooltip.hoverProps : undefined)}
-              >
-                {qualityAnalyzing && qualityProgress
-                  ? `Smart ${Math.round((qualityProgress.done / Math.max(qualityProgress.total, 1)) * 100)}%`
-                  : liveSuggestionCount > 0
-                    ? `Smart · ${liveSuggestionCount}`
-                    : "Smart"}
-              </button>
-              {topOf(filter) === "suggested" && (
-                <span
-                  className={`cull-filter-tab-tooltip${chipsTooltip.visible ? " is-on" : ""}`}
-                  {...chipsTooltip.hoverProps}
-                >
-                  <button
-                    type="button"
-                    className={filter === "suggested" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("suggested");
-                      chipsTooltip.pulse();
-                    }}
-                    title="any suggestion"
-                  >
-                    all
-                  </button>
-                  <button
-                    type="button"
-                    className={filter === "suggestedRejects" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("suggestedRejects");
-                      chipsTooltip.pulse();
-                    }}
-                    title="suggested rejects"
-                  >
-                    ✕
-                  </button>
-                  <button
-                    type="button"
-                    className={filter === "suggestedKeeps" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("suggestedKeeps");
-                      chipsTooltip.pulse();
-                    }}
-                    title="suggested keeps"
-                  >
-                    ✓
-                  </button>
-                  <button
-                    type="button"
-                    className={filter === "suggestedFavs" ? "is-active" : ""}
-                    onClick={() => {
-                      setFilter("suggestedFavs");
-                      chipsTooltip.pulse();
-                    }}
-                    title="suggested favorites"
-                  >
-                    ★
-                  </button>
-                </span>
-              )}
-            </span>
-          </div>
-        )}
-        {(stats.keeps > 0 || rejectedPaths.length > 0) && !actionsOpen && (
-          // The finish moment: once every frame is rated the button announces it
-          // and brightens — the one nudge from "culling" to "act on the cull".
-          <button
-            type="button"
-            className={`cull-statusbar__finish${
-              stats.unrated === 0 && stats.total > 0 ? " is-done" : ""
-            }`}
-            onClick={() => setActionsOpen(true)}
-            title="finish the cull · move rejects / copy keeps"
-          >
-            {stats.unrated === 0 && stats.total > 0
-              ? `All ${stats.total} rated · ${modGlyph}E finish`
-              : `${modGlyph}E · ${totalKeeps} keeps`}
-          </button>
-        )}
-      </div>
-    </footer>
+    <StatusBar
+      frame={statusFrame}
+      overlays={statusOverlays}
+      selection={statusSelection}
+      save={statusSave}
+      filter={statusFilter}
+      session={statusSession}
+    />
   );
 
   // Each strip is built once and reused in the top OR bottom slot (only one of
@@ -2012,7 +1740,7 @@ export default function App() {
           {folderTrouble !== "hidden" && (
             <button
               type="button"
-              className="cull-trouble-chip"
+              className="chip chip--bad cull-trouble-chip"
               data-state={folderTrouble}
               disabled={folderTrouble !== "latched"}
               onClick={() => void retryUnreachableFolders()}
@@ -2038,7 +1766,7 @@ export default function App() {
           {analyzeWarning && (
             <button
               type="button"
-              className="cull-trouble-chip"
+              className="chip chip--bad cull-trouble-chip"
               title={analyzeWarning.detail}
               onClick={() => setAnalyzeWarning(null)}
             >
@@ -2047,7 +1775,7 @@ export default function App() {
           )}
           {memPressure !== "normal" && (
             <span
-              className={`cull-mem-chip${memPressure === "critical" ? " is-critical" : ""}`}
+              className={`chip chip--soft chip--accent cull-mem-chip${memPressure === "critical" ? " is-critical" : ""}`}
               title={
                 memPressure === "critical"
                   ? "system memory critically low. Zoom was released and its caches dropped to keep the app alive"
@@ -2156,31 +1884,11 @@ export default function App() {
       )}
 
       {confirmHome && (
-        <div className="cull-quitguard">
-          <div className="cull-quitguard__box">
-            <div
-              className={`cull-quitguard__title${failedCount > 0 ? " cull-quitguard__title--warn" : ""}`}
-            >
-              {failedCount > 0
-                ? `⚠ leave with ${failedCount} unsaved rating${failedCount > 1 ? "s" : ""}?`
-                : "leave to home?"}
-            </div>
-            <div className="cull-quitguard__body">
-              {failedCount > 0
-                ? `${failedCount} rating${failedCount > 1 ? "s have" : " has"} not saved to disk yet. Leaving won't lose ${failedCount > 1 ? "them" : "it"}: the unsaved flag stays on the home screen for retrying. Staying to retry first is safer.`
-                : "Ratings are saved in .xmp sidecars. Reopening the folder restores them."}
-            </div>
-            <div className="cull-quitguard__actions">
-              <button className="cull-pick-button cull-pick-button--primary" onClick={leaveToHome}>
-                leave to home
-              </button>
-              <button className="cull-pick-button" onClick={() => setConfirmHome(false)}>
-                stay
-              </button>
-            </div>
-            <div className="cull-quitguard__hint">enter · leave · · · esc · stay</div>
-          </div>
-        </div>
+        <ConfirmHomeDialog
+          failedCount={failedCount}
+          onLeave={leaveToHome}
+          onStay={() => setConfirmHome(false)}
+        />
       )}
 
       {actionsOpen && (
@@ -2223,316 +1931,5 @@ export default function App() {
         />
       )}
     </main>
-  );
-}
-
-/**
- * Shared markup for the two true "no match" empty states (not-analyzed and
- * filter-empty) — both drop the old `⌀` glyph for a faint desert backdrop
- * instead. The "analyzing" / "analyzed" variants above them are transient
- * or informational rather than "nothing here", so they keep their glyph
- * and skip the backdrop.
- */
-function NoMatchEmptyState({
-  eyebrow,
-  title,
-  hint,
-}: {
-  eyebrow: string;
-  title: ReactNode;
-  hint: ReactNode;
-}) {
-  return (
-    <div className="cull-empty-state cull-empty-state--desert">
-      <div className="cull-empty-state__eyebrow">{eyebrow}</div>
-      <div className="cull-empty-state__title">{title}</div>
-      <div className="cull-empty-state__hint">{hint}</div>
-    </div>
-  );
-}
-
-/**
- * Centered empty-state shown in loupe / grid when the active filter has zero
- * matches. Small icon,
- * uppercase eyebrow, headline with the missing filter highlighted, and a key
- * hint to switch out.
- */
-function EmptyFilter({
-  filter,
-  smartCulling,
-  smartCullingOnOpen,
-  analyzing,
-  scoredCount,
-  progress,
-}: {
-  filter: Filter;
-  /** `settings.smartCulling` — the master switch. Smart is now a valid filter
-   *  state even when off, so this drives the "disabled" empty screen. */
-  smartCulling?: boolean;
-  /** `settings.smartCullingOnOpen` — whether the pass self-starts; changes
-   *  the not-analyzed hint (self-starting passes never need a "press 4"). */
-  smartCullingOnOpen?: boolean;
-  analyzing?: boolean;
-  /** How many frames the smart pass has scored — distinguishes "analyzed,
-   *  no obvious calls" (the healthy quiet case) from "never analyzed". */
-  scoredCount?: number;
-  /** Live pass progress — on a 5000-frame NAS folder the pass runs for many
-   *  minutes (by design: it always yields to interactive reads), and without
-   *  a count "analyzing" is indistinguishable from "hung". */
-  progress?: { done: number; total: number } | null;
-}) {
-  // The whole "suggested" family (base + verdict sub-modes) has five empty
-  // states, and telling them apart is the difference between "working as
-  // designed" and "looks broken". All five are NoMatchEmptyState (desert
-  // backdrop, no icon circle) — see pickSmartEmptyState for the precedence.
-  if (topOf(filter) === "suggested") {
-    const state = pickSmartEmptyState({
-      smartCulling: smartCulling ?? false,
-      autoStart: smartCullingOnOpen ?? false,
-      analyzing: analyzing ?? false,
-      scoredCount: scoredCount ?? 0,
-    });
-    switch (state) {
-      case "disabled":
-        return (
-          <NoMatchEmptyState
-            eyebrow="Smart culling off"
-            title="Smart culling is turned off"
-            hint={
-              <>
-                <kbd>{modGlyph} ,</kbd> for Settings · <kbd>1</kbd> for all
-              </>
-            }
-          />
-        );
-      case "analyzing":
-        // Not done yet — suggestions fill in progressively per chunk.
-        return (
-          <NoMatchEmptyState
-            eyebrow="Analyzing"
-            title={
-              <>
-                Looking for obvious calls
-                {progress
-                  ? ` · ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} scored`
-                  : ""}
-              </>
-            }
-            hint={
-              <>
-                fills in as frames are scored · culling comes first · <kbd>1</kbd> for all
-              </>
-            }
-          />
-        );
-      case "analyzedNoSuggestions":
-        // The healthy quiet case: everything scored (or since rated away),
-        // nothing worth flagging. An advisory tool only speaks on clear
-        // calls — silence is a verdict, whether this filter never had a hit
-        // or every hit it had has since been rated.
-        return (
-          <NoMatchEmptyState
-            eyebrow="Analyzed"
-            title={<>Analysis done · no suggestions left here ({scoredCount} scored)</>}
-            hint={
-              <>
-                <kbd>1</kbd> for all
-              </>
-            }
-          />
-        );
-      case "notAnalyzedAutoStart":
-        // The pass self-starts — this screen is a blink, no "press 4" needed.
-        return (
-          <NoMatchEmptyState
-            eyebrow="Not analyzed"
-            title="No frames have been scored yet"
-            hint={
-              <>
-                <kbd>1</kbd> for all
-              </>
-            }
-          />
-        );
-      case "notAnalyzedManual":
-        // Auto-analyze off: the pass hasn't run, or every chunk failed
-        // (drive hiccup) — 5 retries in both cases.
-        return (
-          <NoMatchEmptyState
-            eyebrow="Not analyzed"
-            title="No frames have been scored yet"
-            hint={
-              <>
-                <kbd>4</kbd> to analyze · <kbd>1</kbd> for all
-              </>
-            }
-          />
-        );
-    }
-  }
-  // Label the user-facing filter name. "All" can never actually be empty (it
-  // includes unrated), so falling back to "this" covers the impossible-case.
-  const label =
-    filter === "keepsFavs"
-      ? "Favorites"
-      : filter === "keeps"
-        ? "Keeps"
-        : filter === "unrated"
-          ? "Unrated"
-          : "this"; // "suggested*" fully handled (and narrowed away) above
-  return (
-    <NoMatchEmptyState
-      eyebrow="No matches"
-      title={
-        <>
-          No images in the <em>{label}</em> filter
-        </>
-      }
-      hint={
-        <>
-          <kbd>1</kbd> for all
-        </>
-      }
-    />
-  );
-}
-
-/**
- * Recent-sessions section on the home screen. Renders nothing on a totally
- * fresh launch (empty state replaces the list). Click a row to re-open that
- * session's folder set; rows that don't have a `count` yet hide the count
- * column rather than show a stub `0`.
- *
- * Three columns: folder names (`wedding-d1 + wedding-d2`, overflowing to
- * `+N more` — full paths in the tooltip), count badge (`327 / 372`, plain
- * `421`, or `932 ✓`), and a relative-time stamp.
- */
-function RecentFolders({
-  recents,
-  onPick,
-  pickerBusy,
-}: {
-  recents: RecentEntry[];
-  onPick: (entry: RecentEntry) => void;
-  pickerBusy: boolean;
-}) {
-  return (
-    <div className="cull-recent">
-      <div className="cull-recent__label">Recent</div>
-      {recents.length === 0 ? (
-        <div className="cull-recent__empty">
-          No folders yet. Drop some anywhere, or press{" "}
-          <kbd className="cull-recent__kbd">{modGlyph} O</kbd>.
-        </div>
-      ) : (
-        <div className="cull-recent__items">
-          {recents.map((r) => (
-            <RecentRow key={recentKey(r.paths)} entry={r} onPick={() => !pickerBusy && onPick(r)} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RecentRow({ entry, onPick }: { entry: RecentEntry; onPick: () => void }) {
-  // Folder NAMES, not paths — budgeted at ~52 chars so the count + time
-  // columns still fit at the 620px hero width. The tooltip carries the full
-  // paths (one per line), which also disambiguates duplicate basenames.
-  const display = formatFolderSet(entry.paths, 52);
-  const rel = formatRelativeTime(entry.lastOpened);
-  return (
-    <div
-      className="cull-recent__item"
-      role="button"
-      tabIndex={0}
-      onClick={onPick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onPick();
-        }
-      }}
-      title={entry.paths.join("\n")}
-    >
-      <span className="cull-recent__path">{display}</span>
-      <span className="cull-recent__count">
-        {entry.count > 0 ? (
-          entry.done ? (
-            <>
-              <b>{entry.count}</b>
-              <span className="cull-recent__done" aria-label="finished">
-                {" "}
-                ✓
-              </span>
-            </>
-          ) : entry.rated > 0 ? (
-            <>
-              <b>{entry.rated}</b>
-              <span className="cull-recent__of"> / {entry.count}</span>
-            </>
-          ) : (
-            <b>{entry.count}</b>
-          )
-        ) : null}
-      </span>
-      <span className="cull-recent__time">{rel ?? ""}</span>
-    </div>
-  );
-}
-
-/**
- * XMP save-status pill rendered in the top chrome (next to the brand). The
- * bottom status bar also surfaces failed saves — this is a peripheral mirror
- * the user catches with their peripheral vision so a failed write doesn't sit
- * unnoticed when the bottom bar is occluded by a modal.
- *
- * Three states, fully derived from existing state (no new state machinery):
- *  - failed   → red pill, clickable, runs the same retry path as the bottom bar
- *  - saving   → champagne dot pulsing, "saving…" text
- *  - idle     → muted dot, "saved" text (default)
- *
- * Failed wins over saving so an in-flight retry doesn't visually mask the
- * still-failing batch behind it.
- */
-function SaveStatusPill({
-  failedCount,
-  savingCount,
-  onRetry,
-}: {
-  failedCount: number;
-  savingCount: number;
-  onRetry: () => void;
-}) {
-  const state = failedCount > 0 ? "failed" : savingCount > 0 ? "saving" : "idle";
-  // Quiet when there's nothing to say: a standing "saved" on a fresh home
-  // screen reads as noise. The pill exists for in-flight and failed writes.
-  if (state === "idle") return null;
-  const text = state === "failed" ? "failed · retry" : "saving…";
-  return (
-    <span
-      className={`cull-save-status cull-save-status--${state}`}
-      role={state === "failed" ? "button" : undefined}
-      tabIndex={state === "failed" ? 0 : undefined}
-      onClick={state === "failed" ? onRetry : undefined}
-      onKeyDown={
-        state === "failed"
-          ? (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onRetry();
-              }
-            }
-          : undefined
-      }
-      title={
-        state === "failed"
-          ? "ratings failed to save · click to retry"
-          : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
-      }
-    >
-      <span className="cull-save-status__dot" />
-      <span className="cull-save-status__label">{text}</span>
-    </span>
   );
 }
