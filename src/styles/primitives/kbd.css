@@ -31,6 +31,12 @@
   font-family: var(--font-mono);
   font-size: var(--fs-3);
   line-height: 1;
+  /* A keycap is the NAME of a key, so it prints what it was given — "esc",
+     "Ctrl" — and is spaced the same wherever it sits. Both are stated here
+     rather than left to inherit: a cap inside an uppercase, widely tracked
+     surface (the settings footer is an `.eyebrow`) used to come out "ESC". */
+  text-transform: none;
+  letter-spacing: 0.04em; /* off-scale */
 }
 
 /* Keycap sitting INSIDE a filled accent button: a translucent scrim of the

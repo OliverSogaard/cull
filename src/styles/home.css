@@ -200,7 +200,6 @@
 
 .cull-hero__how-key {
   background: var(--surface);
-  letter-spacing: 0.04em;
 }
 
 /* The combo prefixes a label with no space between them, so this row owns

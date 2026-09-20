@@ -99,8 +99,5 @@
 }
 
 /* The hint row is uppercase and widely tracked; the keycaps inside it are
-   neither. Everything else about them comes from `.kbd`. */
-.dialog__hint kbd {
-  letter-spacing: 0.04em;
-  text-transform: none;
-}
+   neither — but that is `.kbd`'s own doing now, so there is nothing to say
+   here. */
