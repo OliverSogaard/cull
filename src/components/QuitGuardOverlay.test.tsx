@@ -76,3 +76,113 @@ describe("QuitGuardOverlay", () => {
     expect(buttons.map((b) => b.textContent)).toEqual(["Keep culling"]);
   });
 });
+
+/**
+ * The missing/retry -> saving transition renders a dialog__actions with
+ * fewer buttons. Without keys, React matched the old buttons by POSITION:
+ * the pressed "Check again" node (position 1) got unmounted (focus fell to
+ * <body>), and the pressed "Retry saving" node (position 0) was reused and
+ * silently relabelled "Keep culling" — so a second Enter did something else.
+ * Keys fix the matching; moving focus to "Keep culling" before firing the
+ * retry keeps it there through whichever transition follows.
+ */
+describe("QuitGuardOverlay — keeps focus on Keep culling through a re-check", () => {
+  afterEach(cleanup);
+
+  it("from the missing-photo branch: Check again", () => {
+    const retryFailed = vi.fn((): void => {});
+    const { rerender } = render(
+      <QuitGuardOverlay
+        failedCount={2}
+        missingCount={2}
+        savingCount={0}
+        retryFailed={retryFailed}
+        onKeepCulling={vi.fn()}
+        onCloseAnyway={vi.fn()}
+      />,
+    );
+    const keepBefore = screen.getByRole("button", { name: "Keep culling" });
+    const checkAgain = screen.getByRole("button", { name: "Check again" });
+    checkAgain.focus();
+    fireEvent.click(checkAgain);
+    expect(retryFailed).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <QuitGuardOverlay
+        failedCount={0}
+        missingCount={0}
+        savingCount={1}
+        retryFailed={retryFailed}
+        onKeepCulling={vi.fn()}
+        onCloseAnyway={vi.fn()}
+      />,
+    );
+    const keepAfter = screen.getByRole("button", { name: "Keep culling" });
+    expect(keepAfter).toBe(keepBefore);
+    expect(document.activeElement).toBe(keepAfter);
+  });
+
+  it("from the ordinary-failure branch: Retry saving", () => {
+    const retryFailed = vi.fn((): void => {});
+    const { rerender } = render(
+      <QuitGuardOverlay
+        failedCount={2}
+        missingCount={0}
+        savingCount={0}
+        retryFailed={retryFailed}
+        onKeepCulling={vi.fn()}
+        onCloseAnyway={vi.fn()}
+      />,
+    );
+    const keepBefore = screen.getByRole("button", { name: "Keep culling" });
+    const retrySaving = screen.getByRole("button", { name: "Retry saving" });
+    retrySaving.focus();
+    fireEvent.click(retrySaving);
+    expect(retryFailed).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <QuitGuardOverlay
+        failedCount={0}
+        missingCount={0}
+        savingCount={1}
+        retryFailed={retryFailed}
+        onKeepCulling={vi.fn()}
+        onCloseAnyway={vi.fn()}
+      />,
+    );
+    const keepAfter = screen.getByRole("button", { name: "Keep culling" });
+    expect(keepAfter).toBe(keepBefore);
+    expect(document.activeElement).toBe(keepAfter);
+    // The pressed node is retired on the transition, never silently
+    // repurposed as "Keep culling" under the user's held focus.
+    expect(keepAfter).not.toBe(retrySaving);
+    expect(document.body.contains(retrySaving)).toBe(false);
+  });
+
+  it("keeps the Keep culling DOM node itself stable across branch changes", () => {
+    const { rerender } = render(
+      <QuitGuardOverlay
+        failedCount={2}
+        missingCount={0}
+        savingCount={0}
+        retryFailed={vi.fn()}
+        onKeepCulling={vi.fn()}
+        onCloseAnyway={vi.fn()}
+      />,
+    );
+    const inRetryBranch = screen.getByRole("button", { name: "Keep culling" });
+
+    rerender(
+      <QuitGuardOverlay
+        failedCount={2}
+        missingCount={2}
+        savingCount={0}
+        retryFailed={vi.fn()}
+        onKeepCulling={vi.fn()}
+        onCloseAnyway={vi.fn()}
+      />,
+    );
+    const inMissingBranch = screen.getByRole("button", { name: "Keep culling" });
+    expect(inMissingBranch).toBe(inRetryBranch);
+  });
+});
