@@ -584,8 +584,10 @@
   z-index: -1;
   pointer-events: none;
   background: url("../assets/backdrop.jpg") center / cover no-repeat;
-  filter: grayscale(1) brightness(0.85) contrast(1.05);
-  opacity: 0.11;
+  /* The tone is BAKED into the JPEG (scripts/bake-backdrop.mjs): grayscale +
+     brightness .85 + contrast 1.05, composited at .11 over --bg, at 2560px
+     wide. Only the vignette stays here — it is sized to the WINDOW, not the
+     image, so baking it would fix the falloff at one aspect ratio. */
   -webkit-mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
   mask-image: radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%);
 }

@@ -205,3 +205,27 @@ describe("the home screen at 2000px and wider", () => {
     expect(block).toMatch(/--home-row-pad:\s*16px/);
   });
 });
+
+describe("the backdrops", () => {
+  const rules = [
+    [sheet("./chrome.css"), ".cull-chrome::before"],
+    [sheet("./empty-state.css"), ".cull-empty-state--desert::before"],
+  ] as const;
+
+  test("the tone is baked, so neither rule dims or desaturates at runtime", () => {
+    for (const [css, selector] of rules) {
+      const body = ruleBody(css, selector);
+      expect(body, `${selector} filter`).not.toMatch(/\bfilter:/);
+      expect(body, `${selector} opacity`).not.toMatch(/\bopacity:/);
+    }
+  });
+
+  test("the vignette stays in CSS, identical in both", () => {
+    const mask = "radial-gradient(115% 90% at 50% 42%, #000 30%, transparent 78%)";
+    for (const [css, selector] of rules) {
+      const body = ruleBody(css, selector);
+      expect(body, `${selector} mask`).toContain(`mask-image: ${mask}`);
+      expect(body, `${selector} -webkit-mask`).toContain(`-webkit-mask-image: ${mask}`);
+    }
+  });
+});

@@ -1,0 +1,188 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>CULL backdrop bake</title>
+<script type="text/plain" id="out"></script>
+<script type="text/plain" id="diff"></script>
+<script>
+  // Baked recipe, verbatim from styles/chrome.css .cull-chrome::before:
+  //   filter: grayscale(1) brightness(0.85) contrast(1.05); opacity: 0.11
+  // over --bg. The radial mask is NOT baked — it is sized to the window.
+  const TONE = "grayscale(1) brightness(0.85) contrast(1.05)";
+  const ALPHA = 0.11;
+  const BG = "#0c0c0d";
+
+  const p = new URLSearchParams(location.search);
+  const W = Number(p.get("w") ?? 2560);
+  const Q = Number(p.get("q") ?? 0.82);
+
+  /** Lanczos-3 windowed sinc, zero outside [-a, a]. */
+  function lanczosKernel(x, a) {
+    if (x === 0) return 1;
+    if (x <= -a || x >= a) return 0;
+    const px = Math.PI * x;
+    return (a * Math.sin(px) * Math.sin(px / a)) / (px * px);
+  }
+
+  /**
+   * One separable pass: resamples `srcW` samples to `dstW` along one axis,
+   * `lines` times along the other. `getSample(line, x)` reads a source pixel
+   * (clamped to the edge) and `setSample(line, x, r, g, b, a)` writes the
+   * resampled one. Upscaling keeps the fixed a=3 support; a downscale would
+   * widen it by 1/scale, but every call here upscales.
+   */
+  function resample1D(srcW, dstW, lines, getSample, setSample) {
+    const a = 3;
+    const scale = dstW / srcW;
+    const filterScale = scale < 1 ? scale : 1;
+    const support = a / filterScale;
+    for (let d = 0; d < dstW; d++) {
+      const centre = (d + 0.5) / scale - 0.5;
+      const left = Math.floor(centre - support);
+      const right = Math.ceil(centre + support);
+      const taps = [];
+      let wsum = 0;
+      for (let s = left; s <= right; s++) {
+        const w = lanczosKernel((s - centre) * filterScale, a);
+        if (w !== 0) {
+          taps.push([Math.min(srcW - 1, Math.max(0, s)), w]);
+          wsum += w;
+        }
+      }
+      for (let line = 0; line < lines; line++) {
+        let r = 0,
+          g = 0,
+          b = 0,
+          al = 0;
+        for (const [s, w] of taps) {
+          const px = getSample(line, s);
+          r += px[0] * w;
+          g += px[1] * w;
+          b += px[2] * w;
+          al += px[3] * w;
+        }
+        setSample(line, d, r / wsum, g / wsum, b / wsum, al / wsum);
+      }
+    }
+  }
+
+  /** Separable Lanczos3 resample of an ImageData to w×h. */
+  function lanczos(src, w, h) {
+    const sw = src.width;
+    const sh = src.height;
+    const data = src.data;
+
+    // Horizontal pass: sw -> w, height stays sh.
+    const tmp = new Float32Array(w * sh * 4);
+    resample1D(
+      sw,
+      w,
+      sh,
+      (y, x) => {
+        const i = (y * sw + x) * 4;
+        return [data[i], data[i + 1], data[i + 2], data[i + 3]];
+      },
+      (y, x, r, g, b, a) => {
+        const i = (y * w + x) * 4;
+        tmp[i] = r;
+        tmp[i + 1] = g;
+        tmp[i + 2] = b;
+        tmp[i + 3] = a;
+      },
+    );
+
+    // Vertical pass: sh -> h, width stays w.
+    const out = new Uint8ClampedArray(w * h * 4);
+    resample1D(
+      sh,
+      h,
+      w,
+      (x, y) => {
+        const i = (y * w + x) * 4;
+        return [tmp[i], tmp[i + 1], tmp[i + 2], tmp[i + 3]];
+      },
+      (x, y, r, g, b, a) => {
+        const i = (y * w + x) * 4;
+        out[i] = r;
+        out[i + 1] = g;
+        out[i + 2] = b;
+        out[i + 3] = a;
+      },
+    );
+
+    return new ImageData(out, w, h);
+  }
+
+  function compose(imageData, w, h) {
+    const tmp = new OffscreenCanvas(w, h);
+    tmp.getContext("2d").putImageData(imageData, 0, 0);
+    const out = document.createElement("canvas");
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext("2d");
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, w, h);
+    ctx.filter = TONE;
+    ctx.globalAlpha = ALPHA;
+    ctx.drawImage(tmp, 0, 0);
+    return out;
+  }
+
+  const img = new Image();
+  img.onload = () => {
+    const h = Math.round((img.naturalHeight / img.naturalWidth) * W);
+    const read = document.createElement("canvas");
+    read.width = img.naturalWidth;
+    read.height = img.naturalHeight;
+    const rctx = read.getContext("2d", { willReadFrequently: true });
+    rctx.drawImage(img, 0, 0);
+    const srcData = rctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
+
+    const baked = compose(lanczos(srcData, W, h), W, h);
+
+    // Reference: exactly what the live CSS does — the browser's own upscale
+    // through the same tone chain and alpha.
+    const ref = document.createElement("canvas");
+    ref.width = W;
+    ref.height = h;
+    const rc = ref.getContext("2d");
+    rc.fillStyle = BG;
+    rc.fillRect(0, 0, W, h);
+    rc.imageSmoothingQuality = "high";
+    rc.filter = TONE;
+    rc.globalAlpha = ALPHA;
+    rc.drawImage(img, 0, 0, W, h);
+
+    // 32×32 sample grid, per-channel absolute difference. TWO whole-canvas
+    // reads, not 2,048 single-pixel ones — same numbers, a fraction of the
+    // time inside the virtual-time budget.
+    const A = baked.getContext("2d").getImageData(0, 0, W, h).data;
+    const B = rc.getImageData(0, 0, W, h).data;
+    let sum = 0,
+      max = 0,
+      n = 0;
+    for (let gy = 0; gy < 32; gy++) {
+      for (let gx = 0; gx < 32; gx++) {
+        const x = Math.floor(((gx + 0.5) / 32) * W);
+        const y = Math.floor(((gy + 0.5) / 32) * h);
+        const i = (y * W + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const d = Math.abs(A[i + c] - B[i + c]);
+          sum += d;
+          if (d > max) max = d;
+          n++;
+        }
+      }
+    }
+    const url = baked.toDataURL("image/jpeg", Q);
+    document.getElementById("out").textContent = url;
+    document.getElementById("diff").textContent = JSON.stringify({
+      w: W,
+      h,
+      q: Q,
+      bytes: Math.round((url.length - url.indexOf(",") - 1) * 0.75),
+      meanAbsDiff: +(sum / n).toFixed(3),
+      maxAbsDiff: max,
+    });
+  };
+  img.src = p.get("src");
+</script>
