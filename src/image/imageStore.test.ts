@@ -1946,6 +1946,29 @@ describe("imageStore — reads in flight for a forgotten path", () => {
     expect(readsOf("extract_thumbnail")).toBe(0);
   });
 
+  it("a forgotten path's requestZoomFull never starts a read_fullres invoke", async () => {
+    const { store, deferreds } = await stagedStore();
+
+    store.forget(new Set([PATH]));
+    store.requestZoomFull(PATH);
+    await flush();
+
+    expect(deferreds).toHaveLength(0);
+    expect(readsOf("read_fullres")).toBe(0);
+  });
+
+  it("a forgotten path's requestMid never starts a read_mid invoke", async () => {
+    const { store, deferreds } = await stagedStore();
+    store.setNeedPxProvider(() => 1860); // 4K-class stage — the mid tier engages
+
+    store.forget(new Set([PATH]));
+    store.maybeRequestMid(PATH);
+    await flush();
+
+    expect(deferreds).toHaveLength(0);
+    expect(readsOf("read_mid")).toBe(0);
+  });
+
   it("rearm() does not re-queue a forgotten path whose in-flight read settled after the tombstone, but still re-queues a surviving wanted one", async () => {
     const { store, deferreds } = await stagedStore([PATH, SURVIVOR]);
     store.registerWantFull(PATH);

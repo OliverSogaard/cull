@@ -65,7 +65,13 @@ describe("MetaBatcher", () => {
     expect(b.peek("/a.CR3")).toBeUndefined();
   });
 
-  test("peek keeps seeing the entry across everything short of forget/clear — mirrors imageStore.reset(), which deliberately does not touch the batcher", () => {
+  // imageStore.reset() deliberately never calls forget()/clear() on the
+  // batcher (thumbs survive reset()) — that reset-survival property is
+  // covered at the imageStore level by imageStore.test.ts's "pendingMetaFor
+  // still sees the entry after reset() — reset deliberately keeps the
+  // queue". This test only covers the batcher's own contract: peek is keyed
+  // per path, so an unrelated delivery cannot disturb it.
+  test("an unrelated delivery does not disturb a pending entry", () => {
     const { scheduler } = manualScheduler();
     const sink = makeSink();
     const b = new MetaBatcher(scheduler);
