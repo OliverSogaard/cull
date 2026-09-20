@@ -461,6 +461,12 @@
 
 .cull-error-chip button {
   font: inherit;
+  /* Chromium's UA stylesheet resets text-transform (and other form-control
+     text styling) to none on <button>, so it does NOT pick up the chip's
+     uppercase the way the sibling <span> does — pull both back explicitly so
+     "retry" reads the same case/tracking as "read failed" next to it. */
+  text-transform: inherit;
+  letter-spacing: inherit;
   color: var(--text);
   background: none;
   border: none;
