@@ -54,6 +54,22 @@ export function missingFailureSentence(count: number): string {
     : `${count} ratings could not be saved because the photos are no longer at their paths.`;
 }
 
+/**
+ * The one recovery instruction. Every surface that reports a missing photo ends
+ * on it — the quit guard included, where the guard cannot clear itself and this
+ * is the only way out that keeps the rating. Centralised because three
+ * hand-written tails drifted apart on the punctuation alone (two commas and an
+ * em dash) the first time round.
+ *
+ * Each of those bodies reads fact → what it means here → this clause, so the
+ * advice always lands last.
+ */
+export function missingRecovery(count: number): string {
+  return count === 1
+    ? "Retrying cannot help — put the photo back and rate it again."
+    : "Retrying cannot help — put the photos back and rate them again.";
+}
+
 /** The mixed-failure dialog tail — empty when nothing would be skipped. */
 export function missingSkippedNote(missingCount: number): string {
   if (missingCount <= 0) return "";

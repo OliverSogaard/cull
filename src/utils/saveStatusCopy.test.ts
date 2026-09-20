@@ -3,6 +3,7 @@ import {
   MISSING_PHOTO_TITLE,
   missingFailureSentence,
   missingPhotosLabel,
+  missingRecovery,
   missingSkippedNote,
   saveFailureKind,
   unsavedLabel,
@@ -51,6 +52,21 @@ describe("the missing-photo wording", () => {
     expect(missingFailureSentence(3)).toBe(
       "3 ratings could not be saved because the photos are no longer at their paths.",
     );
+  });
+
+  it("always ends on how to recover, in one wording", () => {
+    expect(missingRecovery(1)).toBe("Retrying cannot help — put the photo back and rate it again.");
+    expect(missingRecovery(3)).toBe(
+      "Retrying cannot help — put the photos back and rate them again.",
+    );
+  });
+
+  it("punctuates every 'Retrying cannot help' tail the same way", () => {
+    // The three surfaces build their body from this one clause, so the em dash
+    // (never a comma) is settled here rather than in each of them.
+    for (const count of [1, 2, 7]) {
+      expect(missingRecovery(count).startsWith("Retrying cannot help — ")).toBe(true);
+    }
   });
 });
 

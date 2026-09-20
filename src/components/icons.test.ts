@@ -16,7 +16,12 @@ import { describe, expect, test } from "vitest";
  */
 const CHROME_GLYPHS = ["✓", "✕", "★", "⚠", "↓", "⟶"];
 
-const modules = import.meta.glob<string>("../**/*.tsx", {
+/**
+ * `.ts` as well as `.tsx`: copy that reaches the chrome does not only live in
+ * components — utils/saveStatusCopy.ts writes the save-status wording, and a
+ * glyph smuggled in there would render exactly like one written in JSX.
+ */
+const modules = import.meta.glob<string>("../**/*.{ts,tsx}", {
   query: "?raw",
   eager: true,
   import: "default",
@@ -120,6 +125,10 @@ describe("no Unicode glyphs in the chrome", () => {
     // make the assertion below pass on nothing at all.
     expect(sources.length).toBeGreaterThan(10);
     expect(sources.some(([, source]) => source.includes("lucide-react"))).toBe(true);
+    // Both extensions really arrive — a glob narrowed back to `.tsx` would
+    // stop guarding the copy modules without failing anything else here.
+    expect(sources.some(([file]) => file.endsWith(".tsx"))).toBe(true);
+    expect(sources.some(([file]) => file.endsWith(".ts"))).toBe(true);
   });
 
   test("every chrome glyph is drawn by a Lucide icon", () => {

@@ -3,6 +3,7 @@ import { ICON } from "./icons";
 import {
   missingFailureSentence,
   missingPhotosLabel,
+  missingRecovery,
   missingSkippedNote,
   saveFailureKind,
 } from "../utils/saveStatusCopy";
@@ -26,7 +27,7 @@ export function ConfirmHomeDialog({ failedCount, missingCount, onLeave, onStay }
       ? `Leave with ${missingPhotosLabel(missingCount)}?`
       : `Leave with ${failedCount} unsaved rating${failedCount > 1 ? "s" : ""}?`;
   const retryBody = `${failedCount} rating${failedCount > 1 ? "s have" : " has"} not saved to disk yet. Leaving won't lose ${failedCount > 1 ? "them" : "it"}: the unsaved flag stays on the home screen for retrying. Staying to retry first is safer.`;
-  const missingBody = `${missingFailureSentence(missingCount)} Retrying cannot help — put the photo${missingCount > 1 ? "s" : ""} back and rate ${missingCount > 1 ? "them" : "it"} again.`;
+  const missingBody = `${missingFailureSentence(missingCount)} ${missingRecovery(missingCount)}`;
   return (
     <div className="dialog">
       <div className="dialog__box">

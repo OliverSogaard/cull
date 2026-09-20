@@ -7,7 +7,11 @@ import { ICON } from "./icons";
 import { normalizeRejectedSubfolder } from "../types/settings";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import { missingFailureSentence, missingSkippedNote } from "../utils/saveStatusCopy";
+import {
+  missingFailureSentence,
+  missingRecovery,
+  missingSkippedNote,
+} from "../utils/saveStatusCopy";
 import {
   isReservedFolderName,
   joinPath,
@@ -180,6 +184,20 @@ export function FinishDialog({
   // and its pinned root must still exist on disk.
   const subTrimmed = sub.trim();
   const subInvalid = pinnedMode && (subTrimmed.length === 0 || isReservedFolderName(subTrimmed));
+
+  // Which story the pending note tells, in priority order. A retryable failure
+  // is the loudest — it is the one disabling the actions. An in-flight write
+  // outranks a missing photo: while savingCount > 0 the buttons ARE disabled,
+  // so the missing note's "these failures do not block the actions below" would
+  // contradict the screen it sits on.
+  const pendingNote =
+    retryableFailedCount > 0
+      ? "retryable"
+      : savingCount > 0
+        ? "saving"
+        : failedCount > 0
+          ? "missing"
+          : "none";
   const copyDisabled =
     keptPaths.length === 0 ||
     actionBusy !== null ||
@@ -278,9 +296,11 @@ export function FinishDialog({
           </div>
         )}
 
-        {(savingCount > 0 || failedCount > 0) && (
-          <div className={`note cull-actions__pending${failedCount > 0 ? " note--bad" : ""}`}>
-            {retryableFailedCount > 0 ? (
+        {pendingNote !== "none" && (
+          <div
+            className={`note cull-actions__pending${pendingNote === "saving" ? "" : " note--bad"}`}
+          >
+            {pendingNote === "retryable" ? (
               <>
                 <TriangleAlert {...ICON.md} aria-hidden />
                 <span>
@@ -289,12 +309,12 @@ export function FinishDialog({
                   {missingCount > 0 && ` ${missingSkippedNote(missingCount)}`}
                 </span>
               </>
-            ) : failedCount > 0 ? (
+            ) : pendingNote === "missing" ? (
               <>
                 <TriangleAlert {...ICON.md} aria-hidden />
                 <span>
-                  {missingFailureSentence(missingCount)} Retrying cannot help, so the actions below
-                  stay available.
+                  {missingFailureSentence(missingCount)} These failures do not block the actions
+                  below. {missingRecovery(missingCount)}
                 </span>
               </>
             ) : (

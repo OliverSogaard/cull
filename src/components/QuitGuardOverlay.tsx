@@ -4,6 +4,7 @@ import { ICON } from "./icons";
 import {
   missingFailureSentence,
   missingPhotosLabel,
+  missingRecovery,
   missingSkippedNote,
   saveFailureKind,
 } from "../utils/saveStatusCopy";
@@ -39,9 +40,13 @@ export function QuitGuardOverlay({
               <TriangleAlert className="dialog__title-icon" {...ICON.lg} aria-hidden />
               {missingPhotosLabel(missingCount)}
             </div>
+            {/* Fact → what closing costs → how to recover. The guard cannot
+                clear itself (failedCount never reaches zero for a missing
+                photo), so the last clause is the only way out that keeps the
+                rating — it must be on screen, not just in the other dialog. */}
             <div className="dialog__body">
-              {missingFailureSentence(missingCount)} Retrying cannot help, so closing now loses{" "}
-              {missingCount > 1 ? "them" : "it"}.
+              {missingFailureSentence(missingCount)} Closing now loses{" "}
+              {missingCount > 1 ? "them" : "it"}. {missingRecovery(missingCount)}
             </div>
             <div className="dialog__actions">
               <button className="btn btn--primary" onClick={onKeepCulling}>
