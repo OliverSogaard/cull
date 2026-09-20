@@ -480,6 +480,13 @@ export default function App() {
   // scope when it was attached, or it would forever act on a stale size.
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  // Same idiom, for the help sheet: `.cull-help`'s scrim is
+  // `pointer-events: none` so a ctrl+wheel over the grid still reaches this
+  // listener while help is showing. Read through a ref rather than adding
+  // `helpVisible` to the effect's deps, which would tear the listener down
+  // and re-attach it on every Tab press.
+  const helpVisibleRef = useRef(helpVisible);
+  helpVisibleRef.current = helpVisible;
   // Wall-clock timestamp of the last COMMITTED wheel step (not React state —
   // updating it must never itself trigger a render). A precision-touchpad
   // pinch fires dozens of ctrl+wheel events 5-10ms apart; this is what
@@ -506,14 +513,21 @@ export default function App() {
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
+      // preventDefault fires for every ctrl+wheel in the grid regardless of
+      // the help sheet, or the webview would scroll/zoom under the gesture.
       e.preventDefault();
+      if (helpVisibleRef.current) return;
       if (e.deltaY === 0) return;
       const now = performance.now();
       if (!wheelStepDue(now, lastWheelStepRef.current)) return;
-      lastWheelStepRef.current = now;
       const current = settingsRef.current.gridSize;
       const next = stepGridSize(current, e.deltaY < 0 ? 1 : -1);
-      if (next !== current) setSettings({ ...settingsRef.current, gridSize: next });
+      // Only a step that actually changes the size stamps the cooldown — a
+      // clamped step (wheel up at Large, wheel down at Small) must not start
+      // the 160ms window, or an immediate reversal is swallowed.
+      if (next === current) return;
+      lastWheelStepRef.current = now;
+      setSettings({ ...settingsRef.current, gridSize: next });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -521,10 +535,15 @@ export default function App() {
 
   // The grid's cell width decides whether the sharp tier is worth fetching
   // ((cellW − 18) × DPR > 160). 0 while the grid is closed, which lets the
-  // store's window eviction free every grid blob.
+  // store's window eviction free every grid blob — and also 0 before the
+  // ResizeObserver's first measurement, so the store is never told
+  // `gridCellWidth`'s 168px pre-measurement placeholder as if it were the
+  // grid's real cell width.
   useEffect(() => {
     imageStore.setGridCellW(
-      gridVisible && !compareMode ? gridCellWidth(gridContentW, gridCols) : 0,
+      gridVisible && !compareMode && gridContentW > 0
+        ? gridCellWidth(gridContentW, gridCols)
+        : 0,
     );
   }, [gridVisible, compareMode, gridContentW, gridCols]);
 

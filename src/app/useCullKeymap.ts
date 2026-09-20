@@ -444,17 +444,22 @@ export function useCullKeymap({
           break;
         // Grid size, grid only. Bare + / = (the unshifted key on most
         // layouts) and − , numpad included via e.key, which reports the same
-        // characters for NumpadAdd / NumpadSubtract.
+        // characters for NumpadAdd / NumpadSubtract. `e.repeat` is ignored
+        // (break, not return, so preventDefault still runs) — without the
+        // guard, holding the key past the OS repeat delay steps Small → Large
+        // in one press.
         case "+":
         case "=":
           if (gridVisible) {
             e.preventDefault();
+            if (e.repeat) break;
             stepGridSizeBy(1);
           }
           break;
         case "-":
           if (gridVisible) {
             e.preventDefault();
+            if (e.repeat) break;
             stepGridSizeBy(-1);
           }
           break;
