@@ -18,9 +18,11 @@ export type PressureLevel = "normal" | "warn" | "critical";
  * shrinks is what holds bytes: decoded pools (the ~130 MB fulls first),
  * blob keep-windows, and speculative prefetch.
  *
- * - warn: halve the windows, at most one decoded full, no background fill.
+ * - warn: halve the windows, at most one decoded full, no background fill, and
+ *   a much shorter grid-thumb window (its blobs decode to ~0.7 MB each).
  * - critical: survival numbers — no decoded fulls, no zoom-full window, no
- *   prefetch; a small preview working set keeps the cull usable.
+ *   prefetch, no grid tier at all; a small preview working set keeps the cull
+ *   usable.
  */
 export function clampProfileForPressure(
   base: PerformanceProfile,
@@ -38,6 +40,8 @@ export function clampProfileForPressure(
       decodedPoolFulls: Math.min(base.decodedPoolFulls, 1),
       backgroundFillConcurrency: 0,
       midGenConcurrency: Math.min(base.midGenConcurrency, 1),
+      gridThumbConcurrency: Math.min(base.gridThumbConcurrency, 1),
+      gridThumbKeep: Math.min(base.gridThumbKeep, 40),
     };
   }
   return {
@@ -50,5 +54,7 @@ export function clampProfileForPressure(
     decodedPoolFulls: 0,
     backgroundFillConcurrency: 0,
     midGenConcurrency: 0,
+    gridThumbConcurrency: 0,
+    gridThumbKeep: 0,
   };
 }

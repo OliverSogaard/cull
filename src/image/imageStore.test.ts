@@ -1531,6 +1531,168 @@ describe("lane parity net (Phase 8 TierLane collapse)", () => {
     });
   }
 
+  // The grid lane's parity tests. Driven by RANGE, not by path — the store
+  // owns the request, so the rule, the tombstone check and the two sentinels
+  // live in one place. Same three invariants as every other lane, plus the
+  // four that are this lane's alone.
+  describe("grid thumb", () => {
+    function makeGridThumbBuf(): ArrayBuffer {
+      const header = JSON.stringify({ gridLen: 3, width: 512, height: 341 });
+      const headerBytes = new TextEncoder().encode(header);
+      const buf = new ArrayBuffer(4 + headerBytes.length + 3);
+      new DataView(buf).setUint32(0, headerBytes.length, true);
+      new Uint8Array(buf, 4, headerBytes.length).set(headerBytes);
+      new Uint8Array(buf, 4 + headerBytes.length).set([0xff, 0xd8, 0x00]);
+      return buf;
+    }
+
+    async function armed(paths: string[]) {
+      const StoreClass = await getStoreClass();
+      const store = new StoreClass();
+      store.setProfile(PERFORMANCE_PROFILES.network); // gridThumbConcurrency 1
+      store.reset(paths);
+      store.setGridCellW(400); // (400 − 18) × 1 = 382 > 160
+      return store;
+    }
+
+    it("single-flight — re-reporting the same range never duplicates the fetch", async () => {
+      const store = await armed(["/net/a.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      deferreds[0].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot("/net/a.cr3").gridThumbUrl !== undefined);
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+    });
+
+    it("stale completion is gen-scoped — nothing leaks, the blob is revoked", async () => {
+      const store = await armed(["/old/0.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      store.hardReset();
+      deferreds[0].resolve(makeGridThumbBuf());
+      await flush();
+      expect(store.snapshot("/old/0.cr3").gridThumbUrl).toBeUndefined();
+      expect(liveUrls.size).toBe(0);
+    });
+
+    it("error → cooldown blocks re-requests → retry() re-arms", async () => {
+      const store = await armed(["/net/err.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].reject(new Error("boom"));
+      await flush();
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      store.retry("/net/err.cr3");
+      store.setGridRange(0, 0);
+      await vi.waitUntil(() => deferreds.length === 2, { timeout: 2000 });
+      deferreds[1].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot("/net/err.cr3").gridThumbUrl !== undefined);
+    });
+
+    it("the rule gates the lane: a cell the THMB already covers asks for nothing", async () => {
+      const store = await armed(["/net/a.cr3"]);
+      store.setGridCellW(120); // (120 − 18) × 1 = 102 ≤ 160
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(0);
+    });
+
+    it("the UNAVAILABLE sentinel latches per path: one miss, then never again", async () => {
+      const store = await armed(["/net/noprvw.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].reject(new Error("grid thumb unavailable (no preview)"));
+      await flush();
+      // No error recorded, no cooldown to expire, and no second request ever.
+      store.setGridRange(0, 0);
+      store.setGridCellW(500);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+      expect(store.snapshot("/net/noprvw.cr3").gridThumbUrl).toBeUndefined();
+      // The THMB underneath is untouched — the cell simply keeps showing it.
+      expect(store.snapshot("/net/noprvw.cr3").stage).toBe("shimmer");
+    });
+
+    it("the PENDING sentinel does NOT latch: it is a plain cooldown, then asked again", async () => {
+      // The backend's MidGen pending set is shared with the whole-shoot mid
+      // sweep, so this bounce is common. Latching it would strand the cell on
+      // the soft THMB for the session — the bug this sentinel exists to avoid.
+      const store = await armed(["/net/busy.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].reject(new Error("grid thumb pending"));
+      await flush();
+
+      // Inside the backoff: no re-fetch (a cooldown, not a latch).
+      store.setGridRange(0, 0);
+      await flush();
+      expect(deferreds).toHaveLength(1);
+
+      // retry() clears the tier error — the path is NOT in the unavailable set,
+      // so the very next range report asks again.
+      store.retry("/net/busy.cr3");
+      store.setGridRange(0, 0);
+      await vi.waitUntil(() => deferreds.length === 2, { timeout: 2000 });
+      deferreds[1].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot("/net/busy.cr3").gridThumbUrl !== undefined);
+    });
+
+    it("eviction follows the GRID RANGE, and leaving the grid frees everything", async () => {
+      const paths = Array.from({ length: 400 }, (_, i) => `/win/${i}.cr3`);
+      const store = await armed(paths);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot(paths[0]).gridThumbUrl !== undefined);
+
+      store.setGridRange(100, 110); // inside gridThumbKeep (120) — survives
+      expect(store.snapshot(paths[0]).gridThumbUrl).toBeDefined();
+      store.setGridRange(300, 310); // far outside — evicted
+      expect(store.snapshot(paths[0]).gridThumbUrl).toBeUndefined();
+      expect(liveUrls.size).toBe(0);
+    });
+
+    it("a mounted cell's displayRef protects its blob even outside the window", async () => {
+      const paths = Array.from({ length: 400 }, (_, i) => `/win/${i}.cr3`);
+      const store = await armed(paths);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.setGridRange(0, 0);
+      await flush();
+      deferreds[0].resolve(makeGridThumbBuf());
+      await vi.waitUntil(() => store.snapshot(paths[0]).gridThumbUrl !== undefined);
+      store.registerDisplay(paths[0]);
+      store.setGridRange(300, 310);
+      expect(store.snapshot(paths[0]).gridThumbUrl).toBeDefined();
+      store.unregisterDisplay(paths[0]);
+      store.setGridRange(301, 311);
+      expect(store.snapshot(paths[0]).gridThumbUrl).toBeUndefined();
+    });
+
+    it("a tombstoned path never takes a lane slot", async () => {
+      const store = await armed(["/net/a.cr3", "/net/b.cr3"]);
+      const deferreds = laneDeferreds("read_grid_thumb");
+      store.forget(new Set(["/net/a.cr3"]));
+      store.setGridRange(0, 1);
+      await flush();
+      // forget() re-indexes, so only the survivor may be fetched.
+      expect(deferreds).toHaveLength(1);
+    });
+  });
+
   // Windowed eviction parity for the three cursor-windowed lanes (the thumb
   // LRU's protection is pinned by the existing displayRef test above). Each
   // lane's OWN protection class must hold, and releasing it must evict.

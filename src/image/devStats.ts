@@ -31,9 +31,11 @@ export class DevStats {
     thumbLoads: 0,
     midLoads: 0,
     midGens: 0,
+    gridThumbLoads: 0,
     previewEvicts: 0,
     zoomEvicts: 0,
     midEvicts: 0,
+    gridThumbEvicts: 0,
     errors: 0,
   };
 

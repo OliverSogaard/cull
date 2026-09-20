@@ -23,8 +23,10 @@
  *  8–10. zoom tier (reset/hardReset, fetchZoomInto stale/replace, zoomLane.evictAround)
  *  11–12. mid tier (Phase 8): reset/hardReset + fetchMidInto stale/replace (11),
  *     midLane.evictAround window eviction (12)
- *  13. all four fetch*Into landing sites: a path forgotten mid-flight (Move
+ *  13. all five fetch*Into landing sites: a path forgotten mid-flight (Move
  *     rejects) revokes its just-created blob, exactly as a stale generation does
+ *  14. grid tier (Phase 3B): reset/hardReset + fetchGridThumbInto stale/replace,
+ *     gridThumbLane.evictAround window eviction
  *
  * Concurrency-correctness invariants (mechanics enforced by TierLane.run —
  * see tierLane.ts):
@@ -40,12 +42,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   fetchFullres,
+  fetchGridThumb,
   fetchMid,
   fetchNav,
   fetchThumbnail,
+  GRID_THUMB_PENDING_RE,
+  GRID_THUMB_UNAVAILABLE_RE,
   invokeGenerateMid,
   MID_UNCACHED_RE,
 } from "../utils/bundle";
+import { wantsGridThumb } from "./gridThumbRule";
 import { nextMidEngaged } from "./midSelect";
 import type { PerformanceProfile } from "../types/settings";
 import { clampProfileForPressure, type PressureLevel } from "./pressureProfile";
@@ -182,6 +188,26 @@ export class ImageStore {
   /** Latched once `read_mid` is rejected as an unknown command (Phase-8
    *  frontend on an older backend): the tier stays dormant for the session. */
   private midUnsupported = false;
+  // ── Grid tier (Phase 3B): the sharp contact-sheet thumbnail ─────────────
+  /** path → grid-thumb state. Windowed on the VISIBLE GRID RANGE, not the
+   *  cursor: the grid is the only consumer and it scrolls independently. */
+  private gridThumbs = new Map<string, ImageState["gridThumb"]>();
+  private requestedGridThumb = new Set<string>();
+  private gridThumbInFlightPaths = new Set<string>();
+  private gridThumbErrors = new Map<string, TierError>();
+  /** Paths whose preview can never produce a grid thumb (none embedded,
+   *  undecodable, or already ≤512px) — the backend's one quiet sentinel,
+   *  LATCHED per path. The cell keeps the THMB it is already showing: no
+   *  shimmer, no retry loop, no error chip. Cleared only by reset()/
+   *  hardReset(); retry() deliberately does NOT clear it, because nothing
+   *  about the file will have changed. */
+  private gridThumbUnavailable = new Set<string>();
+  /** Latched once `read_grid_thumb` is rejected as an unknown command (a
+   *  3B frontend on an older backend): the tier stays dormant for the session. */
+  private gridThumbUnsupported = false;
+  /** The grid's current cell width in CSS px, 0 while the grid is closed.
+   *  With the DPR it decides whether the tier is worth asking for at all. */
+  private gridCellW = 0;
   /** Hysteresis latch for the display-adaptive choice (midSelect.ts):
    *  engage >1750 device px, release <1650, hold in between. */
   private midEngaged = false;
@@ -422,6 +448,41 @@ export class ImageStore {
     },
   });
 
+  /** Grid-tier lane (Phase 3B): the 512px contact-sheet thumbnails. */
+  private readonly gridThumbLane: TierLane<ImageState["gridThumb"]> = new TierLane({
+    cap: () => this.profile.gridThumbConcurrency,
+    generation: () => this.generation,
+    isReady: (p) => this.gridThumbs.get(p)?.status === "ready",
+    markLoading: (p) => {
+      this.gridThumbs.set(p, { status: "loading" });
+      this.invalidate(p);
+    },
+    fetch: (p, gen) => this.fetchGridThumbInto(p, gen),
+    afterSettle: () => {
+      this.gridThumbLane.pump();
+    },
+    requested: this.requestedGridThumb,
+    inFlightPaths: this.gridThumbInFlightPaths,
+    errors: this.gridThumbErrors,
+    // Windowed eviction — REVOKE SITE 14. The window is the VISIBLE GRID
+    // RANGE ± gridThumbKeep, so the `centerIndex` TierLane passes is ignored
+    // here (the store hands it this.cursor purely to clear evictAround's
+    // `centerIndex < 0` guard). Leaving the grid sets the range to -1/-1,
+    // which empties the window and frees every unmounted blob.
+    cache: this.gridThumbs,
+    isEvictionProtected: (p) => {
+      if (this.displayRefs.has(p)) return true;
+      if (this.gridStart < 0) return false;
+      const idx = this.indexOf(p);
+      const keep = this.profile.gridThumbKeep;
+      return idx !== -1 && idx >= this.gridStart - keep && idx <= this.gridEnd + keep;
+    },
+    onEvict: (p) => {
+      this.stats.counts.gridThumbEvicts++;
+      this.invalidate(p);
+    },
+  });
+
   constructor(opts: ImageStoreOptions = {}) {
     this.thumbLruCap = opts.thumbLruCap ?? THUMB_LRU_CAP;
     const poolFactory =
@@ -446,6 +507,7 @@ export class ImageStore {
     this.navLane.evictAround(this.cursor);
     this.zoomLane.evictAround(this.cursor);
     this.midLane.evictAround(this.cursor);
+    this.gridThumbLane.evictAround(this.cursor);
     // Re-aim the pool under the new caps/radii (a network→local flip may
     // shrink it; eviction above may have dropped blobs it referenced).
     this.refreshPool();
@@ -454,6 +516,7 @@ export class ImageStore {
     this.bgLane.pump();
     this.zoomLane.pump();
     this.midLane.pump();
+    this.gridThumbLane.pump();
     this.midSweep.pump();
   }
 
@@ -567,6 +630,7 @@ export class ImageStore {
     this.navLane.reset();
     this.zoomLane.reset();
     this.midLane.reset();
+    this.gridThumbLane.reset();
     // NOT this.metaBatcher.clear(): thumbs survive reset(), and a thumb that
     // already landed is never re-fetched — dropping its pending delivery would
     // lose that frame's phash for the rest of the session (hardReset, which
@@ -588,6 +652,11 @@ export class ImageStore {
     this.midUncached.clear();
     this.midReprobed.clear();
     this.midSweep.reset();
+    // Grid tier (Phase 3B) — REVOKE SITE 14. A re-staged folder gets a clean
+    // slate, so the per-path "can never have one" latch dies with the session
+    // that set it (a re-stage may be looking at re-exported files).
+    this.revokeReadyBlobs(this.gridThumbs);
+    this.gridThumbUnavailable.clear();
     // The pool's decoded refs point at blob URLs this reset revokes.
     this.pool?.clear();
     // old-gen thumb loads bailed without populating `thumbs`; if we keep
@@ -664,7 +733,14 @@ export class ImageStore {
     const cursorPath = this.paths[this.cursor];
     this.paths = this.paths.filter((p) => !gone.has(p));
     this.rebuildPathIndex();
-    for (const lane of [this.thumbLane, this.bgLane, this.navLane, this.zoomLane, this.midLane]) {
+    for (const lane of [
+      this.thumbLane,
+      this.bgLane,
+      this.navLane,
+      this.zoomLane,
+      this.midLane,
+      this.gridThumbLane,
+    ]) {
       lane.queue = lane.queue.filter((p) => !gone.has(p));
     }
     // Drop each gone path's records AND tombstone it, so a read still in
@@ -720,6 +796,9 @@ export class ImageStore {
     const m = this.mids.get(p);
     if (m?.status === "ready") URL.revokeObjectURL(m.url);
     this.mids.delete(p);
+    const g = this.gridThumbs.get(p);
+    if (g?.status === "ready") URL.revokeObjectURL(g.url);
+    this.gridThumbs.delete(p);
     this.states.delete(p);
     this.snaps.delete(p);
     for (const set of [
@@ -727,14 +806,22 @@ export class ImageStore {
       this.requestedFull,
       this.requestedZoom,
       this.requestedMid,
+      this.requestedGridThumb,
       this.pendingZoom,
       this.pendingMid,
       this.midUncached,
       this.midReprobed,
+      this.gridThumbUnavailable,
     ]) {
       set.delete(p);
     }
-    for (const map of [this.thumbErrors, this.fullErrors, this.zoomErrors, this.midErrors]) {
+    for (const map of [
+      this.thumbErrors,
+      this.fullErrors,
+      this.zoomErrors,
+      this.midErrors,
+      this.gridThumbErrors,
+    ]) {
       map.delete(p);
     }
     this.fullHints.delete(p);
@@ -756,6 +843,7 @@ export class ImageStore {
     this.navLane.reset();
     this.zoomLane.reset();
     this.midLane.reset();
+    this.gridThumbLane.reset();
     this.metaBatcher.clear();
     this.forgotten.clear();
     this.wantFull.clear();
@@ -766,6 +854,8 @@ export class ImageStore {
     this.midUncached.clear();
     this.midReprobed.clear();
     this.midSweep.reset();
+    this.revokeReadyBlobs(this.gridThumbs); // REVOKE SITE 14
+    this.gridThumbUnavailable.clear();
     this.fullHints.clear();
     this.nativeDims.clear();
     this.stats.clearTimings();
@@ -830,6 +920,10 @@ export class ImageStore {
     // (~130 MB each); the previews stay warm for the return to loupe.
     this.pool?.retain("full", [], 0);
     this.bgLane.pump();
+    // The grid tier's window moves with the reported range, not the cursor:
+    // re-centre it, then ask for the cells that just came into view.
+    this.gridThumbLane.evictAround(this.cursor);
+    this.requestGridThumbsInRange();
   }
 
   /** Clear the grid viewport so bg-fill prioritizes purely by cursor distance. */
@@ -838,6 +932,62 @@ export class ImageStore {
     this.gridEnd = -1;
     this.refreshPool(); // back in loupe — re-warm the band (incl. zoom fulls)
     this.bgLane.pump();
+    // An empty window: every grid blob no cell still displays is freed here.
+    this.gridThumbLane.evictAround(this.cursor);
+  }
+
+  /**
+   * The grid's cell width in CSS px (0 = the grid is closed). With the device
+   * pixel ratio this decides whether the sharp tier is worth asking for at
+   * all — see gridThumbRule. A size change re-runs the decision for every
+   * visible cell; closing the grid lets the window eviction free the blobs.
+   */
+  setGridCellW(cellW: number): void {
+    if (cellW === this.gridCellW) return;
+    this.gridCellW = cellW;
+    this.gridThumbLane.evictAround(this.cursor);
+    this.requestGridThumbsInRange();
+  }
+
+  /** DPR flip (window dragged 4K ↔ 1440p): the same cell can cross the rule
+   *  in either direction without the grid itself changing. */
+  reevaluateGridThumbs(): void {
+    this.requestGridThumbsInRange();
+  }
+
+  /** True when the painted grid cell needs more pixels than the THMB has. */
+  private gridThumbWanted(): boolean {
+    return !this.gridThumbUnsupported && wantsGridThumb(this.gridCellW, this.dpr());
+  }
+
+  private dpr(): number {
+    return typeof window === "undefined" ? 1 : window.devicePixelRatio;
+  }
+
+  /** Request the grid tier for every cell inside the reported grid viewport.
+   *  The ONE entry point — so the tombstone check, the sentinel latch and the
+   *  rule live in one place and a scroll costs one pass, not one effect per
+   *  mounted cell. */
+  private requestGridThumbsInRange(): void {
+    if (!this.gridThumbWanted() || this.gridStart < 0) return;
+    const last = Math.min(this.gridEnd, this.paths.length - 1);
+    for (let i = Math.max(0, this.gridStart); i <= last; i++) {
+      this.requestGridThumb(this.paths[i]);
+    }
+    this.gridThumbLane.pump();
+  }
+
+  private requestGridThumb(path: string): void {
+    if (!path) return;
+    // Tombstoned (Move rejects) — never take a lane slot for a gone frame.
+    if (this.forgotten.has(path)) return;
+    // The file will never have one; the cell keeps its THMB for the session.
+    if (this.gridThumbUnavailable.has(path)) return;
+    const existing = this.gridThumbs.get(path);
+    if (existing?.status === "ready" || existing?.status === "loading") return;
+    if (this.requestedGridThumb.has(path) || this.gridThumbInFlightPaths.has(path)) return;
+    if (inCooldown(this.gridThumbErrors.get(path), Date.now())) return;
+    if (!this.gridThumbLane.queue.includes(path)) this.gridThumbLane.queue.push(path);
   }
 
   private rebuildPathIndex(): void {
@@ -960,6 +1110,11 @@ export class ImageStore {
     this.midErrors.delete(path);
     this.midUncached.delete(path);
     this.midReprobed.delete(path);
+    // NOT gridThumbUnavailable: that sentinel is a fact about the file (no
+    // usable preview to sharpen from), not a transient failure, and a retry
+    // cannot change it. A `pending` bounce is a plain tier error and clears
+    // with the rest above.
+    this.gridThumbErrors.delete(path);
     this.trouble.clearPath(path);
     if (this.fulls.get(path)?.status === "error") {
       this.fulls.delete(path);
@@ -985,6 +1140,9 @@ export class ImageStore {
     this.invalidate(path);
     this.thumbLane.pump();
     this.navLane.pump();
+    // The cleared cooldown alone re-queues nothing — without this pump the
+    // grid tier would wait for the next viewport change to ask again.
+    this.gridThumbLane.pump();
   }
 
   /** App registers this to surface the non-blocking "folder unreachable —
@@ -1077,6 +1235,7 @@ export class ImageStore {
       full: this.fulls.get(path),
       zoomFull: this.zoomFulls.get(path),
       mid: this.mids.get(path),
+      gridThumb: this.gridThumbs.get(path),
       knownDims: this.pathDims.get(path),
     };
   }
@@ -1091,6 +1250,7 @@ export class ImageStore {
       full: this.fulls.get(path),
       zoomFull: this.zoomFulls.get(path),
       mid: this.mids.get(path),
+      gridThumb: this.gridThumbs.get(path),
       knownDims: this.pathDims.get(path),
     };
     this.states.set(path, newState);
@@ -1105,6 +1265,7 @@ export class ImageStore {
       old.error !== newResolved.error ||
       old.full?.url !== newResolved.full?.url ||
       old.mid?.url !== newResolved.mid?.url ||
+      old.gridThumbUrl !== newResolved.gridThumbUrl ||
       old.dims?.w !== newResolved.dims?.w ||
       old.dims?.h !== newResolved.dims?.h
     ) {
@@ -1561,6 +1722,61 @@ export class ImageStore {
     }
   }
 
+  // ── Grid tier (Phase 3B): the sharp 512px contact-sheet thumbnail ────────
+
+  private async fetchGridThumbInto(path: string, gen: number): Promise<void> {
+    try {
+      const result = await fetchGridThumb(path, gen);
+      if (this.generation !== gen) {
+        URL.revokeObjectURL(result.url); // REVOKE SITE 14 (stale session)
+        return;
+      }
+      if (this.forgotten.has(path)) {
+        URL.revokeObjectURL(result.url); // REVOKE SITE 13 (forgotten mid-flight)
+        return;
+      }
+      const existing = this.gridThumbs.get(path);
+      if (existing?.status === "ready") URL.revokeObjectURL(existing.url);
+      this.gridThumbs.set(path, { status: "ready", url: result.url });
+      this.gridThumbErrors.delete(path);
+      this.stats.counts.gridThumbLoads++;
+      this.invalidate(path);
+      this.gridThumbLane.evictAround(this.cursor);
+    } catch (e) {
+      if (this.generation !== gen) return;
+      // Forgotten mid-flight — dropPath already cleared the markers and the
+      // entry this branch would rewrite, and skipping spares the unsupported
+      // latch a false positive from a moved file's "not found".
+      if (this.forgotten.has(path)) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      this.requestedGridThumb.delete(path);
+      this.gridThumbs.delete(path);
+      if (/(^|: )cancelled$/i.test(msg)) {
+        // Superseded by a session change the backend saw first — quiet drop.
+        // Two shapes: the bare sentinel, and preview_parts's wrapped
+        // "cr3 preview: cancelled" (bundle.rs:184 + cr3.rs:684).
+      } else if (GRID_THUMB_PENDING_RE.test(msg)) {
+        // TRANSIENT: another producer holds the backend's shared MidGen claim
+        // (the opportunistic mid generator and the whole-shoot idle sweep use
+        // the same pending set). Ordinary backoff — NEVER the latch, or a grid
+        // scroll that raced the sweep would strand those cells on the soft
+        // THMB for the rest of the session.
+        this.noteTierError(this.gridThumbErrors, path, msg);
+      } else if (GRID_THUMB_UNAVAILABLE_RE.test(msg)) {
+        // PERMANENT, and not a failure: this file has no preview to sharpen
+        // from. LATCH it — the cell keeps its THMB for the session, with no
+        // shimmer, no retry and no error chip.
+        this.gridThumbUnavailable.add(path);
+      } else if (/command\s+\S*\s*not found|unknown command|no handler/i.test(msg)) {
+        // A 3B frontend on an older backend: the tier stays dormant.
+        this.gridThumbUnsupported = true;
+      } else {
+        this.noteTierError(this.gridThumbErrors, path, msg);
+      }
+      this.invalidate(path);
+    }
+  }
+
   /** One delayed re-probe after a quiet miss: the opportunistic generator
    *  needs ~300–400 ms of CPU after its zoom read returns. Fires only when a
    *  zoom-tier read is in play for the path (otherwise nothing will have
@@ -1724,9 +1940,11 @@ export class ImageStore {
       thumbLoads: number;
       midLoads: number;
       midGens: number;
+      gridThumbLoads: number;
       previewEvicts: number;
       zoomEvicts: number;
       midEvicts: number;
+      gridThumbEvicts: number;
       errors: number;
     };
     mid: {
@@ -1736,12 +1954,20 @@ export class ImageStore {
       cached: number;
       sweepLeft: number;
     };
+    gridThumb: {
+      lane: string;
+      cached: number;
+      cellW: number;
+      wanted: boolean;
+      unavailable: number;
+    };
     decodedMB: number;
     cursor: number;
   } {
     const previews = [...this.fulls.values()].filter((s) => s?.status === "ready").length;
     const zooms = [...this.zoomFulls.entries()].filter(([, s]) => s?.status === "ready");
     const mids = [...this.mids.values()].filter((s) => s?.status === "ready").length;
+    const gridCached = [...this.gridThumbs.values()].filter((s) => s?.status === "ready").length;
     let zoomMB = 0;
     for (const [p] of zooms) {
       const d = this.nativeDims.get(p);
@@ -1780,7 +2006,18 @@ export class ImageStore {
             ? Math.max(0, this.paths.length - this.midSweep.doneSize)
             : 0,
       },
-      decodedMB: Math.round(previews * 7 + zoomMB + mids * 17 + this.thumbs.size * 0.08),
+      gridThumb: {
+        lane: `${this.gridThumbLane.inFlight}/${this.profile.gridThumbConcurrency} q${this.gridThumbLane.queue.length}`,
+        cached: gridCached,
+        cellW: this.gridCellW,
+        wanted: this.gridThumbWanted(),
+        unavailable: this.gridThumbUnavailable.size,
+      },
+      // A 512 × 341 RGBA raster is ~0.7 MB, so the grid tier's decoded cost
+      // is its cached count × 0.7 — small each, but 2,726 of them would not be.
+      decodedMB: Math.round(
+        previews * 7 + zoomMB + mids * 17 + this.thumbs.size * 0.08 + gridCached * 0.7,
+      ),
       cursor: this.cursor,
     };
   }
