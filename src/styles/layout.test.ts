@@ -60,37 +60,63 @@ describe("the footer's breakpoints", () => {
       const at = statusbar.indexOf(`@media (width < ${w}px) {`);
       return statusbar.slice(at, statusbar.indexOf("\n}", at));
     };
+    // The save chip's tail sheds a breakpoint earlier than the rest — fix
+    // round 1 moved it from 1200 to 1360 (a clip band survived just above
+    // 1200 otherwise). Pin it INSIDE 1360 and explicitly NOT inside 1200,
+    // so a future move-back can't slip past this guard silently.
     expect(block(1360)).toContain(".cull-statusbar__keyhint");
+    expect(block(1360)).toContain(".cull-statusbar__unsaved-tail");
     for (const cls of [
       ".cull-statusbar__filename-ext",
       ".cull-statusbar__chip-label",
       ".cull-statusbar__scrub-label",
       ".cull-statusbar__verdict-label",
-      ".cull-statusbar__unsaved-tail",
     ]) {
       expect(block(1200), cls).toContain(cls);
     }
+    expect(block(1200), "the tail moved to 1360 and must not still be here").not.toContain(
+      ".cull-statusbar__unsaved-tail",
+    );
     expect(block(1100)).toContain(".cull-statusbar__finish-long");
   });
 
   test("only the filename may shrink, so nothing else can be squeezed into a clip", () => {
-    expect(ruleBody(sheet("./chrome.css"), ".cull-statusbar__left")).toMatch(/flex-shrink:\s*1/);
-    expect(ruleBody(sheet("./chrome.css"), ".cull-statusbar__filename-name")).toMatch(
-      /text-overflow:\s*ellipsis/,
-    );
+    const chrome = sheet("./chrome.css");
+    // The guarantee rests on THREE things staying min-width: 0 (so the flex
+    // algorithm is even allowed to shrink them below content size)...
+    for (const selector of [
+      ".cull-statusbar__left",
+      ".cull-statusbar__filename",
+      ".cull-statusbar__filename-name",
+    ]) {
+      expect(ruleBody(chrome, selector), selector).toMatch(/min-width:\s*0/);
+    }
+    // ...and on every OTHER left-cluster child refusing to shrink at all, so
+    // the filename stem is the only thing that ever gives.
+    for (const [file, selector] of [
+      ["./chrome.css", ".cull-statusbar__verdict"],
+      ["./chrome.css", ".cull-statusbar__scrub"],
+      ["./chrome.css", ".cull-statusbar__overlay-cluster"],
+      ["./statusbar.css", ".cull-statusbar__chip"],
+      ["./statusbar.css", ".cull-statusbar__multi"],
+      ["./chrome.css", ".cull-statusbar__unsaved"],
+    ] as const) {
+      expect(ruleBody(sheet(file), selector), `${file} ${selector}`).toMatch(/flex-shrink:\s*0/);
+    }
+    expect(ruleBody(chrome, ".cull-statusbar__filename-name")).toMatch(/text-overflow:\s*ellipsis/);
   });
 
   test("the save chip's tail is hidden visually, never removed from the name", () => {
     // `display: none` would shorten the button's accessible name; the tail is
-    // clipped instead, with the same declarations base.css's utility uses.
+    // clipped instead. Lives in the 1360 block now (fix round 1), alongside
+    // the keyhint rule.
     const block = statusbar.slice(
+      statusbar.indexOf("@media (width < 1360px) {"),
       statusbar.indexOf("@media (width < 1200px) {"),
-      statusbar.indexOf("@media (width < 1100px) {"),
     );
     const tail = block.slice(block.indexOf(".cull-statusbar__unsaved-tail {"));
     expect(tail).toMatch(/clip-path:\s*inset\(50%\)/);
     expect(tail.slice(0, tail.indexOf("}"))).not.toMatch(/display:\s*none/);
-    expect(ruleBody(sheet("./base.css"), ".visually-hidden")).toMatch(/clip-path:\s*inset\(50%\)/);
   });
 });
 

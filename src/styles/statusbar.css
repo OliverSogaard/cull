@@ -43,7 +43,13 @@
 .cull-statusbar__chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  /* Reproduces the space the old flat text node ("zoom 2:1") used to have
+     between the word and the value: a mono space character advances by
+     0.6em, plus this chip's own 0.16em letter-spacing (applied per
+     character, the space included) = 0.76em. An arbitrary px gap here
+     would visibly re-space the chip at every width, including ≥1360 where
+     the word/value split is meant to change nothing at all. */
+  gap: 0.76em;
   padding: 1px 8px;
   background: var(--surface-2);
   letter-spacing: 0.16em;
@@ -71,9 +77,37 @@
    no resize listener is needed. Every label below is rendered in both forms
    by StatusBar; only one is ever displayed.
 
-   Budget at the 1024px minimum: 1024 − 36 (bar padding) − 36 (two 18px
-   gaps) = 952 of content. Right cluster at <1100 = 79 (pos, 12ch) + 347
-   (filter tabs, worst "SMART · 4194") + 66 ("FINISH") + 28 gaps = 520.
+   Two tiers below 1360, not one: the save chip's tail sheds FIRST, at 1360,
+   because it is the single biggest item on the left (a full "4194 photos
+   missing · check again" tail costs ~93px) and its wrapper's title already
+   says what the click does — nothing is lost by dropping it early. The four
+   cosmetic words (extension, zoom/scrub word, verdict word) stay at 1200
+   exactly as the owner saw them on the design board; they are NOT moved.
+
+   Worst case just above 1200 (tail already gone, cosmetic words NOT yet —
+   real filter tabs at their widest "SMART · 4194", finish still in its long
+   form since that only shortens below 1100): right cluster = 79 (pos, 12ch)
+   + 14 (gap) + 347 (filter tabs) + 14 (gap) + 244 ("All 4194 rated ·
+   Ctrl+E finish", 30 chars @ 10px mono + 0.14em track + 22px btn--sm
+   padding/border) = 698. Left cluster, the two mutually exclusive pairs
+   collapsed to their larger member (zoom XOR scrub; overlay cluster XOR "N
+   selected") = 68 (verdict: glyph 14 + gap 7 + "REJECT" 47) + 129 (scrub:
+   icon 12 + two 4px gaps + "Scrubbing" 67 + ×10 chip 42) + 133 (overlay
+   cluster) + 143 ("4194 photos missing", tail already hidden) + 56 (four
+   14px gaps) = 529. Right + left = 1227 of content with the filename stem
+   already at zero, needing 1227 + 72 (bar padding + the two 18px spacer
+   gaps) = 1299px of window at minimum for this fully-loaded combination —
+   down from ~1392px before this fix (moving the tail here recovers exactly
+   its own ~93px), but the individual pieces above only finish shedding at
+   their own 1200 / 1100 breakpoints, so a window between about 1201 and
+   1299 can still clip the right end in this specific worst-of-worst-cases
+   pileup. Ordinary states (no scrub, nothing missing, no smart suggestions)
+   are nowhere near this tight.
+
+   Budget at the 1024px minimum, every shed already applied (tail AND the
+   four cosmetic words gone, finish short): 1024 − 36 (bar padding) − 36
+   (two 18px gaps) = 952 of content. Right cluster at <1100 = 79 (pos, 12ch)
+   + 347 (filter tabs, worst "SMART · 4194") + 66 ("FINISH") + 28 gaps = 520.
    Left, with every chip present and the two mutually exclusive pairs
    collapsed (zoom XOR scrub; overlay cluster XOR "N selected") = 14
    (verdict glyph) + 58 (scrub + ×10) + 133 (overlay cluster) + 143
@@ -84,6 +118,24 @@
 @media (width < 1360px) {
   .cull-statusbar__keyhint {
     display: none;
+  }
+
+  /* The save chip's tail sheds here, a breakpoint earlier than the other
+     cosmetic words below — see the arithmetic above. It is hidden VISUALLY,
+     not removed: `display: none` would drop it from the button's
+     accessible name, and the button would stop announcing what clicking it
+     does. A media query cannot add a class, so this is the same clip-path
+     recipe inlined rather than shared through one. */
+  .cull-statusbar__unsaved-tail {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
 }
 
@@ -97,22 +149,6 @@
   /* aria-label on the pill keeps the word for AT. */
   .cull-statusbar__verdict-label {
     display: none;
-  }
-
-  /* The save chip's tail is hidden VISUALLY, not removed: `display: none`
-     would drop it from the button's accessible name, and the button would
-     stop announcing what clicking it does. Same declarations as
-     base.css's .visually-hidden — a media query cannot add a class. */
-  .cull-statusbar__unsaved-tail {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-    border: 0;
   }
 }
 
