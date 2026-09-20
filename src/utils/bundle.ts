@@ -148,6 +148,42 @@ export async function invokeGenerateMid(
   });
 }
 
+/** Header for `read_grid_thumb` (Phase 3B): JPEG length + (unrotated) dims. */
+type GridThumbHeader = { gridLen: number; width: number; height: number };
+
+/** PERMANENT: this file has no usable preview to sharpen from — none embedded,
+ *  undecodable, or already ≤512px. The store LATCHES it per path and the grid
+ *  cell keeps the THMB it is already showing — no shimmer, no retry loop, no
+ *  error chip. */
+export const GRID_THUMB_UNAVAILABLE_RE = /grid thumb unavailable/i;
+
+/** TRANSIENT: another producer holds this path's generation claim on the
+ *  backend's shared MidGen gate (the opportunistic mid generator and the
+ *  whole-shoot idle sweep use the same pending set, so a grid scroll racing
+ *  the sweep hits this often). Must NOT latch — ordinary backoff only, and the
+ *  next viewport report asks again. */
+export const GRID_THUMB_PENDING_RE = /grid thumb pending/i;
+
+/** Grid-tier read (Phase 3B): the generated 512px JPEG from the disk cache,
+ *  generated from the CR3's embedded preview on a miss. Two arguments only —
+ *  unlike the mid tier this reads the PRVW, not the mdat full, so there is no
+ *  exact-range hint to pass. */
+export async function fetchGridThumb(
+  path: string,
+  gen: number,
+): Promise<{ url: string; width: number; height: number }> {
+  const buf = await invoke<ArrayBuffer>("read_grid_thumb", { path, gen });
+  const view = new DataView(buf);
+  const headerLen = view.getUint32(0, true);
+  const header = JSON.parse(
+    new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
+  ) as GridThumbHeader;
+  const bytes = new Uint8Array(buf, 4 + headerLen, header.gridLen);
+  logBlobIntegrity("gridThumb", bytes);
+  const url = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
+  return { url, width: header.width, height: header.height };
+}
+
 /**
  * Parse the binary frame from `extract_thumbnail`: `u32 LE` header length, that
  * many bytes of JSON (`{ width, height, jpegLen }`), then `jpegLen` bytes of

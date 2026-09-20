@@ -6,7 +6,7 @@
 //! |---------------|---------------------------------------------------------|
 //! | [`cr3`]       | Pure-Rust CR3 parser: preview + EXIF + thumbnail bytes. |
 //! | [`meta`]      | [`meta::ImageMetadata`] for the UI + `From<cr3::Cr3Meta>`. |
-//! | [`bundle`]    | `read_preview` / `read_fullres` / `read_mid` / `generate_mid` + `extract_thumbnail` Tauri commands. |
+//! | [`bundle`]    | `read_preview` / `read_fullres` / `read_mid` / `generate_mid` / `read_grid_thumb` + `extract_thumbnail` Tauri commands. |
 //! | [`io_gate`]   | Read-permit backstop (IoGate), session gen + mtime table (SessionGate), `begin_session` / `set_io_profile`. |
 //! | [`midtier`]   | Phase 8 mid-tier generation: decode → SIMD resize ≤2560 → q80 encode + the MidGen concurrency gate. |
 //! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
@@ -56,9 +56,6 @@ mod embed;
 #[cfg_attr(not(feature = "smart-ml"), allow(dead_code))]
 mod faces;
 mod file_ops;
-// Consumed by `bundle::read_grid_thumb` (Task 10); until that lands the
-// module's only callers are its own tests.
-#[cfg_attr(not(test), allow(dead_code))]
 mod gridthumb;
 mod io_gate;
 mod jpeg_rgb;
@@ -210,6 +207,7 @@ pub fn run() {
             bundle::read_fullres,
             bundle::read_mid,
             bundle::generate_mid,
+            bundle::read_grid_thumb,
             bundle::extract_thumbnail,
             bundle::clear_thumb_cache,
             bundle::thumb_cache_size,
