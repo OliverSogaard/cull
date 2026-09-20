@@ -5,7 +5,8 @@ import type { BurstCtx } from "../../smart/groupBursts";
 import { FilmStrip } from "./FilmStrip";
 import { burstBoxOverlays } from "./BurstBoxes";
 import { computeBurstSegments } from "./burstSegments";
-import { CELL_H, CELL_STRIDE, CELL_W, STRIP_BUFFER } from "./metrics";
+import { STRIP_BUFFER } from "./metrics";
+import { useStripMetrics } from "./useStripMetrics";
 
 /**
  * THE filmstrip — one component for the loupe strip and the compare strip
@@ -48,6 +49,7 @@ export function PhotoStrip({
   /** Cell renderer: (imageIndex, stripPos) → the ThumbCell. */
   renderCell: (imageIndex: number, stripPos: number) => ReactNode;
 }) {
+  const m = useStripMetrics();
   const { segs, prefix } = useMemo(
     () =>
       computeBurstSegments(
@@ -58,22 +60,34 @@ export function PhotoStrip({
     [indices, images, bursts, similar],
   );
   const burstBoxes = useMemo(
-    () => (segs.length > 0 ? burstBoxOverlays(segs, prefix) : null),
-    [segs, prefix],
+    () => (segs.length > 0 ? burstBoxOverlays(segs, prefix, m) : null),
+    [segs, prefix, m],
   );
 
   // Scrub position bar: fraction of the way through the DISPLAY list.
-  const frac =
-    indices.length > 1 ? Math.max(0, Math.min(1, centerPos / (indices.length - 1))) : 0;
+  const frac = indices.length > 1 ? Math.max(0, Math.min(1, centerPos / (indices.length - 1))) : 0;
 
   return (
-    <div className="cull-strip-wrap">
+    <div
+      className="cull-strip-wrap"
+      // The stylesheet's single source for the cell box. Set HERE rather than
+      // on .cull-thumbs because FilmStrip owns that element's className only;
+      // custom properties inherit, so the strip and every cell inside it read
+      // the same three numbers metrics.ts just handed us.
+      style={
+        {
+          "--cell-w": `${m.cellW}px`,
+          "--cell-h": `${m.cellH}px`,
+          "--strip-h": `${m.stripH}px`,
+        } as React.CSSProperties
+      }
+    >
       <FilmStrip
         className="cull-thumbs"
         count={indices.length}
-        stride={CELL_STRIDE}
-        cellWidth={CELL_W}
-        trackHeight={CELL_H}
+        stride={m.stride}
+        cellWidth={m.cellW}
+        trackHeight={m.cellH}
         centerOffset={centerPos}
         buffer={STRIP_BUFFER}
         overlays={burstBoxes}
@@ -95,10 +109,7 @@ export function PhotoStrip({
               (the old per-step inline `left` + `transition: left` re-ran
               layout in the strip wrap on every nav step — the grid's
               indicator already moves by transform for the same reason). */}
-          <div
-            className="cull-scrubbar__pos"
-            style={{ transform: `translateX(${frac * 100}%)` }}
-          >
+          <div className="cull-scrubbar__pos" style={{ transform: `translateX(${frac * 100}%)` }}>
             <div className="cull-scrubbar__thumb" />
             {scrubSpeed > 1 && (
               <div className="chip chip--soft chip--accent cull-scrubbar__speed">{scrubSpeed}×</div>

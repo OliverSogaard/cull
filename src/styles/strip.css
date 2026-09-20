@@ -1,13 +1,17 @@
 /* ── thumbnail strip ──────────────────────────────────────── */
 .cull-thumbs {
   flex: 0 0 auto;
-  height: 82px;
+  /* border-box is LOAD-BEARING: the app has no global box-sizing reset, so a
+     content-box height of 82px rendered as 111px — 28px of dead air under the
+     cells, although the sum below always read as a border box. --strip-h IS
+     that sum (metrics.ts), and metrics.test.ts fails if the two disagree. */
+  box-sizing: border-box;
+  height: var(--strip-h);
   /* Cells are absolutely positioned inside the inner track (see FilmStrip); the
-     4px gap lives in CELL_STRIDE, not CSS. Top padding is deliberately deeper
+     4px gap lives in the stride, not CSS. Top padding is deliberately deeper
      (20px vs 8px): the burst run box extends 4px above the cells and its ×N
-     count sits OUTSIDE the box's top-left corner in that headroom
-     (20 + 54 + 8 = 82). Overflow clips at the padding box, so overlays drawn
-     into the padding area render fine. */
+     count sits OUTSIDE the box's top-left corner in that headroom. Overflow
+     clips at the padding box, so overlays drawn into the padding render fine. */
   padding: 20px 0 8px;
   overflow: auto hidden;
   background: var(--bg);
@@ -94,16 +98,16 @@
 
 .cull-thumb {
   position: relative;
-  flex: 0 0 76px;
-  height: 54px;
+  flex: 0 0 var(--cell-w);
+  height: var(--cell-h);
   cursor: pointer;
   transition: opacity 150ms ease-out;
 }
 
 .cull-thumb__frame {
   position: relative;
-  width: 76px;
-  height: 54px;
+  width: var(--cell-w);
+  height: var(--cell-h);
   box-sizing: border-box;
   border-radius: 1px; /* off-scale */
   overflow: hidden;

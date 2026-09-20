@@ -116,7 +116,10 @@
   --winbtn-reserve: calc(var(--winbtn-w) * 4);
   --rail-w: 290px;
   --rail-w-compare: 340px;
-  --strip-h: 82px;
+  /* The strip's SMALL step, as a fallback: PhotoStrip overrides all three on
+     .cull-strip-wrap at runtime (see strip/metrics.ts). Kept in :root so the
+     stylesheet still measures if a rule outside a mounted strip reads them. */
+  --strip-h: 83px;
   --cell-w: 76px;
   --cell-h: 54px;
 }
