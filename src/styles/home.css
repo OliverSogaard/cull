@@ -11,7 +11,7 @@
   flex-direction: column;
   align-items: flex-start;
   text-align: left;
-  max-width: 620px;
+  max-width: var(--home-col);
   width: 100%;
   animation: cull-hero-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -32,11 +32,11 @@
 }
 
 .cull-hero__sub {
-  font-size: 17px; /* off-scale */
+  font-size: var(--home-sub);
   color: var(--text-2);
   line-height: 1.55;
   margin: 0 0 44px;
-  max-width: 500px;
+  max-width: var(--home-measure);
 }
 
 .cull-hero__cta-row {
@@ -82,7 +82,7 @@
   font-family: Inter, sans-serif;
   font-size: var(--fs-4);
   color: var(--muted);
-  max-width: 500px;
+  max-width: var(--home-measure);
 }
 
 /* ── home recents list ──────────────────────────────────────
@@ -92,7 +92,7 @@
 .cull-recent {
   margin-top: 68px;
   width: 100%;
-  max-width: 620px;
+  max-width: var(--home-col);
   align-self: stretch;
 }
 
@@ -113,7 +113,7 @@
   grid-template-columns: 1fr 110px 100px;
   gap: 20px;
   align-items: baseline;
-  padding: 13px 0;
+  padding: var(--home-row-pad) 0;
   cursor: pointer;
   border-bottom: 1px solid var(--border-soft);
   transition: color 150ms ease;
@@ -122,6 +122,18 @@
 
 .cull-recent__item:last-child {
   border-bottom: none;
+}
+
+.cull-recent__path {
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
+  font-family: Inter, sans-serif;
+  font-size: var(--home-path);
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: color 150ms ease;
+  min-width: 0;
 }
 
 .cull-recent__item:hover .cull-recent__path,
@@ -134,18 +146,6 @@
 .cull-recent__item:focus-visible {
   box-shadow: var(--ring-inset);
   border-radius: var(--r-2);
-}
-
-.cull-recent__path {
-  /* stylelint-disable-next-line declaration-property-value-disallowed-list */
-  font-family: Inter, sans-serif;
-  font-size: var(--fs-6);
-  color: var(--text);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  transition: color 150ms ease;
-  min-width: 0;
 }
 
 .cull-recent__count {
@@ -311,4 +311,21 @@
   font-size: var(--fs-3);
   line-height: 1.5;
   color: var(--text-2);
+}
+
+/* ── a wide window gets a bigger home ─────────────────────────
+   At 2560 × 1440 the 620px column is 24% of the width and the screen reads
+   as a small page floating in a lot of nothing. From 2000px the same
+   left-aligned editorial layout steps up — column, title, sub, measure,
+   recents row — and nothing moves or re-flows. Below 2000 nothing changes,
+   so the 1600 × 1000 default window is untouched. */
+@media (width >= 2000px) {
+  :root {
+    --home-col: 780px;
+    --home-measure: 620px;
+    --fs-hero: 72px;
+    --home-sub: 19px; /* off-scale */
+    --home-path: 15px; /* off-scale */
+    --home-row-pad: 16px;
+  }
 }

@@ -124,4 +124,11 @@
   --strip-h: 83px;
   --cell-w: 76px;
   --cell-h: 54px;
+
+  /* home screen — one column, one measure, stepped up on a wide window */
+  --home-col: 620px;
+  --home-measure: 500px;
+  --home-sub: 17px; /* off-scale */
+  --home-path: 14px;
+  --home-row-pad: 13px;
 }

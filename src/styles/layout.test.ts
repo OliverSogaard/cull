@@ -120,3 +120,29 @@ describe("the info rail", () => {
     expect(block).toMatch(/gap:\s*28px/);
   });
 });
+
+describe("the home screen at 2000px and wider", () => {
+  const home = sheet("./home.css");
+
+  test("its sizes come from tokens", () => {
+    expect(ruleBody(home, ".cull-hero")).toContain("max-width: var(--home-col)");
+    expect(ruleBody(home, ".cull-recent")).toContain("max-width: var(--home-col)");
+    expect(ruleBody(home, ".cull-hero__sub")).toContain("font-size: var(--home-sub)");
+    expect(ruleBody(home, ".cull-hero__sub")).toContain("max-width: var(--home-measure)");
+    expect(ruleBody(home, ".cull-hero__how")).toContain("max-width: var(--home-measure)");
+    expect(ruleBody(home, ".cull-recent__path")).toContain("font-size: var(--home-path)");
+    expect(ruleBody(home, ".cull-recent__item")).toContain("padding: var(--home-row-pad) 0");
+  });
+
+  test("the step is the one the board picked", () => {
+    const at = home.indexOf("@media (width >= 2000px) {");
+    expect(at, "no 2000px breakpoint in home.css").toBeGreaterThan(-1);
+    const block = home.slice(at);
+    expect(block).toMatch(/--home-col:\s*780px/);
+    expect(block).toMatch(/--fs-hero:\s*72px/);
+    expect(block).toMatch(/--home-sub:\s*19px/);
+    expect(block).toMatch(/--home-measure:\s*620px/);
+    expect(block).toMatch(/--home-path:\s*15px/);
+    expect(block).toMatch(/--home-row-pad:\s*16px/);
+  });
+});
