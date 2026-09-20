@@ -40,8 +40,25 @@ export function gridColsFor(contentWidth: number, size: GridSize): number {
 }
 
 /** Cell width for a measured content width and column count. Before the first
- *  measurement (contentWidth 0) it answers the medium target, so the very
- *  first paint is the size the grid is about to become. */
+ *  measurement (contentWidth 0) it falls back to the medium target — a stable
+ *  placeholder to render before the ResizeObserver reports the real content
+ *  width, not a prediction of the grid's eventual size. */
 export function gridCellWidth(contentWidth: number, cols: number): number {
   return contentWidth > 0 ? Math.floor(contentWidth / cols) : GRID_CELL_TARGET[DEFAULT_GRID_SIZE];
+}
+
+/** Minimum time between committed grid-size wheel steps. A precision-touchpad
+ *  pinch fires dozens of ctrl+wheel events 5-10ms apart, each closing over
+ *  whatever size was current when it landed — without a floor, one gesture
+ *  slams straight to an end and Medium becomes unreachable by wheel. No rAF
+ *  coalescing: the display this runs on is 240 Hz, so a rAF-throttled step
+ *  would drop most of a fast gesture's events instead of spacing them; an
+ *  explicit millisecond cooldown is the throttle instead. */
+export const GRID_WHEEL_COOLDOWN_MS = 160;
+
+/** True once `GRID_WHEEL_COOLDOWN_MS` has elapsed since the last committed
+ *  wheel step. `lastStepMs` is `-Infinity` for "no step has happened yet",
+ *  which makes the very first wheel event due regardless of `nowMs`. */
+export function wheelStepDue(nowMs: number, lastStepMs: number): boolean {
+  return nowMs - lastStepMs >= GRID_WHEEL_COOLDOWN_MS;
 }

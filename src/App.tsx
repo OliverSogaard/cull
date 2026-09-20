@@ -79,7 +79,7 @@ import type { AnalyzeWarning } from "./utils/analyzeWarnings";
 import { passesFilter } from "./utils/filter";
 import { topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
-import { gridColsFor, stepGridSize } from "./utils/gridSize";
+import { DEFAULT_GRID_SIZE, gridColsFor, stepGridSize, wheelStepDue } from "./utils/gridSize";
 import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
@@ -450,23 +450,50 @@ export default function App() {
   // Grid size: the setting is the source of truth, so + / − / Ctrl+0 and the
   // Settings row all write the same field and all persist. useSettings's
   // setter takes a WHOLE Settings, not an updater, so these close over the
-  // current object and change identity on any settings write.
+  // current object and change identity on any settings write. Both bail on a
+  // no-op step — holding + at Large (OS key repeat) or repeat-pressing Ctrl+0
+  // already at Medium must not commit App, JSON.stringify, and write
+  // localStorage tens of times a second for a change that never happens.
   const stepGridSizeBy = useCallback(
-    (dir: 1 | -1) => setSettings({ ...settings, gridSize: stepGridSize(settings.gridSize, dir) }),
+    (dir: 1 | -1) => {
+      const next = stepGridSize(settings.gridSize, dir);
+      if (next !== settings.gridSize) setSettings({ ...settings, gridSize: next });
+    },
     [settings, setSettings],
   );
-  const resetGridSize = useCallback(
-    () => setSettings({ ...settings, gridSize: "medium" }),
-    [settings, setSettings],
-  );
+  const resetGridSize = useCallback(() => {
+    if (settings.gridSize !== DEFAULT_GRID_SIZE)
+      setSettings({ ...settings, gridSize: DEFAULT_GRID_SIZE });
+  }, [settings, setSettings]);
 
-  // Ctrl + wheel over the grid steps the size. NON-PASSIVE on purpose: the
-  // preventDefault is what stops the grid scrolling under the gesture (and,
-  // belt and braces, any webview zoom — WebView2's zoom hotkeys are already
-  // off, since tauri.conf.json leaves `zoomHotkeysEnabled` at its `false`
-  // default and that maps to IsZoomControlEnabled). No rAF coalescing: this
-  // display runs at 240 Hz, and there are only three steps — a fast trackpad
-  // flick simply saturates at Small or Large, which is the right answer.
+  // Render-phase mirror of `settings`, read by the wheel handler below — same
+  // idiom as zoomZRef elsewhere in this file: a pure function of state, same
+  // value every render, no tearing concern. The wheel listener is attached
+  // once (its effect's deps are deliberately minimal, see below) and must
+  // still read the LIVE settings at event time rather than whatever was in
+  // scope when it was attached, or it would forever act on a stale size.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  // Wall-clock timestamp of the last COMMITTED wheel step (not React state —
+  // updating it must never itself trigger a render). A precision-touchpad
+  // pinch fires dozens of ctrl+wheel events 5-10ms apart; this is what
+  // `wheelStepDue` measures against to cap the grid at one step per
+  // GRID_WHEEL_COOLDOWN_MS instead of racing straight to an end.
+  const lastWheelStepRef = useRef(-Infinity);
+
+  // Ctrl + wheel over the grid steps the size, at most once every
+  // GRID_WHEEL_COOLDOWN_MS. NON-PASSIVE on purpose: the preventDefault is what
+  // stops the grid scrolling under the gesture (and, belt and braces, any
+  // webview zoom — WebView2's zoom hotkeys are already off, since
+  // tauri.conf.json leaves `zoomHotkeysEnabled` at its `false` default and
+  // that maps to IsZoomControlEnabled) — it fires for EVERY ctrl+wheel event
+  // in the grid, whether or not that event is inside the cooldown. No rAF
+  // coalescing: this display runs at 240 Hz, so a rAF-throttled step would
+  // drop most of a fast gesture's events instead of spacing them; the
+  // explicit millisecond cooldown is the throttle. Deps are deliberately
+  // minimal (no `settings`, no `stepGridSizeBy`) so the listener is not torn
+  // down and re-attached on every settings write — settingsRef above is what
+  // lets it still read the current size.
   useEffect(() => {
     if (!gridVisible || compareMode) return;
     const el = gridContainerRef.current;
@@ -475,11 +502,16 @@ export default function App() {
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       if (e.deltaY === 0) return;
-      stepGridSizeBy(e.deltaY < 0 ? 1 : -1);
+      const now = performance.now();
+      if (!wheelStepDue(now, lastWheelStepRef.current)) return;
+      lastWheelStepRef.current = now;
+      const current = settingsRef.current.gridSize;
+      const next = stepGridSize(current, e.deltaY < 0 ? 1 : -1);
+      if (next !== current) setSettings({ ...settingsRef.current, gridSize: next });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [gridVisible, compareMode, gridHasCells, stepGridSizeBy]);
+  }, [gridVisible, compareMode, gridHasCells, setSettings]);
 
   // Compare-mode candidates: every UNRATED frame except the champion (which the
   // strip shows separately as its grayed in-track ghost). The challenger is

@@ -3,10 +3,12 @@ import {
   DEFAULT_GRID_SIZE,
   GRID_CELL_TARGET,
   GRID_SIZES,
+  GRID_WHEEL_COOLDOWN_MS,
   gridCellWidth,
   gridColsFor,
   isGridSize,
   stepGridSize,
+  wheelStepDue,
 } from "./gridSize";
 
 describe("grid size", () => {
@@ -54,5 +56,16 @@ describe("grid size", () => {
 
   test("the cell width falls back to the medium target before anything is measured", () => {
     expect(gridCellWidth(0, 6)).toBe(GRID_CELL_TARGET.medium);
+  });
+
+  test("a wheel step is due once the cooldown elapses, not a millisecond before", () => {
+    expect(GRID_WHEEL_COOLDOWN_MS).toBe(160);
+    expect(wheelStepDue(160, 0)).toBe(true);
+    expect(wheelStepDue(159, 0)).toBe(false);
+  });
+
+  test("the very first wheel event is always due — lastStepMs starts at -Infinity", () => {
+    expect(wheelStepDue(0, -Infinity)).toBe(true);
+    expect(wheelStepDue(1, -Infinity)).toBe(true);
   });
 });
