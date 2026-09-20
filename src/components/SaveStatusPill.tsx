@@ -44,8 +44,8 @@ export function SaveStatusPill({
       }
       title={
         state === "failed"
-          ? "ratings failed to save · click to retry"
-          : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
+          ? "Ratings failed to save · click to retry"
+          : `Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
       }
     >
       <span className="cull-save-status__dot" />

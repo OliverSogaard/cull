@@ -185,7 +185,7 @@ export function FinishDialog({
         directory: true,
         multiple: false,
         defaultPath: lastExport,
-        title: "choose export folder",
+        title: "Choose export folder",
       });
       if (typeof picked === "string") {
         // NFC-normalize like openFoldersByPaths: macOS dialogs can return
@@ -270,7 +270,7 @@ export function FinishDialog({
           <div className={`note cull-actions__pending${failedCount > 0 ? " note--bad" : ""}`}>
             {failedCount > 0
               ? `⚠ ${failedCount} rating${failedCount > 1 ? "s" : ""} haven't saved · actions disabled until resolved (status bar · retry)`
-              : `saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`}
+              : `Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`}
           </div>
         )}
 
@@ -317,14 +317,14 @@ export function FinishDialog({
                 <div className="cull-finish__dest-edit">
                   <span
                     className="cull-finish__dest-root"
-                    title={pinnedRoot || "(pinned root not set)"}
+                    title={pinnedRoot || "(Pinned root not set)"}
                   >
                     {pinnedRoot
                       ? truncatePathDisplay(
                           `${pinnedRoot.replace(/[\\/]+$/, "")}${pinnedRoot.includes("\\") ? "\\" : "/"}`,
                           24,
                         )
-                      : "(no pinned root) "}
+                      : "(No pinned root) "}
                   </span>
                   <input
                     className={`cull-finish__dest-sub${subInvalid ? " is-invalid" : ""}${flashing ? " is-flash" : ""}`}
@@ -345,7 +345,7 @@ export function FinishDialog({
                     onClick={commitCopy}
                   >
                     {actionBusy === "copy"
-                      ? "copying…"
+                      ? "Copying…"
                       : folderExists
                         ? "Confirm (merge)"
                         : "Copy keeps"}
@@ -365,7 +365,7 @@ export function FinishDialog({
                 }
                 onClick={pickDestination}
               >
-                {picking ? "opening picker…" : "Pick destination"}
+                {picking ? "Opening picker…" : "Pick destination"}
               </button>
             ) : (
               // Ask each time, stage 2: confirm or change.
@@ -379,7 +379,7 @@ export function FinishDialog({
                   disabled={actionBusy !== null || picking}
                   onClick={pickDestination}
                 >
-                  {picking ? "opening…" : "Change"}
+                  {picking ? "Opening…" : "Change"}
                 </button>
                 <button
                   className="btn btn--primary"
@@ -391,18 +391,18 @@ export function FinishDialog({
                   }
                   onClick={commitCopy}
                 >
-                  {actionBusy === "copy" ? "copying…" : "Copy keeps"}
+                  {actionBusy === "copy" ? "Copying…" : "Copy keeps"}
                 </button>
               </div>
             )}
 
-            {copyResult && <FileOpResultLine verb="copied" result={copyResult} />}
+            {copyResult && <FileOpResultLine verb="Copied" result={copyResult} />}
           </div>
         </div>
 
         <div className="dialog__actions dialog__actions--flush">
           <button className="btn" onClick={onClose}>
-            close
+            Close
           </button>
         </div>
         <div className="dialog__hint dialog__hint--flush">
@@ -493,7 +493,7 @@ function MoveRejectsRow({
         // batched and doesn't stream per-file progress, so we don't show a %.
         <div className="cull-finish__progress">
           <span className="cull-finish__progress-label">
-            <b>moving</b> {rejectedCount}…
+            <b>Moving</b> {rejectedCount}…
           </span>
           <div className="progress cull-finish__progress-bar">
             <div className="progress__fill cull-finish__progress-fill" />
@@ -525,7 +525,7 @@ function MoveRejectsRow({
         </button>
       )}
 
-      {moveResult && <FileOpResultLine verb="moved" result={moveResult} />}
+      {moveResult && <FileOpResultLine verb="Moved" result={moveResult} />}
     </div>
   );
 }

@@ -98,7 +98,7 @@ export function EmptyFilter({
             }
             hint={
               <>
-                fills in as frames are scored · culling comes first · <kbd className="kbd">1</kbd>{" "}
+                Fills in as frames are scored · culling comes first · <kbd className="kbd">1</kbd>{" "}
                 for all
               </>
             }

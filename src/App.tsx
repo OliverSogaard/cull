@@ -1438,10 +1438,10 @@ export default function App() {
                   onClick={pickFolder}
                   disabled={pickerBusy}
                 >
-                  {pickerBusy ? "opening…" : "Open folders"}
+                  {pickerBusy ? "Opening…" : "Open folders"}
                   <KeyCombo keys={["mod", "O"]} className="kbd--tint cull-hero__cta-key" />
                 </button>
-                <span className="cull-hero__drop-hint">or drop folders anywhere</span>
+                <span className="cull-hero__drop-hint">Or drop folders anywhere</span>
               </div>
               <RecentFolders
                 recents={recentFolders}
@@ -1454,7 +1454,7 @@ export default function App() {
               <div className="cull-hero__how">
                 <span>
                   <KeyCombo keys={["mod", ","]} className="cull-hero__how-key" />
-                  settings
+                  Settings
                 </span>
               </div>
             </div>
@@ -1470,7 +1470,7 @@ export default function App() {
                 </span>
               </div>
               <div className="cull-chrome__sub">
-                {images.length > 0 ? `${images.length} files staged · scanning…` : "scanning…"}
+                {images.length > 0 ? `${images.length} files staged · scanning…` : "Scanning…"}
               </div>
             </>
           )}
@@ -1497,7 +1497,7 @@ export default function App() {
                 )}
               </div>
               <div className="cull-chrome__sub">
-                {progress.done > 0 ? `${progress.done} / ${progress.total}` : "starting…"}
+                {progress.done > 0 ? `${progress.done} / ${progress.total}` : "Starting…"}
               </div>
             </>
           )}
@@ -1528,16 +1528,16 @@ export default function App() {
               <div className="cull-staged__actions">
                 {images.length > 0 ? (
                   <button className="btn btn--primary" onClick={beginCulling}>
-                    begin culling →
+                    Begin culling →
                   </button>
                 ) : (
                   <button className="btn btn--primary" onClick={pickFolder} disabled={pickerBusy}>
-                    {pickerBusy ? "opening…" : "open folders"}
+                    {pickerBusy ? "Opening…" : "Open folders"}
                   </button>
                 )}
               </div>
               <div className="cull-staged__hint">
-                drop folders anywhere to add more · <KeyCombo keys={["mod", "O"]} /> · esc to start
+                Drop folders anywhere to add more · <KeyCombo keys={["mod", "O"]} /> · esc to start
                 over
               </div>
             </>

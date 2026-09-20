@@ -13,8 +13,8 @@ export function ConfirmHomeDialog({ failedCount, onLeave, onStay }: Props) {
       <div className="dialog__box">
         <div className={`dialog__title${failedCount > 0 ? " dialog__title--warn" : ""}`}>
           {failedCount > 0
-            ? `⚠ leave with ${failedCount} unsaved rating${failedCount > 1 ? "s" : ""}?`
-            : "leave to home?"}
+            ? `⚠ Leave with ${failedCount} unsaved rating${failedCount > 1 ? "s" : ""}?`
+            : "Leave to home?"}
         </div>
         <div className="dialog__body">
           {failedCount > 0
@@ -23,10 +23,10 @@ export function ConfirmHomeDialog({ failedCount, onLeave, onStay }: Props) {
         </div>
         <div className="dialog__actions">
           <button className="btn btn--primary" onClick={onLeave}>
-            leave to home
+            Leave to home
           </button>
           <button className="btn" onClick={onStay}>
-            stay
+            Stay
           </button>
         </div>
         <div className="dialog__hint">enter · leave · · · esc · stay</div>

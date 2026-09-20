@@ -189,7 +189,7 @@ export const StatusBar = memo(function StatusBar({
         {selection.gridVisible && selection.selectedCount >= 1 && (
           <span
             className="chip cull-statusbar__multi"
-            title="selection · rating keys apply to all selected"
+            title="Selection · rating keys apply to all selected"
           >
             {selection.selectedCount} selected
           </span>
@@ -198,13 +198,13 @@ export const StatusBar = memo(function StatusBar({
           <span
             className="cull-statusbar__unsaved"
             onClick={save.retryFailed}
-            title="ratings failed to save · click to retry"
+            title="Ratings failed to save · click to retry"
           >
             ⚠ {save.failedCount} unsaved · retry
           </span>
         ) : (
           save.savingCount > 0 && (
-            <span className="cull-statusbar__saving">saving {save.savingCount}…</span>
+            <span className="cull-statusbar__saving">Saving {save.savingCount}…</span>
           )
         )}
       </div>
@@ -217,8 +217,8 @@ export const StatusBar = memo(function StatusBar({
           className="cull-statusbar__pos"
           title={
             frame.compareMode
-              ? "challenger position / total candidates"
-              : "current position / filtered total"
+              ? "Challenger position / total candidates"
+              : "Current position / filtered total"
           }
         >
           {frame.compareMode ? (
@@ -281,7 +281,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("keeps");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="keeps and favorites"
+                    title="Keeps and favorites"
                   >
                     all
                   </button>
@@ -292,7 +292,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("keepsFavs");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="favorites only"
+                    title="Favorites only"
                   >
                     ★
                   </button>
@@ -337,7 +337,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("suggested");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="any suggestion"
+                    title="Any suggestion"
                   >
                     all
                   </button>
@@ -348,7 +348,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("suggestedRejects");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="suggested rejects"
+                    title="Suggested rejects"
                   >
                     ✕
                   </button>
@@ -359,7 +359,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("suggestedKeeps");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="suggested keeps"
+                    title="Suggested keeps"
                   >
                     ✓
                   </button>
@@ -370,7 +370,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("suggestedFavs");
                       filter.chipsTooltip.pulse();
                     }}
-                    title="suggested favorites"
+                    title="Suggested favorites"
                   >
                     ★
                   </button>
@@ -388,7 +388,7 @@ export const StatusBar = memo(function StatusBar({
               filter.stats.unrated === 0 && filter.stats.total > 0 ? " is-done" : ""
             }`}
             onClick={session.openActions}
-            title="finish the cull · move rejects / copy keeps"
+            title="Finish the cull · move rejects / copy keeps"
           >
             {filter.stats.unrated === 0 && filter.stats.total > 0
               ? `All ${filter.stats.total} rated · ${modCombo("E")} finish`

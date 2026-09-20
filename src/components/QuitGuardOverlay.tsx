@@ -31,27 +31,27 @@ export function QuitGuardOverlay({
             </div>
             <div className="dialog__actions">
               <button className="btn btn--primary" onClick={retryFailed}>
-                retry saving
+                Retry saving
               </button>
               <button className="btn" onClick={onKeepCulling}>
-                keep culling
+                Keep culling
               </button>
               <button className="btn cull-quitguard__danger" onClick={onCloseAnyway}>
-                close anyway
+                Close anyway
               </button>
             </div>
           </>
         ) : (
           <>
             <div className="dialog__title">
-              saving {savingCount} rating{savingCount > 1 ? "s" : ""}…
+              Saving {savingCount} rating{savingCount > 1 ? "s" : ""}…
             </div>
             <div className="dialog__body">
               The app will close on its own the moment your ratings are safely on disk.
             </div>
             <div className="dialog__actions">
               <button className="btn" onClick={onKeepCulling}>
-                keep culling
+                Keep culling
               </button>
             </div>
           </>

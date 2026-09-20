@@ -72,5 +72,5 @@ export function verdictDotClass(
 export function ghostTitle(s: Suggestion): string {
   const word = s.verdict === "reject" ? "reject" : s.verdict === "favorite" ? "favorite" : "keep";
   const pct = Math.round(s.confidence * 100);
-  return `suggested ${word} · ${pct}%${s.reasons.length > 0 ? ` · ${s.reasons.join(", ")}` : ""}`;
+  return `Suggested ${word} · ${pct}%${s.reasons.length > 0 ? ` · ${s.reasons.join(", ")}` : ""}`;
 }

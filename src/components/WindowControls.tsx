@@ -47,8 +47,8 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
       {onSettings && (
         <button
           className="cull-winbtn"
-          title={`settings  (${isMac ? "Cmd" : "Ctrl"} + , )`}
-          aria-label="settings"
+          title={`Settings  (${isMac ? "Cmd" : "Ctrl"} + , )`}
+          aria-label="Settings"
           // NOTE: deliberately NOT blurring here (unlike minimize/close). The
           // settings dialog's focus trap restores focus to whatever was focused
           // when it opened; blurring first would lose the gear as that target
@@ -62,8 +62,8 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
         <>
           <button
             className="cull-winbtn"
-            title="minimize"
-            aria-label="minimize"
+            title="Minimize"
+            aria-label="Minimize"
             onClick={(e) => {
               e.currentTarget.blur();
               void win.minimize();
@@ -73,8 +73,8 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
           </button>
           <button
             className="cull-winbtn"
-            title={maximized ? "restore" : "maximize"}
-            aria-label={maximized ? "restore window" : "maximize window"}
+            title={maximized ? "Restore" : "Maximize"}
+            aria-label={maximized ? "Restore window" : "Maximize window"}
             onClick={(e) => {
               e.currentTarget.blur();
               void win.toggleMaximize();
@@ -89,8 +89,8 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
           </button>
           <button
             className="cull-winbtn cull-winbtn--close"
-            title="close"
-            aria-label="close"
+            title="Close"
+            aria-label="Close"
             onClick={(e) => {
               e.currentTarget.blur();
               void win.close();

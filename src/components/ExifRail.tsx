@@ -124,7 +124,7 @@ export const ExifRail = memo(function ExifRail({
           {!body && !lens && !timeStr && !dateStr && !imageSize && !showLrc && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">—</span>
-              <span className="cull-exif-rail__v cull-exif-rail__v--dim">reading…</span>
+              <span className="cull-exif-rail__v cull-exif-rail__v--dim">Reading…</span>
             </div>
           )}
         </div>
@@ -142,7 +142,7 @@ export const ExifRail = memo(function ExifRail({
           {!shutter && !aperture && !iso && !focal && !ev && !wb && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">—</span>
-              <span className="cull-exif-rail__v cull-exif-rail__v--dim">no exposure data</span>
+              <span className="cull-exif-rail__v cull-exif-rail__v--dim">No exposure data</span>
             </div>
           )}
         </div>

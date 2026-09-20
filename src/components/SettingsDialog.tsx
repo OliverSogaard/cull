@@ -418,7 +418,7 @@ function PinnedRootControl({ path, onPick }: { path: string; onPick: (next: stri
         directory: true,
         multiple: false,
         defaultPath: path || undefined,
-        title: "pin export folder",
+        title: "Pin export folder",
       });
       if (typeof picked === "string") onPick(picked);
     } finally {
@@ -428,11 +428,11 @@ function PinnedRootControl({ path, onPick }: { path: string; onPick: (next: stri
 
   return (
     <div className="cull-settings__pinned-control">
-      <span className="cull-settings__pinned-path" title={path || "(no folder picked)"}>
-        {path || "(no folder picked)"}
+      <span className="cull-settings__pinned-path" title={path || "(No folder picked)"}>
+        {path || "(No folder picked)"}
       </span>
       <button type="button" className="btn" onClick={pick} disabled={picking}>
-        {picking ? "opening…" : "Change"}
+        {picking ? "Opening…" : "Change"}
       </button>
     </div>
   );
