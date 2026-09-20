@@ -1865,16 +1865,24 @@ export default function App() {
             challengerIndex={challengerIndex}
             metadata={metadata}
             championClipMask={
-              images[championIndex] && overlayService.get("clip", images[championIndex].path)
+              overlaysShown && clippingVisible && images[championIndex]
+                ? overlayService.get("clip", images[championIndex].path)
+                : undefined
             }
             challengerClipMask={
-              images[challengerIndex] && overlayService.get("clip", images[challengerIndex].path)
+              overlaysShown && clippingVisible && images[challengerIndex]
+                ? overlayService.get("clip", images[challengerIndex].path)
+                : undefined
             }
             championPeakingMask={
-              images[championIndex] && overlayService.get("peak", images[championIndex].path)
+              overlaysShown && peakingVisible && images[championIndex]
+                ? overlayService.get("peak", images[championIndex].path)
+                : undefined
             }
             challengerPeakingMask={
-              images[challengerIndex] && overlayService.get("peak", images[challengerIndex].path)
+              overlaysShown && peakingVisible && images[challengerIndex]
+                ? overlayService.get("peak", images[challengerIndex].path)
+                : undefined
             }
             ratings={ratings}
             exifVisible={exifVisible}

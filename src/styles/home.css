@@ -289,6 +289,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Copyable error data (folder path, raw OS error text) — carve an
+     exception out of the app-wide `user-select: none` in base.css. */
+  user-select: text;
 }
 
 .cull-scanfail__detail {
