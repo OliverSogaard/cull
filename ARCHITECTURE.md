@@ -450,12 +450,18 @@ conventions instead of per-component one-offs:
 - **One icon scale.** `src/components/icons.ts`'s `ICON` gives every Lucide
   icon in the chrome one of three steps — `sm` 12px, `md` 14px (both stroke
   1.75), `lg` 16px (stroke 1.5) — so a row of unrelated icons reads as one
-  set. Four families stay off-scale because their size is dictated by a
-  fixed container rather than taste: the verdict glyphs inside rating dots,
-  the LrC star badges pinned to a thumbnail corner, the 22px glyph inside the
-  48px rating-feedback pop, and the window-control icons (sized to the
-  Windows caption-button metric so the title bar matches the rest of the
-  desktop) — only their stroke width still follows the scale.
+  set. Four families stay off-scale, for two different reasons. Three are
+  drawn into a container far smaller than any scale step, so both their size
+  *and* their stroke are tuned heavier than the scale to stay legible: the
+  verdict glyphs inside rating dots (`verdictGlyph.tsx`, stroke 3 for
+  keep/reject, 2.6 for favorite), the LrC star badges pinned to a thumbnail
+  corner (`GridView.tsx` / `ThumbCell.tsx`, stroke 2.4), and the 22px glyph
+  inside the 48px rating-feedback pop (`App.tsx`, stroke 3). The
+  window-control icons (`WindowControls.tsx`) are the one family that keeps
+  only its *size* off-scale — sized to the Windows caption-button metric so
+  the title bar matches the rest of the desktop — while its stroke takes the
+  scale's lightest step verbatim (`ICON.lg.strokeWidth`, 1.5), so it still
+  weighs the same as the icons in the app below it.
 - **Reduced motion.** `src/styles/motion.css` is the one stylesheet that
   answers `prefers-reduced-motion: reduce`. The policy: motion that is purely
   decorative or attention-grabbing (a pulse beside a word that already says
@@ -482,10 +488,10 @@ conventions instead of per-component one-offs:
   four surfaces that report a failure (status-bar chip, save-status pill,
   quit guard, leave-to-home warning), so they all tell the same story instead
   of drifting into slightly different wording. `FinishDialog`'s
-  `retryableFailedCount = failedCount - missingCount` is the only count that
-  disables the move/copy actions — a photo that's gone is warned about but
-  never blocks finishing the cull, since blocking on an unfixable failure
-  would leave no way out of the session at all.
+  `retryableFailedCount` (`Math.max(0, failedCount - missingCount)`) is the
+  only count that disables the move/copy actions — a photo that's gone is
+  warned about but never blocks finishing the cull, since blocking on an
+  unfixable failure would leave no way out of the session at all.
 
 ## Modules
 
