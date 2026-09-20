@@ -85,44 +85,47 @@
    sheds to "Finish" at the same 1360 breakpoint — the button already
    carries `is-done` there (brightened fill + the one-time breathe
    animation, stage.css), so the moment still reads without its longest
-   label. The ORDINARY finish label ("Ctrl+E · N keeps") and the four
-   cosmetic words (extension, zoom/scrub word, verdict word) stay at their
-   original 1200 / 1100 breakpoints exactly as the owner saw them on the
-   design board; they are NOT moved.
+   label. The ORDINARY finish label ("Ctrl+E · N keeps") stays at its
+   original 1100 breakpoint exactly as the owner saw it on the design
+   board; it is NOT moved. The four cosmetic words (extension, zoom/scrub
+   word, verdict word), though, sit at 1220 here, not 1200 — see below for
+   why; the info rail's own, unrelated 1200px breakpoint (exif-rail.css) is
+   a different decision and stays exactly where it is.
 
-   Worst case just above 1200 (tail and the all-rated label both already
-   gone; cosmetic words NOT yet; real filter tabs at their widest "SMART ·
-   4194"): the binding case is now NOT-all-rated (is-done false), because
-   that is the finish state nothing sheds before 1100 — right cluster = 79
+   Worst case at and above 1220 (tail and the all-rated label both already
+   gone; cosmetic words still shown; real filter tabs at their widest
+   "SMART · 4194"): the binding case is NOT-all-rated (is-done false),
+   because that is the finish state nothing sheds before 1100 — right cluster = 79
    (pos, 12ch) + 14 (gap) + 347 (filter tabs) + 14 (gap) + 163 ("Ctrl+E ·
    4194 keeps", 19 chars @ 10px mono + 0.14em track + 22px btn--sm
-   padding/border) = 617. (The all-rated state, now shedding to "Finish" at
-   66px, sums to only 520 here and is no longer the constraint.) Left
-   cluster, unchanged by this fix, the two mutually exclusive pairs
-   collapsed to their larger member (zoom XOR scrub; overlay cluster XOR "N
-   selected") = 68 (verdict: glyph 14 + gap 7 + "REJECT" 47) + 129 (scrub:
-   icon 12 + two 4px gaps + "Scrubbing" 67 + ×10 chip 42) + 133 (overlay
-   cluster) + 143 ("4194 photos missing", tail already hidden) + 56 (four
-   14px gaps) = 529. Right + left = 1146 of content with the filename stem
-   already at zero, needing 1146 + 72 (bar padding + the two 18px spacer
-   gaps) = 1218px of window at minimum for this combination — down from
-   1299px before this fix (the all-rated shed recovers 81px here, not the
-   full 178px its own label lost, because the smaller ordinary label
-   becomes the new bottleneck the moment the bigger one sheds).
+   padding/border) = 617. (The all-rated state, shedding to "Finish" at
+   66px, sums to only 520 here and is never the constraint.) Left cluster,
+   the two mutually exclusive pairs collapsed to their larger member (zoom
+   XOR scrub; overlay cluster XOR "N selected") = 68 (verdict: glyph 14 +
+   gap 7 + "REJECT" 47) + 129 (scrub: icon 12 + two 4px gaps + "Scrubbing"
+   67 + ×10 chip 42) + 133 (overlay cluster) + 143 ("4194 photos missing",
+   tail already hidden) + 56 (four 14px gaps) = 529. Right + left = 1146 of
+   content with the filename stem already at zero, needing 1146 + 72 (bar
+   padding + the two 18px spacer gaps) = 1218px of window at minimum for
+   this combination.
 
-   A band still remains: at 1218px this fits exactly with the stem at zero;
-   below that, down to 1201px, the shortfall is at most 1218 − 1201 = 17px —
-   real, but an order of magnitude smaller than the 99px gap this fix
-   closes. It is caused by the state above (NOT all-rated, so the ordinary
-   "Ctrl+E · N keeps" label is showing at its longest, together with a full
-   4-digit missing chip, scrub, and every overlay chip at once) — not by
-   the all-rated state this task targeted, which now sums to 1121px and is
-   nowhere near tight. At 1359px (the top of this band) there is 141px of
-   slack even with every one of these worst-case items present. Closing the
-   remaining ~17px would mean shedding a fifth thing (most likely the
-   ordinary finish label, or the "SMART · 4194" suggestion count) — left for
-   a future call rather than invented here. Ordinary states (no scrub,
-   nothing missing, no smart suggestions) are nowhere near any of this.
+   That 1218px is why the cosmetic shed sits at 1220, not the rail's 1200:
+   at window 1220 (the shed has NOT triggered yet — the media query only
+   matches width < 1220 — so this is the tightest real width in that
+   state) the available content is 1220 − 72 = 1148px, covering the 1146px
+   requirement with 2px to spare. At 1219 (one pixel narrower, the shed HAS
+   triggered — verdict/chip/scrub words and the extension are gone) the
+   requirement drops to 617 (right, unchanged) + 404 (left: 14 verdict
+   glyph + 58 scrub + 133 overlay + 143 missing chip + 56 gaps) = 1021,
+   + 72 = 1093px needed against 1219 − 72 = 1147px available — 54px of
+   slack. At 1359px (the top of the whole band, cosmetic words still
+   shown, nothing else changes there) the requirement is still 1146 + 72 =
+   1218px against 1359 − 72 = 1287px available — 69px of slack. The band
+   is closed: every width from 1220 up through 1359 clears its
+   requirement (by as little as 2px right at 1220, growing from there),
+   and every width from 1024 up to 1219 already has the cosmetic shed
+   applied and clears by a wide margin. Ordinary states (no scrub, nothing
+   missing, no smart suggestions) are nowhere near any of this.
 
    Budget at the 1024px minimum, every shed already applied (tail AND the
    four cosmetic words gone, finish short): 1024 − 36 (bar padding) − 36
@@ -177,7 +180,10 @@
   }
 }
 
-@media (width < 1200px) {
+@media (width < 1220px) {
+  /* 1220, not the info rail's 1200 (exif-rail.css) — the rail's number is
+     its own decision; this one is the footer's worst-of-worst arithmetic
+     above needing those extra 20px to fit before this shed can help it. */
   /* The name is enough; every file in a cull is a .CR3. */
   .cull-statusbar__filename-ext,
   /* "zoom 1:1" → "1:1". */

@@ -49,7 +49,10 @@ describe("the footer's breakpoints", () => {
   const statusbar = sheet("./statusbar.css");
 
   test("the three picked widths are there, in range notation", () => {
-    for (const w of [1360, 1200, 1100]) {
+    // The cosmetic shed sits at 1220 (fix round 3 — closes the ~17px band
+    // that survived at the plain 1200), not the info rail's own, unrelated
+    // 1200px breakpoint in exif-rail.css.
+    for (const w of [1360, 1220, 1100]) {
       expect(statusbar, `${w}px breakpoint`).toContain(`@media (width < ${w}px)`);
     }
     expect(statusbar, "range notation only").not.toMatch(/@media\s*\(max-width/);
@@ -62,19 +65,20 @@ describe("the footer's breakpoints", () => {
     };
     // The save chip's tail sheds a breakpoint earlier than the rest — fix
     // round 1 moved it from 1200 to 1360 (a clip band survived just above
-    // 1200 otherwise). Pin it INSIDE 1360 and explicitly NOT inside 1200,
+    // 1200 otherwise). Pin it INSIDE 1360 and explicitly NOT inside 1220,
     // so a future move-back can't slip past this guard silently.
     expect(block(1360)).toContain(".cull-statusbar__keyhint");
     expect(block(1360)).toContain(".cull-statusbar__unsaved-tail");
+    // Fix round 3: the cosmetic words moved from 1200 to 1220.
     for (const cls of [
       ".cull-statusbar__filename-ext",
       ".cull-statusbar__chip-label",
       ".cull-statusbar__scrub-label",
       ".cull-statusbar__verdict-label",
     ]) {
-      expect(block(1200), cls).toContain(cls);
+      expect(block(1220), cls).toContain(cls);
     }
-    expect(block(1200), "the tail moved to 1360 and must not still be here").not.toContain(
+    expect(block(1220), "the tail moved to 1360 and must not still be here").not.toContain(
       ".cull-statusbar__unsaved-tail",
     );
     expect(block(1100)).toContain(".cull-statusbar__finish-long");
@@ -90,14 +94,14 @@ describe("the footer's breakpoints", () => {
     // fix-round-1 report found exactly that kind of false positive once.
     const tier = statusbar.slice(
       statusbar.indexOf("@media (width < 1360px) {"),
-      statusbar.indexOf("@media (width < 1200px) {"),
+      statusbar.indexOf("@media (width < 1220px) {"),
     );
-    expect(
-      ruleBody(tier, ".cull-statusbar__finish.is-done .cull-statusbar__finish-long"),
-    ).toMatch(/display:\s*none/);
-    expect(
-      ruleBody(tier, ".cull-statusbar__finish.is-done .cull-statusbar__finish-short"),
-    ).toMatch(/display:\s*inline/);
+    expect(ruleBody(tier, ".cull-statusbar__finish.is-done .cull-statusbar__finish-long")).toMatch(
+      /display:\s*none/,
+    );
+    expect(ruleBody(tier, ".cull-statusbar__finish.is-done .cull-statusbar__finish-short")).toMatch(
+      /display:\s*inline/,
+    );
 
     // The plain (unscoped) finish-long shed must still live ONLY at 1100 —
     // exactly one occurrence of its selector in the 1360 tier, and that one
@@ -141,7 +145,7 @@ describe("the footer's breakpoints", () => {
     // the keyhint rule.
     const block = statusbar.slice(
       statusbar.indexOf("@media (width < 1360px) {"),
-      statusbar.indexOf("@media (width < 1200px) {"),
+      statusbar.indexOf("@media (width < 1220px) {"),
     );
     const tail = block.slice(block.indexOf(".cull-statusbar__unsaved-tail {"));
     expect(tail).toMatch(/clip-path:\s*inset\(50%\)/);
