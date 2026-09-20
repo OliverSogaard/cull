@@ -18,10 +18,10 @@
 /* The top chrome row — brand + window controls. 36px, sits above
    the cull view, with border-bottom (status bar is at the bottom). */
 .cull-statusbar--top {
-  flex: 0 0 36px;
+  flex: 0 0 var(--bar-h);
   border-top: 0;
   border-bottom: 1px solid var(--border);
-  padding: 0 148px 0 14px;
+  padding: 0 var(--winbtn-reserve) 0 14px;
   font-size: var(--fs-4);
   letter-spacing: 0.04em;
 }

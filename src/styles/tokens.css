@@ -109,6 +109,11 @@
   /* layout */
   --bar-h: 36px;
   --winbtn-w: 44px;
+  /* The Windows caption strip WindowControls actually draws: settings ·
+     minimize · maximize · close, each --winbtn-w wide. The title bar reserves
+     exactly this much on the right so the brand row can never slide under a
+     button (148px reserved four 44px buttons and came up 28px short). */
+  --winbtn-reserve: calc(var(--winbtn-w) * 4);
   --rail-w: 290px;
   --rail-w-compare: 340px;
   --strip-h: 82px;

@@ -87,12 +87,12 @@
   right: 0;
   z-index: var(--z-wincontrols);
   display: flex;
-  height: 36px;
+  height: var(--bar-h);
 }
 
 .cull-winbtn {
-  width: 44px;
-  height: 36px;
+  width: var(--winbtn-w);
+  height: var(--bar-h);
   display: flex;
   align-items: center;
   justify-content: center;

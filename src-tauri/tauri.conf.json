@@ -15,9 +15,9 @@
         "title": "CULL",
         "width": 1600,
         "height": 1000,
-        "minWidth": 800,
+        "minWidth": 1024,
         "minHeight": 500,
-        "backgroundColor": "#000000",
+        "backgroundColor": "#0c0c0d",
         "decorations": false
       }
     ],

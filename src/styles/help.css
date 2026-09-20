@@ -1,7 +1,7 @@
 /* ── help overlay ─────────────────────────────────────────── */
 .cull-help {
   position: fixed;
-  inset: 36px 0 0;
+  inset: var(--bar-h) 0 0;
   z-index: var(--z-help);
   background: rgba(8, 8, 10, 0.92);
   backdrop-filter: blur(8px);
