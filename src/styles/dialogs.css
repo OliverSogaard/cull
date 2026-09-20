@@ -102,10 +102,6 @@
   border-top: 1px solid var(--border-soft);
 }
 
-.cull-settings__foot kbd {
-  margin: 0 4px;
-}
-
 .cull-settings__row {
   display: grid;
   grid-template-columns: 1fr auto;

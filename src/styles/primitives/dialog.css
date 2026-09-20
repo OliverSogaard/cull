@@ -98,11 +98,9 @@
   border-top: 0;
 }
 
-/* The hint row is uppercase; the keycaps inside it are not. */
+/* The hint row is uppercase and widely tracked; the keycaps inside it are
+   neither. Everything else about them comes from `.kbd`. */
 .dialog__hint kbd {
-  display: inline-block;
-  margin: 0 2px;
-  font-size: var(--fs-2);
   letter-spacing: 0.04em;
   text-transform: none;
 }

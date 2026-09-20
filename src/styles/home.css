@@ -59,9 +59,9 @@
   background: var(--surface-2);
 }
 
+/* The CTA sets `letter-spacing: normal`; the keycap inside it keeps the
+   tracking every other cap has. Size and shape come from `.kbd`. */
 .cull-hero__cta-key {
-  font-size: var(--fs-3);
-  padding: 2px 7px;
   letter-spacing: 0.05em;
 }
 
@@ -191,21 +191,20 @@
   line-height: 1.55;
 }
 
+/* Both home keycaps sit on `--surface` rather than the keycap default: the
+   home screen's own background is already `--surface-2`-adjacent, and the
+   lighter cap is what makes them read as keys. Geometry is `.kbd`'s. */
 .cull-recent__kbd {
-  font-size: var(--fs-3);
   background: var(--surface);
-  margin: 0 2px;
 }
 
 .cull-hero__how-key {
-  font-size: var(--fs-2);
   background: var(--surface);
-  padding: 3px 7px;
   letter-spacing: 0.04em;
 }
 
-/* The margin was a single cap's own spacing before the label that follows it;
-   moved to the combo wrapper so two side-by-side caps don't double it. */
+/* The combo prefixes a label with no space between them, so this row owns
+   the space after it. */
 .cull-hero__how .keycombo {
   margin-right: 8px;
 }
