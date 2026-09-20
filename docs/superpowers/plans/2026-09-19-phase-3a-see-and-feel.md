@@ -190,3 +190,48 @@ describe("KeyCombo", () => {
 - [ ] README key table: Compare's `f` ("keep both, challenger gets ★") and `k` get their own row/footnote (audit M5; the Compare column for `f` is `—` at README:184 today). ARCHITECTURE/README design notes: the favourite colour, the focus ring token, the two button sizes, the icon scale, reduced motion.
 - [ ] Controller: headless screenshots of `http://localhost:1420/design-board/` — the "today" columns now show the shipped stylesheet; compare against the picked options (1B, 2A, 3, 4A) and against a plain-browser render of the home screen (`http://localhost:1420/`).
 - [ ] Final gate incl. `pnpm build` and `pnpm css:census`.
+
+---
+
+## Implementation note (2026-09-20)
+
+Executed with subagent-driven development: a fresh implementer and a fresh reviewer per task, a pre-flight fact-check of this plan against the code (3 blockers and 9 should-fixes corrected before Task 1), fix rounds on Tasks 1, 2, 6, 8, 9 and 10, a whole-branch review on the strongest model, one fix wave and one scoped re-review. Gates at the tip: 621 tests in 65 files, lint, lint:css, typecheck, typecheck:tests, build (JS ≈ 123 kB gzip, CSS ≈ 10 kB gzip). No Rust changes.
+
+### What shipped
+
+The seven picks exactly as chosen on the design board (lilac `--fav`, the double focus ring, the contrast lifts, two button sizes and one keycap, "Ctrl" + key as separate keycaps, Sentence case, Lucide icons on one scale), plus: `prefers-reduced-motion`, the help sheet hiding overlays, the selection tint inside the frame, a 36 × 28 toggle hit area, armed confirms that take focus, selectable EXIF and error text, and write failures split into retryable and missing.
+
+### Where the plan was wrong, and what was ruled instead
+
+- **Tests could not read stylesheets.** `@types/node` is absent (caught pre-flight → `import.meta.glob` raw reads), and Vitest 4 stubs every CSS import to an empty string (caught by Task 1's implementer → `vite.config.ts` now processes only `?raw` stylesheet reads in tests).
+- **Reduced motion.** `cull-spinner-reveal` is a 150 ms debounce, not motion — left alone. The "moving N…" bar is a working signal — slowed, not frozen. The 100 ms hi-res cross-fade stays; only transform transitions are removed.
+- **Focus ring.** The inset form is chosen by geometry (less than 4 px to a neighbour), not by a name list, and became two-layer so it reads on champagne fills. A zero-specificity `:where()` fallback covers focusable elements with no class (two classless retry buttons had none).
+- **Sizes.** `btn--sm` unifies height and padding only; the two mono uppercase labels keep 10 / 11 px. `box-sizing: border-box` was added to `.btn` and `.kbd` (the app has no global reset, so every picked height would have rendered 2 px over). The hero CTA is 1.5 px taller because its keycap is now 20 px; a CTA-local keycap size was rejected.
+- **The footer finish label** is plain text `Ctrl+E` / `⌘E` (`modCombo`), not keycaps.
+- **Casing.** A `<button>` does not inherit an ancestor's uppercase (Chromium's UA sheet resets it), so the error chip rendered "READ FAILED retry"; fixed in CSS, source string left lowercase.
+- **Missing photos (the largest correction).** The plan said a `source missing:` failure cannot be retried. The final review pointed out that an ejected card, an unplugged drive or a dropped share return the same error, so ratings made during an outage could never be saved afterwards — a regression against main. Ruled: no automatic retry schedule for missing writes, but the manual retry re-attempts them, and the missing chip / pill are a "check again" button. Missing-only failures warn but do not block Move rejects / Copy keeps (otherwise a cull with one vanished photo could never be finished); they still stop a silent quit.
+- **A held Enter** on "Move rejects" would auto-repeat into the now-focused "Yes, move"; the armed button ignores repeated keydowns.
+- **The favourite verdict flash** was still champagne — the pre-flight check had classed every hardcoded champagne value as "accent"; this one meant favourite.
+- **Not selectable after all:** the analyze-warning detail is a native `title` tooltip.
+
+### Verification
+
+Headless screenshots of the design board (its untouched columns render the shipped stylesheet) and, with the PC idle, a click-only run of the real app on a 12-frame scratch copy: home, staged, loupe and Settings at the final commit. No rating key was sent; the scratch folder has no sidecars. Screenshots: `~/.claude/plans/cull-audit-2026-09-13/phase-3a-shots/`. The finish dialog, compare, grid, help sheet and every focus ring were NOT seen rendered.
+
+### Oliver's walk
+
+1. Press `f` on a frame: lilac wash, lilac pop, lilac dot. Look at lilac beside a warm photo in the strip and grid.
+2. Tab through Settings: the ring on the segmented control (selected segment too), nav, chips, toggles; the 22 px overlay toggles in the footer; the title-bar buttons (their icons are thinner now).
+3. Finish dialog (`Ctrl+E`): buttons are 32 px where they were about 42 px — the most visible density change. Tab to "Move rejects", press Enter once: focus lands on "Yes, move"; holding Enter must not confirm.
+4. Compare: the "differs" dot in the rail is smaller than the old bullet — say if it should be a 4 px dot. Hold Tab with clipping or peaking on: overlays hide, then return.
+5. Windows "Show animations" off: rating shows an instant tint, spinners are slow, placeholders static.
+6. Unplug the card or drive mid-cull, rate a frame, plug it back, click "N photos missing · check again".
+
+### Left for later phases
+
+- 3B: the class ↔ rule CSS census; button/keycap heights as tokens if a third use appears; `UNZOOM_RETREAT_MS` still waits out a glide that reduced motion removed.
+- A custom tooltip would make the analyze-warning detail selectable; the help sheet still mixes plain `ctrl+a` text with keycaps elsewhere — convert it whole or not at all.
+- Pre-existing, found on the way: the retryable-save chip was a click-only `<span>` (now a button); the app cannot render in a plain browser because `WindowControls` needs the Tauri window API, so visual checks need the desktop shell.
+- Still open from earlier phases: the first staged frame can lose its LrC star; the `/not found/` mid-tier latch; the Phase 0 live check on a scratch copy.
+- The save chip and pill unmount the moment they are clicked (the failure list clears while the writes re-run), so a keyboard user who activates "retry" / "check again" loses focus to the page. New with this phase, because those chips only became real buttons here; move focus somewhere sensible or keep the button mounted while saving.
+- The quit guard offers "Keep culling" / "Close anyway" but no "check again" of its own; the re-check lives in the footer chip and the home pill.
