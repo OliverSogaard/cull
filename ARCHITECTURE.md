@@ -492,9 +492,11 @@ conventions instead of per-component one-offs:
   strand every rating made during an outage with no way to save it after the
   drive returned. `src/utils/saveStatusCopy.ts`'s `saveFailureKind` turns
   `failedCount`/`missingCount` into `"none" | "missing" | "retry"` for the
-  five surfaces that report a failure (status-bar chip, save-status pill,
-  quit guard, leave-to-home warning, finish dialog), so they all tell the same
-  story instead of drifting into slightly different wording — the all-missing
+  status-bar chip, the save-status pill, the quit guard and the leave-to-home
+  warning; the finish dialog derives its own note priority (retryable, then
+  saving, then missing) but takes its sentences from the same module, so all
+  five surfaces tell the same story instead of drifting into slightly
+  different wording — the all-missing
   chip and pill offer "check again" rather than a plain "retry", because that
   is what the click is worth once the drive is back. `FinishDialog`'s
   `retryableFailedCount` (`Math.max(0, failedCount - missingCount)`) is the

@@ -28,9 +28,10 @@ const ACCENT_RGB = "212, 175, 106";
 
 /**
  * One rule body, looked up by the selector that opens it. `lastIndexOf` on
- * purpose: these three selectors each appear twice — once at the end of the
- * grouped rule that gives all three flashes their geometry, then again on
- * their own colour rule below it, which is the one under test.
+ * purpose: the three flash selectors first appear together in the grouped
+ * rule that gives them their geometry (the last of the group, `--flash-fav`,
+ * is even followed by ` {` there), then each again on its own colour rule
+ * below it, which is the one under test.
  */
 const ruleBody = (sheet: string, selector: string): string => {
   const at = sheet.lastIndexOf(`${selector} {`);
