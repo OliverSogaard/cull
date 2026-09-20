@@ -67,10 +67,28 @@
   transition: transform 80ms linear;
 }
 
+/* Re-anchored into the strip's top headroom (fix round 4) — at the strip's
+   real 83/103px box (STRIP_SMALL/STRIP_LARGE) this chip used to sit on the
+   thumbnails' lower edge, over the rating dots and badges. Derivation, all
+   from real numbers: `.cull-thumbs`' padding is `20px 0 8px` (see strip.css
+   top of file / metrics.ts), so a cell's TOP edge sits `8px + var(--cell-h)`
+   above `.cull-strip-wrap`'s bottom edge (the wrap has no other sized flow
+   child, so its bottom coincides with `.cull-thumbs`'; the padding-bottom is
+   the only gap between the cells and that edge). This bar (`.cull-scrubbar`)
+   floats at `bottom: 3px`, 2px tall, inside that same wrap, and this chip's
+   own `bottom` is measured from THIS bar's box (`.cull-scrubbar__pos` is
+   `inset: 0` of it) — 3px above the wrap's bottom edge. So
+   `bottom: calc(var(--cell-h) + 7px)` puts the chip's bottom edge at
+   `3 + var(--cell-h) + 7 = var(--cell-h) + 10` above the wrap's bottom edge,
+   which is exactly 2px above the cells' top edge (`8 + var(--cell-h)`) —
+   for either step, 54 or 74px, because it is expressed in `--cell-h`, never
+   a literal. (The grid's reuse of this class, `.cull-grid__scrollbar-speed`
+   in grid.css, overrides `bottom: auto` and positions via `top` instead, so
+   this rule never applies there.) */
 .cull-scrubbar__speed {
   position: absolute;
   left: 0;
-  bottom: 7px;
+  bottom: calc(var(--cell-h) + 7px);
   transform: translateX(-50%);
   font-size: var(--fs-1);
   letter-spacing: 0.08em;
