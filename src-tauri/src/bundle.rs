@@ -165,6 +165,27 @@ pub(crate) async fn read_preview(
     .await
 }
 
+/// Write a prvw-miss result back to the tier, or don't — the ONE place that
+/// decision is made, so [`preview_parts_opt`]'s `put_on_miss` flag is pinned
+/// by a plain unit test instead of only by the corpus-gated acquisition test
+/// (a cache-HIT test alone can't distinguish `true` from `false`: both return
+/// before this function is ever called).
+fn put_prvw_on_miss(
+    put: bool,
+    cache: &TierCache,
+    path: &str,
+    stat: Option<(i64, u64)>,
+    header: &[u8],
+    jpeg: &[u8],
+) {
+    if !put {
+        return;
+    }
+    if let Some((ms, size)) = stat {
+        cache.put(CacheTier::Prvw, path, ms, size, header, jpeg);
+    }
+}
+
 /// The one prvw acquisition path (shared by [`read_preview`],
 /// [`fetch_decoded_preview`] and [`read_grid_thumb`], so cache/read behavior
 /// can never drift): validated cache hit returns the stored wire header +
@@ -202,11 +223,7 @@ fn preview_parts_opt(
         full_len: b.full_hint.map(|h| h.1),
     };
     let header_json = serde_json::to_vec(&header).map_err(|e| format!("preview header: {e}"))?;
-    if put_on_miss {
-        if let Some((ms, size)) = stat {
-            cache.put(CacheTier::Prvw, path, ms, size, &header_json, &b.preview);
-        }
-    }
+    put_prvw_on_miss(put_on_miss, cache, path, stat, &header_json, &b.preview);
     Ok((header_json, b.preview, false))
 }
 
@@ -775,7 +792,7 @@ pub(crate) async fn read_grid_thumb(
                 preview_parts_opt(&path, &session, &cache, &cancelled, false)
                     .map_err(grid_thumb_error)?;
             let header: PreviewHeader = serde_json::from_slice(&header_json)
-                .map_err(|e| format!("grid thumb prvw header parse: {e}"))?;
+                .map_err(|e| grid_thumb_error(format!("grid thumb prvw header parse: {e}")))?;
             let (out_header, payload) = generate_and_cache_grid_thumb(
                 &cache,
                 &path,
@@ -935,6 +952,10 @@ mod tests {
             "cr3 preview: no PRVW".to_string(),
             "source not larger than grid tier (400x300)".to_string(),
             "grid thumb invalid jpeg".to_string(),
+            // A cached prvw header that fails to deserialize (corrupt/foreign
+            // entry) is permanent for that path, not a transient I/O failure —
+            // it must latch, or the frontend backs off and re-asks forever.
+            "grid thumb prvw header parse: EOF while parsing a value".to_string(),
         ] {
             assert!(
                 grid_thumb_error(permanent.clone()).starts_with(GRID_THUMB_UNAVAILABLE),
@@ -997,6 +1018,55 @@ mod tests {
         assert_eq!(payload.as_slice(), b"\xFF\xD8prvw");
         assert_eq!(header.as_slice(), b"{\"orientation\":1}");
         assert_eq!(cache.size_bytes(), before, "a hit writes nothing");
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Pins `put_prvw_on_miss`'s flag directly, ungated: `false` writes
+    /// nothing and a subsequent `get` still misses; `true` grows the store and
+    /// a subsequent `get` hits with the exact bytes given. This is the test
+    /// that actually distinguishes the two `put_on_miss` values — the cache-
+    /// HIT acquisition test above returns before this function is ever
+    /// called, and the only other coverage was the `CULL_TEST_CR3_DIR`-gated
+    /// corpus test below, which CI never runs.
+    #[test]
+    fn put_prvw_on_miss_writes_only_when_told_to() {
+        let work = grid_tmp("put-flag");
+        let cache = TierCache::new(work.join("tiers"));
+        let session = SessionGate::new();
+        let src = work.join("b.cr3");
+        std::fs::write(&src, b"not really a cr3").unwrap();
+        let src = src.to_string_lossy().to_string();
+        let stat = resolve_stat(&session, &src);
+
+        put_prvw_on_miss(
+            false,
+            &cache,
+            &src,
+            stat,
+            b"{\"orientation\":1}",
+            b"\xFF\xD8jpeg",
+        );
+        assert_eq!(cache.size_bytes(), 0, "false must write nothing");
+        let (ms, size) = stat.expect("stat");
+        assert!(
+            cache.get(CacheTier::Prvw, &src, ms, size).is_none(),
+            "false must leave the store missing this entry"
+        );
+
+        put_prvw_on_miss(
+            true,
+            &cache,
+            &src,
+            stat,
+            b"{\"orientation\":1}",
+            b"\xFF\xD8jpeg",
+        );
+        assert!(cache.size_bytes() > 0, "true must write the entry");
+        let (header, payload) = cache
+            .get(CacheTier::Prvw, &src, ms, size)
+            .expect("true must leave the store holding this entry");
+        assert_eq!(header.as_slice(), b"{\"orientation\":1}");
+        assert_eq!(payload.as_slice(), b"\xFF\xD8jpeg");
         let _ = std::fs::remove_dir_all(&work);
     }
 
