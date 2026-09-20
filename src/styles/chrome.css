@@ -1,9 +1,11 @@
 /* ── save-status pill (top chrome) ────────────────────────────
    XMP save indicator next to the brand block. Four states driven
    purely from the existing savingCount / failedWrites state. */
-/* The failed / missing states render as a real <button>, so the base carries
-   the reset that keeps a button looking like this pill (the size and the mono
-   face come from `.chip`; only the UA's own chrome has to go). */
+/* Every non-idle state renders as a real <button> — saving included, so a
+   retry that lands mid-flight never swaps the element type out from under
+   keyboard focus — so the base carries the reset that keeps a button looking
+   like this pill (the size and the mono face come from `.chip`; only the
+   UA's own chrome has to go). */
 .cull-save-status {
   appearance: none;
   background: none;
@@ -62,8 +64,9 @@
   background: rgba(200, 127, 127, 0.2);
 }
 
-/* `.chip:focus-visible` already carries --ring; these two are the only
-   focusable pills, and they take it from there. */
+/* `.chip:focus-visible` already carries --ring; failed, missing and saving
+   are the only three states rendered at all (idle returns null), all three
+   are real buttons, and they take the ring from there. */
 
 @keyframes cull-save-pulse {
   0%,
