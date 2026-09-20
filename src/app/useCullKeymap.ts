@@ -42,6 +42,8 @@ export function useCullKeymap({
   redo,
   gridVisible,
   gridCols,
+  stepGridSizeBy,
+  resetGridSize,
   advance,
   selectAllInGrid,
   growGridSelection,
@@ -102,6 +104,8 @@ export function useCullKeymap({
   redo: () => void;
   gridVisible: boolean;
   gridCols: number;
+  stepGridSizeBy: (dir: 1 | -1) => void;
+  resetGridSize: () => void;
   advance: (dir: 1 | -1, step?: number) => boolean;
   selectAllInGrid: () => void;
   growGridSelection: (deltaCells: number) => void;
@@ -438,6 +442,22 @@ export function useCullKeymap({
           e.preventDefault();
           goToSite("grid"); // no-op if already in grid; ESC to leave
           break;
+        // Grid size, grid only. Bare + / = (the unshifted key on most
+        // layouts) and − , numpad included via e.key, which reports the same
+        // characters for NumpadAdd / NumpadSubtract.
+        case "+":
+        case "=":
+          if (gridVisible) {
+            e.preventDefault();
+            stepGridSizeBy(1);
+          }
+          break;
+        case "-":
+          if (gridVisible) {
+            e.preventDefault();
+            stepGridSizeBy(-1);
+          }
+          break;
         case "o":
         case "O":
           setCompositionVisible((v) => !v);
@@ -510,6 +530,18 @@ export function useCullKeymap({
       if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
         e.preventDefault();
         if (gridVisible) selectAllInGrid();
+        return;
+      }
+
+      // Ctrl/Cmd+0 → grid size back to Medium. Above the Ctrl drop below, like
+      // every other Ctrl binding. `e.code` covers the numpad zero and the
+      // layouts where `0` reports differently.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0")
+      ) {
+        e.preventDefault();
+        if (gridVisible) resetGridSize();
         return;
       }
 
@@ -616,6 +648,8 @@ export function useCullKeymap({
     advance,
     gridVisible,
     gridCols,
+    stepGridSizeBy,
+    resetGridSize,
     applyRating,
     unrateCurrent,
     undo,

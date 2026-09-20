@@ -41,6 +41,10 @@ export type ExportFolderMode =
 /** Where the loupe / compare thumbnail strip sits relative to the photo. */
 export type ThumbsPosition = "bottom" | "top";
 
+/** Contact-sheet cell size. Drives the column-target maths in utils/gridSize;
+ *  `medium` is today's grid at every window size. */
+export type GridSize = "small" | "medium" | "large";
+
 export type Settings = {
   // — Storage —
   storageMode: StorageMode;
@@ -60,6 +64,8 @@ export type Settings = {
   defaultCompositionVisible: boolean;
   /** Where the loupe / compare thumbnail strip sits (bottom or top). */
   thumbsPosition: ThumbsPosition;
+  /** Contact-sheet cell size. +/− in the grid, Ctrl+0 back to medium. */
+  gridSize: GridSize;
 
   // — File operations —
   /** Subfolder name that "move rejects" creates inside the cull folder. */
@@ -104,6 +110,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultPeakingVisible: false,
   defaultCompositionVisible: false,
   thumbsPosition: "bottom",
+  gridSize: "medium",
 
   rejectedSubfolder: "_rejected",
   exportFolder: { mode: "remember" },

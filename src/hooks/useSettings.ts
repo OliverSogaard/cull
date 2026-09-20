@@ -8,6 +8,7 @@ import {
 } from "../types/settings";
 import type { Filter } from "../types/rating";
 import { sanitizeFolderName } from "../utils/path";
+import { isGridSize } from "../utils/gridSize";
 
 const FILTERS: readonly Filter[] = ["all", "unrated", "keeps", "keepsFavs"];
 
@@ -56,6 +57,7 @@ export function coerceSettings(raw: unknown): Settings {
       p.thumbsPosition === "bottom" || p.thumbsPosition === "top"
         ? p.thumbsPosition
         : d.thumbsPosition,
+    gridSize: isGridSize(p.gridSize) ? p.gridSize : d.gridSize,
     rejectedSubfolder:
       typeof p.rejectedSubfolder === "string"
         ? normalizeRejectedSubfolder(sanitizeFolderName(p.rejectedSubfolder))

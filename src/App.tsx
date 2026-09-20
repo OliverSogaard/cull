@@ -29,7 +29,7 @@ import { ConfirmHomeDialog } from "./components/ConfirmHomeDialog";
 import { EmptyFilter } from "./components/EmptyFilter";
 import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
-import { GridView, GRID_CELL_TARGET } from "./components/GridView";
+import { GridView } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { ICON, ICON_DISPLAY_STROKE } from "./components/icons";
 import { KeyCombo } from "./components/KeyCombo";
@@ -79,6 +79,7 @@ import type { AnalyzeWarning } from "./utils/analyzeWarnings";
 import { passesFilter } from "./utils/filter";
 import { topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
+import { gridColsFor, stepGridSize } from "./utils/gridSize";
 import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
@@ -438,13 +439,47 @@ export default function App() {
       const padR = parseFloat(cs.paddingRight) || 0;
       const w = Math.max(0, el.clientWidth - padL - padR);
       setGridContentW(w);
-      setGridCols(Math.max(2, Math.floor(w / GRID_CELL_TARGET)));
+      setGridCols(gridColsFor(w, settings.gridSize));
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [gridVisible, compareMode, gridHasCells]);
+  }, [gridVisible, compareMode, gridHasCells, settings.gridSize]);
+
+  // Grid size: the setting is the source of truth, so + / − / Ctrl+0 and the
+  // Settings row all write the same field and all persist. useSettings's
+  // setter takes a WHOLE Settings, not an updater, so these close over the
+  // current object and change identity on any settings write.
+  const stepGridSizeBy = useCallback(
+    (dir: 1 | -1) => setSettings({ ...settings, gridSize: stepGridSize(settings.gridSize, dir) }),
+    [settings, setSettings],
+  );
+  const resetGridSize = useCallback(
+    () => setSettings({ ...settings, gridSize: "medium" }),
+    [settings, setSettings],
+  );
+
+  // Ctrl + wheel over the grid steps the size. NON-PASSIVE on purpose: the
+  // preventDefault is what stops the grid scrolling under the gesture (and,
+  // belt and braces, any webview zoom — WebView2's zoom hotkeys are already
+  // off, since tauri.conf.json leaves `zoomHotkeysEnabled` at its `false`
+  // default and that maps to IsZoomControlEnabled). No rAF coalescing: this
+  // display runs at 240 Hz, and there are only three steps — a fast trackpad
+  // flick simply saturates at Small or Large, which is the right answer.
+  useEffect(() => {
+    if (!gridVisible || compareMode) return;
+    const el = gridContainerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      if (e.deltaY === 0) return;
+      stepGridSizeBy(e.deltaY < 0 ? 1 : -1);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [gridVisible, compareMode, gridHasCells, stepGridSizeBy]);
 
   // Compare-mode candidates: every UNRATED frame except the champion (which the
   // strip shows separately as its grayed in-track ghost). The challenger is
@@ -1222,6 +1257,8 @@ export default function App() {
     redo,
     gridVisible,
     gridCols,
+    stepGridSizeBy,
+    resetGridSize,
     advance,
     selectAllInGrid,
     growGridSelection,

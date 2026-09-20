@@ -9,6 +9,7 @@ import { hasLrcRating } from "../utils/ratingColor";
 import { useThumb } from "../image/useThumb";
 import { computeScrollIndicator } from "../utils/scrollIndicator";
 import { computeGridAutoScrollTop, computeGridWindow } from "./gridWindow";
+import { gridCellWidth } from "../utils/gridSize";
 
 /** Visible rows above and below the viewport that we still render. */
 const GRID_BUFFER_ROWS = 2;
@@ -18,12 +19,6 @@ const GRID_BUFFER_ROWS = 2;
  *  scrub bar, which lingers briefly after a hold releases before fading. */
 const SCROLL_INDICATOR_IDLE_MS = 500;
 
-/**
- * Target cell width — App's outer ResizeObserver picks `cols = floor(width /
- * GRID_CELL_TARGET)`, so cells fall between ~140 and ~210 px depending on
- * window size.
- */
-export const GRID_CELL_TARGET = 168;
 /** .cull-grid's vertical padding total (20px top + 20px bottom) — the scroll
  *  range includes it, so indicator geometry must too. */
 const GRID_V_PADDING = 40;
@@ -182,7 +177,7 @@ export const GridView = memo(function GridView({
     };
   }, []);
 
-  const cellW = contentWidth > 0 ? Math.floor(contentWidth / cols) : GRID_CELL_TARGET;
+  const cellW = gridCellWidth(contentWidth, cols);
   const rowH = cellW; // square cells — accommodate landscape AND portrait
   const totalRows = Math.ceil(visibleIndices.length / cols);
   const totalH = totalRows * rowH;

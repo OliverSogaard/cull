@@ -10,4 +10,4 @@ export { EMPTY_METADATA } from "./image";
 export type { FileOpResult, AnalyzeProgress, AnalyzeResult, ScanResult } from "./ipc";
 export type { NavSite, NavEntry, HelpMode, HelpGroup } from "./nav";
 export type { Phase, Feedback } from "./ui";
-export type { Settings, SmartLevel, StorageMode, ThumbsPosition } from "./settings";
+export type { GridSize, Settings, SmartLevel, StorageMode, ThumbsPosition } from "./settings";
