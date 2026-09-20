@@ -24,6 +24,14 @@ export function stripExt(filename: string): string {
   return filename.replace(/\.[^.]+$/, "");
 }
 
+/** The extension INCLUDING its dot ("IMG_0001.CR3" → ".CR3"), "" when there is
+ *  none. The exact complement of stripExt: stripExt(n) + extOf(n) === n. The
+ *  footer hides this half on a narrow window rather than truncating the stem. */
+export function extOf(filename: string): string {
+  const m = /\.[^.]+$/.exec(filename);
+  return m ? m[0] : "";
+}
+
 /**
  * Join a root path to a subfolder segment, picking the separator from the root
  * (backslash on Windows, forward slash on POSIX). Trailing separators on the

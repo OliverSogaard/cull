@@ -41,10 +41,14 @@
    The zoom indicator is the bar's only chip and has always rendered in
    accent ink, so the `--zoom` modifier is now just `chip--accent`. */
 .cull-statusbar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px 8px;
   background: var(--surface-2);
   letter-spacing: 0.16em;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* "N selected" multi-select counter chip — pinned next to the position
@@ -59,5 +63,74 @@
   background: var(--accent-soft);
   color: var(--accent);
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── the footer sheds as the window narrows ───────────────────
+   Pure CSS on the window width — the webview's viewport IS the window, so
+   no resize listener is needed. Every label below is rendered in both forms
+   by StatusBar; only one is ever displayed.
+
+   Budget at the 1024px minimum: 1024 − 36 (bar padding) − 36 (two 18px
+   gaps) = 952 of content. Right cluster at <1100 = 79 (pos, 12ch) + 347
+   (filter tabs, worst "SMART · 4194") + 66 ("FINISH") + 28 gaps = 520.
+   Left, with every chip present and the two mutually exclusive pairs
+   collapsed (zoom XOR scrub; overlay cluster XOR "N selected") = 14
+   (verdict glyph) + 58 (scrub + ×10) + 133 (overlay cluster) + 143
+   ("4194 photos missing") + 56 gaps = 404 → 28px for the filename stem in
+   the absolute worst case (all-missing chip + scrub + overlay cluster at
+   once); the stem ellipses there and nothing is clipped. In every ordinary
+   state the stem has its full 240px max-width. */
+@media (width < 1360px) {
+  .cull-statusbar__keyhint {
+    display: none;
+  }
+}
+
+@media (width < 1200px) {
+  /* The name is enough; every file in a cull is a .CR3. */
+  .cull-statusbar__filename-ext,
+  /* "zoom 1:1" → "1:1". */
+  .cull-statusbar__chip-label,
+  /* aria-label="scrubbing" on the wrapper keeps the word for AT. */
+  .cull-statusbar__scrub-label,
+  /* aria-label on the pill keeps the word for AT. */
+  .cull-statusbar__verdict-label {
+    display: none;
+  }
+
+  /* The save chip's tail is hidden VISUALLY, not removed: `display: none`
+     would drop it from the button's accessible name, and the button would
+     stop announcing what clicking it does. Same declarations as
+     base.css's .visually-hidden — a media query cannot add a class. */
+  .cull-statusbar__unsaved-tail {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (width < 1100px) {
+  .cull-statusbar__finish-long {
+    display: none;
+  }
+}
+
+/* The short finish label is the exception: hidden by default, shown only
+   under 1100 (the reverse of every rule above). */
+.cull-statusbar__finish-short {
+  display: none;
+}
+
+@media (width < 1100px) {
+  .cull-statusbar__finish-short {
+    display: inline;
+  }
 }
 
