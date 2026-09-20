@@ -11,7 +11,7 @@
 //! | [`midtier`]   | Phase 8 mid-tier generation: decode → SIMD resize ≤2560 → q80 encode + the MidGen concurrency gate. |
 //! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
 //! | [`jpeg_rgb`]  | The shared JPEG → validated-RGB8 decode ritual.          |
-//! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid), format v3 (`tier_cache::VERSION`). |
+//! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid/grid), format v3 (`tier_cache::VERSION`). |
 //! | [`xmp`]       | XMP sidecar I/O: `write_xmp_rating` / `clear_xmp_rating` + the parser the analyze step uses to restore ratings. |
 //! | [`file_ops`]  | Post-cull file operations: `move_rejects_to_subfolder` / `copy_keeps_to_export`. |
 //! | [`gridthumb`] | Phase 3B grid tier: PRVW → SIMD resize ≤512 → q82 encode + orientation splice. |
