@@ -26,14 +26,19 @@ const base = (): string => {
 };
 
 /**
- * Every rule elsewhere that reaches a keycap — `.kbd`, `.kbd--tint`, a
- * `… kbd` descendant selector or a `--…-kbd`/`--…-key` class — paired with
- * its body, so a re-declared typography property can be found.
+ * Every rule outside primitives/kbd.css that reaches a keycap, paired with its
+ * body, so a re-declared typography property can be found.
+ *
+ * The four shapes a keycap selector takes: `.kbd` and its modifiers, a
+ * `… kbd` descendant, a `__kbd` element class, and the hero's `-key` caps.
+ * Deliberately NOT matched: `.cull-grid.is-kbd-nav` (a grid state, not a cap)
+ * and `.cull-help__key` (the help sheet's plain-text key column, whose own
+ * tracking is its business).
  */
 const capRules = Object.entries(sheets)
   .filter(([file]) => file !== "./primitives/kbd.css")
   .flatMap(([file, css]) =>
-    [...css.matchAll(/^([^\r\n{}]*(?:\bkbd\b|-key)[^\r\n{}]*)\{([^}]*)\}/gm)].map(
+    [...css.matchAll(/^([^\r\n{}]*(?:\.kbd\b|__kbd\b|\skbd\b|-key\b)[^\r\n{}]*)\{([^}]*)\}/gm)].map(
       ([, selector, body]): [string, string] => [`${file}  ${selector.trim()}`, body],
     ),
   );

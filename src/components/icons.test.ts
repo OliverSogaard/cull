@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { ICON, ICON_DISPLAY_STROKE } from "./icons";
 
 /**
  * The Unicode-glyph guard.
@@ -117,6 +118,26 @@ const leaks = sources.flatMap(([file, source]) => {
       if (found.length === 0 || isAllowed(file, trimmed)) return [];
       return [`${file}:${index + 1}  ${found.join(" ")}  ${trimmed}`];
     });
+});
+
+describe("the icon scale", () => {
+  /**
+   * Decision 7 of docs/superpowers/specs/2026-09-19-phase-3a-see-and-feel-design.md:
+   * 12 / 14 px at stroke 1.75, 16 px at stroke 1.5, and the two display glyphs
+   * keeping their size at stroke 1.5. Three steps is the whole point — the
+   * stroke lightening as the icon grows is what makes unrelated icons read as
+   * one set, and a step nudged by a later eyeball would undo that silently.
+   */
+  test("has the three steps the design board picked, strokes included", () => {
+    expect(ICON.sm).toEqual({ size: 12, strokeWidth: 1.75 });
+    expect(ICON.md).toEqual({ size: 14, strokeWidth: 1.75 });
+    expect(ICON.lg).toEqual({ size: 16, strokeWidth: 1.5 });
+  });
+
+  test("gives the two display glyphs the same weight as the largest step", () => {
+    expect(ICON_DISPLAY_STROKE).toBe(1.5);
+    expect(ICON_DISPLAY_STROKE).toBe(ICON.lg.strokeWidth);
+  });
 });
 
 describe("no Unicode glyphs in the chrome", () => {

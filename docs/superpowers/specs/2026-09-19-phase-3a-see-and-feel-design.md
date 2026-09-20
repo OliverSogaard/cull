@@ -27,7 +27,7 @@ The board was a local page built from the app's real stylesheet; options differe
 - Armed confirms ("Yes, move", "Yes, reset") receive focus when they appear.
 - EXIF values and error text are selectable (`user-select: text`); chrome stays unselectable.
 - A write that failed because the photo was not at its path says so ("photo missing") instead of reading as an ordinary unsaved rating. It still offers the click — labelled "check again", since the usual cause is a drive or folder that dropped out and a re-check saves the rating once it is back (controller ruling, final review).
-- The dead `.cull-quitguard__danger:hover` becomes live through the danger button modifier.
+- The dead `.cull-quitguard__danger:hover` becomes live: it shipped as a specificity fix (the rule now matches `.btn:hover:not(:disabled)` exactly and sits later in the cascade), keeping the quit guard's outline-danger look rather than adopting the filled `.btn--danger`.
 - README's key table describes Compare's compound `f` / `k`.
 
 ## Out of scope for 3A

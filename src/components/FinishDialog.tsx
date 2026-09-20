@@ -20,7 +20,8 @@ const FOLDER_EXISTS_DEBOUNCE_MS = 250;
 
 /**
  * Finish-session dialog (the act-on-cull modal opened via `Ctrl+E` — `⌘E` on
- * macOS — or the status-bar `✦ finish` chip). Wraps two destructive actions —
+ * macOS — or the status bar's finish button, which prints that same shortcut).
+ * Wraps two destructive actions —
  * *move rejects* into a subfolder in the source, and *copy keeps* to an
  * export folder — both backed by idempotent Tauri commands so re-running
  * after a partial failure is safe.

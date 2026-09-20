@@ -1,9 +1,5 @@
 import type { HelpGroup, HelpMode } from "../types";
-import { modLabel, modName } from "../utils/platform";
-
-/** Sentinel `keys` value for the one help row that needs an actual keycap for
- *  the platform modifier (see the render below) instead of plain text. */
-const MOD_CLICK = "mod+click";
+import { modName } from "../utils/platform";
 
 /**
  * Context-aware keyboard reference. The "switch view" group lists only the
@@ -126,7 +122,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         ["click", "Open in loupe"],
         ["⇧+click", "Select range"],
         ["⇧+← → ↑ ↓", "Grow selection"],
-        [MOD_CLICK, "Add to selection"],
+        [`${modName}+click`, "Add to selection"],
         [`${modName}+a`, "Select all in filter"],
       ],
     },
@@ -177,15 +173,7 @@ export function HelpOverlay({
               <div className="eyebrow cull-help__group">{g.title}</div>
               {g.keys.map(([k, label]) => (
                 <div key={k} className="cull-help__row">
-                  <span className="cull-help__key">
-                    {k === MOD_CLICK ? (
-                      <>
-                        <kbd className="kbd">{modLabel}</kbd> click
-                      </>
-                    ) : (
-                      k
-                    )}
-                  </span>
+                  <span className="cull-help__key">{k}</span>
                   <span className="cull-help__desc">{label}</span>
                 </div>
               ))}

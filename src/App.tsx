@@ -1551,8 +1551,8 @@ export default function App() {
                 )}
               </div>
               <div className="cull-staged__hint">
-                Drop folders anywhere to add more · <KeyCombo keys={["mod", "O"]} /> · esc to start
-                over
+                Drop folders anywhere to add more · <KeyCombo keys={["mod", "O"]} /> ·{" "}
+                <kbd className="kbd">esc</kbd> to start over
               </div>
             </>
           )}
@@ -1815,12 +1815,12 @@ export default function App() {
               onClick={() => void retryUnreachableFolders()}
               title={
                 folderTrouble === "checking"
-                  ? "probing every source folder…"
+                  ? "Probing every source folder…"
                   : folderTrouble === "still"
-                    ? "still not responding. Check the drive or NAS, then retry"
+                    ? "Still not responding. Check the drive or NAS, then retry"
                     : folderTrouble === "recovered"
-                      ? "folder reachable again. Resuming loads"
-                      : "several reads failed. The folder may be unreachable (NAS asleep or unmounted)"
+                      ? "Folder reachable again. Resuming loads"
+                      : "Several reads failed. The folder may be unreachable (NAS asleep or unmounted)"
               }
             >
               {folderTrouble === "checking"
@@ -1848,8 +1848,8 @@ export default function App() {
               className={`chip chip--soft chip--accent cull-mem-chip${memPressure === "critical" ? " is-critical" : ""}`}
               title={
                 memPressure === "critical"
-                  ? "system memory critically low. Zoom was released and its caches dropped to keep the app alive"
-                  : "system memory is running low. Image caches shrunk; full speed returns when pressure eases"
+                  ? "System memory critically low. Zoom was released and its caches dropped to keep the app alive"
+                  : "System memory is running low. Image caches shrunk; full speed returns when pressure eases"
               }
             >
               {memPressure === "critical" ? "low memory · zoom off" : "low memory"}

@@ -45,7 +45,8 @@ export type StatusBarOverlays = {
 export type StatusBarSelection = { gridVisible: boolean; selectedCount: number };
 
 /** XMP write durability: in-flight writes, failed writes (`missingCount` = the
- *  permanent subset whose photo is gone), and the retry. */
+ *  subset whose photo was not at its path), and the retry, which re-attempts
+ *  both kinds. */
 export type StatusBarSave = {
   savingCount: number;
   failedCount: number;
@@ -316,9 +317,12 @@ export const StatusBar = memo(function StatusBar({
                       filter.setFilter("keepsFavs");
                       filter.chipsTooltip.pulse();
                     }}
-                    // `title` is this button's only accessible name once the
-                    // star is an aria-hidden SVG — same for the three below.
+                    // The star is an aria-hidden SVG, so the button has no text
+                    // to name it. `title` is a hover affordance a screen reader
+                    // may or may not announce; the aria-label is the name, and
+                    // the two are kept identical — same for the three below.
                     title="Favorites only"
+                    aria-label="Favorites only"
                   >
                     <Star {...ICON.sm} fill="currentColor" aria-hidden />
                   </button>
@@ -375,6 +379,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.chipsTooltip.pulse();
                     }}
                     title="Suggested rejects"
+                    aria-label="Suggested rejects"
                   >
                     <XIcon {...ICON.sm} aria-hidden />
                   </button>
@@ -386,6 +391,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.chipsTooltip.pulse();
                     }}
                     title="Suggested keeps"
+                    aria-label="Suggested keeps"
                   >
                     <Check {...ICON.sm} aria-hidden />
                   </button>
@@ -397,6 +403,7 @@ export const StatusBar = memo(function StatusBar({
                       filter.chipsTooltip.pulse();
                     }}
                     title="Suggested favorites"
+                    aria-label="Suggested favorites"
                   >
                     <Star {...ICON.sm} fill="currentColor" aria-hidden />
                   </button>

@@ -42,6 +42,11 @@ describe("colour tokens", () => {
   test("the favourite colour is not the accent", () => {
     expect(token("fav").toLowerCase()).not.toBe(token("accent").toLowerCase());
   });
+  test("the favourite colour is the lilac the design board picked", () => {
+    // Decision 1 of docs/superpowers/specs/2026-09-19-phase-3a-see-and-feel-design.md.
+    // "Not the accent" alone would pass for any colour at all; this is the one.
+    expect(token("fav").toLowerCase()).toBe("#b9a2dc");
+  });
   test("the favourite verdict flash is drawn in --fav, not the accent", () => {
     // The flash is the loudest favourite in the app — a full-frame wash over
     // the photo. It sat on the champagne literal long after `--fav` existed,

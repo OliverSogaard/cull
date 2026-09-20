@@ -198,6 +198,13 @@
   background: var(--surface);
 }
 
+/* The caps in a combo drop their own text gutter (primitives/kbd.css), so the
+   space around the combo is this sentence's to give — without it the full stop
+   after it sits on the cap's border. */
+.cull-recent__empty .keycombo {
+  margin-right: var(--sp-0);
+}
+
 .cull-hero__how-key {
   background: var(--surface);
 }

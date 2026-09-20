@@ -21,6 +21,9 @@
   justify-content: center;
   gap: var(--sp-2);
   height: 32px; /* off-scale */
+  /* The height is fixed, so a label allowed to wrap would spill out of the
+     button rather than grow it. */
+  white-space: nowrap;
   background: transparent;
   color: var(--text);
   border: 1px solid var(--border);
