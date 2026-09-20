@@ -3,6 +3,11 @@
 * text=auto
 *.sh text eol=lf
 
+# The Tauri CLI rewrites this file with LF on every dev/build run; pinning
+# LF keeps `git status` clean on Windows and stops the revert → watcher →
+# app-restart loop.
+src-tauri/Cargo.toml text eol=lf
+
 # Binary model weights; keep them out of language stats and diffs.
 *.onnx -text linguist-generated
 

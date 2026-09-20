@@ -62,6 +62,7 @@ import { normalizeRejectedSubfolder } from "./types/settings";
 import { imageStore } from "./image/imageStore";
 import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
+import type { AnalyzeWarning } from "./utils/analyzeWarnings";
 import { passesFilter } from "./utils/filter";
 import { cycleFilter, topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
@@ -71,6 +72,7 @@ import { formatFolderSet, formatRelativeTime } from "./utils/format";
 import { basename } from "./utils/path";
 import { modGlyph } from "./utils/platform";
 import { pickSmartEmptyState } from "./utils/smartEmptyState";
+import { writeLocalStorage } from "./utils/storage";
 import { afZoomOrigin } from "./utils/zoom";
 import { RATING_COLOR } from "./utils/ratingColor";
 import type { ScrubSpeed } from "./utils/scrubAccel";
@@ -152,7 +154,7 @@ export default function App() {
     if (phase !== "culling") return;
     try {
       if (localStorage.getItem("cull:helpSeen")) return;
-      localStorage.setItem("cull:helpSeen", "1");
+      writeLocalStorage("cull:helpSeen", "1");
     } catch {
       return; // private mode: skip the intro rather than show it every time
     }
@@ -211,6 +213,10 @@ export default function App() {
   // rating-restore returns the user to staged with a retry instead of silently
   // dropping them into an unsorted, ratings-not-restored cull.
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  // Non-fatal analyze-pass trouble (an unreadable folder, sidecars that
+  // couldn't be read): the cull still enters, but the status bar flags what
+  // didn't come back clean. Click to dismiss.
+  const [analyzeWarning, setAnalyzeWarning] = useState<AnalyzeWarning | null>(null);
   // True from the moment pickFolder is invoked until the OS dialog resolves
   // (success OR cancel). Prevents a double-click — or a stuck dialog — from
   // queuing a second picker behind the first.
@@ -579,7 +585,7 @@ export default function App() {
   // Staging (picker / drag-drop / recents / launch auto-open), begin-culling
   // (analyze + sort + rating restore), the session's recents write-back, and
   // session teardown (reset / leave-to-home) live in app/useSessionLifecycle.
-  const { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome } =
+  const { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome, pruneMoved } =
     useSessionLifecycle({
       images,
       imagesRef,
@@ -605,6 +611,7 @@ export default function App() {
       setPickerBusy,
       setScanFailures,
       setAnalyzeError,
+      setAnalyzeWarning,
       setLastAdded,
       setLastIgnored,
       setLastBatchFolders,
@@ -621,6 +628,8 @@ export default function App() {
       setSelectedIndices,
       setSelectionAnchor,
       setConfirmHome,
+      setChampionIndex,
+      setChallengerIndex,
     });
 
   // Wipe the multi-selection state — called whenever the user leaves the grid
@@ -673,7 +682,8 @@ export default function App() {
   // came FROM — a multi-folder session must not sweep folder A's rejects into
   // folder B's `_rejected`. One backend call per source folder, results merged
   // into a single FileOpResult for the dialog. The subfolder name comes from
-  // settings (default `_rejected`).
+  // settings (default `_rejected`). Moved frames are then pruned from the
+  // session (`pruneMoved`).
   const doMoveRejects = useCallback(
     async (dest: "subfolder" | "trash" = "subfolder") => {
       if (rejectedPaths.length === 0 || actionBusy !== null) return;
@@ -684,11 +694,19 @@ export default function App() {
           // OS Trash: no destination folder, so no per-source-folder split — one
           // call for the whole set. Recoverable by design (never a hard delete).
           try {
-            setMoveResult(
-              await invoke<FileOpResult>("move_rejects_to_trash", { paths: rejectedPaths }),
-            );
+            const res = await invoke<FileOpResult>("move_rejects_to_trash", {
+              paths: rejectedPaths,
+            });
+            setMoveResult(res);
+            pruneMoved(res.gone);
           } catch (e) {
-            setMoveResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1 });
+            setMoveResult({
+              completed: 0,
+              skipped: 0,
+              errors: [String(e)],
+              errorCount: 1,
+              gone: [],
+            });
           }
           return;
         }
@@ -700,7 +718,13 @@ export default function App() {
           if (list) list.push(im.path);
           else byFolder.set(im.srcFolder, [im.path]);
         }
-        const merged: FileOpResult = { completed: 0, skipped: 0, errors: [], errorCount: 0 };
+        const merged: FileOpResult = {
+          completed: 0,
+          skipped: 0,
+          errors: [],
+          errorCount: 0,
+          gone: [],
+        };
         for (const [srcFolder, paths] of byFolder) {
           try {
             const res = await invoke<FileOpResult>("move_rejects_to_subfolder", {
@@ -712,6 +736,7 @@ export default function App() {
             merged.skipped += res.skipped;
             merged.errors.push(...res.errors);
             merged.errorCount = (merged.errorCount ?? 0) + (res.errorCount ?? res.errors.length);
+            merged.gone.push(...res.gone);
           } catch (e) {
             // One folder failing (offline NAS, permissions) must not abort the
             // moves for the folders that ARE reachable.
@@ -723,11 +748,12 @@ export default function App() {
         // errorCount still carries the true total.
         merged.errors = merged.errors.slice(0, 20);
         setMoveResult(merged);
+        pruneMoved(merged.gone);
       } finally {
         setActionBusy(null);
       }
     },
-    [images, ratings, rejectedPaths, actionBusy, settings.rejectedSubfolder],
+    [images, ratings, rejectedPaths, actionBusy, settings.rejectedSubfolder, pruneMoved],
   );
 
   // Copy keeps + favorites (+sidecars) to `dest`. The finish dialog decides
@@ -745,6 +771,7 @@ export default function App() {
           skipped: 0,
           errors: ["destination not set"],
           errorCount: 1,
+          gone: [],
         });
         return;
       }
@@ -752,7 +779,7 @@ export default function App() {
       // so the next session's picker opens there. Pinned mode is its own root,
       // so it doesn't need this hint.
       if (settings.exportFolder.mode === "remember") {
-        localStorage.setItem("cull:lastExportDest", dest);
+        writeLocalStorage("cull:lastExportDest", dest);
       }
       setActionBusy("copy");
       setCopyResult(null);
@@ -763,7 +790,7 @@ export default function App() {
         });
         setCopyResult(res);
       } catch (e) {
-        setCopyResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1 });
+        setCopyResult({ completed: 0, skipped: 0, errors: [String(e)], errorCount: 1, gone: [] });
       } finally {
         setActionBusy(null);
       }
@@ -2006,6 +2033,16 @@ export default function App() {
                   : folderTrouble === "recovered"
                     ? "reconnected"
                     : "folder unreachable · retry"}
+            </button>
+          )}
+          {analyzeWarning && (
+            <button
+              type="button"
+              className="cull-trouble-chip"
+              title={analyzeWarning.detail}
+              onClick={() => setAnalyzeWarning(null)}
+            >
+              ⚠ {analyzeWarning.label}
             </button>
           )}
           {memPressure !== "normal" && (

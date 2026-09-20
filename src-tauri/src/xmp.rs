@@ -70,6 +70,29 @@ fn atomic_write_xmp(xmp_path: &Path, contents: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Refusal prefix for a sidecar write whose CR3 is no longer at its path. The
+/// frontend matches on it (`utils/writeFailure.ts`) to skip its retry
+/// schedule: nothing short of putting the photo back can make the write land.
+pub(crate) const MISSING_SOURCE: &str = "source missing";
+
+/// A sidecar is only ever written next to a CR3 that is actually there.
+///
+/// After "Move rejects" the frontend prunes the moved frames, but a stale
+/// cell, an undo replay or a file deleted outside CULL could still ask — and
+/// used to get a real, orphaned `.xmp` in the old folder plus a "saved"
+/// report (audit 2026-09-13, CRITICAL). A transient stat failure (NAS blip) is
+/// reported as such so the frontend's normal retry schedule still applies.
+fn require_source(cr3: &Path) -> Result<(), String> {
+    match std::fs::metadata(cr3) {
+        Ok(md) if md.is_file() => Ok(()),
+        Ok(_) => Err(format!("{MISSING_SOURCE}: {} is not a file", cr3.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(format!("{MISSING_SOURCE}: {}", cr3.display()))
+        }
+        Err(e) => Err(format!("stat source {}: {e}", cr3.display())),
+    }
+}
+
 /// Set a rating on the CR3's sidecar (creating the sidecar if absent).
 #[tauri::command]
 pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(), String> {
@@ -83,6 +106,7 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
 
 fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
     let cr3 = Path::new(path);
+    require_source(cr3)?;
     let xmp_path = cr3.with_extension("xmp");
 
     let base = match std::fs::read_to_string(&xmp_path) {
@@ -121,6 +145,10 @@ fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
 ///
 /// INVARIANT: only the `{basename}.xmp` sidecar is touched — the CR3 is never
 /// modified.
+///
+/// No sidecar → already unrated → `Ok(())` even if the photo is gone; a
+/// sidecar that exists is only touched when the CR3 is present (ownership
+/// cannot be verified without the photo).
 #[tauri::command]
 pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
     // Spawn-blocking for the same reason as write_xmp_rating: sync fs I/O
@@ -136,10 +164,14 @@ fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
 
     let existing = match std::fs::read_to_string(&xmp_path) {
         Ok(s) => s,
-        // No sidecar → already unrated. Nothing to do.
+        // No sidecar → already unrated. Nothing to do — even if the CR3 is
+        // also gone, this is a no-op, not a refusal.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(format!("read existing xmp: {e}")),
     };
+    // A sidecar exists — only touch it once the CR3 is confirmed present:
+    // ownership of an orphaned sidecar can't be verified without the photo.
+    require_source(cr3)?;
 
     let authored = authored_by_cull(&existing);
     let stripped = strip_cull_fields(&existing);
@@ -184,11 +216,16 @@ fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
 /// sidecars that stored only `xmp:Rating` with a Cull CreatorTool (keep→0,
 /// reject→-1, favorite→5), so existing culls still resume after the format
 /// change. The star value is the raw `xmp:Rating` (1–5), or `None`.
-pub(crate) fn read_ratings(cr3_path: &str) -> (Option<String>, Option<u8>) {
+///
+/// Absent sidecar → `Ok((None, None))` (unrated). Any other read failure is
+/// an `Err` the analyze pass counts and reports — a sidecar that IS there but
+/// can't be read must not silently become "no rating".
+pub(crate) fn read_ratings(cr3_path: &str) -> Result<(Option<String>, Option<u8>), String> {
     let xmp = Path::new(cr3_path).with_extension("xmp");
     match std::fs::read_to_string(&xmp) {
-        Ok(content) => (classify_xmp(&content), parse_lrc_rating(&content)),
-        Err(_) => (None, None),
+        Ok(content) => Ok((classify_xmp(&content), parse_lrc_rating(&content))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, None)),
+        Err(e) => Err(format!("{}: {e}", xmp.display())),
     }
 }
 
@@ -901,7 +938,7 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
 
         let write = tauri::async_runtime::block_on(write_xmp_rating(p.clone(), "keep".into()));
         assert_eq!(write, Ok(()));
-        assert_eq!(read_ratings(&p).0.as_deref(), Some("keep"));
+        assert_eq!(read_ratings(&p).unwrap().0.as_deref(), Some("keep"));
 
         // Re-rating to the value already on disk takes the no-write skip path.
         let rewrite = tauri::async_runtime::block_on(write_xmp_rating(p.clone(), "keep".into()));
@@ -914,6 +951,80 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
             "CULL-authored sidecar removed on unrate"
         );
 
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// An absent sidecar is "unrated", not an error; a sidecar that exists but
+    /// can't be read (here: a directory wearing the name) is an error the
+    /// analyze pass reports instead of folding into "no rating".
+    #[test]
+    fn read_ratings_distinguishes_absent_from_unreadable() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let absent = work.join("absent.cr3");
+        assert_eq!(read_ratings(&absent.to_string_lossy()), Ok((None, None)));
+
+        let blocked = work.join("blocked.cr3");
+        std::fs::create_dir_all(blocked.with_extension("xmp")).unwrap();
+        let err = read_ratings(&blocked.to_string_lossy()).unwrap_err();
+        assert!(err.contains("blocked.xmp"), "{err}");
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Rating a CR3 that is no longer at its path (moved by "Move rejects",
+    /// deleted outside CULL) must refuse — never write an orphan sidecar into
+    /// the old folder and report "saved".
+    #[test]
+    fn write_refuses_when_cr3_is_missing() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-nosrc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("moved.cr3"); // never created
+
+        let err = write_xmp_rating_sync(&cr3.to_string_lossy(), "keep").unwrap_err();
+        assert!(err.starts_with(MISSING_SOURCE), "{err}");
+        assert!(
+            !cr3.with_extension("xmp").exists(),
+            "no orphan sidecar written"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Unrating a missing CR3 refuses too, and leaves whatever sidecar is
+    /// there untouched — ownership can't be verified without the photo.
+    #[test]
+    fn clear_refuses_when_cr3_is_missing_and_leaves_sidecar() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-noclr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("gone.cr3");
+        let xmp = cr3.with_extension("xmp");
+        std::fs::write(&xmp, b"<orphan/>").unwrap();
+
+        let err = clear_xmp_rating_sync(&cr3.to_string_lossy()).unwrap_err();
+        assert!(err.starts_with(MISSING_SOURCE), "{err}");
+        assert_eq!(
+            std::fs::read(&xmp).unwrap(),
+            b"<orphan/>",
+            "sidecar untouched"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// A frame with no sidecar is already unrated: clearing it is a no-op even
+    /// when the photo itself is gone — never a permanent "unsaved" the user
+    /// cannot retry out of.
+    #[test]
+    fn clear_is_a_no_op_when_cr3_and_sidecar_are_both_missing() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-noop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("gone.cr3"); // neither the CR3 nor gone.xmp exists
+        assert_eq!(clear_xmp_rating_sync(&cr3.to_string_lossy()), Ok(()));
+        assert!(!cr3.with_extension("xmp").exists());
         let _ = std::fs::remove_dir_all(&work);
     }
 }

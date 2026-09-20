@@ -12,7 +12,9 @@
 /// pHashes are never compared against each other (different source
 /// resolutions — see `groupSimilar::SimilarInput`).
 pub(crate) fn luma_of(rgb: &[u8]) -> Vec<u8> {
-    rgb.chunks_exact(3)
+    rgb.as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| ((77 * p[0] as u32 + 150 * p[1] as u32 + 29 * p[2] as u32) >> 8) as u8)
         .collect()
 }

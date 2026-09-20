@@ -45,6 +45,9 @@ export type Resolved = {
    *  blanks the cell while WebKit decodes the 1620×1080 preview (the
    *  "8-away flash", thumb-flash-report). Undefined until the thumb exists. */
   thumbUrl: string | undefined;
+  /** The zoom tier's error while it is in the error state — the pane shows a
+   *  "full-res failed · retry" chip instead of an endless loading ring. */
+  fullError: string | undefined;
 };
 
 export function resolveStage(s: ImageState): Resolved {
@@ -53,6 +56,7 @@ export function resolveStage(s: ImageState): Resolved {
     s.zoomFull?.status === "ready" ? { url: s.zoomFull.url, dims: s.zoomFull.dims } : undefined;
   const mid = s.mid?.status === "ready" ? { url: s.mid.url } : undefined;
   const thumbUrl = s.thumb?.url;
+  const fullError = s.zoomFull?.status === "error" ? s.zoomFull.error : undefined;
   if (s.full?.status === "ready") {
     // The full can land BEFORE the thumb (big scrub jump): the store freezes
     // it with the {1,1} UNKNOWN sentinel, so real dims must stand in from the
@@ -63,9 +67,36 @@ export function resolveStage(s: ImageState): Resolved {
       s.full.dims.w > 1 && s.full.dims.h > 1
         ? s.full.dims
         : (s.thumb?.dims ?? s.knownDims ?? s.full.dims);
-    return { stage: "full", url: s.full.url, dims, error: undefined, full, mid, thumbUrl };
+    return {
+      stage: "full",
+      url: s.full.url,
+      dims,
+      error: undefined,
+      full,
+      mid,
+      thumbUrl,
+      fullError,
+    };
   }
   if (s.thumb)
-    return { stage: "thumb", url: s.thumb.url, dims: s.thumb.dims, error, full, mid, thumbUrl };
-  return { stage: "shimmer", url: undefined, dims: s.knownDims, error, full, mid, thumbUrl };
+    return {
+      stage: "thumb",
+      url: s.thumb.url,
+      dims: s.thumb.dims,
+      error,
+      full,
+      mid,
+      thumbUrl,
+      fullError,
+    };
+  return {
+    stage: "shimmer",
+    url: undefined,
+    dims: s.knownDims,
+    error,
+    full,
+    mid,
+    thumbUrl,
+    fullError,
+  };
 }

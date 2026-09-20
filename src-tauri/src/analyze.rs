@@ -280,7 +280,7 @@ pub(crate) fn clip_pcts(rgb: &[u8]) -> (f32, f32) {
         return (0.0, 0.0);
     }
     let (mut blown, mut crushed) = (0usize, 0usize);
-    for p in rgb.chunks_exact(3) {
+    for p in rgb.as_chunks::<3>().0 {
         if p[0] >= CLIP_HIGH && p[1] >= CLIP_HIGH && p[2] >= CLIP_HIGH {
             blown += 1;
         } else if p[0] <= CLIP_LOW && p[1] <= CLIP_LOW && p[2] <= CLIP_LOW {
@@ -323,6 +323,17 @@ pub(crate) fn af_crop(
     w: usize,
     h: usize,
 ) -> (Rect, bool) {
+    if w == 0 || h == 0 {
+        return (
+            Rect {
+                x0: 0,
+                y0: 0,
+                x1: 0,
+                y1: 0,
+            },
+            false,
+        );
+    }
     let side = ((AF_CROP_FRAC * w.min(h) as f32) as usize).clamp(1, w.min(h));
     let (cx, cy, valid) = match (af_x_pct, af_y_pct) {
         (Some(xp), Some(yp)) => {
@@ -892,6 +903,18 @@ mod tests {
         assert_eq!((rect.x1, rect.y1), (1000, 600));
     }
 
+    /// A degenerate decode (0×0) must not panic in the clamp — the crop is
+    /// empty and flagged invalid, and score_one never sees one anyway
+    /// (jpeg_rgb::validate_dims rejects it upstream).
+    #[test]
+    fn af_crop_zero_sized_buffer_does_not_panic() {
+        for (w, h) in [(0, 0), (0, 600), (1000, 0)] {
+            let (rect, valid) = af_crop(1, Some(50.0), Some(50.0), w, h);
+            assert_eq!((rect.x0, rect.y0, rect.x1, rect.y1), (0, 0, 0, 0));
+            assert!(!valid);
+        }
+    }
+
     // ── Motion blur ────────────────────────────────────────────────────────
 
     #[test]
@@ -1150,7 +1173,7 @@ mod tests {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let (user, _lrc) = crate::xmp::read_ratings(p);
+            let (user, _lrc) = crate::xmp::read_ratings(p).unwrap_or((None, None));
             let suggest_reject =
                 s.decode_ok && s.af_sharpness < SHARP_REJECT && s.af_texture >= TEXTURE_MIN;
             let suggest = if suggest_reject { "reject" } else { "-" };

@@ -29,6 +29,9 @@ import { normalizeRejectedSubfolder, type PerformanceProfile } from "../types/se
 import { basename } from "../utils/path";
 import { imageStore } from "../image/imageStore";
 import { overlayService } from "../overlays/overlayService";
+import { omitIds, pruneGone, pruneHistory, remapNavStack } from "../utils/pruneSession";
+import { summarizeAnalyzeWarnings, type AnalyzeWarning } from "../utils/analyzeWarnings";
+import { writeLocalStorage } from "../utils/storage";
 
 /**
  * All-null ImageMetadata template. Seeds a grid badge from a known LrC star
@@ -89,6 +92,7 @@ export function useSessionLifecycle({
   setPickerBusy,
   setScanFailures,
   setAnalyzeError,
+  setAnalyzeWarning,
   setLastAdded,
   setLastIgnored,
   setLastBatchFolders,
@@ -105,6 +109,8 @@ export function useSessionLifecycle({
   setSelectedIndices,
   setSelectionAnchor,
   setConfirmHome,
+  setChampionIndex,
+  setChallengerIndex,
 }: {
   images: Img[];
   imagesRef: RefObject<Img[]>;
@@ -130,6 +136,7 @@ export function useSessionLifecycle({
   setPickerBusy: Dispatch<SetStateAction<boolean>>;
   setScanFailures: Dispatch<SetStateAction<readonly ScanFailure[] | null>>;
   setAnalyzeError: Dispatch<SetStateAction<string | null>>;
+  setAnalyzeWarning: Dispatch<SetStateAction<AnalyzeWarning | null>>;
   setLastAdded: Dispatch<SetStateAction<number>>;
   setLastIgnored: Dispatch<SetStateAction<number>>;
   setLastBatchFolders: Dispatch<SetStateAction<string[]>>;
@@ -146,6 +153,8 @@ export function useSessionLifecycle({
   setSelectedIndices: Dispatch<SetStateAction<Set<number>>>;
   setSelectionAnchor: Dispatch<SetStateAction<number | null>>;
   setConfirmHome: Dispatch<SetStateAction<boolean>>;
+  setChampionIndex: Dispatch<SetStateAction<number>>;
+  setChallengerIndex: Dispatch<SetStateAction<number>>;
 }) {
   // Serialises folder opens: a scan already in flight makes any second open
   // (drag-drop, recents, mount auto-open) a no-op until it settles.
@@ -246,7 +255,9 @@ export function useSessionLifecycle({
 
             // Persist the last-used dir only AFTER a successful scan, so a folder
             // that fails to open never becomes the picker default / auto-open target.
-            localStorage.setItem("cull:lastDir", folderPath);
+            // writeLocalStorage never throws, so a full/private-mode storage can no
+            // longer surface here as a scan failure.
+            writeLocalStorage("cull:lastDir", folderPath);
 
             // APPEND, never replace. Read the prior set from imagesRef and update it
             // synchronously alongside setImages, so dedupe + ids are computed against
@@ -420,6 +431,7 @@ export function useSessionLifecycle({
     if (analyzingRef.current) return; // ignore a double-click — one analyze pass
     analyzingRef.current = true;
     setAnalyzeError(null);
+    setAnalyzeWarning(null);
     setProgress({ done: 0, total: images.length, phase: "reading" });
     setPhase("analyzing");
     const unlisten = await listen<AnalyzeProgress>("analyze-progress", (e) =>
@@ -456,6 +468,7 @@ export function useSessionLifecycle({
       // ids ride along, so the rating map stays valid post-sort.
       setImages(sorted);
       setRatings(restoredRatings);
+      setAnalyzeWarning(summarizeAnalyzeWarnings(result));
       setMetadata((prev) => ({ ...seededMeta, ...prev }));
       // Point the image store at the (sorted) culling set: revoke any prior
       // full-res blobs, keep thumbs, and kick off background thumb fill in
@@ -512,6 +525,7 @@ export function useSessionLifecycle({
     setFilter,
     setPhase,
     setAnalyzeError,
+    setAnalyzeWarning,
     setProgress,
     setThumbsVisible,
     setExifVisible,
@@ -519,6 +533,63 @@ export function useSessionLifecycle({
     setPeakingVisible,
     setCompositionVisible,
   ]);
+
+  // After "Move rejects" (subfolder or Trash): take the moved frames out of
+  // the live session in place. Every cursor is remapped through functional
+  // setState from its LIVE value — this runs after an await, and the dialog
+  // can be dismissed mid-move, so closure values may be stale. The undo/redo
+  // history loses the moved frames' changes, and the image store forgets them
+  // WITHOUT a generation bump (survivors keep their tiers and the mounted
+  // panes keep their registrations). A stale cell for a moved photo used to
+  // write a real, orphaned sidecar into the old folder.
+  const pruneMoved = useCallback(
+    (gone: readonly string[]) => {
+      const next = pruneGone(imagesRef.current, gone);
+      if (!next) return;
+      const { images: survivors, goneIds, remap } = next;
+      imagesRef.current = survivors;
+      setImages(survivors);
+      setRatings((prev) => omitIds(prev, goneIds));
+      setMetadata((prev) => {
+        const out = { ...prev };
+        for (const p of gone) delete out[p];
+        return out;
+      });
+      setCurrentIndex(remap);
+      setChampionIndex(remap);
+      setChallengerIndex(remap);
+      setNavStack((prev) => remapNavStack(prev, remap));
+      setSelectedIndices((s) => (s.size > 0 ? new Set() : s));
+      setSelectionAnchor(null);
+      undoStack.current = pruneHistory(undoStack.current, goneIds);
+      redoStack.current = pruneHistory(redoStack.current, goneIds);
+      imageStore.forget(new Set(gone));
+      if (survivors.length === 0) {
+        // Nothing left to compare or grid: the compare branch has no
+        // empty-session guard, and an empty grid is just the "no images" loupe.
+        setCompareMode(false);
+        setGridVisible(false);
+      }
+      // The recents entry is refreshed by the debounced culling effect on the
+      // images/ratings change; no immediate write from a possibly stale closure.
+    },
+    [
+      imagesRef,
+      undoStack,
+      redoStack,
+      setImages,
+      setRatings,
+      setMetadata,
+      setCurrentIndex,
+      setChampionIndex,
+      setChallengerIndex,
+      setNavStack,
+      setSelectedIndices,
+      setSelectionAnchor,
+      setCompareMode,
+      setGridVisible,
+    ],
+  );
 
   // Esc out of review → discard the in-memory session and return Home.
   // Successfully-saved ratings live on in the .xmp sidecars, so reopening the
@@ -547,6 +618,7 @@ export function useSessionLifecycle({
     setPendingFolder(null);
     setScanFailures(null);
     setAnalyzeError(null);
+    setAnalyzeWarning(null);
     setLastAdded(0);
     setLastIgnored(0);
     setLastBatchFolders([]);
@@ -583,6 +655,7 @@ export function useSessionLifecycle({
     setPendingFolder,
     setScanFailures,
     setAnalyzeError,
+    setAnalyzeWarning,
     setLastAdded,
     setLastIgnored,
     setLastBatchFolders,
@@ -601,5 +674,5 @@ export function useSessionLifecycle({
     resetSession();
   }, [images, ratings, resetSession, writeSessionRecent, setConfirmHome]);
 
-  return { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome };
+  return { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome, pruneMoved };
 }

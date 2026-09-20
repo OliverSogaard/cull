@@ -420,9 +420,28 @@ export const PhotoPane = memo(function PhotoPane({
       {/* Zoom loading ring: zoomed but the sharp raster isn't in place yet
           (fetching or decoding) — tells the user when the pixels are real.
           The 150ms CSS reveal delay keeps cached zooms ring-free. */}
-      {isZooming && !hiResReady && (
+      {isZooming && !hiResReady && !img.fullError && (
         <div className="cull-photo-frame__spinner-wrap" aria-hidden>
           <div className="cull-loading__spinner" />
+        </div>
+      )}
+      {/* The 32 MP read failed while the user is judging sharpness: say so
+          instead of spinning forever (the store's auto-retry backs off up to
+          MAX_TIER_ATTEMPTS; this chip is the manual way through). retry()
+          clears the error state; the explicit request re-queues the read —
+          the zoom effects key on path/zoom, which did not change. */}
+      {isZooming && !hiResReady && img.fullError && (
+        <div className="cull-error-chip" title={img.fullError}>
+          <span>full-res failed</span>
+          <button
+            type="button"
+            onClick={() => {
+              imageStore.retry(path);
+              imageStore.requestZoomFull(path);
+            }}
+          >
+            retry
+          </button>
         </div>
       )}
       {/* Deferred zoom layer: the 32 MP zoom-tier blob at native size,

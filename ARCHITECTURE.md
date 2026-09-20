@@ -139,6 +139,13 @@ write that exhausts every retry is recorded in `failedWrites`; the UI shows
 an unsaved indicator and the close handler refuses to quit. Retry is one
 click from the indicator or the quit guard.
 
+A write is refused outright when the CR3 is no longer at its path
+(`xmp::require_source`, error prefix `source missing:`) — after "Move rejects"
+the moved frames are pruned from the session (see "Finishing a cull" below),
+so this only fires for a file deleted outside CULL. The frontend recognises
+the prefix and records the failure without retrying (`utils/writeFailure.ts`).
+An unrate with no sidecar to touch stays a no-op regardless.
+
 Writes are atomic at the filesystem level — we write to a temp sibling and
 rename. A unique process-wide sequence number on the temp filename
 (`XMP_TMP_SEQ`) means two overlapping writes to the same sidecar never
@@ -156,6 +163,32 @@ when CULL owned it (`cull:fav="star"`); a user's own star — including a genuin
 1★ — is preserved. If the remaining sidecar carries no other user data and was
 authored by CULL originally, the whole file is removed so unrating leaves no
 litter.
+
+## Finishing a cull (move / copy / trash)
+
+`file_ops.rs` batches are idempotent and never overwrite. Every result carries
+`completed`, `skipped`, an error list capped at 20 with the exact `errorCount`,
+and `gone` — the sources no longer at their original location (completed moves
+plus sources already missing; empty for a copy). A sidecar that fails to
+follow its CR3 is an error in that count, so "N moved · 0 errors" means the
+ratings travelled too.
+
+After a move, `pruneMoved` (`useSessionLifecycle`) takes the `gone` frames out
+of the live session: `images`, ratings and metadata drop them, and every
+index-based cursor (current, champion, challenger, nav stack) is remapped
+through functional setState off its live value (`utils/pruneSession.ts`) —
+this runs after an await, so a closure value could otherwise be stale. The
+undo/redo history loses the moved frames' changes, and `imageStore.forget()`
+revokes their blobs without a generation bump so the mounted panes keep their
+registrations. The session's recents entry is not written immediately from
+that same closure; it's refreshed by the debounced effect that already
+watches `images`/`ratings` while culling. The staged-set identity changes, so
+smart-culling scores restart for the remaining unrated frames.
+
+The analyze pass reports what it could not read — parent folders that failed
+to list, sidecars that exist but failed to read — on `AnalyzeResult`; the
+status bar shows a dismissible chip (`utils/analyzeWarnings.ts`) instead of
+silently sorting those frames last and unrated.
 
 ## Site navigation: stack-based ESC
 

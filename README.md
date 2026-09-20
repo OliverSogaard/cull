@@ -271,7 +271,7 @@ cull/
 │   │   ├── io_gate.rs          # global I/O admission (NAS backpressure)
 │   │   ├── memory_pressure.rs  # jetsam defense (macOS memory watch)
 │   │   ├── xmp.rs              # XMP sidecar I/O (atomic writes)
-│   │   ├── file_ops.rs         # move / copy after the cull
+│   │   ├── file_ops.rs         # move / copy / trash after the cull (sidecar failures counted, gone list)
 │   │   └── meta.rs             # ImageMetadata shared with the UI
 │   ├── models/                 # bundled ONNX models (see THIRD_PARTY_NOTICES.md)
 │   └── Cargo.toml
