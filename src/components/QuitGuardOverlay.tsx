@@ -5,7 +5,6 @@ import {
   missingFailureSentence,
   missingPhotosLabel,
   missingRecovery,
-  missingSkippedNote,
   saveFailureKind,
 } from "../utils/saveStatusCopy";
 
@@ -19,9 +18,11 @@ type Props = {
 };
 
 /** The close-request guard: shown while ratings are still being written (auto-closes
- *  when they land) or when writes failed permanently (explicit choice, never silent loss).
- *  When every failure is a photo that is gone there is no retry to offer, so the guard
- *  states the loss and leaves the choice at keep culling / close anyway. */
+ *  when they land) or when writes exhausted their retries (explicit choice, never
+ *  silent loss). When every failure is a photo that wasn't at its path, the way back
+ *  is the footer's "check again" once the drive is up — not a retry from in here,
+ *  which would fire against the same outage — so the guard says so and leaves the
+ *  choice at keep culling / close anyway. */
 export function QuitGuardOverlay({
   failedCount,
   missingCount,
@@ -40,10 +41,10 @@ export function QuitGuardOverlay({
               <TriangleAlert className="dialog__title-icon" {...ICON.lg} aria-hidden />
               {missingPhotosLabel(missingCount)}
             </div>
-            {/* Fact → what closing costs → how to recover. The guard cannot
-                clear itself (failedCount never reaches zero for a missing
-                photo), so the last clause is the only way out that keeps the
-                rating — it must be on screen, not just in the other dialog. */}
+            {/* Fact → what closing costs → how to recover. Nothing in this
+                dialog can clear the guard while the photos are unreachable, so
+                the last clause is the only way out that keeps the rating — it
+                must be on screen, not just in the other dialog. */}
             <div className="dialog__body">
               {missingFailureSentence(missingCount)} Closing now loses{" "}
               {missingCount > 1 ? "them" : "it"}. {missingRecovery(missingCount)}
@@ -66,7 +67,6 @@ export function QuitGuardOverlay({
             <div className="dialog__body">
               {failedCount} {failedCount > 1 ? "ratings are" : "rating is"} not on disk (the sidecar
               write kept failing). Closing now will lose {failedCount > 1 ? "them" : "it"}.
-              {missingCount > 0 && ` ${missingSkippedNote(missingCount)}`}
             </div>
             <div className="dialog__actions">
               <button className="btn btn--primary" onClick={retryFailed}>

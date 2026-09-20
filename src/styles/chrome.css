@@ -1,7 +1,13 @@
 /* ── save-status pill (top chrome) ────────────────────────────
    XMP save indicator next to the brand block. Four states driven
    purely from the existing savingCount / failedWrites state. */
+/* The failed / missing states render as a real <button>, so the base carries
+   the reset that keeps a button looking like this pill (the size and the mono
+   face come from `.chip`; only the UA's own chrome has to go). */
 .cull-save-status {
+  appearance: none;
+  background: none;
+  border: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -35,15 +41,13 @@
   animation: cull-save-pulse 0.9s infinite;
 }
 
-/* --missing shares the failed pill's alarm but not its affordance: the photo
-   is gone, so there is no retry to click. */
+/* --missing shares the failed pill's alarm AND its affordance: a photo that
+   wasn't at its path is usually a drive that dropped out, so both states are
+   one click on the same retry. They differ only in what they say. */
 .cull-save-status--failed,
 .cull-save-status--missing {
   color: var(--bad);
   background: rgba(200, 127, 127, 0.12);
-}
-
-.cull-save-status--failed {
   cursor: pointer;
 }
 
@@ -53,14 +57,13 @@
   opacity: 1;
 }
 
-.cull-save-status--failed:hover {
+.cull-save-status--failed:hover,
+.cull-save-status--missing:hover {
   background: rgba(200, 127, 127, 0.2);
 }
 
-.cull-save-status--failed:focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
-}
+/* `.chip:focus-visible` already carries --ring; these two are the only
+   focusable pills, and they take it from there. */
 
 @keyframes cull-save-pulse {
   0%,
@@ -699,7 +702,16 @@
   letter-spacing: 0.06em;
 }
 
+/* A real <button>: both kinds of failed write re-attempt on click, so the
+   chip is keyboard-reachable and takes the focus ring like every other
+   control (--ring, not --ring-inset — the footer gives it 14px of gap and
+   13px above and below). The reset is what a bare button needs to sit in a
+   text row: no UA chrome, no UA padding, no UA font. */
 .cull-statusbar__unsaved {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
   color: var(--bad);
   font-family: var(--font-mono);
   font-size: var(--fs-2);
@@ -714,12 +726,4 @@
 .cull-statusbar__unsaved:hover {
   color: var(--bad-hover);
   text-decoration: underline;
-}
-
-/* A missing photo's chip is a statement, not a retry button. */
-.cull-statusbar__unsaved--missing,
-.cull-statusbar__unsaved--missing:hover {
-  color: var(--bad);
-  cursor: default;
-  text-decoration: none;
 }

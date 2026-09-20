@@ -481,17 +481,26 @@ conventions instead of per-component one-offs:
   dialog.
 - **Write failures come in two kinds, and only one blocks finishing.**
   `useRatingPersistence` (`src/app/useRatingPersistence.ts`) records each
-  exhausted write with a boolean `missing`: true when the CR3 is no longer at
-  its path (no retry can fix that), false when the failure is a transient one
-  a retry can still save. `src/utils/saveStatusCopy.ts`'s `saveFailureKind` turns
+  exhausted write with a boolean `missing`: true when the backend refused
+  because the CR3 was not at its path, false when the write itself kept
+  failing. `missing` buys one thing — no AUTOMATIC retry schedule, since
+  hammering a `source missing:` refusal on a 400/1500/4000 ms timer only
+  delays the honest "didn't save" by six seconds. It does **not** exclude the
+  write from `retryFailed()`: a drive or NAS dropping out is what usually
+  produces it, so a deliberate re-check re-attempts every failure the hook
+  holds (once each for the missing ones, fail fast). Skipping them used to
+  strand every rating made during an outage with no way to save it after the
+  drive returned. `src/utils/saveStatusCopy.ts`'s `saveFailureKind` turns
   `failedCount`/`missingCount` into `"none" | "missing" | "retry"` for the
-  four surfaces that report a failure (status-bar chip, save-status pill,
-  quit guard, leave-to-home warning), so they all tell the same story instead
-  of drifting into slightly different wording. `FinishDialog`'s
+  five surfaces that report a failure (status-bar chip, save-status pill,
+  quit guard, leave-to-home warning, finish dialog), so they all tell the same
+  story instead of drifting into slightly different wording — the all-missing
+  chip and pill offer "check again" rather than a plain "retry", because that
+  is what the click is worth once the drive is back. `FinishDialog`'s
   `retryableFailedCount` (`Math.max(0, failedCount - missingCount)`) is the
-  only count that disables the move/copy actions — a photo that's gone is
-  warned about but never blocks finishing the cull, since blocking on an
-  unfixable failure would leave no way out of the session at all.
+  only count that disables the move/copy actions — a missing photo is warned
+  about but never blocks finishing the cull, since blocking on a failure the
+  session cannot clear would leave no way out of it at all.
 
 ## Modules
 

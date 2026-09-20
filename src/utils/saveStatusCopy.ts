@@ -1,12 +1,13 @@
 /**
  * The one vocabulary for a rating write that didn't land.
  *
- * Four surfaces report a failed write — the status-bar chip, the save-status
- * pill in the top chrome, the quit guard and the leave-to-home warning — and
- * they have to tell the same story, because a photo that is no longer at its
- * path can never be saved by retrying (see utils/writeFailure). Offering
- * "unsaved · retry" there is a lie; saying so in three slightly different ways
- * is how the lie comes back.
+ * Five surfaces report a failed write — the status-bar chip, the save-status
+ * pill in the top chrome, the quit guard, the leave-to-home warning and the
+ * finish dialog — and they have to tell the same story, because a photo that
+ * was not at its path when the write went out is a different situation from a
+ * sidecar that simply would not write (see utils/writeFailure). Saying that in
+ * five slightly different ways is how a surface ends up promising something
+ * another one denies.
  *
  * Sentence case throughout, even for the chips CSS renders in another case.
  */
@@ -15,9 +16,9 @@
 export type SaveFailureKind =
   /** Nothing failed. */
   | "none"
-  /** Every failure is a photo that is gone — warn, but never offer a retry. */
+  /** Every failure is a photo that was not at its path — offer a re-check. */
   | "missing"
-  /** At least one failure could still succeed — the retry is real. */
+  /** At least one failure is an ordinary one — the retry is the plain retry. */
   | "retry";
 
 export function saveFailureKind(failedCount: number, missingCount: number): SaveFailureKind {
@@ -25,13 +26,24 @@ export function saveFailureKind(failedCount: number, missingCount: number): Save
   return missingCount >= failedCount ? "missing" : "retry";
 }
 
-/** Why the missing chip is not a button. */
+/**
+ * What the missing chip does, and when it is worth doing.
+ *
+ * A drive or NAS dropping out is what usually produces this, so the honest
+ * offer is "check again", not "give up": the rating is still held, and one
+ * click once the photos are reachable saves it.
+ */
 export const MISSING_PHOTO_TITLE =
-  "The photo is no longer at its path, so its rating could not be saved.";
+  "The photo is not at its path. Check again once the drive or folder is back.";
 
-/** The all-missing chip label: "1 photo missing" / "3 photos missing". */
+/** The all-missing count phrase: "1 photo missing" / "3 photos missing". */
 export function missingPhotosLabel(count: number): string {
   return `${count} photo${count === 1 ? "" : "s"} missing`;
+}
+
+/** The all-missing chip label — the count phrase plus what clicking it does. */
+export function missingCheckAgainLabel(count: number): string {
+  return `${missingPhotosLabel(count)} · check again`;
 }
 
 /** The retryable chip label, unchanged: "3 unsaved · retry". */
@@ -39,13 +51,11 @@ export function unsavedLabel(failedCount: number): string {
   return `${failedCount} unsaved · retry`;
 }
 
-/** The retryable chip title, warning about the part of the batch a retry skips. */
-export function unsavedTitle(missingCount: number): string {
-  const base = "Ratings failed to save · click to retry";
-  if (missingCount <= 0) return base;
-  const photos = missingCount === 1 ? "missing photo" : "missing photos";
-  return `${base} (${missingCount} ${photos} will be skipped)`;
-}
+/**
+ * The retryable chip title. No count and no caveat: a mixed batch re-attempts
+ * every failure it holds, the missing ones included.
+ */
+export const UNSAVED_TITLE = "Ratings failed to save · click to retry";
 
 /** The all-missing dialog sentence, agreeing with itself in both numbers. */
 export function missingFailureSentence(count: number): string {
@@ -56,24 +66,16 @@ export function missingFailureSentence(count: number): string {
 
 /**
  * The one recovery instruction. Every surface that reports a missing photo ends
- * on it — the quit guard included, where the guard cannot clear itself and this
- * is the only way out that keeps the rating. Centralised because three
- * hand-written tails drifted apart on the punctuation alone (two commas and an
- * em dash) the first time round.
+ * on it. Centralised because three hand-written tails drifted apart on the
+ * punctuation alone (two commas and an em dash) the first time round.
  *
+ * It names the likely cause first — a drive or folder that went away, which the
+ * re-check fixes by itself — and only then the case the user has to act on.
  * Each of those bodies reads fact → what it means here → this clause, so the
  * advice always lands last.
  */
 export function missingRecovery(count: number): string {
   return count === 1
-    ? "Retrying cannot help — put the photo back and rate it again."
-    : "Retrying cannot help — put the photos back and rate them again.";
-}
-
-/** The mixed-failure dialog tail — empty when nothing would be skipped. */
-export function missingSkippedNote(missingCount: number): string {
-  if (missingCount <= 0) return "";
-  return missingCount === 1
-    ? "1 of them is a missing photo, which a retry will skip."
-    : `${missingCount} of them are missing photos, which a retry will skip.`;
+    ? "Check again once the drive or folder is back and it will save; if the photo was moved or deleted, put it back and rate it again."
+    : "Check again once the drive or folder is back and they will save; if the photos were moved or deleted, put them back and rate them again.";
 }

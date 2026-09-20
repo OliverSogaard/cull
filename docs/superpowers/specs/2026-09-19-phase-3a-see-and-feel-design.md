@@ -26,7 +26,7 @@ The board was a local page built from the app's real stylesheet; options differe
 - The settings toggle's hit area is at least 24 × 24 CSS px; the drawn track stays 36 × 20.
 - Armed confirms ("Yes, move", "Yes, reset") receive focus when they appear.
 - EXIF values and error text are selectable (`user-select: text`); chrome stays unselectable.
-- A write that failed because the photo is no longer at its path says so ("photo missing") instead of offering a retry that cannot succeed.
+- A write that failed because the photo was not at its path says so ("photo missing") instead of reading as an ordinary unsaved rating. It still offers the click — labelled "check again", since the usual cause is a drive or folder that dropped out and a re-check saves the rating once it is back (controller ruling, final review).
 - The dead `.cull-quitguard__danger:hover` becomes live through the danger button modifier.
 - README's key table describes Compare's compound `f` / `k`.
 

@@ -6,10 +6,10 @@ import { cycleFilter, topOf } from "../utils/filterModes";
 import { modCombo } from "../utils/platform";
 import {
   MISSING_PHOTO_TITLE,
-  missingPhotosLabel,
+  UNSAVED_TITLE,
+  missingCheckAgainLabel,
   saveFailureKind,
   unsavedLabel,
-  unsavedTitle,
 } from "../utils/saveStatusCopy";
 import { ICON } from "./icons";
 import { verdictGlyph } from "./verdictGlyph";
@@ -115,8 +115,9 @@ export const StatusBar = memo(function StatusBar({
     favorite: "cull-statusbar__verdict--fav",
   };
   const totalKeeps = filter.stats.keeps; // includes favorites
-  // A write that failed because the photo is gone gets a statement, not a
-  // retry button — the retry could never succeed (see utils/saveStatusCopy).
+  // Both kinds of failure are one button running one action (retryFailed);
+  // only the words change, because a missing photo is usually a drive that
+  // went away rather than a write that won't take (see utils/saveStatusCopy).
   const failureKind = saveFailureKind(save.failedCount, save.missingCount);
   return (
     <footer className="cull-statusbar">
@@ -213,23 +214,18 @@ export const StatusBar = memo(function StatusBar({
             {selection.selectedCount} selected
           </span>
         )}
-        {failureKind === "missing" ? (
-          <span
-            className="cull-statusbar__unsaved cull-statusbar__unsaved--missing"
-            title={MISSING_PHOTO_TITLE}
-          >
-            <TriangleAlert {...ICON.sm} aria-hidden />
-            {missingPhotosLabel(save.missingCount)}
-          </span>
-        ) : failureKind === "retry" ? (
-          <span
+        {failureKind !== "none" ? (
+          <button
+            type="button"
             className="cull-statusbar__unsaved"
             onClick={save.retryFailed}
-            title={unsavedTitle(save.missingCount)}
+            title={failureKind === "missing" ? MISSING_PHOTO_TITLE : UNSAVED_TITLE}
           >
             <TriangleAlert {...ICON.sm} aria-hidden />
-            {unsavedLabel(save.failedCount)}
-          </span>
+            {failureKind === "missing"
+              ? missingCheckAgainLabel(save.missingCount)
+              : unsavedLabel(save.failedCount)}
+          </button>
         ) : (
           save.savingCount > 0 && (
             <span className="cull-statusbar__saving">Saving {save.savingCount}…</span>

@@ -4,7 +4,6 @@ import {
   missingFailureSentence,
   missingPhotosLabel,
   missingRecovery,
-  missingSkippedNote,
   saveFailureKind,
 } from "../utils/saveStatusCopy";
 
@@ -18,8 +17,8 @@ type Props = {
 /** Esc-to-leave confirmation shown while culling: warns about unsaved ratings
  *  when there are failed writes, otherwise just confirms the reopen-restores
  *  guarantee (ratings live in .xmp sidecars). When every failure is a photo
- *  that is gone, staying to retry is not the safer option — the dialog says so
- *  instead of promising a retry that cannot succeed. */
+ *  that wasn't at its path, staying is not what fixes it — the drive coming
+ *  back is — so the dialog gives that instruction instead of "retry first". */
 export function ConfirmHomeDialog({ failedCount, missingCount, onLeave, onStay }: Props) {
   const failure = saveFailureKind(failedCount, missingCount);
   const title =
@@ -43,8 +42,7 @@ export function ConfirmHomeDialog({ failedCount, missingCount, onLeave, onStay }
         </div>
         <div className="dialog__body">
           {failure === "missing" && missingBody}
-          {failure === "retry" &&
-            (missingCount > 0 ? `${retryBody} ${missingSkippedNote(missingCount)}` : retryBody)}
+          {failure === "retry" && retryBody}
           {failure === "none" &&
             "Ratings are saved in .xmp sidecars. Reopening the folder restores them."}
         </div>

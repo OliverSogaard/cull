@@ -1,8 +1,8 @@
 import {
   MISSING_PHOTO_TITLE,
-  missingPhotosLabel,
+  UNSAVED_TITLE,
+  missingCheckAgainLabel,
   saveFailureKind,
-  unsavedTitle,
 } from "../utils/saveStatusCopy";
 
 /**
@@ -12,10 +12,11 @@ import {
  * unnoticed when the bottom bar is occluded by a modal.
  *
  * Four states, fully derived from existing state (no new state machinery):
- *  - missing  → red pill, NOT clickable: the photo is gone, so there is no
- *               retry to offer — same wording as the bottom bar's chip
- *  - failed   → red pill, clickable, runs the same retry path as the bottom bar
- *  - saving   → champagne dot pulsing, "saving…" text
+ *  - missing  → red pill, a real button: the photo wasn't at its path, which
+ *               is usually a drive that dropped out, so it offers the re-check
+ *               in the same words as the bottom bar's chip
+ *  - failed   → red pill, a real button, same retry path as the bottom bar
+ *  - saving   → champagne dot pulsing, "saving…" text, not a control
  *  - idle     → muted dot, "saved" text (default)
  *
  * A failure wins over saving so an in-flight retry doesn't visually mask the
@@ -44,38 +45,37 @@ export function SaveStatusPill({
   // Quiet when there's nothing to say: a standing "saved" on a fresh home
   // screen reads as noise. The pill exists for in-flight and failed writes.
   if (state === "idle") return null;
-  const text =
-    state === "missing"
-      ? missingPhotosLabel(missingCount)
-      : state === "failed"
-        ? "failed · retry"
-        : "saving…";
-  return (
-    <span
-      className={`chip cull-save-status cull-save-status--${state}`}
-      role={state === "failed" ? "button" : undefined}
-      tabIndex={state === "failed" ? 0 : undefined}
-      onClick={state === "failed" ? onRetry : undefined}
-      onKeyDown={
-        state === "failed"
-          ? (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onRetry();
-              }
-            }
-          : undefined
-      }
-      title={
-        state === "missing"
-          ? MISSING_PHOTO_TITLE
-          : state === "failed"
-            ? unsavedTitle(missingCount)
-            : `Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`
-      }
-    >
+  const className = `chip cull-save-status cull-save-status--${state}`;
+  const body = (
+    <>
       <span className="cull-save-status__dot" />
-      <span className="cull-save-status__label">{text}</span>
-    </span>
+      <span className="cull-save-status__label">
+        {state === "missing"
+          ? missingCheckAgainLabel(missingCount)
+          : state === "failed"
+            ? "failed · retry"
+            : "saving…"}
+      </span>
+    </>
+  );
+  if (state === "saving") {
+    return (
+      <span
+        className={className}
+        title={`Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}`}
+      >
+        {body}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={onRetry}
+      title={state === "missing" ? MISSING_PHOTO_TITLE : UNSAVED_TITLE}
+    >
+      {body}
+    </button>
   );
 }

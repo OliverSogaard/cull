@@ -8,12 +8,16 @@ import { useRatingPersistence } from "./useRatingPersistence";
  * Rating-write durability, from the outside: what the chrome is allowed to say
  * about a write that didn't land.
  *
- * The distinction under test is PERMANENCE. The backend refuses to write a
- * sidecar for a photo that is no longer at its path (`source missing:`), and no
- * amount of retrying can bring it back — so such a write is counted in
- * `missingCount` as well as `failedCount`, and `retryFailed()` leaves it alone.
- * Every other failure keeps the 400/1500/4000 ms retry schedule and stays
- * retryable.
+ * The distinction under test is the RETRY SCHEDULE, not whether a retry may
+ * happen at all. The backend refuses to write a sidecar for a photo that is not
+ * at its path (`source missing:`), and hammering that refusal on a timer only
+ * delays the honest "didn't save" — so such a write is counted in
+ * `missingCount` as well as `failedCount` and gets ONE attempt, no schedule.
+ * Every other failure keeps the 400/1500/4000 ms schedule.
+ *
+ * A deliberate `retryFailed()` is a different thing: the drive or NAS the photo
+ * lives on may have come back since, so it re-attempts every failure including
+ * the missing ones — once each, fail fast.
  *
  * Fake timers drive that schedule; `settleWrites` advances past all three
  * slots and drains the promise chain the per-path write queue is built from.
@@ -98,7 +102,7 @@ describe("useRatingPersistence — a missing photo is a permanent failure", () =
     expect(mockInvoke).toHaveBeenCalledTimes(4);
   });
 
-  it("retryFailed re-attempts the retryable path and skips the missing one", async () => {
+  it("retryFailed re-attempts the retryable path and re-checks the missing one", async () => {
     const { result } = renderHook(() => useRatingPersistence());
 
     mockInvoke.mockRejectedValue(new Error(MISSING));
@@ -117,18 +121,50 @@ describe("useRatingPersistence — a missing photo is a permanent failure", () =
     expect(result.current.missingCount).toBe(1);
 
     mockInvoke.mockClear();
+    mockInvoke.mockImplementation((_cmd, args) =>
+      typeof args === "object" && args !== null && "path" in args && args.path === GONE
+        ? Promise.reject(new Error(MISSING))
+        : Promise.reject(new Error(TRANSIENT)),
+    );
     act(() => {
       result.current.retryFailed();
     });
     await settleWrites();
 
-    // Only the flaky path is written again — retrying the gone one would just
-    // re-collect the same refusal. The count says so explicitly: one fresh
-    // attempt plus its three retry slots, and not a single call for GONE.
-    expect(new Set(writtenPaths())).toEqual(new Set([FLAKY]));
-    expect(mockInvoke).toHaveBeenCalledTimes(4);
+    // BOTH paths are written again: a missing photo is missing because a drive
+    // or folder went away, and the user clicking "check again" is saying it may
+    // be back. The missing one still gets no SCHEDULE — exactly one attempt,
+    // against the flaky one's fresh attempt plus its three retry slots.
+    const retried = writtenPaths();
+    expect(retried.filter((path) => path === GONE)).toHaveLength(1);
+    expect(retried.filter((path) => path === FLAKY)).toHaveLength(4);
     expect(result.current.failedCount).toBe(2);
     expect(result.current.missingCount).toBe(1);
+  });
+
+  it("retryFailed saves a missing photo whose drive came back, clearing both counts", async () => {
+    mockInvoke.mockRejectedValue(new Error(MISSING));
+    const { result } = renderHook(() => useRatingPersistence());
+
+    act(() => {
+      result.current.persistRating(GONE, "favorite");
+    });
+    await settleWrites();
+    expect(result.current.failedCount).toBe(1);
+    expect(result.current.missingCount).toBe(1);
+
+    // The NAS is awake again, so the same write the outage refused now lands.
+    mockInvoke.mockReset();
+    mockInvoke.mockResolvedValue(undefined);
+    act(() => {
+      result.current.retryFailed();
+    });
+    await settleWrites();
+
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockInvoke).toHaveBeenCalledWith("write_xmp_rating", { path: GONE, rating: "favorite" });
+    expect(result.current.failedCount).toBe(0);
+    expect(result.current.missingCount).toBe(0);
   });
 
   it("retryFailed re-submits the rating each failed write carried", async () => {
@@ -244,7 +280,7 @@ describe("useRatingPersistence — a missing photo is a permanent failure", () =
     expect(result.current.savingCount).toBe(0);
   });
 
-  it("a successful retry of the retryable half leaves only the missing one", async () => {
+  it("a successful retry of the retryable half leaves only the still-missing one", async () => {
     const { result } = renderHook(() => useRatingPersistence());
 
     mockInvoke.mockRejectedValue(new Error(MISSING));
@@ -259,8 +295,13 @@ describe("useRatingPersistence — a missing photo is a permanent failure", () =
     });
     await settleWrites();
 
+    // The flaky write lands this time; the photo is still not where it was.
     mockInvoke.mockReset();
-    mockInvoke.mockResolvedValue(undefined);
+    mockInvoke.mockImplementation((_cmd, args) =>
+      typeof args === "object" && args !== null && "path" in args && args.path === GONE
+        ? Promise.reject(new Error(MISSING))
+        : Promise.resolve(undefined),
+    );
     act(() => {
       result.current.retryFailed();
     });

@@ -8,11 +8,12 @@ const FEEDBACK_MS = 320;
 // after the last attempt is surfaced as "unsaved" rather than silently dropped.
 const WRITE_RETRY_DELAYS = [400, 1500, 4000];
 
-/** A write that exhausted its options, and whether anything can still be done
- *  about it. `rating === null` = an unrate (clear) that failed, so a stuck
- *  unrate is surfaced and guarded just like a stuck rating. `missing` = the
- *  backend refused because the photo is no longer at its path, which no retry
- *  can fix (utils/writeFailure). */
+/** A write that exhausted its options, and what kind of failure it was.
+ *  `rating === null` = an unrate (clear) that failed, so a stuck unrate is
+ *  surfaced and guarded just like a stuck rating. `missing` = the backend
+ *  refused because the photo is not at its path (utils/writeFailure), which a
+ *  timer cannot fix — only the drive coming back or the photo being put back
+ *  can, so it gets one attempt per deliberate retry and no schedule. */
 type FailedWrite = { rating: Rating | null; missing: boolean };
 
 /**
@@ -25,9 +26,11 @@ type FailedWrite = { rating: Rating | null; missing: boolean };
  *
  * Failures come in two kinds and the chrome must tell them apart: `failedCount`
  * is every failure (so the quit guard and the leave-to-home warning still
- * refuse to lose one silently), `missingCount` is the permanent subset whose
- * photo is gone. What is left — `failedCount - missingCount` — is what a retry
- * could still save, and the only thing that blocks finishing the cull.
+ * refuse to lose one silently), `missingCount` is the subset whose photo was
+ * not at its path. What is left — `failedCount - missingCount` — is what a
+ * retry can be expected to save, and the only thing that blocks finishing the
+ * cull; a missing photo warns instead, because blocking on one would leave a
+ * session with no way out.
  */
 export function useRatingPersistence() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -136,13 +139,15 @@ export function useRatingPersistence() {
     );
   }, []);
 
-  // Re-attempt every rating that exhausted its retries (triggered from the unsaved
-  // indicator or the quit guard). A missing photo is skipped: the backend would
-  // refuse the write again, and clearing then re-stamping its failure would only
-  // make the chrome flicker.
+  // Re-attempt every rating that exhausted its retries (triggered from the
+  // unsaved indicator or the quit guard) — the missing ones included. A photo
+  // is usually "missing" because the drive or NAS it lives on dropped out, and
+  // the user clicking this is saying it may be back; skipping them would strand
+  // every rating made during an outage with no way to ever save it. What the
+  // missing flag still buys them is no automatic SCHEDULE (tryWrite above):
+  // one attempt per click, fail fast.
   const retryFailed = useCallback(() => {
     Object.entries(failedWrites).forEach(([path, write]) => {
-      if (write.missing) return;
       persistRating(path, write.rating);
     });
   }, [failedWrites, persistRating]);

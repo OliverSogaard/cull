@@ -7,11 +7,7 @@ import { ICON } from "./icons";
 import { normalizeRejectedSubfolder } from "../types/settings";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import {
-  missingFailureSentence,
-  missingRecovery,
-  missingSkippedNote,
-} from "../utils/saveStatusCopy";
+import { missingFailureSentence, missingRecovery } from "../utils/saveStatusCopy";
 import {
   isReservedFolderName,
   joinPath,
@@ -306,7 +302,6 @@ export function FinishDialog({
                 <span>
                   {failedCount} rating{failedCount > 1 ? "s" : ""} haven't saved · actions disabled
                   until resolved (status bar · retry)
-                  {missingCount > 0 && ` ${missingSkippedNote(missingCount)}`}
                 </span>
               </>
             ) : pendingNote === "missing" ? (
