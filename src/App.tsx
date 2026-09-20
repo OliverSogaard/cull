@@ -79,7 +79,13 @@ import type { AnalyzeWarning } from "./utils/analyzeWarnings";
 import { passesFilter } from "./utils/filter";
 import { topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
-import { DEFAULT_GRID_SIZE, gridColsFor, stepGridSize, wheelStepDue } from "./utils/gridSize";
+import {
+  DEFAULT_GRID_SIZE,
+  gridCellWidth,
+  gridColsFor,
+  stepGridSize,
+  wheelStepDue,
+} from "./utils/gridSize";
 import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
@@ -512,6 +518,15 @@ export default function App() {
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [gridVisible, compareMode, gridHasCells, setSettings]);
+
+  // The grid's cell width decides whether the sharp tier is worth fetching
+  // ((cellW − 18) × DPR > 160). 0 while the grid is closed, which lets the
+  // store's window eviction free every grid blob.
+  useEffect(() => {
+    imageStore.setGridCellW(
+      gridVisible && !compareMode ? gridCellWidth(gridContentW, gridCols) : 0,
+    );
+  }, [gridVisible, compareMode, gridContentW, gridCols]);
 
   // Compare-mode candidates: every UNRATED frame except the champion (which the
   // strip shows separately as its grayed in-track ghost). The challenger is
