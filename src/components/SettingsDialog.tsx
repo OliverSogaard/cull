@@ -546,7 +546,7 @@ function ThumbCacheRow() {
  * message with primary "Yes, reset". Auto-disarms after 4 s (and Esc / clicking
  * outside closes the dialog), so no explicit Cancel button is needed. */
 function ResetRow({ onReset }: { onReset: () => void }) {
-  const [armed, setArmed] = useArmedConfirm();
+  const [armed, setArmed, armedRef] = useArmedConfirm();
 
   return (
     <div className="cull-settings__row">
@@ -561,6 +561,7 @@ function ResetRow({ onReset }: { onReset: () => void }) {
           <div className="cull-settings__reset-confirm">
             <span className="cull-settings__reset-msg">Sure?</span>
             <button
+              ref={armedRef}
               type="button"
               className="btn btn--sm cull-settings__reset is-armed"
               onClick={() => {
@@ -573,6 +574,7 @@ function ResetRow({ onReset }: { onReset: () => void }) {
           </div>
         ) : (
           <button
+            ref={armedRef}
             type="button"
             className="btn btn--sm cull-settings__reset"
             onClick={() => setArmed(true)}

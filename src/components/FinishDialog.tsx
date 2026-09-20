@@ -459,7 +459,7 @@ function MoveRejectsRow({
   settings: Settings;
   onMoveRejects: (dest: "subfolder" | "trash") => void;
 }) {
-  const [armed, setArmed] = useArmedConfirm();
+  const [armed, setArmed, armedRef] = useArmedConfirm();
   // Where rejects go: the in-source subfolder (default, reversible in place)
   // or the OS Trash (recoverable from the Bin; CULL never hard-deletes).
   const [dest, setDest] = useState<"subfolder" | "trash">("subfolder");
@@ -526,6 +526,7 @@ function MoveRejectsRow({
               : `Sure? This moves ${rejectedCount} files.`}
           </span>
           <button
+            ref={armedRef}
             className="btn btn--primary btn--danger"
             onClick={() => {
               setArmed(false);
@@ -539,7 +540,12 @@ function MoveRejectsRow({
           </button>
         </div>
       ) : (
-        <button className="btn btn--primary" disabled={disabled} onClick={() => setArmed(true)}>
+        <button
+          ref={armedRef}
+          className="btn btn--primary"
+          disabled={disabled}
+          onClick={() => setArmed(true)}
+        >
           Move rejects
         </button>
       )}
