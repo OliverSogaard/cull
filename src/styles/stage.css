@@ -379,6 +379,9 @@
   border: 1px solid var(--border);
   border-radius: 3px; /* off-scale */
   margin: 16px 0;
+  /* Error text (preview-failed detail, analyze-error dump) is copyable data —
+     carve an exception out of the app-wide `user-select: none` in base.css. */
+  user-select: text;
 }
 
 /* Retry affordance on the preview-failed panel (errored reads back off and

@@ -60,6 +60,10 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
   word-break: break-word;
+  /* Values are copyable data (shutter speed, ISO, file path, etc.) — carve
+     an exception out of the app-wide `user-select: none` in base.css. Also
+     used by CompareExifRail, so this covers the compare rail's values too. */
+  user-select: text;
 }
 
 .cull-exif-rail__v--dim {
@@ -144,6 +148,9 @@
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
   word-break: break-word;
+  /* Values are copyable data — carve an exception out of the app-wide
+     `user-select: none` in base.css, same as .cull-exif-rail__v. */
+  user-select: text;
 }
 
 .cull-cr-rail__row.is-diff .cull-cr-rail__v {
