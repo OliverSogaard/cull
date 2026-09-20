@@ -1,0 +1,129 @@
+/* ────────────────────────────────────────────────────────────
+   CULL · reduced motion
+   The one block that honours the OS "reduce motion" setting.
+
+   POLICY: decorative and attention motion stops; motion that means
+   "working" stays, slowed. The verdict flash still tints and the rating
+   pop still pops — they arrive whole instead of animating in, and hold
+   for exactly as long as they always did — while the spinner and the
+   indeterminate bar keep turning, because a frozen spinner reads as a
+   hung app, which is worse than the motion it saved.
+
+   This sheet is imported LAST (index.css), but last only wins
+   SPECIFICITY TIES, so every rule below repeats verbatim the selector it
+   overrides. Where the declaration being overridden is an inline style
+   written from JS, `!important` is the only thing that reaches it.
+
+   Every keyframe defined under src/styles must be named in a review
+   marker beside the rule that decides it. motion.test.ts parses those
+   markers and fails on a keyframe nobody has ruled on yet.
+   ──────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  /* The verdict flash — the most frequent motion in the app, one per rating
+     keystroke. `animation: none` leaves the pseudo-element at its resting
+     opacity of 1, so the full tint and its inset ring appear at once and hold
+     for the ~320ms the flash class lives, instead of fading up and back down
+     over 380ms. The confirmation survives; only the pulse goes.
+     reviewed: cull-flash-pulse */
+  .cull-photo-frame--flash-keep::after,
+  .cull-photo-frame--flash-reject::after,
+  .cull-photo-frame--flash-fav::after {
+    animation: none;
+  }
+
+  /* The rating pop, same keystroke: the circle is simply drawn, at full size
+     and full opacity, for its usual 320ms — no scale-up, no fade-out.
+     reviewed: cull-feedback-pop */
+  .cull-feedback__circle {
+    animation: none;
+  }
+
+  /* The champagne "restored the default" flash on a free-text input. Unlike
+     the two above, the resting state here is the input's ordinary background
+     — that is, no confirmation at all — so the keyframe's opening frame is
+     held instead, for the 900ms the class lives.
+     reviewed: cull-flash-restore */
+  .cull-settings__text.is-flash,
+  .cull-finish__dest-sub.is-flash {
+    animation: none;
+    background: var(--accent-a25);
+    border-color: var(--accent);
+  }
+
+  /* Attention pulses and breathes. Each sits beside a word that already says
+     what is happening ("saving", "checking folder…", "moving N…"), so the
+     throb is decoration and the resting frame is the honest state.
+     reviewed: cull-save-pulse, cull-trouble-pulse, cull-finish-progress-breathe */
+  .cull-save-status--saving .cull-save-status__dot,
+  .cull-trouble-chip[data-state="checking"],
+  .cull-finish__progress-fill {
+    animation: none;
+  }
+
+  /* The scrub arrow blinks and nudges 2px while a held arrow key scrubs. The
+     label it prefixes is the signal; the arrow only has to be there.
+     reviewed: cull-scrub-flash */
+  .cull-statusbar__scrub::before {
+    animation: none;
+  }
+
+  /* "Every frame rated" fills the finish button solid and breathes it once.
+     The fill is the message, the breath is the flourish, and the fill is
+     declared on the rule itself so it stays.
+     reviewed: cull-finish-done */
+  .cull-statusbar__finish.is-done {
+    animation: none;
+  }
+
+  /* Entrances. Both rest visible and un-nudged, so dropping the animation
+     already leaves the element in its final state.
+     reviewed: cull-hero-in */
+  .cull-hero,
+  .cull-scanfail {
+    animation: none;
+  }
+
+  /* Skeleton sweep → a static placeholder: the highlight band parks off the
+     box at its resting translate and the element's own base colour is all
+     that shows.
+     reviewed: cull-shimmer-sweep */
+  .shimmer::after {
+    animation: none;
+  }
+
+  /* The photo-frame spinner hides itself for 150ms and is revealed BY its
+     animation, so this is the one place the visible end state has to be
+     restored by hand. The spinner now appears as soon as it mounts.
+     reviewed: cull-spinner-reveal */
+  .cull-photo-frame__spinner-wrap {
+    animation: none;
+    opacity: 1;
+  }
+
+  /* Kept, slowed — these two are the app saying "working", and nothing else
+     in their corner of the UI says it. Only the duration is overridden; the
+     rest of each shorthand stands.
+     reviewed: cull-spin */
+  .spinner {
+    animation-duration: 1.6s;
+  }
+
+  /* reviewed: cull-indeterminate */
+  .cull-progress__indeterminate {
+    animation-duration: 2.4s;
+  }
+
+  /* Zoom and pan glide. This transition is an inline style (App's zoomGlide,
+     shared by every layer that scales with zoom, plus the hi-res layer's own
+     string), so only `!important` can reach it. Zoom still happens — it lands
+     instantly rather than gliding, and it is the one large full-frame
+     movement in the app. A transition, not an animation: no keyframe to
+     review. */
+  .cull-image,
+  .cull-cmp-img,
+  .cull-clip-overlay,
+  .cull-peaking-overlay {
+    transition: none !important;
+  }
+}
