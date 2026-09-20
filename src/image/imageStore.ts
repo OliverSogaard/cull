@@ -84,6 +84,12 @@ const THUMB_LRU_CAP = 15000;
 /** Placeholder dims used before real dimensions are known. */
 const UNKNOWN_DIMS: ImageDims = { w: 1, h: 1 };
 
+/** Margin added to a `pending` bounce's OWN backoff before the grid tier asks
+ *  again by itself. The re-request is refused while `inCooldown` is still true,
+ *  so the timer has to land after `nextRetryAt`, not on it. A wall-clock wait,
+ *  never an animation frame: the display is 240 Hz and this is a backoff. */
+const GRID_THUMB_PENDING_RETRY_MS = 250;
+
 /** Delay before re-probing `read_mid` after a quiet miss (Phase 8): the
  *  opportunistic generator needs ~300–400 ms of CPU after its zoom read
  *  returns, plus slack for the MidGen queue. */
@@ -208,6 +214,12 @@ export class ImageStore {
   /** The grid's current cell width in CSS px, 0 while the grid is closed.
    *  With the DPR it decides whether the tier is worth asking for at all. */
   private gridCellW = 0;
+  /** The ONE armed self-retry after a `pending` bounce (undefined = none).
+   *  Deduped on purpose: a whole viewport bouncing off the idle sweep's
+   *  generation claim must arm one timer, not one per cell — it re-runs the
+   *  visible RANGE, which is where every grid request comes from anyway.
+   *  Cleared by reset()/hardReset() so it can never fire into a dead session. */
+  private gridThumbPendingRetry: ReturnType<typeof setTimeout> | undefined;
   /** Hysteresis latch for the display-adaptive choice (midSelect.ts):
    *  engage >1750 device px, release <1650, hold in between. */
   private midEngaged = false;
@@ -657,6 +669,7 @@ export class ImageStore {
     // that set it (a re-stage may be looking at re-exported files).
     this.revokeReadyBlobs(this.gridThumbs);
     this.gridThumbUnavailable.clear();
+    this.clearGridThumbPendingRetry();
     // The pool's decoded refs point at blob URLs this reset revokes.
     this.pool?.clear();
     // old-gen thumb loads bailed without populating `thumbs`; if we keep
@@ -856,6 +869,7 @@ export class ImageStore {
     this.midSweep.reset();
     this.revokeReadyBlobs(this.gridThumbs); // REVOKE SITE 14
     this.gridThumbUnavailable.clear();
+    this.clearGridThumbPendingRetry();
     this.fullHints.clear();
     this.nativeDims.clear();
     this.stats.clearTimings();
@@ -980,6 +994,11 @@ export class ImageStore {
   private requestGridThumb(path: string): void {
     if (!path) return;
     // Tombstoned (Move rejects) — never take a lane slot for a gone frame.
+    // Defence in depth: forget() also removes the path from `this.paths`, and
+    // the caller above iterates that list, so no range report can reach here
+    // with a tombstoned path today. The guard costs one line and keeps the
+    // rule true if this ever gains a second, path-driven caller; the landing
+    // sites in fetchGridThumbInto are what actually stop a read in flight.
     if (this.forgotten.has(path)) return;
     // The file will never have one; the cell keeps its THMB for the session.
     if (this.gridThumbUnavailable.has(path)) return;
@@ -1140,9 +1159,11 @@ export class ImageStore {
     this.invalidate(path);
     this.thumbLane.pump();
     this.navLane.pump();
-    // The cleared cooldown alone re-queues nothing — without this pump the
-    // grid tier would wait for the next viewport change to ask again.
-    this.gridThumbLane.pump();
+    // A failed grid read left the lane's queue and its request marker behind
+    // it, so a bare pump would re-request nothing: re-run the visible range,
+    // which is the tier's only entry point. Cheap (one pass over the cells on
+    // screen) and a no-op outside the grid.
+    this.requestGridThumbsInRange();
   }
 
   /** App registers this to surface the non-blocking "folder unreachable —
@@ -1756,12 +1777,18 @@ export class ImageStore {
         // Two shapes: the bare sentinel, and preview_parts's wrapped
         // "cr3 preview: cancelled" (bundle.rs:184 + cr3.rs:684).
       } else if (GRID_THUMB_PENDING_RE.test(msg)) {
-        // TRANSIENT: another producer holds the backend's shared MidGen claim
-        // (the opportunistic mid generator and the whole-shoot idle sweep use
-        // the same pending set). Ordinary backoff — NEVER the latch, or a grid
-        // scroll that raced the sweep would strand those cells on the soft
-        // THMB for the rest of the session.
-        this.noteTierError(this.gridThumbErrors, path, msg);
+        // TRANSIENT, and NOT a failure: another producer holds the backend's
+        // shared MidGen claim (the opportunistic mid generator and the
+        // whole-shoot idle sweep use the same pending set, so on the local
+        // profile a grid scroll races it constantly). Pure backoff via
+        // recordTierError — deliberately NOT noteTierError, which counts an
+        // error and feeds the FolderTroubleLatch: four bounces on four paths
+        // would raise "folder unreachable — retry" on a healthy folder, from
+        // a tier that has no error surface by design (the mid tier's
+        // equivalent, midUncached, is quiet for the same reason). Never the
+        // unavailable latch either, or a scroll that raced the sweep would
+        // strand those cells on the soft THMB for the rest of the session.
+        this.scheduleGridThumbPendingRetry(recordTierError(this.gridThumbErrors, path, msg), gen);
       } else if (GRID_THUMB_UNAVAILABLE_RE.test(msg)) {
         // PERMANENT, and not a failure: this file has no preview to sharpen
         // from. LATCH it — the cell keeps its THMB for the session, with no
@@ -1775,6 +1802,32 @@ export class ImageStore {
       }
       this.invalidate(path);
     }
+  }
+
+  /**
+   * After a `pending` bounce, ask again by ourselves once the path's backoff
+   * has actually expired — a cell that lost the race must not stay on the soft
+   * THMB until the user happens to scroll. ONE timer for the whole grid
+   * (deduped): it re-runs the visible range, so it re-queues exactly the cells
+   * still on screen and nothing else. Gen-scoped, and every guard re-checks at
+   * fire time, so a stale fire is a no-op.
+   */
+  private scheduleGridThumbPendingRetry(te: TierError, gen: number): void {
+    if (this.gridThumbPendingRetry !== undefined) return;
+    const delay = Math.max(0, te.nextRetryAt - Date.now()) + GRID_THUMB_PENDING_RETRY_MS;
+    this.gridThumbPendingRetry = setTimeout(() => {
+      this.gridThumbPendingRetry = undefined;
+      if (this.generation !== gen) return;
+      this.requestGridThumbsInRange();
+    }, delay);
+  }
+
+  /** Disarm the pending self-retry (session change — it must not fire into
+   *  the next folder's grid). */
+  private clearGridThumbPendingRetry(): void {
+    if (this.gridThumbPendingRetry === undefined) return;
+    clearTimeout(this.gridThumbPendingRetry);
+    this.gridThumbPendingRetry = undefined;
   }
 
   /** One delayed re-probe after a quiet miss: the opportunistic generator
