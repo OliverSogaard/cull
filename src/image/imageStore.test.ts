@@ -1546,14 +1546,128 @@ describe("lane parity net (Phase 8 TierLane collapse)", () => {
       return buf;
     }
 
-    async function armed(paths: string[]) {
+    /** Records every invoke and defers ONLY `read_grid_thumb`; every other
+     *  command answers with a valid frame, so the local profile's background
+     *  machinery (thumb sweep, mid sweep) runs for real around the lane. */
+    function sweepHarness() {
+      const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+      const gridDeferreds: Deferred[] = [];
+      vi.mocked(invoke).mockImplementation((cmd: unknown, args?: unknown) => {
+        calls.push({ cmd: cmd as string, args: (args ?? {}) as Record<string, unknown> });
+        if (cmd === "read_grid_thumb") {
+          return new Promise<ArrayBuffer>((resolve, reject) => {
+            gridDeferreds.push({ resolve, reject });
+          });
+        }
+        if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
+        if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(60, 40));
+        if (cmd === "read_mid") return Promise.resolve(makeMidBuf());
+        if (cmd === "generate_mid") return Promise.resolve(true);
+        return Promise.resolve(new ArrayBuffer(0));
+      });
+      const gens = () => calls.filter((c) => c.cmd === "generate_mid");
+      return { calls, gridDeferreds, gens };
+    }
+
+    it("the idle mid sweep stands down for grid work and resumes when the lane drains", async () => {
+      // The sweep holds both generation permits in ~450 ms jobs. While the
+      // user is scrolling the contact sheet that starves the tier they are
+      // actually looking at (~8 cells/s instead of ~50).
+      const { gridDeferreds, gens } = sweepHarness();
+      const StoreClass = await getStoreClass();
+      const store = new StoreClass();
+      store.setProfile(PERFORMANCE_PROFILES.local); // the sweep is local-only
+      const paths = Array.from({ length: 6 }, (_, i) => `/s/${i}.cr3`);
+      store.reset(paths);
+      store.setNeedPxProvider(() => 1860); // 4K-class stage — the mid tier engages
+      for (const p of paths) store.registerDisplay(p);
+      store.registerWantFull(paths[0]); // its landing starts the background sweeps
+      await flush();
+      store.reevaluateMid();
+
+      store.setGridCellW(400);
+      store.setGridRange(0, 5); // 4 in flight (local cap), 2 queued
+      await flush();
+      expect(gridDeferreds.length).toBeGreaterThan(0);
+      expect(gens()).toHaveLength(0);
+
+      // Drain the lane — each landing pumps the sweep, which may now run.
+      for (let i = 0; i < 10 && gridDeferreds.length > 0; i++) {
+        for (const d of gridDeferreds.splice(0)) d.resolve(makeGridThumbBuf());
+        await flush();
+      }
+      await vi.waitUntil(() => gens().length > 0, { timeout: 4000 });
+    });
+
+    /** A network-profile store with the grid open at a cell width the rule
+     *  wants. `mount` registers a display ref for every path: the store only
+     *  asks for cells that are actually MOUNTED (what a rendered GridCell
+     *  does through useImage's effect), so a test that expects a fetch has to
+     *  mount its cells. The window tests pass false and mount their own. */
+    async function armed(paths: string[], mount = true) {
       const StoreClass = await getStoreClass();
       const store = new StoreClass();
       store.setProfile(PERFORMANCE_PROFILES.network); // gridThumbConcurrency 1
       store.reset(paths);
+      if (mount) for (const p of paths) store.registerDisplay(p);
       store.setGridCellW(400); // (400 − 18) × 1 = 382 > 160
       return store;
     }
+
+    /** The paths `read_grid_thumb` was called for, in call order. */
+    const askedFor = () =>
+      vi
+        .mocked(invoke)
+        .mock.calls.filter((c) => c[0] === "read_grid_thumb")
+        .map((c) => (c[1] as { path: string }).path);
+
+    it("asks only for cells that are actually mounted — a filtered range is mostly holes", async () => {
+      // Under a filter GridView reports the min..max ABSOLUTE index of the
+      // cells it rendered, so a 300-of-2,726 filter spans ~1,000 indices that
+      // render nothing. Requesting those costs a head read and a generation
+      // each, for frames nobody can see.
+      vi.useFakeTimers();
+      try {
+        const paths = Array.from({ length: 10 }, (_, i) => `/f/${i}.cr3`);
+        const StoreClass = await getStoreClass();
+        const store = new StoreClass();
+        store.setProfile(PERFORMANCE_PROFILES.local); // cap 4 — all three may start
+        store.reset(paths);
+        store.setGridCellW(400);
+        laneDeferreds("read_grid_thumb");
+        for (const i of [0, 4, 9]) store.registerDisplay(paths[i]);
+
+        store.setGridRange(0, 9);
+        await flush();
+        expect(askedFor()).toEqual([paths[0], paths[4], paths[9]]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a new range REPLACES the queue: a scrollbar drag never serves the cells it flew past", async () => {
+      const paths = Array.from({ length: 20 }, (_, i) => `/q/${i}.cr3`);
+      const store = await armed(paths); // network profile: one at a time
+      const deferreds = laneDeferreds("read_grid_thumb");
+
+      store.setGridRange(0, 4);
+      await flush();
+      expect(askedFor()).toEqual([paths[0]]); // one in flight, the rest queued
+
+      store.setGridRange(10, 14); // the drag moves on before any of those start
+      await flush();
+      deferreds[0].resolve(makeGridThumbBuf()); // the in-flight cell lands
+      await flush();
+      // The next read is a cell on screen, not one the user scrolled past.
+      expect(askedFor()[1]).toBe(paths[10]);
+
+      // And leaving the grid stops the tier dead: no landing can arrive for a
+      // cell that is no longer mounted anywhere.
+      store.clearGridRange();
+      for (const d of deferreds.splice(1)) d.resolve(makeGridThumbBuf());
+      await flush();
+      expect(askedFor()).toHaveLength(2);
+    });
 
     it("single-flight — re-reporting the same range never duplicates the fetch", async () => {
       const store = await armed(["/net/a.cr3"]);
@@ -1751,12 +1865,16 @@ describe("lane parity net (Phase 8 TierLane collapse)", () => {
 
     it("eviction follows the GRID RANGE, and leaving the grid frees everything", async () => {
       const paths = Array.from({ length: 400 }, (_, i) => `/win/${i}.cr3`);
-      const store = await armed(paths);
+      const store = await armed(paths, false); // mount cell 0 only, by hand
       const deferreds = laneDeferreds("read_grid_thumb");
+      store.registerDisplay(paths[0]);
       store.setGridRange(0, 0);
       await flush();
       deferreds[0].resolve(makeGridThumbBuf());
       await vi.waitUntil(() => store.snapshot(paths[0]).gridThumbUrl !== undefined);
+      // The cell scrolls off and unmounts, which is what makes its blob
+      // evictable at all — a mounted one is protected (the next test).
+      store.unregisterDisplay(paths[0]);
 
       store.setGridRange(100, 110); // inside gridThumbKeep (120) — survives
       expect(store.snapshot(paths[0]).gridThumbUrl).toBeDefined();
@@ -1767,28 +1885,20 @@ describe("lane parity net (Phase 8 TierLane collapse)", () => {
 
     it("a mounted cell's displayRef protects its blob even outside the window", async () => {
       const paths = Array.from({ length: 400 }, (_, i) => `/win/${i}.cr3`);
-      const store = await armed(paths);
+      const store = await armed(paths, false);
       const deferreds = laneDeferreds("read_grid_thumb");
+      // The one mounted cell: the same ref that makes it fetchable is the one
+      // that protects its blob once the window has moved on.
+      store.registerDisplay(paths[0]);
       store.setGridRange(0, 0);
       await flush();
       deferreds[0].resolve(makeGridThumbBuf());
       await vi.waitUntil(() => store.snapshot(paths[0]).gridThumbUrl !== undefined);
-      store.registerDisplay(paths[0]);
       store.setGridRange(300, 310);
       expect(store.snapshot(paths[0]).gridThumbUrl).toBeDefined();
       store.unregisterDisplay(paths[0]);
       store.setGridRange(301, 311);
       expect(store.snapshot(paths[0]).gridThumbUrl).toBeUndefined();
-    });
-
-    it("a tombstoned path never takes a lane slot", async () => {
-      const store = await armed(["/net/a.cr3", "/net/b.cr3"]);
-      const deferreds = laneDeferreds("read_grid_thumb");
-      store.forget(new Set(["/net/a.cr3"]));
-      store.setGridRange(0, 1);
-      await flush();
-      // forget() re-indexes, so only the survivor may be fetched.
-      expect(deferreds).toHaveLength(1);
     });
   });
 

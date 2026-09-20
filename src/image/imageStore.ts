@@ -472,6 +472,9 @@ export class ImageStore {
     fetch: (p, gen) => this.fetchGridThumbInto(p, gen),
     afterSettle: () => {
       this.gridThumbLane.pump();
+      // Draining the last grid cell is what lets the idle mid sweep run again
+      // (onDemandIdle counts this lane) — the same wake every other lane does.
+      this.midSweep.pump();
     },
     requested: this.requestedGridThumb,
     inFlightPaths: this.gridThumbInFlightPaths,
@@ -946,7 +949,10 @@ export class ImageStore {
     this.gridEnd = -1;
     this.refreshPool(); // back in loupe — re-warm the band (incl. zoom fulls)
     this.bgLane.pump();
-    // An empty window: every grid blob no cell still displays is freed here.
+    // Leaving the grid: drop the queued cells (nothing is mounted to show
+    // them any more) and let the now-empty window free every blob no other
+    // surface still displays.
+    this.gridThumbLane.queue = [];
     this.gridThumbLane.evictAround(this.cursor);
   }
 
@@ -983,6 +989,16 @@ export class ImageStore {
    *  rule live in one place and a scroll costs one pass, not one effect per
    *  mounted cell. */
   private requestGridThumbsInRange(): void {
+    // The queue is REBUILT here, never appended to. A scrollbar drag reports
+    // dozens of ranges, and an append-only FIFO would spend the lane on the
+    // thousand cells the user flew past before it ever reached the ones on
+    // screen (and would keep reading after the grid closed). Only QUEUED
+    // paths are dropped: a read already in flight keeps its marker and
+    // finishes, so single-flight is intact. Queued paths carry no marker of
+    // their own — TierLane.pump adds to `requested` when it STARTS a path,
+    // not when the store queues it (tierLane.ts) — so emptying the queue
+    // leaks nothing.
+    this.gridThumbLane.queue = [];
     if (!this.gridThumbWanted() || this.gridStart < 0) return;
     const last = Math.min(this.gridEnd, this.paths.length - 1);
     for (let i = Math.max(0, this.gridStart); i <= last; i++) {
@@ -1000,6 +1016,15 @@ export class ImageStore {
     // rule true if this ever gains a second, path-driven caller; the landing
     // sites in fetchGridThumbInto are what actually stop a read in flight.
     if (this.forgotten.has(path)) return;
+    // Only cells that are actually MOUNTED. The reported range is the
+    // min..max ABSOLUTE index of the rendered cells, so under a filter it
+    // spans every hidden frame in between — a 300-of-2,726 filter would turn
+    // one screenful into ~1,000 head reads and generations for frames nobody
+    // can see. The display ref is registered by useImage's mount effect
+    // (useImage.ts), which belongs to GridCell — a CHILD of GridView — and
+    // React runs child effects before the parent's, so every mounted cell is
+    // registered before GridView's onViewportChange effect reports the range.
+    if (!this.displayRefs.has(path)) return;
     // The file will never have one; the cell keeps its THMB for the session.
     if (this.gridThumbUnavailable.has(path)) return;
     const existing = this.gridThumbs.get(path);
@@ -1849,16 +1874,21 @@ export class ImageStore {
 
   /** True while every on-demand lane is empty AND idle — the sweep's gate
    *  (the plan: "paused while any on-demand queue is non-empty"; the bg
-   *  thumb sweep is background, not on-demand, and doesn't pause it). */
+   *  thumb sweep is background, not on-demand, and doesn't pause it).
+   *  The grid lane counts as on-demand (Phase 3B): its cells are what the
+   *  user is looking at, and the sweep holds the same MidGen permits in
+   *  ~450 ms jobs — without this it starves a grid scroll to a crawl. */
   private onDemandIdle(): boolean {
     return (
       this.thumbLane.queue.length === 0 &&
       this.navLane.queue.length === 0 &&
       this.zoomLane.queue.length === 0 &&
       this.midLane.queue.length === 0 &&
+      this.gridThumbLane.queue.length === 0 &&
       this.fullInFlightPaths.size === 0 &&
       this.zoomInFlightPaths.size === 0 &&
-      this.midInFlightPaths.size === 0
+      this.midInFlightPaths.size === 0 &&
+      this.gridThumbInFlightPaths.size === 0
     );
   }
 
