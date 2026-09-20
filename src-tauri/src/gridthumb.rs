@@ -4,8 +4,11 @@
 //! 161-px frame is already a 1.5× upscale, and the Large grid size would make
 //! it 2.4× — visibly soft on exactly the screen this app is used on. This tier
 //! is [`GRID_LONG_EDGE`] px on the long edge, q[`GRID_QUALITY`], generated from
-//! the CR3's embedded 1620×1080 PRVW preview (which `read_preview` has already
-//! read and cached, so the grid tier costs CPU, not a second source read).
+//! the CR3's embedded 1620×1080 PRVW preview. For a frame `read_preview` has
+//! already read and cached, that PRVW is a cache hit — the grid tier costs
+//! CPU only, no source I/O. For a frame the loupe never opened, the grid
+//! path still does not fill the preview cache (it would evict what
+//! navigation depends on), so it costs ONE ~2 MiB head read of its own.
 //!
 //! Same pure pipeline as [`crate::midtier`], one tier down: `zune-jpeg` decode
 //! → `fast_image_resize` SIMD Lanczos3 → `jpeg-encoder` → splice the SOURCE's

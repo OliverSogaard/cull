@@ -989,8 +989,8 @@ mod tests {
             );
         }
         // A cancellation is not a failure and must not latch anything — in
-        // either of its two shapes (preview_parts wraps it as "cr3 preview:
-        // cancelled", cr3.rs:684 + bundle.rs:184).
+        // either of its two shapes (`preview_parts_opt` wraps `cr3::cancelled_err`'s
+        // "cancelled" sentinel as "cr3 preview: cancelled").
         assert_eq!(grid_thumb_error("cancelled".into()), "cancelled");
         assert_eq!(
             grid_thumb_error("cr3 preview: cancelled".into()),
