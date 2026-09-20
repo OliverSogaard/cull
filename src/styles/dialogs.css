@@ -197,6 +197,16 @@
   appearance: none;
 }
 
+.cull-settings__toggle::before {
+  /* Transparent hit-area extension: the drawn track is 36x20, under the WCAG
+     2.5.8 24x24 target minimum. Stretches the clickable area to 36x28 without
+     touching the track, the knob, or the focus ring's box (both are drawn by
+     ::after / box-shadow, neither reads ::before's box). */
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
+
 .cull-settings__toggle::after {
   content: "";
   position: absolute;
