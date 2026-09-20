@@ -93,3 +93,30 @@ describe("the footer's breakpoints", () => {
     expect(ruleBody(sheet("./base.css"), ".visually-hidden")).toMatch(/clip-path:\s*inset\(50%\)/);
   });
 });
+
+describe("the info rail", () => {
+  const rail = sheet("./exif-rail.css");
+
+  test("its widths come from the tokens, not literals", () => {
+    expect(ruleBody(rail, ".cull-exif-rail")).toContain("flex: 0 0 var(--rail-w)");
+    expect(ruleBody(rail, ".cull-exif-rail")).toContain("width: var(--rail-w)");
+    expect(ruleBody(rail, ".cull-exif-rail--compare")).toContain("var(--rail-w-compare)");
+    expect(ruleBody(rail, ".cull-cr-rail__row")).toContain(
+      "grid-template-columns: var(--rail-col-k) 1fr 1fr",
+    );
+    expect(ruleBody(rail, ".cull-cr-rail__head")).toContain(
+      "grid-template-columns: var(--rail-col-k) 1fr 1fr",
+    );
+  });
+
+  test("below 1200 the tokens step down to the picked numbers", () => {
+    const at = rail.indexOf("@media (width < 1200px) {");
+    expect(at, "no 1200px breakpoint in exif-rail.css").toBeGreaterThan(-1);
+    const block = rail.slice(at);
+    expect(block).toMatch(/--rail-w:\s*232px/);
+    expect(block).toMatch(/--rail-w-compare:\s*288px/);
+    expect(block).toMatch(/--rail-col-k:\s*76px/);
+    expect(block).toMatch(/padding:\s*28px 20px/);
+    expect(block).toMatch(/gap:\s*28px/);
+  });
+});
