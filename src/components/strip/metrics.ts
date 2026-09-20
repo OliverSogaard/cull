@@ -8,7 +8,9 @@
  * Two steps: the standard cell, and a bigger one on a tall window (≥1200 CSS
  * px of window height — a maximized 1440p or 4K screen). The THMB behind a
  * cell is 160×120, so even the big step is still a downscale at DPR 1.5
- * (104 × 1.5 = 156 device px) — the strip never needs the grid tier.
+ * (104 × 1.5 = 156 device px) — but not at DPR 2 on a ≥1200-px-tall window
+ * (104 × 2 = 208 device px, past the 160 source), where the cell is a
+ * (mild) upscale instead.
  */
 export type StripMetrics = {
   /** Cell width in CSS px. */

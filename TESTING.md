@@ -54,17 +54,21 @@ three new test files use it to keep a CSS number and the JS constant that
 computes against it from drifting apart:
 
 - **`src/styles/layout.test.ts`** — reads the app's stylesheets raw and
-  checks that every layout token (`--bar-h`, `--winbtn-w`, `--rail-w`,
-  `--rail-w-compare`, `--strip-h`, `--cell-w`, `--cell-h`) is actually
-  referenced somewhere, and that the footer's, rail's and home screen's
-  picked window-WIDTH breakpoints (1360 / 1220 / 1200 / 1100 / 2000 px)
-  exist in the stylesheet at the exact width each was picked for.
+  checks that every layout token it covers (`--bar-h`, `--winbtn-w`,
+  `--rail-w`, `--rail-w-compare`) is actually referenced somewhere, and that
+  the footer's, rail's and home screen's picked window-WIDTH breakpoints
+  (1360 / 1240 / 1200 / 1100 / 2000 px) exist in the stylesheet at the exact
+  width each was picked for, plus the filmstrip's scrub-speed chip anchor
+  (`--cell-h`, `strip.css`). `--strip-h` / `--cell-w` / `--cell-h` themselves
+  are NOT this file's concern — see `metrics.test.ts` below.
 - **`src/components/strip/metrics.test.ts`** — asserts `STRIP_SMALL` /
-  `STRIP_LARGE` are the numbers the design board picked, and that `strip.css`'s
-  `.cull-thumbs` rule agrees with `metrics.ts`'s arithmetic for `stripH`. The
-  filmstrip's own window-HEIGHT breakpoint (1200 px) lives in
-  `useStripMetrics.ts`'s `matchMedia` query, a JS string rather than a
-  stylesheet rule, so it falls outside this raw-CSS pattern entirely.
+  `STRIP_LARGE` are the numbers the design board picked, that `strip.css`'s
+  `.cull-thumbs` rule agrees with `metrics.ts`'s arithmetic for `stripH`, and
+  that `tokens.css`'s `:root` fallbacks for `--strip-h` / `--cell-w` /
+  `--cell-h` match `STRIP_SMALL`. The filmstrip's own window-HEIGHT
+  breakpoint (1200 px) lives in `useStripMetrics.ts`'s `matchMedia` query, a
+  JS string rather than a stylesheet rule, so it falls outside this raw-CSS
+  pattern entirely.
 - **`src/image/gridThumbRule.test.ts`** — asserts `GRID_CELL_PADDING` (the
   constant the request-rule math uses) equals the padding `grid.css` actually
   draws on `.cull-grid__cell`.

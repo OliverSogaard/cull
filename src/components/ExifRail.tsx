@@ -23,9 +23,10 @@ import { hasLrcRating } from "../utils/ratingColor";
 const LRC_STAR_SLOTS = [1, 2, 3, 4, 5];
 
 /**
- * Loupe-side EXIF rail. A 290-px column glued to the right
- * edge of the photo stage when (i) is on. Three sections — Frame, Exposure,
- * Histogram — each labelled with the mono champagne uppercase eyebrow.
+ * Loupe-side EXIF rail. A 290-px column (232 below 1200px of window width —
+ * see `--rail-w` in styles/exif-rail.css) glued to the right edge of the
+ * photo stage when (i) is on. Three sections — Frame, Exposure, Histogram —
+ * each labelled with the mono champagne uppercase eyebrow.
  *
  * The rail mounts as a sibling of the photo stage so the photo area shrinks when
  * info is on, rather than floating over the photo.
