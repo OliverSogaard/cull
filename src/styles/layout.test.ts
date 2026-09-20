@@ -11,11 +11,24 @@ const sheet = (name: string): string => {
   return css;
 };
 
-/** The declarations of the first rule whose selector list matches `selector`. */
+/** The declarations of the first rule whose selector list matches `selector`.
+ *  Anchored on a leading newline (optionally followed by the indentation a
+ *  nested rule carries inside a `@media` block), not a bare substring search:
+ *  a plain `indexOf` mis-hits when `selector` is the suffix of a longer
+ *  compound selector sharing the same tail (it already forced a CSS reorder
+ *  once, to dodge a false hit) — e.g. searching for
+ *  `.cull-statusbar__finish-long` alone must not match the tail of
+ *  `.cull-statusbar__finish.is-done .cull-statusbar__finish-long {`, since
+ *  that compound selector doesn't start right after a newline+indent.  Every
+ *  stylesheet this file reads opens with a comment, so no rule this helper is
+ *  asked for ever sits at offset 0 and loses its leading newline. */
 export const ruleBody = (css: string, selector: string): string => {
-  const at = css.indexOf(`${selector} {`);
-  if (at < 0) throw new Error(`no rule \`${selector}\``);
-  return css.slice(at, css.indexOf("}", at));
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`\\n[ \\t]*${escaped} \\{`);
+  const m = re.exec(css);
+  if (!m) throw new Error(`no rule \`${selector}\``);
+  const start = m.index + m[0].indexOf(selector);
+  return css.slice(start, css.indexOf("}", start));
 };
 
 describe("layout tokens are wired, not decorative", () => {
@@ -49,10 +62,10 @@ describe("the footer's breakpoints", () => {
   const statusbar = sheet("./statusbar.css");
 
   test("the three picked widths are there, in range notation", () => {
-    // The cosmetic shed sits at 1220 (fix round 3 — closes the ~17px band
-    // that survived at the plain 1200), not the info rail's own, unrelated
-    // 1200px breakpoint in exif-rail.css.
-    for (const w of [1360, 1220, 1100]) {
+    // The cosmetic shed sits at 1240 (fix round 4 — moved up from 1220 for
+    // margin, since the sums it rests on are estimated glyph advances, not
+    // the info rail's own, unrelated 1200px breakpoint in exif-rail.css).
+    for (const w of [1360, 1240, 1100]) {
       expect(statusbar, `${w}px breakpoint`).toContain(`@media (width < ${w}px)`);
     }
     expect(statusbar, "range notation only").not.toMatch(/@media\s*\(max-width/);
@@ -65,20 +78,28 @@ describe("the footer's breakpoints", () => {
     };
     // The save chip's tail sheds a breakpoint earlier than the rest — fix
     // round 1 moved it from 1200 to 1360 (a clip band survived just above
-    // 1200 otherwise). Pin it INSIDE 1360 and explicitly NOT inside 1220,
+    // 1200 otherwise). Pin it INSIDE 1360 and explicitly NOT inside 1240,
     // so a future move-back can't slip past this guard silently.
     expect(block(1360)).toContain(".cull-statusbar__keyhint");
     expect(block(1360)).toContain(".cull-statusbar__unsaved-tail");
-    // Fix round 3: the cosmetic words moved from 1200 to 1220.
+    // Fix round 4: the extension sheds alongside the tail at 1360 now —
+    // every file in a cull is a .CR3, and the cosmetic tier below no longer
+    // has to price it in (that omission is what let ~1220–1245px overflow).
+    expect(block(1360), ".cull-statusbar__filename-ext").toContain(".cull-statusbar__filename-ext");
+    expect(
+      block(1240),
+      "the extension sheds at 1360, not here — it must not still be in this tier",
+    ).not.toContain(".cull-statusbar__filename-ext");
+    // Fix round 3 moved the cosmetic words from 1200 to 1220; fix round 4
+    // moved them again, from 1220 to 1240.
     for (const cls of [
-      ".cull-statusbar__filename-ext",
       ".cull-statusbar__chip-label",
       ".cull-statusbar__scrub-label",
       ".cull-statusbar__verdict-label",
     ]) {
-      expect(block(1220), cls).toContain(cls);
+      expect(block(1240), cls).toContain(cls);
     }
-    expect(block(1220), "the tail moved to 1360 and must not still be here").not.toContain(
+    expect(block(1240), "the tail moved to 1360 and must not still be here").not.toContain(
       ".cull-statusbar__unsaved-tail",
     );
     expect(block(1100)).toContain(".cull-statusbar__finish-long");
@@ -94,7 +115,7 @@ describe("the footer's breakpoints", () => {
     // fix-round-1 report found exactly that kind of false positive once.
     const tier = statusbar.slice(
       statusbar.indexOf("@media (width < 1360px) {"),
-      statusbar.indexOf("@media (width < 1220px) {"),
+      statusbar.indexOf("@media (width < 1240px) {"),
     );
     expect(ruleBody(tier, ".cull-statusbar__finish.is-done .cull-statusbar__finish-long")).toMatch(
       /display:\s*none/,
@@ -145,11 +166,28 @@ describe("the footer's breakpoints", () => {
     // the keyhint rule.
     const block = statusbar.slice(
       statusbar.indexOf("@media (width < 1360px) {"),
-      statusbar.indexOf("@media (width < 1220px) {"),
+      statusbar.indexOf("@media (width < 1240px) {"),
     );
     const tail = block.slice(block.indexOf(".cull-statusbar__unsaved-tail {"));
     expect(tail).toMatch(/clip-path:\s*inset\(50%\)/);
     expect(tail.slice(0, tail.indexOf("}"))).not.toMatch(/display:\s*none/);
+  });
+});
+
+describe("the filmstrip's scrub-speed chip", () => {
+  test("its offset is expressed in --cell-h, not a literal that only fits one step", () => {
+    // Fix round 4: at the strip's real 83/103px box the chip used to sit ON
+    // the thumbnails' lower edge (a literal `bottom: 7px` measured from a bar
+    // anchored near the strip's bottom). A literal fits one cell step only —
+    // pinning `--cell-h` in the expression is what keeps it 2px clear of the
+    // cells' top edge at both the small (54px) and large (74px) step. See the
+    // derivation comment in strip.css above this rule.
+    const strip = sheet("./strip.css");
+    expect(ruleBody(strip, ".cull-scrubbar__speed")).toContain("bottom: calc(var(--cell-h) + 7px)");
+    expect(
+      ruleBody(strip, ".cull-scrubbar__speed"),
+      "no literal px fallback for bottom",
+    ).not.toMatch(/bottom:\s*\d/);
   });
 });
 
