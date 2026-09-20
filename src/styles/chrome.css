@@ -52,7 +52,7 @@
 
 .cull-save-status--failed:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 @keyframes cull-save-pulse {
@@ -97,9 +97,12 @@
   color: var(--text);
 }
 
-.cull-winbtn:focus,
-.cull-winbtn:focus-visible {
+.cull-winbtn:focus {
   outline: none;
+}
+
+.cull-winbtn:focus-visible {
+  box-shadow: var(--ring-inset);
 }
 
 .cull-winbtn--close:hover {
@@ -264,7 +267,7 @@
 
 .cull-statusbar__ov:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 /* Scrubbing indicator — champagne pulse with an animated arrow prefix.
@@ -410,6 +413,7 @@
 .cull-filter-tabs button:focus-visible {
   outline: none;
   color: var(--text);
+  box-shadow: var(--ring-inset);
 }
 
 /* Keeps / Smart wrap their tab button so the sub-mode tooltip (below) can
@@ -486,6 +490,7 @@
 .cull-filter-tab-tooltip button:focus-visible {
   outline: none;
   color: var(--text);
+  box-shadow: var(--ring);
 }
 
 /* ── chrome phases: start / loading / staged ──────────────── */

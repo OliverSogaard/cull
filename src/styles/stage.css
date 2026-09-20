@@ -343,7 +343,7 @@
 
 .cull-statusbar__finish:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 /* ── messages ─────────────────────────────────────────────── */

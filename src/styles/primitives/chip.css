@@ -16,6 +16,14 @@
   text-transform: uppercase;
 }
 
+/* :focus-visible only ever matches a focusable chip (a real <button>, e.g.
+   .cull-trouble-chip) — non-interactive chips (span/div) can't receive it,
+   so this is safe to add unconditionally to the base class. */
+.chip:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
 .chip--soft {
   border-radius: 3px; /* off-scale */
 }

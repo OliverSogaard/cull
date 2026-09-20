@@ -36,6 +36,11 @@
   background: transparent;
 }
 
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
 /* Accent fill — the "do the thing" button in every dialog. */
 .btn--primary {
   background: var(--accent);

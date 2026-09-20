@@ -76,6 +76,11 @@
   --shadow-2: 0 8px 48px rgba(0, 0, 0, 0.6);
   --shadow-3: 0 24px 60px rgba(0, 0, 0, 0.6);
   --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  /* For controls whose ring must stay inside their own box: full-width rows
+     inside a bordered list, controls flush against a window/viewport edge,
+     and tightly packed segments with zero gap between them (an outer ring
+     would overlap the neighbour). */
+  --ring-inset: inset 0 0 0 2px var(--accent);
   --halo: 0 0 0 1.5px rgba(0, 0, 0, 0.6);
 
   /* motion */

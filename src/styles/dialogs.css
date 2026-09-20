@@ -63,7 +63,7 @@
 
 .cull-settings__navitem:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 .cull-settings__pane {
@@ -179,7 +179,7 @@
 
 .cull-settings__chip:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 /* Knob-style toggle. */
@@ -229,7 +229,7 @@
 
 .cull-settings__toggle:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 /* Pinned-root config row — indented under the Copy keeps segment with a
@@ -295,7 +295,7 @@
 
 .cull-settings__seg-opt:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 .cull-settings__seg.is-disabled,
