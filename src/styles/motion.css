@@ -77,9 +77,11 @@
   }
 
   /* The scrub arrow blinks and nudges 2px while a held arrow key scrubs. The
-     label it prefixes is the signal; the arrow only has to be there.
+     label it prefixes is the signal; the arrow only has to be there. The arrow
+     is a Lucide SVG in the markup now, not a ::before on the label, so the
+     override follows it onto the icon's own class.
      reviewed: cull-scrub-flash */
-  .cull-statusbar__scrub::before {
+  .cull-statusbar__scrub-arrow {
     animation: none;
   }
 

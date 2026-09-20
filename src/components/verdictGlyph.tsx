@@ -10,6 +10,10 @@ import type { Suggestion } from "../smart/deriveVerdict";
  * pill, and RatingDot. `null` for unrated. Default stroke is per-glyph
  * (keep/reject 3, favorite 2.6), not size-based; RatingDot's larger chip
  * passes a uniform `strokeWidth` tuned to its size instead.
+ *
+ * Deliberately OFF the shared ICON scale (icons.ts): these fill a coloured
+ * circle of 9–18px, so the size is the container's and the heavy stroke is
+ * what keeps a 5px tick readable.
  */
 export function verdictGlyph(
   rating: Rating | undefined,

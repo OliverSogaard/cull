@@ -165,9 +165,14 @@
   color: var(--muted);
 }
 
+/* The "finished" tick after the count. Left inline (not inline-flex): an SVG
+   sits its bottom edge on the text baseline exactly as the tick character it
+   replaced did, and the count cell can't become a flex container without
+   collapsing the space inside .cull-recent__of. The margin stands in for the
+   space that used to separate the tick from the number. */
 .cull-recent__done {
   color: var(--ok);
-  margin-left: 2px;
+  margin-left: var(--sp-3);
 }
 
 .cull-recent__time {

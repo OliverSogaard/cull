@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Star } from "lucide-react";
 import type { Filter, Settings, SmartLevel, StorageMode, ThumbsPosition } from "../types";
+import { ICON } from "./icons";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import { LEVEL_THRESHOLD } from "../smart/deriveVerdict";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
@@ -88,7 +90,20 @@ export function SettingsDialog({
                       { value: "all", label: "All" },
                       { value: "unrated", label: "Unrated" },
                       { value: "keeps", label: "Keeps" },
-                      { value: "keepsFavs", label: "Keeps · ★" },
+                      {
+                        value: "keepsFavs",
+                        // No space before the star: .cull-settings__seg-opt is
+                        // a flex row, and its gap is what separates them.
+                        label: (
+                          <>
+                            Keeps ·
+                            <Star {...ICON.sm} fill="currentColor" aria-hidden />
+                          </>
+                        ),
+                        // The star is the whole difference from "Keeps", and an
+                        // aria-hidden SVG says nothing — so the name is spelled out.
+                        ariaLabel: "Keeps · favorites only",
+                      },
                     ]}
                     onChange={(v) => set("defaultFilter", v)}
                   />
@@ -332,7 +347,9 @@ function SegmentToggle<T extends string>({
   disabled,
 }: {
   value: T;
-  options: { value: T; label: string }[];
+  /** `label` may carry an icon; when it does, `ariaLabel` supplies the name
+   *  the icon can't, since an aria-hidden SVG contributes nothing to it. */
+  options: { value: T; label: ReactNode; ariaLabel?: string }[];
   onChange: (next: T) => void;
   disabled?: boolean;
 }) {
@@ -346,6 +363,7 @@ function SegmentToggle<T extends string>({
           onClick={() => !disabled && onChange(opt.value)}
           disabled={disabled}
           aria-pressed={value === opt.value}
+          aria-label={opt.ariaLabel}
         >
           {opt.label}
         </button>

@@ -10,7 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check, Star, X as XIcon } from "lucide-react";
+import { ArrowDown, Check, Star, TriangleAlert, X as XIcon } from "lucide-react";
 import type {
   AnalyzeProgress,
   FileOpResult,
@@ -31,6 +31,7 @@ import { ExifRail } from "./components/ExifRail";
 import { FinishDialog } from "./components/FinishDialog";
 import { GridView, GRID_CELL_TARGET } from "./components/GridView";
 import { HelpOverlay } from "./components/HelpOverlay";
+import { ICON, ICON_DISPLAY_STROKE } from "./components/icons";
 import { KeyCombo } from "./components/KeyCombo";
 import { QuitGuardOverlay } from "./components/QuitGuardOverlay";
 import { RecentFolders } from "./components/RecentFolders";
@@ -1419,7 +1420,9 @@ export default function App() {
         <div className={`cull-chrome${isDragOver ? " is-drag-over" : ""}`} data-tauri-drag-region>
           {isDragOver && (
             <div className="cull-drag-indicator" aria-hidden>
-              <div className="cull-drag-indicator__arrow">↓</div>
+              <div className="cull-drag-indicator__arrow">
+                <ArrowDown size={36} strokeWidth={ICON_DISPLAY_STROKE} aria-hidden />
+              </div>
               <div className="cull-drag-indicator__text">Drop folders to open</div>
             </div>
           )}
@@ -1504,7 +1507,15 @@ export default function App() {
 
           {phase === "staged" && (
             <>
-              <div className="cull-staged__check">{images.length > 0 ? "✓" : "—"}</div>
+              {/* The count line below says what was staged, so the tick is
+                  decoration and stays out of the accessibility tree. */}
+              <div className="cull-staged__check">
+                {images.length > 0 ? (
+                  <Check size={40} strokeWidth={ICON_DISPLAY_STROKE} aria-hidden />
+                ) : (
+                  "—"
+                )}
+              </div>
               <div className="cull-staged__count">
                 {images.length} CR3 {images.length === 1 ? "image" : "images"} staged
               </div>
@@ -1583,6 +1594,8 @@ export default function App() {
   // Rating feedback chip — a brief corner badge. Rendered INSIDE the loupe photo
   // stage and the grid view (each its own positioning context) so it sits bottom-
   // right within the image / grid area, clear of the thumb strip and the footer.
+  // The 22px / stroke-3 glyph is off the shared ICON scale on purpose — it is
+  // sized against the 48px circle it fills (see icons.ts).
   const feedbackChip = feedback && (
     <div className="cull-feedback" key={feedback.ts}>
       <div
@@ -1813,7 +1826,8 @@ export default function App() {
               title={analyzeWarning.detail}
               onClick={() => setAnalyzeWarning(null)}
             >
-              ⚠ {analyzeWarning.label}
+              <TriangleAlert {...ICON.sm} aria-hidden />
+              {analyzeWarning.label}
             </button>
           )}
           {memPressure !== "normal" && (

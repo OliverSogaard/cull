@@ -1,3 +1,6 @@
+import { TriangleAlert } from "lucide-react";
+import { ICON } from "./icons";
+
 type Props = {
   failedCount: number;
   onLeave: () => void;
@@ -12,9 +15,14 @@ export function ConfirmHomeDialog({ failedCount, onLeave, onStay }: Props) {
     <div className="dialog">
       <div className="dialog__box">
         <div className={`dialog__title${failedCount > 0 ? " dialog__title--warn" : ""}`}>
-          {failedCount > 0
-            ? `⚠ Leave with ${failedCount} unsaved rating${failedCount > 1 ? "s" : ""}?`
-            : "Leave to home?"}
+          {failedCount > 0 ? (
+            <>
+              <TriangleAlert className="dialog__title-icon" {...ICON.lg} aria-hidden />
+              Leave with {failedCount} unsaved rating{failedCount > 1 ? "s" : ""}?
+            </>
+          ) : (
+            "Leave to home?"
+          )}
         </div>
         <div className="dialog__body">
           {failedCount > 0

@@ -401,6 +401,12 @@
   /* The bar is Inter, not mono — this chip has always inherited that. */
   font-family: var(--font-ui);
   letter-spacing: 0.08em;
+  /* The analyze variant leads with a warning icon; inline-flex sits it on the
+     label's centre line instead of the baseline it would drop to as an
+     inline SVG. Harmless on the text-only variants. */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
   background: transparent;
   margin-left: 10px;
   cursor: pointer;

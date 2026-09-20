@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { TriangleAlert } from "lucide-react";
+import { ICON } from "./icons";
 
 type Props = {
   failedCount: number;
@@ -23,7 +25,8 @@ export function QuitGuardOverlay({
         {failedCount > 0 ? (
           <>
             <div className="dialog__title dialog__title--warn">
-              ⚠ {failedCount} rating{failedCount > 1 ? "s" : ""} didn’t save
+              <TriangleAlert className="dialog__title-icon" {...ICON.lg} aria-hidden />
+              {failedCount} rating{failedCount > 1 ? "s" : ""} didn’t save
             </div>
             <div className="dialog__body">
               {failedCount} {failedCount > 1 ? "ratings are" : "rating is"} not on disk (the sidecar

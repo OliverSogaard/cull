@@ -50,8 +50,17 @@
   margin-bottom: var(--sp-4);
 }
 
+/* The warning variant is the only title that carries an icon, so flex (and the
+   gap that sits it off the first word) lives here rather than on every title. */
 .dialog__title--warn {
   color: var(--bad);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.dialog__title-icon {
+  flex-shrink: 0;
 }
 
 .dialog__body {

@@ -97,7 +97,9 @@ export const ThumbCell = memo(function ThumbCell({
             two top-left pills don't stack on the same 76px cell. Star
             rendered as a Lucide SVG so it sits on the text baseline cleanly
             instead of riding high (Unicode ★ has weird metrics in
-            Segoe UI on Windows). */}
+            Segoe UI on Windows). The 8 / 9px sizes are off the shared ICON
+            scale: they are sized to the badge pill, not to a text run
+            (see icons.ts). */}
         {roleVariant ? (
           <div
             className={`cull-thumb__role-badge cull-thumb__role-badge--${

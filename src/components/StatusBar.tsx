@@ -1,8 +1,10 @@
 import { memo, type Dispatch, type SetStateAction } from "react";
+import { ArrowRight, Check, Star, TriangleAlert, X as XIcon } from "lucide-react";
 import type { Filter, Rating } from "../types";
 import type { useChipsTooltipVisibility } from "../hooks/useChipsTooltipVisibility";
 import { cycleFilter, topOf } from "../utils/filterModes";
 import { modCombo } from "../utils/platform";
+import { ICON } from "./icons";
 import { verdictGlyph } from "./verdictGlyph";
 
 type ChipsTooltip = ReturnType<typeof useChipsTooltipVisibility>;
@@ -126,6 +128,7 @@ export const StatusBar = memo(function StatusBar({
         )}
         {frame.scrubbing && (
           <span className="cull-statusbar__scrub" aria-label="scrubbing">
+            <ArrowRight className="cull-statusbar__scrub-arrow" {...ICON.sm} aria-hidden />
             Scrubbing
             {frame.scrubSpeed > 1 && (
               <span className="chip chip--soft chip--accent cull-statusbar__scrubspeed">
@@ -200,7 +203,8 @@ export const StatusBar = memo(function StatusBar({
             onClick={save.retryFailed}
             title="Ratings failed to save · click to retry"
           >
-            ⚠ {save.failedCount} unsaved · retry
+            <TriangleAlert {...ICON.sm} aria-hidden />
+            {save.failedCount} unsaved · retry
           </span>
         ) : (
           save.savingCount > 0 && (
@@ -287,14 +291,16 @@ export const StatusBar = memo(function StatusBar({
                   </button>
                   <button
                     type="button"
-                    className={filter.filter === "keepsFavs" ? "is-active" : ""}
+                    className={`is-icon${filter.filter === "keepsFavs" ? " is-active" : ""}`}
                     onClick={() => {
                       filter.setFilter("keepsFavs");
                       filter.chipsTooltip.pulse();
                     }}
+                    // `title` is this button's only accessible name once the
+                    // star is an aria-hidden SVG — same for the three below.
                     title="Favorites only"
                   >
-                    ★
+                    <Star {...ICON.sm} fill="currentColor" aria-hidden />
                   </button>
                 </span>
               )}
@@ -343,36 +349,36 @@ export const StatusBar = memo(function StatusBar({
                   </button>
                   <button
                     type="button"
-                    className={filter.filter === "suggestedRejects" ? "is-active" : ""}
+                    className={`is-icon${filter.filter === "suggestedRejects" ? " is-active" : ""}`}
                     onClick={() => {
                       filter.setFilter("suggestedRejects");
                       filter.chipsTooltip.pulse();
                     }}
                     title="Suggested rejects"
                   >
-                    ✕
+                    <XIcon {...ICON.sm} aria-hidden />
                   </button>
                   <button
                     type="button"
-                    className={filter.filter === "suggestedKeeps" ? "is-active" : ""}
+                    className={`is-icon${filter.filter === "suggestedKeeps" ? " is-active" : ""}`}
                     onClick={() => {
                       filter.setFilter("suggestedKeeps");
                       filter.chipsTooltip.pulse();
                     }}
                     title="Suggested keeps"
                   >
-                    ✓
+                    <Check {...ICON.sm} aria-hidden />
                   </button>
                   <button
                     type="button"
-                    className={filter.filter === "suggestedFavs" ? "is-active" : ""}
+                    className={`is-icon${filter.filter === "suggestedFavs" ? " is-active" : ""}`}
                     onClick={() => {
                       filter.setFilter("suggestedFavs");
                       filter.chipsTooltip.pulse();
                     }}
                     title="Suggested favorites"
                   >
-                    ★
+                    <Star {...ICON.sm} fill="currentColor" aria-hidden />
                   </button>
                 </span>
               )}

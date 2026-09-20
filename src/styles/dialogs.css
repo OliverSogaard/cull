@@ -278,6 +278,13 @@
   letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
+  /* The favourites option carries a Lucide star after its label; flex sits it
+     on the label's centre line and the gap replaces the space that used to
+     precede the character. Inert on text-only options — one item, no gap. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   transition:
     background var(--dur-fast) ease,
     color var(--dur-fast) ease;
@@ -482,7 +489,7 @@
 
 .cull-actions__unrated-icon {
   color: var(--accent);
-  font-size: var(--fs-5);
+  flex-shrink: 0;
 }
 
 .cull-actions__rows {
@@ -528,6 +535,11 @@
   letter-spacing: 0;
   text-transform: none;
   text-align: left;
+  /* Only the failed variant has a leading warning icon; flex-start keeps it on
+     the first line when the sentence wraps, rather than centred against both. */
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
 }
 
 /* Pinned-mode "folder already exists" banner. Sits between the row-help text

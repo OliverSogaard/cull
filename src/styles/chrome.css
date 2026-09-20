@@ -286,9 +286,7 @@
   gap: 4px;
 }
 
-.cull-statusbar__scrub::before {
-  content: "⟶";
-  font-size: var(--fs-3);
+.cull-statusbar__scrub-arrow {
   animation: cull-scrub-flash 0.5s infinite;
 }
 
@@ -479,6 +477,17 @@
     border-color var(--dur-fast) ease;
 }
 
+/* The sub-mode tabs whose whole content is one icon. The rule above tracks
+   these buttons out by .08em for uppercase text; on an SVG that tracking is
+   pure trailing space, which shoves the icon left of centre. Drop it and let
+   flex do the centring. */
+.cull-filter-tab-tooltip button.is-icon {
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .cull-filter-tab-tooltip button:hover:not(.is-active) {
   color: var(--text-2);
 }
@@ -561,7 +570,10 @@
 }
 
 .cull-drag-indicator__arrow {
-  font-size: 36px; /* off-scale */
+  /* Display glyph: the 36px arrow is a Lucide SVG, so the box is the icon —
+     flex keeps it from sitting on a text baseline with descender space under
+     it, which would push it off the indicator's optical centre. */
+  display: flex;
   color: var(--accent);
   line-height: 1;
 }
@@ -624,9 +636,14 @@
 }
 
 .cull-staged__check {
+  /* 40px display tick (a Lucide SVG) or a 40px em dash when nothing staged —
+     the font-size still sizes the dash. Flex centres whichever it is. */
   font-size: 40px; /* off-scale */
   line-height: 1;
   color: var(--ok);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .cull-staged__count {
@@ -682,6 +699,9 @@
   font-weight: 500;
   cursor: pointer;
   letter-spacing: 0.06em;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
 .cull-statusbar__unsaved:hover {

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Star, TriangleAlert } from "lucide-react";
 import type { FileOpResult, Settings } from "../types";
+import { ICON } from "./icons";
 import { normalizeRejectedSubfolder } from "../types/settings";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -243,7 +245,8 @@ export function FinishDialog({
             </div>
             {favorites > 0 && (
               <div className="cull-actions__stat-sub">
-                <span>★</span> {favorites} favorite{favorites === 1 ? "" : "s"}
+                <Star {...ICON.sm} fill="currentColor" aria-hidden /> {favorites} favorite
+                {favorites === 1 ? "" : "s"}
               </div>
             )}
           </div>
@@ -259,7 +262,7 @@ export function FinishDialog({
 
         {unrated > 0 && (
           <div className="note cull-actions__unrated">
-            <span className="cull-actions__unrated-icon">⚠</span>
+            <TriangleAlert className="cull-actions__unrated-icon" {...ICON.md} aria-hidden />
             <span>
               <b>{unrated} unrated</b> will stay in the source untouched.
             </span>
@@ -268,9 +271,17 @@ export function FinishDialog({
 
         {(savingCount > 0 || failedCount > 0) && (
           <div className={`note cull-actions__pending${failedCount > 0 ? " note--bad" : ""}`}>
-            {failedCount > 0
-              ? `⚠ ${failedCount} rating${failedCount > 1 ? "s" : ""} haven't saved · actions disabled until resolved (status bar · retry)`
-              : `Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`}
+            {failedCount > 0 ? (
+              <>
+                <TriangleAlert {...ICON.md} aria-hidden />
+                <span>
+                  {failedCount} rating{failedCount > 1 ? "s" : ""} haven't saved · actions disabled
+                  until resolved (status bar · retry)
+                </span>
+              </>
+            ) : (
+              `Saving ${savingCount} rating${savingCount > 1 ? "s" : ""}… actions wait for the sidecars to land`
+            )}
           </div>
         )}
 
@@ -298,7 +309,11 @@ export function FinishDialog({
               <>
                 {rootMissing && (
                   <div className="note note--bad cull-finish__folder-exists">
-                    <span className="cull-finish__folder-exists-icon">⚠</span>
+                    <TriangleAlert
+                      className="cull-finish__folder-exists-icon"
+                      {...ICON.md}
+                      aria-hidden
+                    />
                     <span>
                       The pinned export root no longer exists. Re-pick it in <b>Settings</b> before
                       copying.
@@ -307,7 +322,11 @@ export function FinishDialog({
                 )}
                 {folderExists && (
                   <div className="note note--bad cull-finish__folder-exists">
-                    <span className="cull-finish__folder-exists-icon">⚠</span>
+                    <TriangleAlert
+                      className="cull-finish__folder-exists-icon"
+                      {...ICON.md}
+                      aria-hidden
+                    />
                     <span>
                       A folder with this name already exists at your pinned root. Rename it in the
                       field below, or click <b>Confirm (merge)</b> to copy into the existing one.
