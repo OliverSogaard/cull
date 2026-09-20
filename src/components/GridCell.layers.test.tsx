@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import { createRef } from "react";
+import { createRef, type RefObject } from "react";
 
 const thumb = vi.hoisted(() => ({
   value: {
@@ -30,9 +30,8 @@ vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
 const images: Img[] = [{ id: 1, path: "/a.cr3", filename: "IMG_0001.CR3", srcFolder: "/" }];
 
-function renderGrid() {
-  const ref = createRef<HTMLDivElement>();
-  return render(
+function gridElement(ref: RefObject<HTMLDivElement | null>) {
+  return (
     <GridView
       images={images}
       visibleIndices={[0]}
@@ -44,8 +43,13 @@ function renderGrid() {
       onPick={vi.fn((_i: number, _m: { shift: boolean; ctrl: boolean }) => {})}
       containerRef={ref}
       onViewportChange={vi.fn((_f: number, _l: number) => {})}
-    />,
+    />
   );
+}
+
+function renderGrid() {
+  const ref = createRef<HTMLDivElement>();
+  return render(gridElement(ref));
 }
 
 afterEach(cleanup);
@@ -72,12 +76,40 @@ describe("the grid cell layers the sharp tier over the THMB", () => {
     expect(container.querySelector(".cull-grid__img--hi")?.className).toContain("is-on");
   });
 
-  test("a grid thumb that never loads leaves the THMB untouched — cells have no error state", () => {
-    thumb.value = { ...thumb.value, url: "blob:thmb", gridUrl: "blob:broken" };
+  test("the sharp layer gains is-on only from ITS OWN load, not the THMB's", () => {
+    thumb.value = { ...thumb.value, url: "blob:thmb", gridUrl: "blob:grid" };
     const { container } = renderGrid();
     const imgs = [...container.querySelectorAll("img")];
-    fireEvent.error(imgs[1]);
-    expect(imgs[0].getAttribute("src")).toBe("blob:thmb");
     expect(container.querySelector(".cull-grid__img--hi")?.className).not.toContain("is-on");
+
+    // The THMB's own load must not turn the sharp layer on — it has no
+    // error state to guard against, but the two layers' load events are
+    // independent and must stay that way.
+    fireEvent.load(imgs[0]);
+    expect(container.querySelector(".cull-grid__img--hi")?.className).not.toContain("is-on");
+
+    fireEvent.load(imgs[1]);
+    expect(container.querySelector(".cull-grid__img--hi")?.className).toContain("is-on");
+  });
+
+  test("the THMB node survives the sharp layer's arrival and departure", () => {
+    thumb.value = { ...thumb.value, url: "blob:thmb", gridUrl: undefined };
+    const ref = createRef<HTMLDivElement>();
+    const { container, rerender } = render(gridElement(ref));
+    const thmbNode = container.querySelectorAll("img")[0];
+    expect(thmbNode).toBeTruthy();
+
+    thumb.value = { ...thumb.value, gridUrl: "blob:grid" };
+    rerender(gridElement(ref));
+    const withHi = [...container.querySelectorAll("img")];
+    expect(withHi[0]).toBe(thmbNode);
+    expect(withHi.length).toBe(2);
+    expect(withHi[1].getAttribute("decoding")).toBe("async");
+
+    thumb.value = { ...thumb.value, gridUrl: undefined };
+    rerender(gridElement(ref));
+    const afterHiGone = [...container.querySelectorAll("img")];
+    expect(afterHiGone.length).toBe(1);
+    expect(afterHiGone[0]).toBe(thmbNode);
   });
 });
