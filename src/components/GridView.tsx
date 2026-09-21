@@ -9,6 +9,7 @@ import { hasLrcRating } from "../utils/ratingColor";
 import { useThumb } from "../image/useThumb";
 import { computeScrollIndicator } from "../utils/scrollIndicator";
 import { computeGridAutoScrollTop, computeGridWindow } from "./gridWindow";
+import { computeGridBurstSegments } from "./gridBurstSegments";
 import { gridCellWidth } from "../utils/gridSize";
 
 /** Visible rows above and below the viewport that we still render. */
@@ -254,72 +255,20 @@ export const GridView = memo(function GridView({
     onViewportChange(viewportFirst, viewportLast);
   }, [viewportFirst, viewportLast, onViewportChange]);
 
-  // Burst run boxes, one per (group, row) segment of RENDERED cells — grid
-  // rows wrap, so "one long square" becomes one box per row the run crosses.
-  // The ×N count rides the segment containing the run's first frame.
-  type Seg = {
-    row: number;
-    c0: number;
-    c1: number;
-    label: number | null;
-    /** Run continues before/after this segment (row wrap): that edge renders
-     *  OPEN (no border, square corners) so the box reads as continuing. */
-    openLeft: boolean;
-    openRight: boolean;
-    /** "burst" = camera burst; "similar" = lookalike set. Drives the box's
-     *  modifier class and legend word. */
-    kind: "burst" | "similar";
-  };
-  const burstSegs: ({ key: string } & Seg)[] = [];
-  if (bursts || similar) {
-    const lookup = (id: number): { c: BurstCtx; kind: "burst" | "similar" } | undefined => {
-      const b = bursts?.get(id);
-      if (b) return { c: b, kind: "burst" };
-      const s = similar?.get(id);
-      return s ? { c: s, kind: "similar" } : undefined;
-    };
-    const segs = new Map<string, Seg & { firstPos: number; lastPos: number; len: number }>();
-    for (const { idx, row, col } of cells) {
-      const hit = lookup(images[idx].id);
-      if (!hit) continue;
-      const { c, kind } = hit;
-      const key = `${kind}:${c.group}:${row}`;
-      const seg = segs.get(key);
-      const label = c.pos === 1 ? c.len : null;
-      if (!seg) {
-        segs.set(key, {
-          row,
-          c0: col,
-          c1: col,
-          label,
-          firstPos: c.pos,
-          lastPos: c.pos,
-          len: c.len,
-          openLeft: false,
-          openRight: false,
-          kind,
-        });
-      } else {
-        seg.c0 = Math.min(seg.c0, col);
-        seg.c1 = Math.max(seg.c1, col);
-        if (label != null) seg.label = label;
-        seg.firstPos = Math.min(seg.firstPos, c.pos);
-        seg.lastPos = Math.max(seg.lastPos, c.pos);
-      }
-    }
-    for (const [key, s] of segs) {
-      burstSegs.push({
-        key,
-        row: s.row,
-        c0: s.c0,
-        c1: s.c1,
-        label: s.label,
-        openLeft: s.firstPos > 1,
-        openRight: s.lastPos < s.len,
-        kind: s.kind,
-      });
-    }
-  }
+  // Burst / similar boxes, one per CONTIGUOUS stretch of a group's cells in a
+  // row (see components/gridBurstSegments — a group's members need not be
+  // adjacent since the per-folder walk). The ×N legend rides the stretch
+  // holding the run's first frame.
+  const burstSegs =
+    bursts || similar
+      ? computeGridBurstSegments(cells, (idx) => {
+          const id = images[idx].id;
+          const b = bursts?.get(id);
+          if (b) return { c: b, kind: "burst" as const };
+          const s = similar?.get(id);
+          return s ? { c: s, kind: "similar" as const } : undefined;
+        })
+      : [];
 
   return (
     <div className={`cull-grid${kbdNav ? " is-kbd-nav" : ""}`} ref={containerRef}>
