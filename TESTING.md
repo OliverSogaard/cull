@@ -98,10 +98,11 @@ CULL_FUZZ_SEED=<seed> CULL_FUZZ_FROM=<iteration> CULL_FUZZ_ITERS=1 \
   cargo test mutation_fuzz -- --nocapture
 ```
 
-PowerShell:
+PowerShell — quote the seed, or PowerShell reads an unquoted `0x…` as a
+signed number and the run stops with "is not a u64":
 
 ```powershell
-$env:CULL_FUZZ_SEED=<seed>; $env:CULL_FUZZ_FROM=<iteration>; $env:CULL_FUZZ_ITERS=1; `
+$env:CULL_FUZZ_SEED='<seed>'; $env:CULL_FUZZ_FROM='<iteration>'; $env:CULL_FUZZ_ITERS='1'; `
   cargo test mutation_fuzz -- --nocapture
 ```
 

@@ -163,7 +163,7 @@ describe("the harness itself", () => {
     // Tab preventDefaults unconditionally (the Tab branch of the big cull
     // keymap's onKey handler, above the help swallow).
     expect(press("Tab").defaultPrevented).toBe(true);
-    // Ctrl+S deliberately does NOT (the Ctrl drop at :722 returns without
+    // Ctrl+S deliberately does NOT (the Ctrl/Meta/Alt drop returns without
     // preventDefault) — so a `true` here would mean the events are not
     // cancelable, and both being `false` would mean nothing is listening.
     expect(press("s", { ctrlKey: true }).defaultPrevented).toBe(false);

@@ -59,7 +59,8 @@ afterEach(() => {
  *  left alive keeps issuing reads into whichever test happens to be running
  *  two seconds later — which showed up as intermittent, order-dependent read
  *  counts in the tombstone tests near the end of the file. `hardReset()`
- *  bumps the generation, so every pending timer and in-flight read bails.
+ *  cancels every pending timer and bumps the generation, so in-flight reads
+ *  bail.
  *  Registered after the mock-restoring hook above so it runs BEFORE it
  *  (Vitest unwinds afterEach hooks in reverse registration order) and the
  *  revokes it performs still land on the mocked URL functions. */
@@ -1350,8 +1351,9 @@ describe("mid tier (Phase 8)", () => {
     const store = new Store();
 
     // Fake timers BEFORE reset(): reset arms a 2 s background-fill fallback
-    // (imageStore.ts:726), and arming it on the real clock is precisely the
-    // cross-test bleed imageStore.test.ts:54-64 documents — it would also
+    // (the `later()` call at the end of `reset()`), and arming it on the real
+    // clock is precisely the cross-test bleed this file's teardown comment
+    // documents — it would also
     // leave the `mid` assertion below depending on a promise chain the fake
     // clock never drives.
     vi.useFakeTimers();
@@ -2678,7 +2680,7 @@ describe("timer hygiene", () => {
       expect(vi.getTimerCount()).toBe(0);
 
       // Phase 2: reset() to a NEW folder cancels the OUTGOING session's grid
-      // retry too — reset() (:696) and hardReset() (:899) each call
+      // retry too — reset() and hardReset() each call
       // clearGridThumbPendingRetry() on their OWN line, so a mutation
       // removing just one of the two still left the whole file green.
       const store2 = new Store();
