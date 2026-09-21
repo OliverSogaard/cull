@@ -414,14 +414,12 @@ export function useSessionLifecycle({
     );
     let ok = true;
     try {
-      // Read HERE, not inside the invoke's object literal, to make the timing
-      // explicit: `imageStore.reset()` (which bumps the generation) runs only
-      // AFTER this call's result is already fully consumed, further down in
-      // this same function — so the generation the capture-time pass runs
-      // under cannot be superseded WHILE it's in flight, and the pass can't
-      // cancel itself. Same read-then-send shape as `analyze_quality` /
-      // `read_preview` (useSmartCulling.ts / utils/bundle.ts).
-      const gen = imageStore.getGeneration();
+      // No `gen` on the wire: TS's `imageStore` generation and the Rust
+      // session's own generation are two separate counters, synchronised
+      // only by `begin_session` — after a webview reload TS would read 0 and
+      // Rust would treat the pass as already cancelled before it starts,
+      // silently falling back to file-time sort. Cancellation of the capture
+      // pass is decided on the Rust side, from its own session generation.
       const result = await invoke<AnalyzeResult>("analyze_folder", {
         paths: images.map((im) => im.path),
         concurrentRestore: profile.concurrentRestore,
@@ -433,7 +431,6 @@ export function useSessionLifecycle({
         offsetsMs: settings.sortByCaptureTime
           ? images.map((im) => settings.captureOffsets[im.srcFolder] ?? 0)
           : null,
-        gen,
       });
 
       const sorted = result.order.map((i) => images[i]);
