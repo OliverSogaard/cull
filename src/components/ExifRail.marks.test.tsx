@@ -43,6 +43,10 @@ describe("the rail with the layer ON", () => {
     const meter = container.querySelector(".cull-mark-stars");
     expect(meter).not.toBeNull();
     expect(meter?.getAttribute("aria-label")).toBe("3 of 5 stars");
+    // "group", not "img": an `img` role marks its children presentational, so
+    // a browser prunes the five star BUTTONS out of the accessibility tree —
+    // a screen reader would announce one image and five nameless focus stops.
+    expect(meter?.getAttribute("role")).toBe("group");
     expect(container.querySelectorAll(".cull-mark-star--on")).toHaveLength(3);
     expect(container.querySelectorAll(".cull-mark-star--off")).toHaveLength(2);
   });
@@ -91,12 +95,25 @@ describe("the rail with the layer ON", () => {
     const onSetLabel = vi.fn((_l: string) => {});
     const { container } = renderRail({ starsAndLabels: true, label: "custom", onSetLabel });
     const buttons = container.querySelectorAll<HTMLButtonElement>(".cull-exif-rail__labels button");
-    expect([...buttons].every((b) => b.disabled)).toBe(true);
+    // aria-disabled, not the `disabled` attribute: Chromium (hence WebView2)
+    // removes natively-disabled elements from the accessibility tree
+    // entirely, so a screen reader could never reach the swatch's own name at
+    // all — aria-disabled keeps it reachable while still refusing the click.
+    expect([...buttons].every((b) => b.getAttribute("aria-disabled") === "true")).toBe(true);
     fireEvent.click(buttons[0]);
     expect(onSetLabel).not.toHaveBeenCalled();
     expect(container.querySelector(".cull-label--custom")?.getAttribute("aria-label")).toBe(
       "Custom Lightroom label — not changed by CULL",
     );
+    // The reason has to be VISIBLE text, not just an aria-label or a `title`
+    // — WebView2 never shows a tooltip on a disabled control, and a screen
+    // reader landing on the row (not the button) would otherwise hear
+    // nothing about why it's inert.
+    expect(
+      [...container.querySelectorAll(".cull-exif-rail__v--dim")].some(
+        (el) => el.textContent === "Custom Lightroom label — not changed by CULL",
+      ),
+    ).toBe(true);
   });
 
   it("flashes when the value CHANGES on one frame, not when the frame changes", () => {

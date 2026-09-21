@@ -173,7 +173,12 @@ export const ExifRail = memo(function ExifRail({
               <span className="cull-exif-rail__k">Rating</span>
               <span
                 className={`cull-exif-rail__v cull-mark-stars${starFlash ? " cull-mark-flash" : ""}`}
-                role="img"
+                // "group", not "img": these five children are BUTTONS, and
+                // `img`'s "children presentational" rule would prune them
+                // from the accessibility tree — a screen reader would
+                // announce one image and five nameless focus stops instead
+                // of a named group of five controls.
+                role="group"
                 aria-label={`${star ?? 0} of 5 stars`}
               >
                 {LRC_STAR_SLOTS.map((slot) => (
@@ -212,11 +217,20 @@ export const ExifRail = memo(function ExifRail({
                     className={`cull-label-swatch cull-label--${key}${
                       label === key ? ` is-active${labelFlash ? " cull-mark-flash" : ""}` : ""
                     }`}
-                    onClick={() => onSetLabel?.(key)}
+                    onClick={() => {
+                      if (label === "custom") return;
+                      onSetLabel?.(key);
+                    }}
                     // Inert over a custom label: CULL never overwrites one,
                     // and the keyboard skips such a frame too, so a swatch
                     // that still looked clickable would be lying.
-                    disabled={label === "custom"}
+                    //
+                    // aria-disabled, not the `disabled` attribute: Chromium
+                    // (hence WebView2) drops a natively-disabled element from
+                    // the accessibility tree outright, so a screen reader
+                    // could never even reach the swatch's own name — the
+                    // click is refused in the handler above instead.
+                    aria-disabled={label === "custom" || undefined}
                     title={label === "custom" ? CUSTOM_LABEL_NOTE : undefined}
                     aria-label={LABEL_NAME[key]}
                     aria-pressed={label === key}
@@ -233,6 +247,17 @@ export const ExifRail = memo(function ExifRail({
                   />
                 )}
               </span>
+            </div>
+          )}
+          {marks && label === "custom" && (
+            // The `title` above WebView2 never shows on a disabled control,
+            // and aria-disabled alone still leaves a mouse user with no
+            // visible reason the row is inert — so the reason gets its own
+            // line, same "—" key convention as the other empty-state rows
+            // below (Reading… / No exposure data).
+            <div className="cull-exif-rail__row">
+              <span className="cull-exif-rail__k">—</span>
+              <span className="cull-exif-rail__v cull-exif-rail__v--dim">{CUSTOM_LABEL_NOTE}</span>
             </div>
           )}
           {!marks && showLrc && lrc != null && (

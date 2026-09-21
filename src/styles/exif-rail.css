@@ -259,6 +259,14 @@
   outline: none;
 }
 
+/* The custom-label swatches are inert via aria-disabled, not the `disabled`
+   attribute (see ExifRail.tsx), so they need their OWN visual affordance —
+   `:disabled` never matches them. */
+.cull-exif-rail__labels button[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.45;
+}
+
 /* The active swatch wears a ring, so which one is set survives a
    screenshot, a colour-blind reader and a dark room. */
 .cull-label-swatch.is-active {
