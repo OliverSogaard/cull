@@ -76,70 +76,83 @@ assertion.
 `mutation_fuzz_never_panics_hangs_or_returns_an_oversized_result` is a plain
 `#[test]` inside `cr3.rs`'s own test module — zero extra dependencies,
 ungated by any env var or corpus, so it runs in CI alongside every other Rust
-test with no fixtures required. It's deterministic: a constant seed drives
-every mutation, with no clock and no environment read unless one of the three
-env vars below overrides it. Per input it asserts the parser never panics,
+test with no fixtures required. It's deterministic: every input the fuzzer
+tries is a pure function of `(seed, iteration)`, and nothing else feeds the
+mutations — the test itself always reads the three env vars below and always
+clocks each input against a per-input budget, but neither of those changes
+what gets generated. Per input it asserts the parser never panics,
 never hangs (a worker thread acks each input; a missed ack past its
 per-input budget fails the test naming the culprit), and never returns a
 size that couldn't fit the buffer it was handed.
 
-To reproduce a red run, verbatim:
+`CULL_FUZZ_SEED` accepts decimal (`20000`) or hex (`0xc0ffee150feed000`,
+either case) — exactly the form the failure line prints it in — and panics
+on anything else instead of silently falling back to the default seed,
+since a silent fallback would run a different input stream than the one
+being reproduced.
+
+To reproduce a red run, verbatim (Git Bash / POSIX):
 
 ```bash
 CULL_FUZZ_SEED=<seed> CULL_FUZZ_FROM=<iteration> CULL_FUZZ_ITERS=1 \
   cargo test mutation_fuzz -- --nocapture
 ```
 
+PowerShell:
+
+```powershell
+$env:CULL_FUZZ_SEED=<seed>; $env:CULL_FUZZ_FROM=<iteration>; $env:CULL_FUZZ_ITERS=1; `
+  cargo test mutation_fuzz -- --nocapture
+```
+
 The failing input is DERIVED from `(seed, iteration)` rather than replayed
 from a saved corpus, so one iteration reproduces that exact input on its own
-— nothing has to be checked in for a bug report to be actionable.
+— nothing has to be checked in for a bug report to be actionable. Its limits
+are real, though: random mutation of a well-formed head can flip bits and
+counts, but it cannot CONSTRUCT an adversarial-but-well-formed input such as
+a JPEG built of thousands of tiny repeated segments — that class of bug
+needs a hand-written test, not this fuzzer.
 
 ## The mock kit
 
 `src/test/tauriMocks.ts` is the shared Tauri + DOM kit: an `invoke` spy
-routed per test, `listen`/window-command stubs shaped exactly like what a
-mounted tree calls, and `installDomStubs()` / `restoreDomStubs()` for the DOM
-globals jsdom doesn't provide. A `vi.mock` factory can't reference a
-module-scope import, so a consumer uses the async form that imports the kit
-from inside the factory itself:
+routed per test, `listen`/window-command stubs, and `installDomStubs()` /
+`restoreDomStubs()` for the DOM globals jsdom doesn't provide (`matchMedia`,
+`ResizeObserver`, `HTMLImageElement.prototype.decode` — none of which jsdom
+implements; `URL.createObjectURL`/`revokeObjectURL` ARE implemented under
+Vitest's jsdom, but the kit swaps them for spies anyway to count blob
+churn). Call `installDomStubs()` in `beforeEach` and `restoreDomStubs()` in
+`afterEach`.
+
+A `vi.mock` factory can't reference a module-scope import, so a consumer
+uses the async form that imports the kit from inside the factory itself:
 
 ```ts
 vi.mock("@tauri-apps/api/window", async () =>
   (await import("./test/tauriMocks")).windowMock());
 ```
 
-The module-default `invoke` router THROWS `tauriMocks: no invoke router
-installed (<cmd>)` rather than resolving `undefined` — a test that forgot to
-install a router would otherwise watch every command succeed with nothing
-back, and fail far downstream with no pointer at the real cause. A per-test
-router's own `default:` arm returning `undefined` is a different, correct
-thing: some commands (`begin_session`, `set_io_profile`, the sidecar writes)
-are genuinely void.
-
-jsdom 30 implements neither `matchMedia` nor `ResizeObserver` — both get
-stubbed. It DOES implement `URL.createObjectURL` / `revokeObjectURL` under
-Vitest's jsdom environment; the kit replaces that pair with spies anyway, to
-count blob churn, not because they're missing. It also stubs
-`HTMLImageElement.prototype.decode` (jsdom has none, and the presenter awaits
-it once per tier on every offer).
-
-The seven pre-existing inline `vi.mock("@tauri-apps/api/core")` declarations
-were deliberately left alone rather than migrated onto this kit — a
-mechanical follow-up for a later pass, not this phase.
+The default `invoke` router THROWS `tauriMocks: no invoke router installed
+(<cmd>)` rather than resolving `undefined`, so a test that forgot to install
+a router fails at the call site instead of far downstream with nothing to
+point at the real cause.
 
 ## Store timer hygiene
 
 Every wall-clock timer inside `ImageStore` goes through its private
-`later()` wrapper rather than a bare `setTimeout`, so `reset()` and
-`hardReset()` can actually cancel what's pending instead of just changing a
-generation counter that a stale callback would still see fire. `MidSweep`
-keeps its own one handle the same way. `imageStore.test.ts`'s `timer
-hygiene` describe enforces this by reading both source files raw and
-failing on any untracked timer call. The reason it matters: the old
-by-generation silencing couldn't tell a scheduled timer from a leaked one —
-a stale `setTimeout` fired, no-oped on a dead generation, and looked exactly
-like nothing had happened. Cancelling the handle is the only way to prove
-nothing is still armed.
+`later()` wrapper — or, for the one exception, its own directly-tracked
+handle: `gridThumbPendingRetry`, cleared from the three sites that need to
+disarm it. Either way, `reset()` and `hardReset()` can actually cancel
+what's pending, instead of just changing a generation counter that a stale
+callback would still see fire. `MidSweep` keeps its own one handle the same
+way. `imageStore.test.ts`'s `timer hygiene` describe enforces this by
+reading both source files raw, stripping comments, and counting every
+`setTimeout`/`setInterval` call: `imageStore.ts` is allowed exactly two (one
+inside `later()`, one for the grid retry); `midSweep.ts` exactly one. The
+reason it matters: the old by-generation silencing couldn't tell a
+scheduled timer from a leaked one — a stale `setTimeout` fired, no-oped on a
+dead generation, and looked exactly like nothing had happened. Cancelling
+the handle is the only way to prove nothing is still armed.
 
 ## Coverage
 
@@ -149,8 +162,10 @@ pnpm test:coverage
 
 Uses the v8 provider with text + html reporters; `coverage/` is git-ignored.
 There is no threshold, in config or in CI — Phase 4 measured for the first
-time (numbers recorded in the phase's implementation note); per-directory
-floors are a later call, once real numbers exist to set them against.
+time, and the numbers are recorded in this phase's implementation note
+(`docs/superpowers/plans/2026-09-21-phase-4-tests-and-ci.md`,
+"Implementation note" section) once the branch lands. Per-directory floors
+are a later call, once real numbers exist to set them against.
 
 ## Stylesheet guards
 

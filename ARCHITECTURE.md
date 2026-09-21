@@ -90,13 +90,12 @@ fresh per request with ~100 px of hysteresis around ~1700) exceeds what the
 preview can show sharply; the fallback chain mid → preview always renders.
 An evicted nav blob falls back to its thumb, never back to shimmer.
 
-Every IFD entry's component count is file-supplied, and reading metadata
-trusts it just enough to be dangerous: before this phase, a CR3 declaring a
-4-billion-component GPS RATIONAL array made `Tiff::rationals` spin about a
-second per tag on every read path, for a value the UI never even displays.
-`Tiff::find_entry` now clamps that count to what the buffer actually holds,
-so no reader — GPS, EXIF, any future tag — can be made to iterate past its
-own bytes.
+Every IFD entry's component count is file-supplied. `Tiff::find_entry`
+clamps it to what the buffer actually holds (Phase 4), so no reader — GPS,
+EXIF, any future tag — can be made to iterate past its own bytes. Unclamped,
+a CR3 declaring a 4-billion-component GPS RATIONAL array made
+`Tiff::rationals` spin about a second per tag on every read path, for a
+value the UI never even displays.
 
 The **grid tier** (Phase 3B) is NOT a fourth display stage — `resolveStage`
 never sees it. It exists only inside the contact sheet: a second `<img>`
