@@ -318,3 +318,21 @@ describe("the backdrops", () => {
     }
   });
 });
+
+describe("the grid's colour-label bar", () => {
+  test("out-specifies marks.css's inset with a compound selector, not import order", () => {
+    // marks.css's `.cull-label-bar` and grid.css's inset rule are both a
+    // single class (0,1,0) — whichever file happens to import LAST would win
+    // on source order alone, and index.css imports marks.css after grid.css,
+    // so the bar used to land in the 9px inter-image corridor instead of on
+    // the frame. Raising this rule to a compound selector (0,2,0) makes it
+    // win regardless of import order. ruleBody's line-anchored `selector {`
+    // match means a comment merely mentioning the compound selector cannot
+    // fake a pass, and it throws outright if the bare, lower-specificity
+    // selector is what's actually there.
+    const body = ruleBody(sheet("./grid.css"), ".cull-label-bar.cull-grid__label-bar");
+    expect(body).toContain("left: 9px");
+    expect(body).toContain("right: 9px");
+    expect(body).toContain("bottom: 9px");
+  });
+});
