@@ -266,3 +266,28 @@
   display: none;
 }
 
+/* ── Stars and colour labels (Phase 5A) ───────────────────────────────────
+   POSITION only; the look is in marks.css. */
+
+/* The free corner. Same dark pill as the LrC badge it replaces, so the two
+   marks never look like two different systems. */
+.cull-grid__star {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 2px 4px;
+  border-radius: var(--r-1);
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* The bar hugs the FRAME's bottom edge, not the cell's: the cell's 9px
+   padding is the inter-image corridor (and the burst boxes' room), and a bar
+   drawn across it would read as belonging to the gap. */
+.cull-grid__label-bar {
+  left: 9px;
+  right: 9px;
+  bottom: 9px;
+}
+
