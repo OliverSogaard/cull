@@ -4,7 +4,8 @@
  * by domain (rating / image / ipc / nav / ui). `EMPTY_METADATA` is the one
  * VALUE here: it belongs with the type it templates, so it rides the barrel.
  */
-export type { Rating, Filter, UndoAction } from "./rating";
+export type { Rating, Filter, UndoAction, Star, Label, LabelValue, MetaChange } from "./rating";
+export { LABELS, LABEL_NAME, isLabel, isLabelValue, isStar } from "./rating";
 export type { Img, ImageMetadata } from "./image";
 export { EMPTY_METADATA } from "./image";
 export type { FileOpResult, AnalyzeProgress, AnalyzeResult, ScanResult } from "./ipc";

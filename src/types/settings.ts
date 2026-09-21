@@ -115,6 +115,23 @@ export type Settings = {
    *  the old key is deliberately dropped by coerceSettings so every user lands
    *  on the default. Inert on builds without the model runtime. */
   deepAnalysis: boolean;
+
+  // — Stars and colour labels (Phase 5A) —
+  /**
+   * Lightroom's other two verdicts: 1–5 stars (`xmp:Rating`) and the five
+   * colour labels (`xmp:Label`), as an optional layer ORTHOGONAL to
+   * keep / reject / favorite.
+   *
+   * OFF by default, and off means off: the digit row keeps selecting filters,
+   * no star or label renders anywhere, and no star or label byte is ever
+   * written. ON, the digit row becomes Lightroom's — `1`–`5` set stars, `0`
+   * clears them, `6`–`9` and `Shift+6` set Red / Yellow / Green / Blue /
+   * Purple — and the five filters move to `Shift+1`–`Shift+5`.
+   *
+   * A starred frame with no keep/reject is still UNRATED: every count, every
+   * filter and the smart pipeline keep keying on `Rating` alone.
+   */
+  starsAndLabels: boolean;
 };
 
 /** Mirror of `src/smart/deriveVerdict.ts`'s SmartLevel (kept here so settings
@@ -145,6 +162,8 @@ export const DEFAULT_SETTINGS: Settings = {
   smartCullingConfidence: "medium",
   smartCullingOnOpen: true,
   deepAnalysis: true,
+
+  starsAndLabels: false,
 };
 
 /** localStorage key. Bump only with a migration (read old key → transform →

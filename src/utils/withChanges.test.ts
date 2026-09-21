@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { withChanges } from "./withChanges";
+import { withChanges, withMeta } from "./withChanges";
 
 describe("withChanges", () => {
   it("applies each change to a COPY, leaving the input untouched", () => {
@@ -31,6 +31,30 @@ describe("withChanges", () => {
   it("an empty changes array still returns a fresh copy", () => {
     const before = { 3: "keep" } as const;
     const after = withChanges(before, []);
+    expect(after).toEqual(before);
+    expect(after).not.toBe(before);
+  });
+});
+
+describe("withMeta — the generic map update for stars and labels", () => {
+  it("sets, replaces and DELETES, never storing undefined", () => {
+    // The delete is the whole point, exactly as in withChanges: an absent key
+    // is how "no star" and "no label" are spelled, so a stored `undefined`
+    // would make `id in stars` and Object.keys(...).length lie.
+    const before = { 1: 3, 2: 5 } as Record<number, number>;
+    const after = withMeta(before, [
+      { imgId: 1, after: 4 },
+      { imgId: 2, after: undefined },
+      { imgId: 7, after: 1 },
+    ]);
+    expect(after).toEqual({ 1: 4, 7: 1 });
+    expect(Object.keys(after)).not.toContain("2");
+    expect(before).toEqual({ 1: 3, 2: 5 }); // input untouched
+  });
+
+  it("an empty change list returns an equal copy, not the same object", () => {
+    const before = { 1: "red" } as Record<number, string>;
+    const after = withMeta(before, []);
     expect(after).toEqual(before);
     expect(after).not.toBe(before);
   });
