@@ -2,6 +2,22 @@ import type { Img } from "../types/image";
 import { pickWinner } from "./pickWinner";
 
 /**
+ * The file's own parent directory, split on both `\` and `/` (Tauri paths use
+ * `\` on Windows, `/` on POSIX — mirrors `basename` in `utils/path.ts`, but
+ * lives here so both groupers can share it without a cross-file dependency
+ * outside this task's scope). This, not `Img.srcFolder`, is what the per-run
+ * walks below key on: `srcFolder` is the folder the OWNER staged, which can
+ * be one date folder holding BOTH camera cards' subfolders when the scan is
+ * recursive — two bodies would then share one `srcFolder` and interleave
+ * inside a single walk. A path with no separator has no parent, so it keys
+ * on "" (every such frame collapses into one bucket, same as before).
+ */
+export function dirOf(path: string): string {
+  const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return idx === -1 ? "" : path.slice(0, idx);
+}
+
+/**
  * Per-frame grouping inputs, SOURCE-AGNOSTIC: built from smart-culling scores
  * when the pass has run, else from the EXIF metadata every frame already
  * receives via its thumbnail — bursts are a standing fact about the shoot and
@@ -59,8 +75,12 @@ function extendsRun(
   if (!(a.driveMode != null && a.driveMode > 0) || !(b.driveMode != null && b.driveMode > 0)) {
     return false;
   }
-  // Invariant since the per-folder walk below: prev and cur always share a
-  // folder. Kept as a gate so the function stays correct on its own terms.
+  // Invariant since the per-directory walk below: prev and cur always share a
+  // parent directory, and hence a srcFolder (a directory's every file shares
+  // its ancestors). Kept as a gate so the function stays correct on its own
+  // terms, and as a safety net for the one case the directory key can't
+  // distinguish — two flat imports (no subfolder) whose files sit directly in
+  // DIFFERENT srcFolders both key on "" (dirOf of a separator-less path).
   if (prev.img.srcFolder !== cur.img.srcFolder) return false;
   if (a.focalLengthMm == null || b.focalLengthMm == null) return false;
   if (Math.abs(a.focalLengthMm - b.focalLengthMm) > 0.01) return false;
@@ -103,11 +123,13 @@ export function groupBursts(
   let groupId = 0;
 
   /**
-   * Walk state PER SOURCE FOLDER. The session order is capture time, so two
-   * bodies shooting the same moment interleave frame by frame — with one
-   * shared `prev` every switch broke both runs and two simultaneous bursts
-   * collapsed into singletons. A run now continues across foreign-folder
-   * frames; the gates (including the srcFolder one, which can no longer fire)
+   * Walk state PER PARENT DIRECTORY (`dirOf(img.path)`, not `img.srcFolder` —
+   * see `dirOf`'s doc). The session order is capture time, so two bodies
+   * shooting the same moment interleave frame by frame — with one shared
+   * `prev` every switch broke both runs and two simultaneous bursts collapsed
+   * into singletons. A run now continues across foreign-directory frames; the
+   * gates (including `extendsRun`'s srcFolder one, which can no longer fire —
+   * two frames sharing a directory always share their ancestor srcFolder too)
    * are unchanged, and group ids stay session-global.
    */
   type Walk = { run: { id: number }[]; prev: { img: Img; input: BurstInput } | null };
@@ -132,15 +154,16 @@ export function groupBursts(
   };
 
   for (const img of images) {
-    let w = walks.get(img.srcFolder);
+    const dir = dirOf(img.path);
+    let w = walks.get(dir);
     if (!w) {
       w = { run: [], prev: null };
-      walks.set(img.srcFolder, w);
+      walks.set(dir, w);
     }
     const input = inputs[img.id];
     if (!input) {
       // A frame without usable inputs is a transparent wall for ITS OWN
-      // folder only — the other body's run is none of its business.
+      // directory only — the other body's run is none of its business.
       flush(w);
       w.prev = null;
       continue;

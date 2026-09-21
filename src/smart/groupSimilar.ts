@@ -1,6 +1,6 @@
 import type { Img } from "../types/image";
 import type { ImageScore } from "../types/ipc";
-import type { BurstCtx, SharpInput } from "./groupBursts";
+import { dirOf, type BurstCtx, type SharpInput } from "./groupBursts";
 import { pickWinner } from "./pickWinner";
 
 /** Same ctx shape as bursts — the UI treats both group kinds identically. */
@@ -115,9 +115,13 @@ export function groupSimilar(
   let groupId = 0;
 
   /**
-   * Walk state PER SOURCE FOLDER — the same shape, and for the same reason,
-   * as groupBursts': a capture-time session order interleaves two bodies
-   * frame by frame, and one shared `prev` made every switch break both runs.
+   * Walk state PER PARENT DIRECTORY (`dirOf(img.path)`) — the same shape, key,
+   * and reason as groupBursts': a capture-time session order interleaves two
+   * bodies frame by frame, and one shared `prev` made every switch break both
+   * runs. Keying on `dirOf(img.path)` rather than `img.srcFolder` matters when
+   * the owner stages one date folder holding BOTH cards' subfolders (a
+   * recursive scan) — the two bodies would otherwise share one `srcFolder`
+   * and interleave inside a single walk.
    */
   type Walk = { run: number[]; prev: { img: Img; input: SimilarInput } | null };
   const walks = new Map<string, Walk>();
@@ -140,14 +144,15 @@ export function groupSimilar(
   };
 
   for (const img of images) {
-    let w = walks.get(img.srcFolder);
+    const dir = dirOf(img.path);
+    let w = walks.get(dir);
     if (!w) {
       w = { run: [], prev: null };
-      walks.set(img.srcFolder, w);
+      walks.set(dir, w);
     }
     const input = inputs[img.id];
     // Transparent walls: no standing input yet, and burst members, both split
-    // — but ONLY their own folder's run.
+    // — but ONLY their own directory's run.
     if (!input || bursts.has(img.id)) {
       flush(w);
       w.prev = null;
@@ -156,8 +161,11 @@ export function groupSimilar(
     const embCur = scores[img.id]?.embedding ?? null;
     if (
       w.prev &&
-      // Invariant since the per-folder walk: prev and img always share a
-      // folder. Kept so the condition stays correct on its own terms.
+      // Invariant since the per-directory walk: prev and img always share a
+      // parent directory, and hence a srcFolder. Kept so the condition stays
+      // correct on its own terms — see the matching gate in groupBursts.ts's
+      // extendsRun for the one edge case (flat, separator-less paths) where
+      // it isn't purely redundant.
       w.prev.img.srcFolder === img.srcFolder &&
       linked(w.prev.input, input, scores[w.prev.img.id]?.embedding ?? null, embCur)
     ) {

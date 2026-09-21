@@ -87,13 +87,98 @@ describe("groupBursts", () => {
     expect(groupBursts(images, inputs).size).toBe(0);
   });
 
-  test("same cadence in a DIFFERENT srcFolder never groups", () => {
-    const images = [img(1, "/shoot/a"), img(2, "/shoot/b")];
+  test("same cadence in a DIFFERENT srcFolder groups each folder on its own, never across", () => {
+    // Each folder gets its OWN 2-frame burst; a single lone frame per folder
+    // (the old shape of this test) passes vacuously once folders walk
+    // independently — there's never a same-folder pair to even compare.
+    const images = [
+      img(1, "/shoot/a"),
+      img(2, "/shoot/b"),
+      img(3, "/shoot/a"),
+      img(4, "/shoot/b"),
+    ];
     const inputs = {
       1: input(0),
-      2: input(1, { srcFolder: "/shoot/b" }),
+      2: input(0, { srcFolder: "/shoot/b" }),
+      3: input(1),
+      4: input(1, { srcFolder: "/shoot/b" }),
     };
-    expect(groupBursts(images, inputs).size).toBe(0);
+    const ctx = groupBursts(images, inputs);
+    expect(ctx.get(1)!.len).toBe(2);
+    expect(ctx.get(2)!.len).toBe(2);
+    expect(ctx.get(1)!.group).toBe(ctx.get(3)!.group);
+    expect(ctx.get(2)!.group).toBe(ctx.get(4)!.group);
+    const groups = new Set([1, 2, 3, 4].map((id) => ctx.get(id)!.group));
+    expect(groups.size).toBe(2); // two folders, two groups — never one merged group of 4
+  });
+
+  test("two bodies in SUBFOLDERS of one staged folder keep BOTH bursts (recursive scan, one srcFolder)", () => {
+    // A recursive scan of one staged date folder puts both cards' frames under
+    // the SAME srcFolder — only the file's own parent directory tells the two
+    // bodies apart. Interleaved A,B,A,B by capture time.
+    const images = [
+      { id: 1, srcFolder: "/shoot", path: "/shoot/CardA/img1.CR3", filename: "img1.CR3" },
+      { id: 2, srcFolder: "/shoot", path: "/shoot/CardB/img2.CR3", filename: "img2.CR3" },
+      { id: 3, srcFolder: "/shoot", path: "/shoot/CardA/img3.CR3", filename: "img3.CR3" },
+      { id: 4, srcFolder: "/shoot", path: "/shoot/CardB/img4.CR3", filename: "img4.CR3" },
+    ];
+    const inputs = {
+      1: input(0, { srcFolder: "/shoot" }),
+      2: input(0, { srcFolder: "/shoot" }),
+      3: input(1, { srcFolder: "/shoot" }),
+      4: input(1, { srcFolder: "/shoot" }),
+    };
+    const ctx = groupBursts(images, inputs);
+    expect(ctx.get(1)!.len).toBe(2);
+    expect(ctx.get(3)!.len).toBe(2);
+    expect(ctx.get(2)!.len).toBe(2);
+    expect(ctx.get(4)!.len).toBe(2);
+    expect(ctx.get(1)!.group).toBe(ctx.get(3)!.group);
+    expect(ctx.get(2)!.group).toBe(ctx.get(4)!.group);
+    expect(ctx.get(1)!.group).not.toBe(ctx.get(2)!.group);
+  });
+
+  test("the parent-directory key handles Windows backslashes the same as forward slashes", () => {
+    // Same interleaved-subfolder shape as the test above, but on a Windows-style
+    // path (backslashes only) — dirOf must split on `\` too, not just `/`.
+    const images = [
+      {
+        id: 1,
+        srcFolder: "C:\\shoot",
+        path: "C:\\shoot\\CardA\\img1.CR3",
+        filename: "img1.CR3",
+      },
+      {
+        id: 2,
+        srcFolder: "C:\\shoot",
+        path: "C:\\shoot\\CardB\\img2.CR3",
+        filename: "img2.CR3",
+      },
+      {
+        id: 3,
+        srcFolder: "C:\\shoot",
+        path: "C:\\shoot\\CardA\\img3.CR3",
+        filename: "img3.CR3",
+      },
+      {
+        id: 4,
+        srcFolder: "C:\\shoot",
+        path: "C:\\shoot\\CardB\\img4.CR3",
+        filename: "img4.CR3",
+      },
+    ];
+    const inputs = {
+      1: input(0, { srcFolder: "C:\\shoot" }),
+      2: input(0, { srcFolder: "C:\\shoot" }),
+      3: input(1, { srcFolder: "C:\\shoot" }),
+      4: input(1, { srcFolder: "C:\\shoot" }),
+    };
+    const ctx = groupBursts(images, inputs);
+    expect(ctx.get(1)!.len).toBe(2);
+    expect(ctx.get(2)!.len).toBe(2);
+    expect(ctx.get(1)!.group).toBe(ctx.get(3)!.group);
+    expect(ctx.get(2)!.group).toBe(ctx.get(4)!.group);
+    expect(ctx.get(1)!.group).not.toBe(ctx.get(2)!.group);
   });
 
   test("SubSec cadence outranks mtime: buffer-dump mtimes stretch, still one burst", () => {

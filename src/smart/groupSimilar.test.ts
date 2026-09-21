@@ -140,10 +140,76 @@ describe("groupSimilar", () => {
     expect(out.get(2)?.isWinner).toBe(false);
   });
 
-  test("different srcFolder never groups", () => {
-    const images = [img(1), { id: 2, srcFolder: "/b", path: "/b/img2.CR3", filename: "img2.CR3" }];
-    const inputs = { 1: input(0), 2: input(1000) };
-    expect(groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {}).size).toBe(0);
+  test("different srcFolder groups each folder on its own, never across", () => {
+    // Each folder gets its OWN 2-frame similar set; a single lone frame per
+    // folder (the old shape of this test) passes vacuously once folders walk
+    // independently — there's never a same-folder pair to even compare.
+    const images = [
+      img(1, "/shoot/a"),
+      { id: 2, srcFolder: "/b", path: "/b/img2.CR3", filename: "img2.CR3" },
+      img(3, "/shoot/a"),
+      { id: 4, srcFolder: "/b", path: "/b/img4.CR3", filename: "img4.CR3" },
+    ];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "ffffffffffffffff" }),
+      3: input(1000, { phash: "0000000000000003" }), // hamming 2 from #1
+      4: input(1000, { phash: "ffffffffffffffff" }), // identical to #2
+    };
+    const out = groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {});
+    expect(out.get(1)?.len).toBe(2);
+    expect(out.get(2)?.len).toBe(2);
+    expect(out.get(1)?.group).toBe(out.get(3)?.group);
+    expect(out.get(2)?.group).toBe(out.get(4)?.group);
+    const groups = new Set([1, 2, 3, 4].map((id) => out.get(id)?.group));
+    expect(groups.size).toBe(2); // two folders, two groups — never one merged group of 4
+  });
+
+  test("two bodies in SUBFOLDERS of one staged folder keep BOTH similar sets (recursive scan, one srcFolder)", () => {
+    // A recursive scan of one staged date folder puts both cards' frames under
+    // the SAME srcFolder — only the file's own parent directory tells the two
+    // bodies apart.
+    const images = [
+      { id: 1, srcFolder: "/shoot", path: "/shoot/CardA/img1.CR3", filename: "img1.CR3" },
+      { id: 2, srcFolder: "/shoot", path: "/shoot/CardB/img2.CR3", filename: "img2.CR3" },
+      { id: 3, srcFolder: "/shoot", path: "/shoot/CardA/img3.CR3", filename: "img3.CR3" },
+      { id: 4, srcFolder: "/shoot", path: "/shoot/CardB/img4.CR3", filename: "img4.CR3" },
+    ];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "ffffffffffffffff" }),
+      3: input(1000, { phash: "0000000000000003" }), // hamming 2 from #1
+      4: input(1000, { phash: "ffffffffffffffff" }), // identical to #2
+    };
+    const out = groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {});
+    expect(out.get(1)?.group).toBe(out.get(3)?.group);
+    expect(out.get(2)?.group).toBe(out.get(4)?.group);
+    expect(out.get(1)?.group).not.toBe(out.get(2)?.group);
+    expect(out.get(1)?.len).toBe(2);
+    expect(out.get(2)?.len).toBe(2);
+  });
+
+  test("the parent-directory key handles Windows backslashes the same as forward slashes", () => {
+    // Same interleaved-subfolder shape as the test above, but on a Windows-style
+    // path (backslashes only) — dirOf must split on `\` too, not just `/`.
+    const images = [
+      { id: 1, srcFolder: "C:\\shoot", path: "C:\\shoot\\CardA\\img1.CR3", filename: "img1.CR3" },
+      { id: 2, srcFolder: "C:\\shoot", path: "C:\\shoot\\CardB\\img2.CR3", filename: "img2.CR3" },
+      { id: 3, srcFolder: "C:\\shoot", path: "C:\\shoot\\CardA\\img3.CR3", filename: "img3.CR3" },
+      { id: 4, srcFolder: "C:\\shoot", path: "C:\\shoot\\CardB\\img4.CR3", filename: "img4.CR3" },
+    ];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "ffffffffffffffff" }),
+      3: input(1000, { phash: "0000000000000003" }), // hamming 2 from #1
+      4: input(1000, { phash: "ffffffffffffffff" }), // identical to #2
+    };
+    const out = groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {});
+    expect(out.get(1)?.group).toBe(out.get(3)?.group);
+    expect(out.get(2)?.group).toBe(out.get(4)?.group);
+    expect(out.get(1)?.group).not.toBe(out.get(2)?.group);
+    expect(out.get(1)?.len).toBe(2);
+    expect(out.get(2)?.len).toBe(2);
   });
 
   test("two bodies interleaved by capture time keep BOTH their similar sets", () => {
