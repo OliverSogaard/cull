@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import { imageStore } from "./image/imageStore";
-import { dialogOpen, frame, installDomStubs, invoke, setInvokeRouter } from "./test/tauriMocks";
+import {
+  dialogOpen,
+  frame,
+  installDomStubs,
+  invoke,
+  restoreDomStubs,
+  setInvokeRouter,
+} from "./test/tauriMocks";
 
 /**
  * ONE path: start -> staged -> culling -> Enter -> the sidecar write.
@@ -34,12 +41,6 @@ vi.mock("@tauri-apps/plugin-dialog", async () => (await import("./test/tauriMock
 
 const FOLDER = "/shoot";
 const PATHS = [`${FOLDER}/a.CR3`, `${FOLDER}/b.CR3`];
-
-const origCreate = globalThis.URL.createObjectURL;
-const origRevoke = globalThis.URL.revokeObjectURL;
-// jsdom never defined this one, so the saved value is `undefined` — putting it
-// back is still the honest restore, and it keeps the kit's stub from leaking.
-const origDecode = HTMLImageElement.prototype.decode;
 
 beforeEach(() => {
   localStorage.clear();
@@ -91,10 +92,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   imageStore.hardReset();
-  vi.unstubAllGlobals();
-  globalThis.URL.createObjectURL = origCreate;
-  globalThis.URL.revokeObjectURL = origRevoke;
-  HTMLImageElement.prototype.decode = origDecode;
+  restoreDomStubs();
 });
 
 describe("App, end to end on one path", () => {
