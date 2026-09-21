@@ -34,7 +34,7 @@
 - **Implementers never run `git stash` / `git checkout` / `git restore` / `git reset`.** To watch a test fail, temporarily edit the one line under test and edit it back.
 - **Never run the app**, never open a real photo folder, never touch `C:\Canon Media`. A vite dev server may be listening on port 1420 — leave it alone.
 - **Gate for every task** (run from the repo root): `pnpm typecheck && pnpm typecheck:tests && pnpm lint && pnpm lint:css && pnpm test`.
-  **Rust tasks additionally** run, from `src-tauri/` — exactly as `.github/workflows/ci.yml` does: `cargo fmt --check`, then `cargo clippy --all-targets -- -D warnings`, then `cargo test`.
+  **Rust tasks additionally** run, from `src-tauri/`: `cargo fmt` FIRST — the Rust in this plan is hand-written, not rustfmt output, so transcribing it verbatim can fail the check gate on nothing but a chain wrap — then, exactly as `.github/workflows/ci.yml` does, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
   The final task adds `pnpm build` and `pnpm css:census`.
 - **Media queries use range notation.** `stylelint-config-standard` sets `media-feature-range-notation: "context"`, so `(max-width: …)` is a lint error; write `(width < 1360px)`. **3C adds no new breakpoint** — every new rule goes inside a block that already exists.
 - **A regex over CSS must not be satisfiable by a comment.** Assert with `ruleBody(...)` from `src/styles/layout.test.ts` (exported, `layout.test.ts:25`), which anchors on a **line start** (`\n` plus optional indent) followed by `selector {` — a bare `toContain(".cull-foo")` passes on a comment merely naming the class, and a fix-round report caught exactly that false positive in 3B.
@@ -63,7 +63,7 @@ export function stripMetricsNow(): StripMetrics;
 
 **Consumes:** `StripMetrics` / `stripMetricsFor` / `STRIP_TALL_QUERY` from `./metrics` (already imported there).
 
-**Ruling (where the strip's width comes from):** `window.innerWidth`, not a new ref. `.cull-strip-wrap` and `.cull-thumbs` are direct children of `main.cull-app` (`App.tsx:2065`, `:2067`, `:1971`, `:2021`), which is `width: 100%; padding: 0` inside a `#root`/`body` that are the same (`base.css:44-61`), and `.cull-thumbs`' padding is `20px 0 8px` — **zero horizontal** (`strip.css`, and `src/components/strip/metrics.test.ts` already pins that exact declaration). `body` is `overflow: hidden`, so no viewport scrollbar eats into it, and `.cull-thumbs`' own horizontal scrollbar is suppressed (`scrollbar-width: none`). The strip's content width therefore **is** the window's inner width, exactly. Threading a ref from `App` through `ThumbStrip` **and** `CompareStrip` into `PhotoStrip` would touch three otherwise-untouched components to learn a number that is already free.
+**Ruling (where the strip's width comes from):** `window.innerWidth`, not a new ref. `.cull-strip-wrap` and `.cull-thumbs` are direct children of `main.cull-app` (`App.tsx:2065`, `:2067`, `:1971`, `:2021`), which is `width: 100%; padding: 0` inside a `#root`/`body` that are the same (`base.css:47-62`), and `.cull-thumbs`' padding is `20px 0 8px` — **zero horizontal** (`strip.css`, and `src/components/strip/metrics.test.ts` already pins that exact declaration). `body` is `overflow: hidden`, so no viewport scrollbar eats into it, and `.cull-thumbs`' own horizontal scrollbar is suppressed (`scrollbar-width: none`). The strip's content width therefore **is** the window's inner width, exactly. Threading a ref from `App` through `ThumbStrip` **and** `CompareStrip` into `PhotoStrip` would touch three otherwise-untouched components to learn a number that is already free.
 
 - [ ] **Step 1: failing test** — create `src/utils/pageStep.test.ts` (node env):
 
@@ -198,13 +198,15 @@ export function stripMetricsNow(): StripMetrics {
   cycleChallenger: (dir: 1 | -1, step?: number) => boolean;
 ```
 
-**Ruling (`e.repeat`):** holding `PgDn` to fly through a shoot is a reasonable gesture, so the plain keys allow OS auto-repeat — `advance` (`App.tsx:1002-1019`) clamps and returns `false` **without calling `setCurrentIndex`** when it cannot move, so a held `Home` at the top costs nothing, and there is no rAF loop for a repeat to race (unlike the held arrows, which is why those guard). The two **Shift** forms DO guard `e.repeat`: `growGridSelection` (`App.tsx:1260-1284`) writes a fresh `Set` on every call and their step is always the whole list, so each repeat would rebuild an identical selection and re-render for nothing.
+**Ruling (`e.repeat`):** holding `PgDn` to fly through a shoot is a reasonable gesture, so the plain keys allow OS auto-repeat — `advance` (`App.tsx:1002-1019`) clamps and returns `false` **without calling `setCurrentIndex`** when it cannot move, so a held `Home` at the top costs nothing, and there is no rAF loop for a repeat to race (unlike the held arrows, which is why those guard). **Shift+Home / Shift+End** DO guard `e.repeat`: `growGridSelection` (`App.tsx:1260-1284`) writes a fresh `Set` on every call and their step is always the whole list, so each repeat would rebuild an identical selection and re-render for nothing. **Shift+PgUp / Shift+PgDn** do not guard it — each repeat genuinely grows the selection by another screenful, exactly like a held Shift+ArrowDown.
 
-**Ruling (compare gets PgUp / PgDn only):** compare navigates candidates through `cycleChallenger`, which walks `findUnrated` once per step in a loop (`useSiteNavigation.ts:246-266`). `cycleChallenger(dir, images.length)` is therefore O(n²) — 17.6 M scans on a 4,194-frame shoot, a visible freeze. A page step (13–18) is the same magnitude as the existing 10× scrub and is fine. `Home` / `End` are loupe + grid only (they are defined in terms of "the active filter", and the filter tablist is hidden in compare — `StatusBar.tsx:295`); they still get an explicit `preventDefault`-and-break in the compare switch so none of the four keys ever reaches a platform default while the cull keymap is live (spec §A: "All new cases `preventDefault`"). This matches the scout's own help-row proposal.
+**Ruling (Shift+PgUp / PgDn extend the selection):** the spec names only Shift+Home / Shift+End, but leaving the page keys' Shift form to fall through to the plain branch would *clear* a grid selection the user was plainly building — the opposite of what every other Shift+navigation key in the grid does. In the grid they call `growGridSelection(±pageStep())`, the exact shape of the Shift+arrow cases. Outside the grid Shift is ignored, as it is for the arrows.
+
+**Ruling (compare gets PgUp / PgDn only):** compare navigates candidates through `cycleChallenger`, which walks `findUnrated` once per step in a loop (`useSiteNavigation.ts:245-266`). `cycleChallenger(dir, images.length)` is therefore O(n²) — 17.6 M scans on a 4,194-frame shoot, a visible freeze. A page step (13–18) is the same magnitude as the existing 10× scrub and is fine. `Home` / `End` are loupe + grid only (they are defined in terms of "the active filter", and the filter tablist is hidden in compare — `StatusBar.tsx:295`); they still get an explicit `preventDefault`-and-break in the compare switch so none of the four keys ever reaches a platform default while the cull keymap is live (spec §A: "All new cases `preventDefault`"). This matches the scout's own help-row proposal.
 
 **Ruling (zoom):** no `isZooming` branch. A cursor move while zoomed already drops the zoom through `usePaneZoom`'s index-change effect (`usePaneZoom.ts:114-121`, "Leaving a zoomed frame via a cursor move drops the zoom"), which is what every non-rating cursor move does. `PgUp` / `Home` have no pan meaning, so panning them would be an invention.
 
-- [ ] **Step 1: App's step callback.** In `src/App.tsx`, extend the existing import from `./utils/gridSize` — it already pulls `gridCellWidth`, `gridColsFor`, `stepGridSize`, `DEFAULT_GRID_SIZE` (`App.tsx:84-88` region) — and add two new imports:
+- [ ] **Step 1: App's step callback.** In `src/App.tsx`, the existing `./utils/gridSize` import (`App.tsx:82-88`) already pulls `gridCellWidth` and needs **no change**. Add two new import statements beside the other local ones:
 
 ```ts
 import { gridPageStep, stripPageStep } from "./utils/pageStep";
@@ -221,6 +223,11 @@ Then, directly **after** the `growGridSelection` callback (`App.tsx:1260-1284`) 
   // utils/pageStep and strip/metrics.test.ts, which pins that padding).
   // gridCellWidth is the SAME formula GridView uses for its square rows
   // (GridView.tsx:180-181), so the key and the layout can never disagree.
+  // clientHeight INCLUDES .cull-grid's own 20px top + 20px bottom padding
+  // (grid.css:18), so a page is a hair more than the fully visible rows —
+  // deliberately, because it is the identical number GridView feeds
+  // computeGridAutoScrollTop (GridView.tsx:232), and the key and the
+  // auto-scroll that follows it must mean the same thing by "in view".
   const pageStep = useCallback((): number => {
     if (gridVisible && !compareMode) {
       const el = gridContainerRef.current;
@@ -280,20 +287,34 @@ and add `cycleChallenger,` after `goBack,` in the destructuring (`:69`) and in t
         // First / last frame OF THE ACTIVE FILTER, not index 0: `advance`
         // works in filter-position space and clamps (App.tsx:1002-1019), so a
         // step of images.length always lands on visibleIndices[0] / [len-1].
-        // e.repeat is deliberately NOT guarded on the plain forms — a clamped
-        // advance returns false without touching state, so a held key is free,
-        // and there is no rAF loop for a repeat to race. The SHIFT forms do
-        // guard it: growGridSelection writes a fresh Set every call and their
-        // step is always the whole list, so each repeat would rebuild an
-        // identical selection and re-render for nothing.
+        // (Its pos === -1 arm lands on visibleIndices[0] for BOTH directions,
+        // but that state is unreachable from a keypress: the pre-paint
+        // auto-jump at App.tsx:948-953 snaps an out-of-filter cursor back in
+        // whenever the filter is non-empty, and on an empty filter advance
+        // returns false at :1004.)
+        //
+        // In the grid, Shift extends the selection to the same target instead
+        // of moving the cursor alone — the keyboard twin of shift-clicking the
+        // first / last cell, and of the Shift+arrow cases above.
+        //
+        // No mid-hold stopGridVertHold() call here, unlike the Shift+arrow
+        // cases: none of these four keys is a vertical arrow, so :238-239 has
+        // already stopped any held row-jump before the switch is reached, and
+        // useHeldRepeat's stop() zeroes the ref synchronously.
+        //
+        // e.repeat is deliberately NOT guarded on the plain Home / End — a
+        // clamped advance returns false without touching state, so a held key
+        // is free, and there is no rAF loop for a repeat to race. The SHIFT
+        // forms of Home / End DO guard it: growGridSelection writes a fresh
+        // Set every call and their step is always the whole list, so each
+        // repeat would rebuild an identical selection and re-render for
+        // nothing. Shift+PgUp / PgDn are NOT guarded, because each repeat
+        // genuinely grows the selection by another screenful — exactly like a
+        // held Shift+ArrowDown.
         case "Home":
           e.preventDefault();
           if (gridVisible && e.shiftKey) {
             if (e.repeat) break;
-            // Same mid-hold guard as Shift+ArrowUp/Down above: Shift added
-            // MID-hold must kill the rAF loop first, or the two race over
-            // currentIndex until the arrow is released.
-            if (heldGridVertDirRef.current !== 0) stopGridVertHold();
             growGridSelection(-images.length);
             break;
           }
@@ -304,7 +325,6 @@ and add `cycleChallenger,` after `goBack,` in the destructuring (`:69`) and in t
           e.preventDefault();
           if (gridVisible && e.shiftKey) {
             if (e.repeat) break;
-            if (heldGridVertDirRef.current !== 0) stopGridVertHold();
             growGridSelection(images.length);
             break;
           }
@@ -315,11 +335,19 @@ and add `cycleChallenger,` after `goBack,` in the destructuring (`:69`) and in t
         // loupe (utils/pageStep, measured live — see App's `pageStep`).
         case "PageUp":
           e.preventDefault();
+          if (gridVisible && e.shiftKey) {
+            growGridSelection(-pageStep());
+            break;
+          }
           if (gridVisible) clearMultiSelection();
           advance(-1, pageStep());
           break;
         case "PageDown":
           e.preventDefault();
+          if (gridVisible && e.shiftKey) {
+            growGridSelection(pageStep());
+            break;
+          }
           if (gridVisible) clearMultiSelection();
           advance(1, pageStep());
           break;
@@ -330,7 +358,7 @@ and add `cycleChallenger,` after `goBack,` in the destructuring (`:69`) and in t
   1. the new cases sit INSIDE the two mode switches, so `handleModalKeys` (`:208-265`) has already returned `true` for settings / quit-guard / non-culling phase / leave-confirm / actions dialog before they can run;
   2. the help-sheet swallow (`:562-572`) and the `e.ctrlKey || e.metaKey || e.altKey` drop (`:580`) both sit ABOVE `handleCompareKey` / `handleSingleModeKey` (`:612-613`), so Ctrl+Home never reaches a case and no key fires behind the help sheet;
   3. a page key pressed mid-scrub stops the hold — `:234-239` calls `stopHold()` / `stopGridVertHold()` for any key that is not the held arrow, and none of the four is an arrow;
-  4. all four keys call `e.preventDefault()` on every path through their cases (`.cull-grid` is `overflow: hidden auto`, `grid.css:13`, so an unhandled PageDown scrolls it behind the cursor).
+  4. all four keys call `e.preventDefault()` on every path through their cases — plain, Shift and compare-inert alike (`.cull-grid` is `overflow: hidden auto`, `grid.css:14`, so an unhandled PageDown scrolls it behind the cursor).
 - [ ] **Step 8:** gate green. Commit: `feat(nav): Home / End / PgUp / PgDn in loupe, grid and compare` — one pathspec commit over both files.
 
 ### Task 3: The `rejects` filter value
@@ -372,7 +400,7 @@ Append to `src/utils/filterModes.test.ts` (same `it` import), inside the existin
   });
 ```
 
-Run them: `filter.test.ts`'s new block fails to type-check / fails at runtime (`"rejects"` is not a `Filter`), and so do the `filterModes` ones. Right failure.
+Run them: `pnpm typecheck:tests` fails on every new line (`"rejects"` is not assignable to `Filter` / `TopFilter`). At RUNTIME only the two `cycleFilter(…, "rejects")` calls throw (`CYCLES["rejects"]` is `undefined`, so `cycle[0]` is a TypeError) and the `passesFilter` block fails on `undefined`; `topOf("rejects")` and the two `cycleFilter("rejects", <other top>)` lines already pass through the existing `default` arms (`filterModes.ts:29-31`, `:44`). That is the right failure — do **not** add a `default` to `passesFilter` to quiet it.
 
 - [ ] **Step 2: `src/types/rating.ts`.** Add the value to the union (`:22-30`) and extend the doc block above it (`:10-21`):
 
@@ -450,7 +478,7 @@ const CYCLES: Record<TopFilter, Filter[]> = {
 
 **Ruling (the tabs carry no `role="tab"` / `aria-selected` today).** `.cull-filter-tabs` has `role="tablist"` but its children are plain `<button type="button">` with no `role="tab"`, no `aria-selected` and no roving tabindex (`StatusBar.tsx:296-312`). That is a pre-existing gap; the Rejects tab copies its siblings exactly and does **not** fix it. Report it, do not widen scope.
 
-- [ ] **Step 1: failing test.** Append to `src/components/StatusBar.shed.test.tsx` (jsdom, `it` — the file imports `afterEach, describe, expect, it, vi`). Its `props()` helper already supplies everything; override `filter.filter` through a small local spread rather than changing the helper:
+- [ ] **Step 1: failing test.** Append to `src/components/StatusBar.shed.test.tsx` (jsdom, `it` — the file imports `afterEach, describe, expect, it, vi`). Its `props()` helper already supplies everything (`filter.filter` is `"all"`, so no tab is active and no sub-mode tooltip renders); the third test spreads a new `suggestionCount` over `props().filter` rather than changing the helper:
 
 ```tsx
 describe("the Rejects tab", () => {
@@ -623,9 +651,9 @@ Tabs below 1360 = 424.4 − 93.2 = **331.2**, which is 15.8 px *narrower* than t
 
 Every pinned width clears with more room than it has today.
 
-**Ruling (≥ 1360 is not fixed here, and gets wider).** Above the shed tier nothing is hidden, so the absolute worst case is `L = 68 (verdict) + 137 (scrub + ×10) + 133 (overlay cluster) + 236 (all-missing chip WITH its tail) + 27 (.CR3) + 56 (four gaps) = 657` and `R = 79 + 14 + 424.4 + 14 + 244 (the all-rated finish label) = 775.4`, so `657 + 775.4 + 72 = 1504.4` is needed — against **1427.2** today. That band (every frame rated AND every photo missing AND scrubbing at ×10 AND the overlay cluster up, all at once) already overflows between 1360 and 1427 on `main`; the fifth tab widens it to 1504. The spec ruled it explicitly — "At 1360 px and wider the footer simply has a fifth tab" — and the structural guarantee is unchanged: the filename stem is still the only shrinkable child, so it ellipses to zero first. Recorded, not fixed.
+**Ruling (≥ 1360 is not fixed here, and gets wider).** Above the shed tier nothing is hidden, so the right cluster additionally carries the key hint — `.cull-statusbar__keyhint` renders unconditionally (`StatusBar.tsx:271-273`) and only sheds below 1360, and it is mono at `--fs-1` 9 px (`stage.css:298-303`, beating `.eyebrow`'s `--fs-2` on source order) with `letter-spacing: var(--track-eyebrow)` 0.2em, so `0.6em + 0.2em = 7.2 px` × the 10 characters of `TAB · KEYS` = **72**, plus one more 14 px gap. The absolute worst case is therefore `L = 68 (verdict) + 137 (scrub + ×10, its chip's own 8 px margin included) + 133 (overlay cluster) + 236 (all-missing chip WITH its tail) + 27 (.CR3) + 56 (four gaps) = 657` and `R = 72 + 14 + 79 + 14 + 424.4 + 14 + 244 (the all-rated finish label) = 861.4`, so `657 + 861.4 + 72 = 1590.4` is needed — against **1513.2** today. That band (every frame rated AND every photo missing AND scrubbing at ×10 AND the overlay cluster up, all at once) already overflows between 1360 and 1513 on `main`; the fifth tab widens it to 1590. Closing it would mean firing the tier at `< 1620px`, which puts Oliver's default 1600 px window permanently inside the shed tier — losing the key hint, `.CR3`, the save chip's tail, the all-rated finish label and Smart's count every day, to guard four rare states that must all be true at once. The spec ruled the other way explicitly — "At 1360 px and wider the footer simply has a fifth tab" — and the structural guarantee is unchanged: the filename stem is still the only shrinkable child, so it ellipses to zero first. Recorded, not fixed.
 
-**Ruling (the padding override needs a specificity bump).** `index.css` imports `statusbar.css` **before** `chrome.css` (`index.css:12-13`), and a media query adds no specificity — so a plain `.cull-filter-tabs button { padding: 4px 8px }` inside `statusbar.css`'s `< 1360` block would LOSE to `chrome.css:397`'s `.cull-filter-tabs button { padding: 4px 12px }` on source order and do nothing. The rule is written as `.cull-statusbar .cull-filter-tabs button` (0,2,1 vs 0,1,1) instead. The tabs are always inside `<footer className="cull-statusbar">` (`StatusBar.tsx:127` → `:270` → `:296`). None of the tier's existing rules has this problem: their competing declarations in `chrome.css` / `stage.css` set other properties, never `display`.
+**Ruling (the padding override needs a specificity bump, and must not reach the sub-mode chips).** `index.css` imports `statusbar.css` **before** `chrome.css` (`index.css:12-13`), and a media query adds no specificity — so a plain `.cull-filter-tabs button { padding: 4px 8px }` inside `statusbar.css`'s `< 1360` block would LOSE to `chrome.css:397`'s `.cull-filter-tabs button { padding: 4px 12px }` on source order and do nothing. But a bare `.cull-statusbar .cull-filter-tabs button` (0,2,1) would over-reach the other way: the Keeps / Smart sub-mode tooltip buttons are descendants of `.cull-filter-tabs` too, and their own `.cull-filter-tab-tooltip button { padding: 3px 7px }` (`chrome.css:508-511`) is only (0,1,1) — it wins today on source order alone, so a (0,2,1) ancestor selector would silently resize the sub-mode chips. The rule is therefore written as a two-member child-combinator list — `.cull-statusbar .cull-filter-tabs > button` (All / Unrated / Rejects) and `.cull-statusbar .cull-filter-tab-group > button` (Keeps / Smart), both (0,2,1), both beating `chrome.css:397`, neither matching a tooltip button. The tabs are always inside `<footer className="cull-statusbar">` (`StatusBar.tsx:127` → `:270` → `:296`). None of the tier's existing rules has this problem: their competing declarations in `chrome.css` / `stage.css` set other properties, never `display`.
 
 - [ ] **Step 1: failing test.** Append to the existing `describe("the footer's breakpoints", …)` in `src/styles/layout.test.ts` (it already binds `const statusbar = sheet("./statusbar.css");` at `:62`):
 
@@ -643,10 +671,17 @@ Every pinned width clears with more room than it has today.
     expect(count).toMatch(/clip-path:\s*inset\(50%\)/);
     expect(count).not.toMatch(/display:\s*none/);
     // The padding override must out-specify chrome.css's own
-    // `.cull-filter-tabs button` rule: index.css imports statusbar.css FIRST,
-    // and a media query adds no specificity.
-    expect(ruleBody(tier, ".cull-statusbar .cull-filter-tabs button")).toMatch(
+    // `.cull-filter-tabs button` rule (index.css imports statusbar.css FIRST,
+    // and a media query adds no specificity) WITHOUT reaching the sub-mode
+    // tooltip's buttons, whose own padding rule is only (0,1,1). Hence the
+    // two-member child-combinator list; ruleBody can only be asked for its
+    // last member, so the first is pinned by a line-anchored regex.
+    expect(tier).toMatch(/^ *\.cull-statusbar \.cull-filter-tabs > button,$/m);
+    expect(ruleBody(tier, ".cull-statusbar .cull-filter-tab-group > button")).toMatch(
       /padding:\s*4px 8px/,
+    );
+    expect(tier, "the sub-mode chips keep their own 3px 7px").not.toMatch(
+      /\.cull-filter-tab-tooltip/,
     );
     // No fourth breakpoint: layout.test's tier slices are keyed to exactly
     // these three widths. Matched on a LINE START so a width merely named in
@@ -687,7 +722,9 @@ Every pinned width clears with more room than it has today.
         BUTTON, so removing it would shorten the button's accessible name
         from "Smart · 4194" to "Smart". Same recipe as the save chip's tail
         above (a media query cannot add a class, so it is inlined again).
-     2. The tabs' horizontal padding goes 12 → 8 = 8px × 5 buttons = 40px.
+     2. The five TABS' horizontal padding goes 12 → 8 = 8px × 5 = 40px. The
+        sub-mode tooltip's own chips are deliberately untouched (see the
+        child combinators below).
 
      Tabs below 1360 are then 331.2px — 15.8px NARROWER than today's
      four-tab 347.2px — so every pinned width in the arithmetic above gains
@@ -705,11 +742,18 @@ Every pinned width clears with more room than it has today.
     border: 0;
   }
 
-  /* `.cull-statusbar` is load-bearing, not decoration: index.css imports
-     statusbar.css BEFORE chrome.css, and a media query adds no specificity,
-     so a bare `.cull-filter-tabs button` here would lose to chrome.css's
-     `padding: 4px 12px` on source order and do nothing at all. */
-  .cull-statusbar .cull-filter-tabs button {
+  /* Both halves of this selector are load-bearing. `.cull-statusbar`:
+     index.css imports statusbar.css BEFORE chrome.css and a media query adds
+     no specificity, so a bare `.cull-filter-tabs button` here would lose to
+     chrome.css's `padding: 4px 12px` on source order and do nothing at all.
+     The CHILD combinators: the Keeps / Smart sub-mode tooltip buttons are
+     descendants of .cull-filter-tabs too, and their own `padding: 3px 7px`
+     (chrome.css) is only one class deep — a descendant selector here would
+     out-specify it and silently resize the sub-mode chips. These two cover
+     exactly the five tabs: All / Unrated / Rejects are direct children of the
+     strip, Keeps / Smart of their tooltip-anchoring group wrapper. */
+  .cull-statusbar .cull-filter-tabs > button,
+  .cull-statusbar .cull-filter-tab-group > button {
     padding: 4px 8px;
   }
 ```
@@ -729,19 +773,26 @@ Every pinned width clears with more room than it has today.
        R-ordinary = 79 + 14 + 331.2 + 14 + 163 = 601.2
        R-short    = 79 + 14 + 331.2 + 14 +  66 = 504.2
 
-     Above this tier nothing sheds and the tabs are 424.4 (27 chars of the
-     four old labels + REJECTS 7, at 12px padding, = 205.2 + 91.2·[the
-     "· 4194" suffix] + 120 + 46). The absolute worst case there — every
-     frame rated AND every photo missing AND scrubbing at ×10 AND the
-     overlay cluster up — needs 1504.4 and so overflows from 1360 up to
-     that width. It already did before the fifth tab (1427.2); the tab
-     widens a band that is four simultaneous rare states deep, and the spec
-     ruled it: "At 1360px and wider the footer simply has a fifth tab."
+     Above this tier nothing sheds: the tabs are 424.4 (the five full
+     labels, "SMART · 4194" included, at 12px padding = 258.4 + 120 + 46)
+     and the right cluster ALSO carries the key hint, which only sheds
+     below 1360 — mono 9px at 0.2em tracking = 7.2px × the 10 chars of
+     "TAB · KEYS" = 72, plus its own 14px gap. So
+       R(>=1360) = 72 + 14 + 79 + 14 + 424.4 + 14 + 244 = 861.4
+     and the absolute worst case there — every frame rated AND every photo
+     missing AND scrubbing at ×10 AND the overlay cluster up, with the
+     all-missing chip still wearing its tail (236) and the extension still
+     shown (27), so L = 657 — needs 657 + 861.4 + 72 = 1590.4 and
+     therefore overflows from 1360 up to that width. It already did before
+     the fifth tab (1513.2). Closing the band would mean firing this tier
+     at <1620px, which puts the default 1600px window permanently inside
+     it; the spec ruled the other way: "At 1360px and wider the footer
+     simply has a fifth tab."
     ```
   - delete the stale hedge at `:123-125` ("The 347 above is the tabs' measured advance; if it excludes their own 4px side margins, take 8 off every slack figure below"): the 46 above enumerates the margins, so there is nothing left to hedge.
   - the six pinned widths (`:150-165`): replace each `needed` figure and slack with the table above — 1359 → `537 + 0 + 601.2 + 72 = 1210.2 needed, 1359 available → 148.8px slack`; 1240 → `1210.2 needed, 1240 available → 29.8px slack`; 1239 → `412 + 0 + 601.2 + 72 = 1085.2 needed, 1239 available → 153.8px slack`; 1120 → `1085.2 needed, 1120 available → 34.8px slack`; 1119 → `412 + 0 + 504.2 + 72 = 988.2 needed, 1119 available → 130.8px slack`; 1024 → `988.2 needed, 1024 available → 35.8px slack`. Keep the closing paragraph's point (every pinned width clears) and drop the sentence about the ~1220–1245 band, which the extension shed already closed and which these numbers restate.
   - add one sentence where the shed list for 1360 is described (`:82-95`): `Since 3C the tier also sheds Smart's count suffix and 4px of each tab's horizontal padding, which is what pays for the fifth (Rejects) tab.`
-- [ ] **Step 4: the hover tip.** In `src/styles/chrome.css`, replace the rule at `:441-447`:
+- [ ] **Step 4: the hover tip.** In `src/styles/chrome.css`, replace the comment at `:441` and the rule at `:443-447`:
 
 ```css
 /* The last group's tab (Smart) sits near the window edge — right-align its
@@ -786,7 +837,7 @@ pub fn read_capture_time(path: &str) -> std::io::Result<(Option<String>, Option<
 
 — `(DateTimeOriginal normalised to "YYYY-MM-DDTHH:MM:SS", SubSecTimeOriginal in ms)`, i.e. exactly the two fields `Cr3Meta.captured_at` / `Cr3Meta.sub_sec_ms` carry, so `analyze::captured_at_ms` combines them unchanged. `Err` only when the file cannot be opened/read or holds no `moov`; a CR3 with a `moov` but no CMT2 (or no tags) answers `Ok((None, None))`.
 
-**Ruling (nothing becomes `pub(crate)` — the scout is wrong here).** The scout says `read_head` / `grow` / `metadata_from_prefix` "need `pub(crate)`". They do not: `read_capture_time` lives in `cr3.rs` itself, alongside `read_head` (`:499`), `grow` (`:511`), `moov_range` (`:413`), `cmt_in_uuid_range` (`:125`), `Tiff` (`:150`), `normalize_datetime` (`:956`), `sub_sec_to_ms` (`:941`) and `io_err` (`:379`) — all module-private and all reachable from inside the module. `mod cr3;` is private in `lib.rs:53`, so `pub fn` here already means crate-visible, matching `read_thumbnail` (`:821`). **No visibility change anywhere.**
+**Ruling (nothing becomes `pub(crate)` — the scout is wrong here).** The scout says `read_head` / `grow` / `metadata_from_prefix` "need `pub(crate)`". They do not: `read_capture_time` lives in `cr3.rs` itself, alongside `read_head` (`:499`), `grow` (`:511`), `moov_range` (`:413`), `cmt_in_uuid_range` (`:125`), `Tiff` (`:150`), `normalize_datetime` (`:956`), `sub_sec_to_ms` (`:941`) and `io_err` (`:379`) — all module-private and all reachable from inside the module. `mod cr3;` is private in `lib.rs:53`, so `pub fn` here already means crate-visible, matching `read_thumbnail` (`:821`). **No visibility change anywhere.** The flip side of that same privacy is that a `pub fn` with no lib-build caller IS dead code to rustc, so this task's own `clippy -D warnings` gate needs `#[cfg_attr(not(test), allow(dead_code))]` until Task 7 supplies the caller — the house pattern (`phash.rs:50`, `embed.rs:59`, `ml_models.rs:46`), and the same 8 → 10 dance Phase 3B ran on `gridthumb.rs`.
 
 **Ruling (1 MiB head, not 256 KiB).** `moov` carries the 160×120 THMB JPEG as well as the four CMT boxes, which is why `read_thumbnail` uses `HEAD = 1 << 20` with the comment "moov (with THMB) virtually always fits in 1 MiB" (`:822`). Reusing that proven constant (and its `2 << 20` grow, and its `64 << 20` scan cap) costs one read where the scout's 256 KiB would usually cost two, and on the benchmarked NAS the per-open round-trip (~37 ms) dominates the byte count anyway.
 
@@ -918,6 +969,11 @@ Run `cargo test` from `src-tauri/`: all three fail to compile (`read_capture_tim
 /// carries the 160×120 THMB as well as the CMT boxes, so a smaller first read
 /// would usually cost a second round-trip — and on the benchmarked NAS the
 /// open, not the byte count, is what costs 37 ms.
+// `mod cr3;` is private (lib.rs:53), so in the non-test lib build a `pub fn`
+// with no caller is dead code and `clippy -D warnings` fails. Nothing calls
+// this until scan.rs's capture pass lands; Task 7 deletes this attribute when
+// `exif_ms_for` becomes its lib-build caller. Precedent: phash.rs:50.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn read_capture_time(path: &str) -> std::io::Result<(Option<String>, Option<u16>)> {
     const HEAD: usize = 1 << 20;
     const GROW: usize = 2 << 20;
@@ -943,11 +999,11 @@ pub fn read_capture_time(path: &str) -> std::io::Result<(Option<String>, Option<
 }
 ```
 
-- [ ] **Step 3:** from `src-tauri/`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. Then the JS gate from the repo root (nothing JS changed, but the branch must stay green). Commit: `feat(cr3): read_capture_time — DateTimeOriginal + SubSec from the moov head`
+- [ ] **Step 3:** from `src-tauri/`: `cargo fmt`, then `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. The clippy run is the one that needs the `allow(dead_code)` attribute above — drop the attribute and it fails with `function \`read_capture_time\` is never used`. Then the JS gate from the repo root (nothing JS changed, but the branch must stay green). Commit: `feat(cr3): read_capture_time — DateTimeOriginal + SubSec from the moov head`
 
 ### Task 7: [RUST] `analyze_folder` sorts on capture time, and a stage-time probe
 
-**Files:** Modify `src-tauri/src/scan.rs`, `src-tauri/src/lib.rs`.
+**Files:** Modify `src-tauri/src/scan.rs`, `src-tauri/src/lib.rs`, `src-tauri/src/cr3.rs` (one deletion — see Step 3b).
 
 **Interfaces — Consumes:** `cr3::read_capture_time` (Task 6), `analyze::captured_at_ms` (`analyze.rs:389`, already `pub(crate)`), `tier_cache::{CacheTier, TierCache}` (both `pub`, `tier_cache.rs:61`, `:415`). **Produces:**
 
@@ -1098,6 +1154,8 @@ and add the import at the top of the file, beside `use crate::xmp::read_ratings;
 use crate::tier_cache::{CacheTier, TierCache};
 ```
 
+- [ ] **Step 3b: give `read_capture_time` its lib-build caller.** In `src-tauri/src/cr3.rs`, delete the `#[cfg_attr(not(test), allow(dead_code))]` line Task 6 added above `read_capture_time`, together with its four-line `//` comment. `exif_ms_for` above is now that caller, so the attribute would itself become a lint. This is the only edit Task 7 makes to `cr3.rs`, and it is why Tasks 6 and 7 are strictly serial rather than merely ordered.
+
 - [ ] **Step 4: the pass.** Still in `scan.rs`, after `restore_ratings` (`:379`), the whole-set pass on the same scoped-thread pattern `restore_ratings` uses:
 
 ```rust
@@ -1206,7 +1264,19 @@ fn read_capture_epochs(
         .map_err(|e| format!("analyze task failed: {e}"))?
     }
     ```
-  - `analyze_folder_sync` (`:402-407`) takes the same two extras plus `cache: &TierCache`, and `let concurrent_restore = concurrent_restore.unwrap_or(false);` gains `let by_capture_time = by_capture_time.unwrap_or(false);` beside it.
+  - `analyze_folder_sync` (`:402-407`) takes the same two extras plus `cache: &TierCache`, and `let concurrent_restore = concurrent_restore.unwrap_or(false);` gains `let by_capture_time = by_capture_time.unwrap_or(false);` beside it, plus one loud-on-drift check (a wrong-length vector is memory-safe — `.get(i)` just reads 0 past the end — but silently wrong, which is worse):
+
+    ```rust
+        if let Some(v) = offsets_ms.as_ref() {
+            if v.len() != n {
+                dlog!(
+                    "[cull] analyze_folder: {} offsets for {} paths; extras read as 0",
+                    v.len(),
+                    n
+                );
+            }
+        }
+    ```
   - replace the `epoch` build (`:458-461`) with:
 
     ```rust
@@ -1246,7 +1316,12 @@ fn read_capture_epochs(
         );
         (0..n)
             .map(|i| {
-                let offset = offsets_ms.as_ref().and_then(|v| v.get(i).copied()).unwrap_or(0);
+                // Pre-formatted as rustfmt wants it: the one-line chain is 84
+                // columns and past the default chain_width of 60.
+                let offset = offsets_ms
+                    .as_ref()
+                    .and_then(|v| v.get(i).copied())
+                    .unwrap_or(0);
                 capture_epoch(exif[i], listing.mtime.get(&paths[i]).copied(), offset)
             })
             .collect()
@@ -1271,9 +1346,11 @@ and `:5-8` with `- [`analyze_folder`] orders them chronologically (EXIF capture 
 
 ```rust
 /// Capture time (epoch ms, camera local clock) for a handful of paths — the
-/// staged screen's per-folder probe, called with ONE representative frame per
-/// staged folder so it can print that folder's first capture time and the
-/// signed difference from the first folder's. Deliberately cache-free and
+/// staged screen's per-folder probe, called with the FIRST STAGED (i.e.
+/// lexicographically first, `scan.rs`'s `paths.sort()`) frame of each staged
+/// folder, so the row can print THAT frame's capture time and the signed
+/// difference from the first folder's. Not necessarily the folder's earliest
+/// frame — a 9999→0001 counter wrap reverses the two. Deliberately cache-free and
 /// sequential: N is the number of staged folders (one or two in practice), so
 /// wiring the tier cache in would cost more than the reads it saves.
 /// A per-path failure is `None`, never an error: a row with no time just shows
@@ -1295,7 +1372,7 @@ pub(crate) async fn read_capture_times(paths: Vec<String>) -> Result<Vec<Option<
 ```
 
 - [ ] **Step 8: register it.** In `src-tauri/src/lib.rs`, add `scan::read_capture_times,` directly after `scan::analyze_folder,` (`:217`). Also extend the module table row for `scan` (`:12`) to `| [`scan`] | `scan_folder` + `analyze_folder` + `read_capture_times` Tauri commands. |`.
-- [ ] **Step 9:** from `src-tauri/`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. The two existing `order_by_capture` tests (`:576-598`) must still pass untouched — the comparator did not change. Then the JS gate from the repo root: `pnpm typecheck` will now FAIL at `useSessionLifecycle.ts:417` only if the TS call was already changed; it has not been (Task 9 does that), and adding optional Rust params breaks nothing on the wire, so the JS gate must be green here. Commit: `feat(scan): analyze_folder can sort on EXIF capture time, with a per-frame clock offset`
+- [ ] **Step 9:** from `src-tauri/`: `cargo fmt`, then `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. Clippy must be clean with Task 6's `allow(dead_code)` now deleted. The two existing `order_by_capture` tests (`:576-598`) must still pass untouched — the comparator did not change. Then the JS gate from the repo root: `pnpm typecheck` will now FAIL at `useSessionLifecycle.ts:417` only if the TS call was already changed; it has not been (Task 9 does that), and adding optional Rust params breaks nothing on the wire, so the JS gate must be green here. Commit: `feat(scan): analyze_folder can sort on EXIF capture time, with a per-frame clock offset`
 
 ### Task 8: The two settings, and the staged rows' pure helpers
 
@@ -1461,6 +1538,12 @@ describe("coerceSettings — capture-time sort (Phase 3C)", () => {
     expect(s.captureOffsets).toEqual({ "C:\\shoot\\bodyB": -72000 });
   });
 
+  it("rounds a fractional stored offset — the wire type is Rust i64", () => {
+    // serde refuses to deserialize 1500.7 into i64, which would fail the whole
+    // analyze_folder call rather than degrade the sort.
+    expect(coerceSettings({ captureOffsets: { a: 1500.7 } }).captureOffsets).toEqual({ a: 1501 });
+  });
+
   it("clamps a stored offset to a day and falls back on a non-object", () => {
     expect(coerceSettings({ captureOffsets: { a: 1e12 } }).captureOffsets).toEqual({
       a: CAPTURE_OFFSET_LIMIT_MS,
@@ -1492,6 +1575,12 @@ describe("coerceSettings — capture-time sort (Phase 3C)", () => {
    * ever written to a file and the info rail keeps showing the camera's own
    * time. Lives here rather than in recents because recents expire after 14
    * days and are capped at 5, so an offset would silently evaporate.
+   *
+   * Keyed by the VERBATIM `srcFolder` string the picker returned — no
+   * normalisation beyond the NFC pass every folder path already gets
+   * (`useSessionLifecycle.ts`), so re-picking the same folder with a
+   * different spelling (a trailing separator, different case) starts it at 0
+   * rather than mis-keying someone else's correction onto it.
    */
   captureOffsets: Record<string, number>;
 ```
@@ -1512,17 +1601,22 @@ and, beside `normalizeRejectedSubfolder` (`:134-138`):
  *  number that swamps it. */
 export const CAPTURE_OFFSET_LIMIT_MS = 24 * 60 * 60 * 1000;
 
-/** Validate a stored `captureOffsets` blob: an object of finite numbers,
- *  each clamped to ±{@link CAPTURE_OFFSET_LIMIT_MS}. Anything else — a
- *  non-object, an array, a string value, a NaN — is dropped entry by entry
- *  rather than failing the whole settings load. A NaN reaching the sort would
- *  poison every comparison in that folder. */
+/** Validate a stored `captureOffsets` blob: an object of finite numbers, each
+ *  clamped to ±{@link CAPTURE_OFFSET_LIMIT_MS} and rounded to a whole
+ *  millisecond. Anything else — a non-object, an array, a string value, a
+ *  NaN — is dropped entry by entry rather than failing the whole settings
+ *  load. A NaN reaching the sort would poison every comparison in that
+ *  folder, and a FRACTION is worse than useless: the wire type is Rust
+ *  `i64`, so serde rejects the whole `analyze_folder` call rather than
+ *  degrading the sort. `stepOffset` only ever produces integers, so storage
+ *  is the one source of either — which is exactly what this distrusts. */
 export const coerceCaptureOffsets = (raw: unknown): Record<string, number> => {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
   const out: Record<string, number> = {};
   for (const [folder, value] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
-    out[folder] = Math.max(-CAPTURE_OFFSET_LIMIT_MS, Math.min(CAPTURE_OFFSET_LIMIT_MS, value));
+    const clamped = Math.max(-CAPTURE_OFFSET_LIMIT_MS, Math.min(CAPTURE_OFFSET_LIMIT_MS, value));
+    out[folder] = Math.round(clamped);
   }
   return out;
 };
@@ -1636,7 +1730,9 @@ export function stepOffset(
 
 ### Task 9: The staged screen — the toggle, the folder rows, and the invoke
 
-**Files:** Create `src/components/StagedFolders.tsx`, `src/components/StagedFolders.test.tsx`, `src/styles/staged.css`. Modify `src/App.tsx`, `src/app/useSessionLifecycle.ts`, `src/styles/index.css`.
+**Files:** Create `src/components/StagedFolders.tsx`, `src/components/StagedFolders.test.tsx`, `src/styles/staged-sort.css`. Modify `src/App.tsx`, `src/app/useSessionLifecycle.ts`, `src/styles/index.css`.
+
+**Ruling (a new stylesheet, named `staged-sort.css`, not `staged.css` and not folded into an existing sheet).** The staged screen's existing classes (`.cull-staged__check` / `__count` / `__folder` / `__ignored` / `__actions` / `__hint`) live in **`chrome.css`** (`:685-733`), not in `stage.css` — `stage.css` is the loupe's photo stage (`.cull-stage`, `.cull-loupe-body`, `.cull-image-area`), a different surface entirely. Folding ~60 lines into `chrome.css` would take it from 778 to about 838 lines, past the repo's 800-line ceiling, **and** hand Task 5 and Task 9 a shared file, serialising two tasks that are otherwise disjoint. A separate sheet is therefore right; it is named `staged-sort.css` (not `staged.css`) so it cannot be confused at a glance with the existing `stage.css` — one letter apart is a maintenance trap.
 
 **Interfaces — Consumes:** `groupStagedFolders` / `formatCaptureClock` / `formatSignedDuration` / `stepOffset` / `StagedFolder` (Task 8), `Settings.sortByCaptureTime` / `Settings.captureOffsets` (Task 8), the `analyze_folder` params and the `read_capture_times` command (Task 7). **Produces:**
 
@@ -1921,7 +2017,7 @@ export function StagedFolders({
 }
 ```
 
-- [ ] **Step 3: its stylesheet** — create `src/styles/staged.css`, per-surface like `home.css` / `grid.css` / `help.css`, tokens only, no keyframes, no class ending in `-key` / `__kbd` (`src/styles/keycap.test.ts:38-44` matches any selector containing those and would start policing this file's typography):
+- [ ] **Step 3: its stylesheet** — create `src/styles/staged-sort.css`, per-surface like `home.css` / `grid.css` / `help.css`, tokens only, no keyframes, no class ending in `-key` / `__kbd` (`src/styles/keycap.test.ts:38-44` matches any selector containing those and would start policing this file's typography). The name carries the `-sort` suffix deliberately — `src/styles/stage.css` already exists and is a different surface; see the ruling above:
 
 ```css
 /* ── staged screen · capture-time sort ────────────────────────
@@ -2003,10 +2099,10 @@ export function StagedFolders({
 }
 ```
 
-and register it in `src/styles/index.css` — one line, directly after `@import url("./chrome.css");` (`:13`), never after `motion.css` (its reduced-motion overrides must stay last):
+and register it in `src/styles/index.css` — one line, directly after `@import url("./chrome.css");` (`:13`), which is where the rest of the staged screen's styling is imported from, and never after `motion.css` (its reduced-motion overrides must stay last):
 
 ```css
-@import url("./staged.css");
+@import url("./staged-sort.css");
 ```
 
 - [ ] **Step 4: App renders it.** In `src/App.tsx`, add `import { StagedFolders } from "./components/StagedFolders";` to the component imports, then insert into the `phase === "staged"` branch (`:1612-1659`), directly after the `{lastIgnored > 0 && …}` block (`:1634-1638`) and before `{scanFailures && …}` (`:1639`):
@@ -2061,13 +2157,13 @@ and register it in `src/styles/index.css` — one line, directly after `@import 
 
 - [ ] **Step 7:** gate green, `pnpm lint:css` included. Commit: `feat(staged): a capture-time sort toggle and per-folder clock offsets`
 
-### Task 10: Bursts survive two interleaved bodies
+### Task 10a: Bursts and similar sets survive two interleaved bodies
 
-**Files:** Modify `src/smart/groupBursts.ts`, `src/smart/groupBursts.test.ts`.
+**Files:** Modify `src/smart/groupBursts.ts`, `src/smart/groupBursts.test.ts`, `src/smart/groupSimilar.ts`, `src/smart/groupSimilar.test.ts`, `src/components/strip/burstSegments.ts` (doc only).
 
-**Interfaces:** none change. `groupBursts`'s signature, `BurstCtx`, and the group ids' meaning (session-global, 0-based, assigned in flush order) are all as they are.
+**Interfaces:** none change. `groupBursts`' and `groupSimilar`'s signatures, `BurstCtx` / `SimilarCtx`, and the group ids' meaning (session-global, 0-based, assigned in flush order) are all as they are. **What DOES change is an unwritten invariant: a group's members are no longer guaranteed contiguous in session order.** Task 10b fixes the one consumer that assumed they were.
 
-**Why:** `groupBursts` walks the session order with ONE `prev` and ONE `run`, and `extendsRun` refuses a folder change (`groupBursts.ts:62`). Today the session order is mtime-concatenated per folder, so runs never meet a foreign frame. The moment the order is true capture time, two bodies shooting the same moment interleave A,B,A,B — and every switch breaks both runs, collapsing two simultaneous bursts into singletons. The walk becomes per-folder over the global order: a run continues across foreign frames, group ids stay session-global.
+**Why:** `groupBursts` walks the session order with ONE `prev` and ONE `run`, and `extendsRun` refuses a folder change (`groupBursts.ts:62`). `groupSimilar` has the identical shape — one shared `prev`, and a `prev.img.srcFolder === img.srcFolder` gate inlined in its link test (`groupSimilar.ts:135-155`). Today the session order is mtime-concatenated per folder, so runs never meet a foreign frame. The moment the order is true capture time, two bodies shooting the same moment interleave A,B,A,B — and every switch breaks both runs, collapsing two simultaneous bursts (and two simultaneous look-alike sets) into singletons. Both walks become per-folder over the global order: a run continues across foreign frames, group ids stay session-global.
 
 - [ ] **Step 1: failing tests.** Append to `src/smart/groupBursts.test.ts`, inside the existing `describe("groupBursts", …)` (its `input()` and `img()` helpers are already in scope):
 
@@ -2140,7 +2236,9 @@ and register it in `src/styles/index.css` — one line, directly after `@import 
       4: input(1),
     };
     const ctx = groupBursts(images, inputs);
-    expect(ctx.get(1)!.len).toBe(2, "folder a's run survives the foreign gap");
+    // Vitest's message goes in `expect`, never in the matcher — `toBe` takes
+    // exactly one argument (@vitest/expect), so a second one is TS2554.
+    expect(ctx.get(1)!.len, "folder a's run survives the foreign gap").toBe(2);
     expect(ctx.get(4)!.len).toBe(2);
     expect(ctx.get(3)).toBeUndefined(); // folder b's run was walled off
   });
@@ -2220,8 +2318,420 @@ Add one line to `extendsRun`'s `srcFolder` gate (`:62`) so the next reader knows
   if (prev.img.srcFolder !== cur.img.srcFolder) return false;
 ```
 
-- [ ] **Step 3:** run `pnpm test src/smart` and confirm **every** pre-existing `groupBursts` test is still green, unedited — in particular "same cadence in a DIFFERENT srcFolder never groups" (two frames, one per folder, each alone in its walk → no group) and "a frame with no input splits the run" (all four frames share `/shoot/a`, so the walk is identical to today's).
-- [ ] **Step 4:** gate green. Commit: `fix(smart): walk bursts per source folder so two interleaved bodies keep their runs`
+- [ ] **Step 3: failing tests for `groupSimilar`.** Append to `src/smart/groupSimilar.test.ts`, inside its existing `describe("groupSimilar", …)` (the `input(t, over)`, `img`, `NO_BURSTS` and `NO_SCORES` helpers are already in scope; the file imports `describe, expect, test`):
+
+```ts
+  test("two bodies interleaved by capture time keep BOTH their similar sets", () => {
+    const images = [
+      img(1, "/shoot/a"),
+      img(2, "/shoot/b"),
+      img(3, "/shoot/a"),
+      img(4, "/shoot/b"),
+    ];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "ffffffffffffffff" }),
+      3: input(1000, { phash: "0000000000000003" }), // hamming 2 from #1
+      4: input(1000, { phash: "ffffffffffffffff" }), // identical to #2
+    };
+    const out = groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {});
+    expect(out.get(1)?.group).toBe(out.get(3)?.group);
+    expect(out.get(2)?.group).toBe(out.get(4)?.group);
+    expect(out.get(1)?.group).not.toBe(out.get(2)?.group);
+    expect(out.get(1)?.len).toBe(2);
+    expect(out.get(2)?.len).toBe(2);
+  });
+
+  test("a foreign frame does NOT weld two same-folder frames that are not alike", () => {
+    // Skipping the foreign frame must not also skip the link test.
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/a")];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "0000000000000001" }),
+      3: input(1000, { phash: "ffffffffffffffff" }), // far from #1
+    };
+    expect(groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {}).size).toBe(0);
+  });
+
+  test("a burst member still walls off ITS OWN folder's run, not the other body's", () => {
+    const images = [
+      img(1, "/shoot/a"),
+      img(2, "/shoot/b"),
+      img(3, "/shoot/b"),
+      img(4, "/shoot/a"),
+    ];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "ffffffffffffffff" }),
+      3: input(1000, { phash: "ffffffffffffffff" }),
+      4: input(1000, { phash: "0000000000000003" }),
+    };
+    // Frame 3 is a burst member -> folder b's run is walled; folder a's is not.
+    const bursts: ReadonlyMap<number, BurstCtx> = new Map([
+      [3, { group: 0, pos: 1, len: 2, isWinner: false, marginToWinner: 0 }],
+    ]);
+    const out = groupSimilar(images, inputs, NO_SCORES, bursts, {}, {});
+    expect(out.get(1)?.len, "folder a's run survives the foreign gap").toBe(2);
+    expect(out.get(4)?.len).toBe(2);
+    expect(out.has(2)).toBe(false);
+    expect(out.has(3)).toBe(false);
+  });
+```
+
+- [ ] **Step 4: the same walk in `groupSimilar`.** Replace `src/smart/groupSimilar.ts:114-158` (from `const out = …` to the closing `return out;`) with the per-folder form. `linked`, `SIMILAR_WINDOW_MS` and every gate are untouched:
+
+```ts
+  const out = new Map<number, SimilarCtx>();
+  let groupId = 0;
+
+  /**
+   * Walk state PER SOURCE FOLDER — the same shape, and for the same reason,
+   * as groupBursts': a capture-time session order interleaves two bodies
+   * frame by frame, and one shared `prev` made every switch break both runs.
+   */
+  type Walk = { run: number[]; prev: { img: Img; input: SimilarInput } | null };
+  const walks = new Map<string, Walk>();
+
+  const flush = (w: Walk) => {
+    if (w.run.length >= 2) {
+      const { winnerIdx: wi, winnerAf } = pickWinner(w.run, sharp, eligible);
+      w.run.forEach((id, i) => {
+        out.set(id, {
+          group: groupId,
+          pos: i + 1,
+          len: w.run.length,
+          isWinner: i === wi,
+          marginToWinner: wi >= 0 && i !== wi ? winnerAf - sharp[id].afSharpness : 0,
+        });
+      });
+      groupId += 1;
+    }
+    w.run = [];
+  };
+
+  for (const img of images) {
+    let w = walks.get(img.srcFolder);
+    if (!w) {
+      w = { run: [], prev: null };
+      walks.set(img.srcFolder, w);
+    }
+    const input = inputs[img.id];
+    // Transparent walls: no standing input yet, and burst members, both split
+    // — but ONLY their own folder's run.
+    if (!input || bursts.has(img.id)) {
+      flush(w);
+      w.prev = null;
+      continue;
+    }
+    const embCur = scores[img.id]?.embedding ?? null;
+    if (
+      w.prev &&
+      // Invariant since the per-folder walk: prev and img always share a
+      // folder. Kept so the condition stays correct on its own terms.
+      w.prev.img.srcFolder === img.srcFolder &&
+      linked(w.prev.input, input, scores[w.prev.img.id]?.embedding ?? null, embCur)
+    ) {
+      if (w.run.length === 0) w.run = [w.prev.img.id];
+      w.run.push(img.id);
+    } else {
+      flush(w);
+    }
+    w.prev = { img, input };
+  }
+  // Map iteration is insertion order, so the trailing flushes are
+  // deterministic: folders get their last group ids in first-seen order.
+  for (const w of walks.values()) flush(w);
+  return out;
+```
+
+- [ ] **Step 5: the strip's doc stops claiming contiguity.** In `src/components/strip/burstSegments.ts`, replace the doc paragraph at `:27-34`'s middle clause — "the loupe strip passes every image (runs come out contiguous), the compare strip passes the candidate SUBSET, where a run interrupted by filtered-out frames yields one segment per contiguous stretch (the first labeled)" — with:
+
+```
+ * items in display order. A run can be interrupted in BOTH strips now: the
+ * compare strip passes the candidate SUBSET, and since the per-folder burst
+ * walk (groupBursts) a group's members need not be contiguous in session
+ * order at all — two bodies interleaved by capture time put another body's
+ * frames between them. Either way the group yields one segment per
+ * contiguous stretch, the first labeled. Also builds the gap prefix
+```
+
+No code changes here: `computeBurstSegments` already splits on contiguity (`:55-78`), `BurstBoxes.tsx:18`'s `${kind}-${group}-${start}` key stays unique, and the `BURST_BREATH` prefix maths just inserts more air.
+
+- [ ] **Step 6:** run `pnpm test src/smart` and confirm **every** pre-existing `groupBursts` and `groupSimilar` test is still green, unedited — in particular `groupBursts`' "same cadence in a DIFFERENT srcFolder never groups" and "a frame with no input splits the run" (all four frames share `/shoot/a`, so that walk is identical to today's), and `groupSimilar`'s "different srcFolder never groups" (`:143`) and "adjacency chaining: a stray frame splits the group in two" (`:80`, one folder throughout).
+- [ ] **Step 7:** gate green. Commit: `fix(smart): walk bursts and similar sets per source folder so interleaved bodies keep their runs`
+
+### Task 10b: The grid's group brackets follow contiguity, not min-to-max
+
+**Files:** Create `src/components/gridBurstSegments.ts`, `src/components/gridBurstSegments.test.ts`. Modify `src/components/GridView.tsx`.
+
+**Interfaces — Produces:**
+
+```ts
+// src/components/gridBurstSegments.ts
+export type GridCell = { idx: number; row: number; col: number };
+export type GridGroupHit = { c: BurstCtx; kind: "burst" | "similar" };
+export type GridBurstSegment = {
+  key: string;
+  row: number;
+  /** Inclusive column span of ONE contiguous stretch. */
+  c0: number;
+  c1: number;
+  label: number | null;
+  openLeft: boolean;
+  openRight: boolean;
+  kind: "burst" | "similar";
+};
+export function computeGridBurstSegments(
+  cells: readonly GridCell[],
+  hitFor: (idx: number) => GridGroupHit | undefined,
+): GridBurstSegment[];
+```
+
+**Consumes:** `BurstCtx` from `../smart/groupBursts`. Nothing else in 3C owns `GridView.tsx` — Tasks 2 and 9 own `App.tsx`, which is a different file.
+
+**Why:** `GridView.tsx:275-321` keys its segments `${kind}:${group}:${row}` and then accumulates `c0 = Math.min(c0, col)` / `c1 = Math.max(c1, col)`, drawing ONE box from the group's leftmost to its rightmost column in that row. That was exact while a group's members were contiguous. After Task 10a they need not be: with two bodies interleaved by capture time, body A's members sit at columns 0 and 2, and A's bracket visually encloses column 1 — a frame from body B. Two groups in the same row also overlap. The membership itself (`pos` / `len` / winner) is right; only the span lies.
+
+**Ruling (the label rule does NOT change).** `strip/burstSegments.ts:69` labels the group's first segment *in display order*; the grid labels the stretch containing the run's **first frame** (`c.pos === 1`). Matching the strip would change what a single-folder shoot draws whenever a burst's first frame is filtered out of the grid, and the brief's own requirement is that nothing changes for single-folder shoots. The grid keeps its rule; the difference is recorded in the new module's doc comment.
+
+- [ ] **Step 1: failing test** — create `src/components/gridBurstSegments.test.ts` (node env):
+
+```ts
+import { describe, expect, it } from "vitest";
+import { computeGridBurstSegments, type GridCell, type GridGroupHit } from "./gridBurstSegments";
+import type { BurstCtx } from "../smart/groupBursts";
+
+const ctx = (group: number, pos: number, len: number): BurstCtx => ({
+  group,
+  pos,
+  len,
+  isWinner: false,
+  marginToWinner: 0,
+});
+/** Cells of one row, left to right — what GridView generates. */
+const row = (r: number, n: number, from = 0): GridCell[] =>
+  Array.from({ length: n }, (_, i) => ({ idx: from + i, row: r, col: i }));
+/** Look a cell's group up from a plain idx -> hit map. */
+const hits =
+  (m: Record<number, GridGroupHit>) =>
+  (idx: number): GridGroupHit | undefined =>
+    m[idx];
+
+describe("computeGridBurstSegments", () => {
+  it("draws ONE box for a contiguous run — today's output, unchanged", () => {
+    const segs = computeGridBurstSegments(
+      row(0, 4),
+      hits({
+        1: { c: ctx(0, 1, 3), kind: "burst" },
+        2: { c: ctx(0, 2, 3), kind: "burst" },
+        3: { c: ctx(0, 3, 3), kind: "burst" },
+      }),
+    );
+    expect(segs).toHaveLength(1);
+    expect(segs[0]).toMatchObject({
+      row: 0,
+      c0: 1,
+      c1: 3,
+      label: 3,
+      openLeft: false,
+      openRight: false,
+      kind: "burst",
+    });
+  });
+
+  it("splits two interleaved bodies into one box per contiguous stretch", () => {
+    // A,B,A,B in one row: neither group may span the other's cell.
+    const segs = computeGridBurstSegments(
+      row(0, 4),
+      hits({
+        0: { c: ctx(0, 1, 2), kind: "burst" },
+        1: { c: ctx(1, 1, 2), kind: "burst" },
+        2: { c: ctx(0, 2, 2), kind: "burst" },
+        3: { c: ctx(1, 2, 2), kind: "burst" },
+      }),
+    );
+    expect(segs).toHaveLength(4);
+    for (const s of segs) expect(s.c0).toBe(s.c1);
+    expect(segs.map((s) => s.c0)).toEqual([0, 1, 2, 3]);
+    // No two boxes overlap, and each group's ends are open where its run
+    // continues elsewhere.
+    expect(segs[0]).toMatchObject({ label: 2, openLeft: false, openRight: true });
+    expect(segs[2]).toMatchObject({ label: null, openLeft: true, openRight: false });
+    // Keys stay unique, or React renders one box and drops the rest.
+    expect(new Set(segs.map((s) => s.key)).size).toBe(4);
+  });
+
+  it("keeps a run that wraps a row as one box per row, each open at the seam", () => {
+    const cells = [...row(0, 2, 0), ...row(1, 2, 2)];
+    const segs = computeGridBurstSegments(
+      cells,
+      hits({
+        0: { c: ctx(0, 1, 4), kind: "burst" },
+        1: { c: ctx(0, 2, 4), kind: "burst" },
+        2: { c: ctx(0, 3, 4), kind: "burst" },
+        3: { c: ctx(0, 4, 4), kind: "burst" },
+      }),
+    );
+    expect(segs).toHaveLength(2);
+    expect(segs[0]).toMatchObject({ row: 0, c0: 0, c1: 1, openLeft: false, openRight: true });
+    expect(segs[1]).toMatchObject({ row: 1, c0: 0, c1: 1, openLeft: true, openRight: false });
+  });
+
+  it("separates a burst from a similar set that happen to share a group number", () => {
+    const segs = computeGridBurstSegments(
+      row(0, 2),
+      hits({
+        0: { c: ctx(0, 1, 1), kind: "burst" },
+        1: { c: ctx(0, 1, 1), kind: "similar" },
+      }),
+    );
+    expect(segs.map((s) => s.kind)).toEqual(["burst", "similar"]);
+    expect(new Set(segs.map((s) => s.key)).size).toBe(2);
+  });
+
+  it("is empty when nothing is grouped", () => {
+    expect(computeGridBurstSegments(row(0, 3), hits({}))).toEqual([]);
+  });
+});
+```
+
+- [ ] **Step 2: the pure module** — create `src/components/gridBurstSegments.ts`:
+
+```ts
+import type { BurstCtx } from "../smart/groupBursts";
+
+/**
+ * Where the grid draws its burst / similar brackets — the vertical sibling of
+ * `strip/burstSegments.ts` (same contract: pure, no DOM, unit-tested).
+ *
+ * ONE BOX PER CONTIGUOUS STRETCH, never min-to-max. A group's members used to
+ * be contiguous in session order, so a row's leftmost and rightmost member
+ * bounded a solid block; since the per-folder walk in `groupBursts` /
+ * `groupSimilar` two bodies interleaved by capture time put another body's
+ * frames between them, and a min-to-max box would enclose frames that are not
+ * in the group.
+ *
+ * The LEGEND rule is the grid's own and deliberately differs from the strip's:
+ * the strip labels a group's first segment in display order, the grid labels
+ * the stretch containing the run's FIRST FRAME (`pos === 1`), so a run whose
+ * opening frame the filter hides draws no ×N at all. Unchanged here — the
+ * point of this module is the span, not the label.
+ */
+
+/** One rendered cell, as GridView generates them: row-major, columns 0..n-1
+ *  with no gaps within a row. */
+export type GridCell = { idx: number; row: number; col: number };
+
+/** A cell's group membership, already resolved by kind (bursts win). */
+export type GridGroupHit = { c: BurstCtx; kind: "burst" | "similar" };
+
+export type GridBurstSegment = {
+  /** React key. Carries `c0` because one (kind, group, row) can now yield
+   *  several stretches — without it React renders one box and drops the rest. */
+  key: string;
+  row: number;
+  /** Inclusive column span of ONE contiguous stretch. */
+  c0: number;
+  c1: number;
+  /** The run's total length, on the stretch holding its first frame; else null. */
+  label: number | null;
+  /** The run continues before / after this stretch (another row, another
+   *  stretch, or off-screen): that edge renders OPEN. */
+  openLeft: boolean;
+  openRight: boolean;
+  kind: "burst" | "similar";
+};
+
+export function computeGridBurstSegments(
+  cells: readonly GridCell[],
+  hitFor: (idx: number) => GridGroupHit | undefined,
+): GridBurstSegment[] {
+  const out: GridBurstSegment[] = [];
+  let open: (GridBurstSegment & { firstPos: number; lastPos: number; len: number }) | null = null;
+  let openKey: string | null = null;
+
+  const close = () => {
+    if (!open) return;
+    out.push({
+      key: open.key,
+      row: open.row,
+      c0: open.c0,
+      c1: open.c1,
+      label: open.label,
+      openLeft: open.firstPos > 1,
+      openRight: open.lastPos < open.len,
+      kind: open.kind,
+    });
+    open = null;
+    openKey = null;
+  };
+
+  for (const cell of cells) {
+    const hit = hitFor(cell.idx);
+    if (!hit) {
+      close();
+      continue;
+    }
+    const key = `${hit.kind}:${hit.c.group}`;
+    // Contiguous means: same row, same group, and the very next column. Cells
+    // arrive row-major with no gaps inside a row, so the column test is what
+    // catches a foreign frame sitting between two members.
+    const extends_ = open !== null && openKey === key && open.row === cell.row && cell.col === open.c1 + 1;
+    if (!extends_) close();
+    if (open === null) {
+      open = {
+        key: `${key}:${cell.row}:${cell.col}`,
+        row: cell.row,
+        c0: cell.col,
+        c1: cell.col,
+        label: hit.c.pos === 1 ? hit.c.len : null,
+        firstPos: hit.c.pos,
+        lastPos: hit.c.pos,
+        len: hit.c.len,
+        openLeft: false,
+        openRight: false,
+        kind: hit.kind,
+      };
+      openKey = key;
+    } else {
+      open.c1 = cell.col;
+      if (hit.c.pos === 1) open.label = hit.c.len;
+      open.firstPos = Math.min(open.firstPos, hit.c.pos);
+      open.lastPos = Math.max(open.lastPos, hit.c.pos);
+    }
+  }
+  close();
+  return out;
+}
+```
+
+- [ ] **Step 3: GridView calls it.** In `src/components/GridView.tsx`, delete the whole `type Seg = {…}` declaration and the `const burstSegs … if (bursts || similar) {…}` block (`:257-322`, from the `// Burst run boxes` comment down to the closing brace before `return (`) and replace it with:
+
+```tsx
+  // Burst / similar boxes, one per CONTIGUOUS stretch of a group's cells in a
+  // row (see components/gridBurstSegments — a group's members need not be
+  // adjacent since the per-folder walk). The ×N legend rides the stretch
+  // holding the run's first frame.
+  const burstSegs =
+    bursts || similar
+      ? computeGridBurstSegments(cells, (idx) => {
+          const id = images[idx].id;
+          const b = bursts?.get(id);
+          if (b) return { c: b, kind: "burst" as const };
+          const s = similar?.get(id);
+          return s ? { c: s, kind: "similar" as const } : undefined;
+        })
+      : [];
+```
+
+and add the import beside the existing `./gridWindow` one (`GridView.tsx:11`):
+
+```ts
+import { computeGridBurstSegments } from "./gridBurstSegments";
+```
+
+The render block at `:357-…` is untouched: it reads `s.key`, `s.row`, `s.c0`, `s.c1`, `s.label`, `s.openLeft`, `s.openRight`, `s.kind`, all of which the new type carries with the same meaning. `key={`burst-${s.key}`}` stays as it is — the key's *shape* changed (it gained the start column), but it is a React key and nothing else reads it.
+
+- [ ] **Step 4:** gate green, and confirm `src/components/gridWindow.test.ts` and `src/components/GridCell.layers.test.tsx` are untouched and still pass. Commit: `fix(ui): the grid's group brackets follow contiguity instead of spanning min to max`
 
 ### Task 11: The help sheet, the docs, and the final gate
 
@@ -2238,11 +2748,16 @@ Add one line to `extendsRun`'s `srcFolder` gate (`:62`) so the next reader knows
     expect(caps(rowFor(container, "Jump one strip"))).toEqual(["PgUp", "PgDn"]);
   });
 
-  test("the grid teaches the screenful and the extend-to-edge forms", () => {
+  test("the grid teaches the screenful and both extend forms", () => {
     const { container } = render(<HelpOverlay mode="grid" />);
     expect(caps(rowFor(container, "First / last"))).toEqual(["Home", "End"]);
     expect(caps(rowFor(container, "One screen"))).toEqual(["PgUp", "PgDn"]);
     expect(caps(rowFor(container, "Extend selection to edge"))).toEqual(["Shift", "Home", "End"]);
+    expect(caps(rowFor(container, "Extend selection one screen"))).toEqual([
+      "Shift",
+      "PgUp",
+      "PgDn",
+    ]);
   });
 
   test("compare gets the page keys only — Home / End are loupe and grid", () => {
@@ -2286,16 +2801,18 @@ change the grid filter row the same way as the loupe's (`:131-135`), and insert 
 
 ```tsx
         { keys: ["Shift", "Home", "End"], desc: "Extend selection to edge" },
+        { keys: ["Shift", "PgUp", "PgDn"], desc: "Extend selection one screen" },
 ```
 
-`KeyCombo` renders raw labels, so `"Home"` / `"End"` / `"PgUp"` / `"PgDn"` need no mapping. The three-cap `Shift`+`Home`+`End` row stays at three caps, under `HelpOverlay.tsx:197`'s `> 3` split threshold, so it renders as one combo.
+`KeyCombo` renders raw labels, so `"Home"` / `"End"` / `"PgUp"` / `"PgDn"` need no mapping. Both new Shift rows are three caps, under `HelpOverlay.tsx:197`'s `> 3` split threshold, so each renders as one combo.
 
-- [ ] **Step 3: `README.md` → the cheat sheet.** Insert two rows after line 188 (`| \`↑ ↓\` …`) and before the `+` / `−` row:
+- [ ] **Step 3: `README.md` → the cheat sheet.** Insert four rows after line 188 (`| \`↑ ↓\` …`) and before the `+` / `−` row:
 
 ```
 | `home` `end` | first / last in filter | —         | first / last in filter |
 | `pgup` `pgdn` | jump one strip-width | jump one strip-width | one screen        |
 | `shift+home` / `shift+end` | — | —                | extend selection to edge |
+| `shift+pgup` / `shift+pgdn` | — | —               | extend selection one screen |
 ```
 
 and change line 200's filter row to:
@@ -2315,13 +2832,31 @@ and change line 200's filter row to:
 ```
 
 - [ ] **Step 5: `ARCHITECTURE.md` → a session-order section.** Add a new `## Session order` section directly before `## Read pipeline` (`:18`), covering: the set is concatenated folder by folder at stage time (`openFoldersByPaths`, ids assigned at append and stable for the session — `types/image.ts:1-5`), and re-sorted **globally once**, at Begin culling, by `analyze_folder`; the key is each frame's EXIF `DateTimeOriginal` + `SubSecTimeOriginal` when `sortByCaptureTime` is on, falling back per frame to that file's mtime and then to path order (`scan.rs`'s `capture_epoch` → the unchanged `order_by_capture`); a thumb-tier cache hit answers the time with zero source round-trips, so re-opening a shoot is free; per-folder offsets are resolved on the TS side into a per-frame vector, apply to whichever epoch a frame got, and are ordering-only; and **why the sort never runs mid-cull** — `currentIndex`, `championIndex`, `challengerIndex`, `selectedIndices`, `selectionAnchor`, `visibleIndices`, `NavEntry`, GridView's window math and `imageStore`'s ordered `paths` + `pathIndex` are all index-keyed, and Begin culling is the one moment `setImages` + `imageStore.reset` + `overlayService.reset` already happen together.
-- [ ] **Step 6: `ARCHITECTURE.md` → filters and keys.** Two smaller edits: in the smart-culling section (`:356-393`), one sentence distinguishing the `rejects` filter (the user's own verdict, the pile "move rejects" takes) from `suggestedRejects` (an unrated frame the pass flagged); and, in the **Design language** section's modifier-key bullet neighbourhood (`:505-543`), one sentence that `Home` / `End` / `PgUp` / `PgDn` move the cursor within the ACTIVE FILTER and that a page is a measured screenful of the surface under the cursor (`src/utils/pageStep.ts`), never a burst.
+- [ ] **Step 6: `ARCHITECTURE.md` → filters, groups and keys.** Three smaller edits: in the smart-culling section (`:356-393`), one sentence distinguishing the `rejects` filter (the user's own verdict, the pile "move rejects" takes) from `suggestedRejects` (an unrated frame the pass flagged), and one recording the invariant 3C broke — `groupBursts` / `groupSimilar` walk **per source folder** over the global order, so a group's members are no longer contiguous in session order, and every consumer that draws a bracket (the two strips' `burstSegments.ts`, the grid's `gridBurstSegments.ts`) segments by contiguity; and, in the **Design language** section's modifier-key bullet neighbourhood (`:505-543`), one sentence that `Home` / `End` / `PgUp` / `PgDn` move the cursor within the ACTIVE FILTER, that Shift extends the grid selection to the same target, and that a page is a measured screenful of the surface under the cursor (`src/utils/pageStep.ts`), never a burst.
 - [ ] **Step 7: `TESTING.md`.** Two additions. Under **Stylesheet guards** (`:49`), one sentence that `layout.test.ts`'s tier slices are keyed to exactly three footer breakpoints, so a new one breaks them and 3C therefore added rules to the existing `< 1360` tier instead. Under **Env-var-gated corpus tests** (`:85`), one sentence that `cr3::read_capture_time` is covered by a SYNTHETIC CR3 head assembled in `cr3.rs`'s own test module (ftyp + moov > uuid > CMT2 with a hand-built little-endian TIFF), so the parser's whole path runs in CI with no corpus — the pattern to copy for any future head-only reader. If nothing else in either section changed, say so and leave it.
-- [ ] **Step 8: the implementation note.** Append an `## Implementation note (2026-09-20)` section to THIS plan file, in the shape Phase 3B's has (what shipped · where the spec or the plan was wrong and what was ruled instead · verification · Oliver's walk · left for later). If a pre-flight fact-check produced a `## Pre-flight corrections` section, move its paragraph into the note verbatim and add one line per further correction the implementers hit.
+- [ ] **Step 8: the implementation note.** Append an `## Implementation note (2026-09-20)` section to THIS plan file, in the shape Phase 3B's has (what shipped · where the spec or the plan was wrong and what was ruled instead · verification · Oliver's walk · left for later). Move the `## Pre-flight corrections (2026-09-20)` section's opening paragraph into the note verbatim and add one line per further correction the implementers hit. Oliver's walk must include: `Home` / `End` / `PgUp` / `PgDn` in loupe and grid, `Shift` with each in the grid, the empty Rejects tab on `5`, and Begin culling with the sort on plus the staged-folder rows for two scratch folders.
 - [ ] **Step 9: final gate** — `pnpm typecheck && pnpm typecheck:tests && pnpm lint && pnpm lint:css && pnpm test && pnpm build && pnpm css:census`, plus the Rust three from `src-tauri/`. `css:census` is a starting list, not a verdict: reconcile the new `cull-staged-sort*` names by hand and report the result.
 - [ ] **Step 10:** commit: `docs: Phase 3C — navigation keys, the Rejects filter, capture-time order`
 
 ---
+
+## Pre-flight corrections (2026-09-20)
+
+Two fresh checkers fact-checked this plan against the code before any of it was executed; every finding below was applied here, so an implementer reads only corrected text. Recorded so the record survives even if the session is interrupted — Task 11 moves this paragraph into the implementation note.
+
+- **The ≥ 1360 footer sums omitted the key hint and its gap, by 86 px.** `.cull-statusbar__keyhint` renders unconditionally (`StatusBar.tsx:271-273`) and only sheds below 1360; it is mono 9 px at 0.2em tracking = 7.2 px × the 10 characters of `TAB · KEYS` = 72, plus one 14 px flex gap. The worst case is **1590.4** with the fifth tab, **1513.2** today — not 1504.4 / 1427.2. Corrected in Task 5's ruling, in its CSS comment and in "Not in this plan". **Ruled: the tier stays at `< 1360px`.** Closing the band needs `< 1620px`, which puts the default 1600 px window inside the shed tier every day to guard four rare states that must all be true at once.
+- **The tab-padding override would have resized the sub-mode chips.** `.cull-filter-tab-tooltip button { padding: 3px 7px }` (`chrome.css:508-511`) is only (0,1,1) and wins today on source order alone, so the planned `.cull-statusbar .cull-filter-tabs button` (0,2,1) would have silently beaten it. Replaced with a two-member CHILD-combinator list (`… .cull-filter-tabs > button`, `… .cull-filter-tab-group > button`), which covers exactly the five tabs and no tooltip chip; the guard test pins both members and asserts the tier never names the tooltip class.
+- **Task 6 could not pass its own clippy gate.** `mod cr3;` is private, so a `pub fn` with no lib-build caller is dead code under `-D warnings`. Task 6 now adds `#[cfg_attr(not(test), allow(dead_code))]` (precedent `phash.rs:50`) and Task 7 gains a Step 3b that deletes it — the `gridthumb.rs` 8 → 10 dance from Phase 3B. `cr3.rs` is now a Task 7 file, and 6/7 are strictly serial rather than merely ordered.
+- **`toBe` takes one argument.** `expect(x).toBe(2, "message")` is TS2554; Vitest's message belongs in `expect`. Fixed in Task 10a's interleaving test.
+- **The per-folder walk broke an unwritten invariant, and the plan was silent about it.** Group members are no longer contiguous in session order. `GridView.tsx:275-321` spans a bracket from a group's min to its max column in a row, so two interleaved bodies would each draw a box enclosing the other's frames. Now fixed rather than accepted: **Task 10b** extracts the row segmentation into a pure, tested `components/gridBurstSegments.ts` that emits one box per contiguous stretch (a contiguous run is byte-identical to today's output, pinned by a test). `groupSimilar.ts:135-155` had the identical one-`prev`-plus-`srcFolder`-wall shape and gets the same per-folder walk in **Task 10a**, with the same three kinds of test. `strip/burstSegments.ts`'s "runs come out contiguous" doc is corrected. Task 10 is split 10a / 10b; neither shares a file with the other or with any other task.
+- **A fractional stored offset would have failed the whole `analyze_folder` call.** The wire type is Rust `i64`, and serde refuses `1500.7`. `coerceCaptureOffsets` now `Math.round`s after clamping, with a test.
+- **`cargo fmt --check` fails on hand-written plan code.** The Global Constraints' Rust gate now runs `cargo fmt` FIRST, and Task 7's one over-long chain (rustfmt's `chain_width` is 60) is pre-wrapped in the plan.
+- **The new stylesheet was one letter from an existing one** — and the checker's suggested home was wrong. `.cull-staged__*` live in **`chrome.css:685-733`**, not `stage.css` (which is the loupe photo stage). Folding into `chrome.css` would push it from 778 past the 800-line ceiling AND give Tasks 5 and 9 a shared file. Ruled: a separate sheet, renamed **`staged-sort.css`**, with the reasoning recorded in Task 9.
+- **Task 3's "right failure" was wrong for two of its three blocks.** `topOf("rejects")` and `cycleFilter("rejects", <other top>)` already pass at runtime through existing `default` arms; only `typecheck:tests` fails on every line. Reworded so nobody "fixes" `passesFilter` with a `default`.
+- **Shift+PgUp / PgDn would have cleared a grid selection** by falling through to the plain branch. They now extend it by a screenful through `growGridSelection(±pageStep())`, mirroring Shift+arrow; help sheet and README rows added, and the `e.repeat` ruling split (guarded for Shift+Home/End, whose step never changes; unguarded for Shift+page, whose every repeat grows).
+- **A wrong-length `offsets_ms` vector degraded silently.** `.get(i)` is memory-safe, but nobody would ever learn; Task 7 now logs the mismatch once via `dlog!`.
+- **Smaller:** the `stopGridVertHold()` call inside the new Shift cases was dead (`:238-239` has already stopped any held row-jump) and is dropped with a comment saying why; the grid's `clientHeight` includes its own 40 px of vertical padding and the comment now says so; `read_capture_times`' doc says "first STAGED (lexicographically first)" rather than implying earliest; `captureOffsets`' doc records that the key is the verbatim `srcFolder` with no normalisation; Task 4's fixture note no longer claims a test overrides `filter.filter`; README gains four rows, not two; and four line references were off by one or two (`base.css:47-62`, `useSiteNavigation.ts:245-266`, `chrome.css:441` comment + `:443-447` rule, `grid.css:14`) — name-wins per the Global Constraints, corrected anyway.
+- **One checker finding rejected:** preflight-b's SHOULD-FIX 6 said `src/styles/stage.css` "already owns `.cull-staged__*`". It does not — `chrome.css` does. The intent (no near-duplicate filename, no maintenance trap) was applied; the named destination was not.
 
 ## Not in this plan
 
@@ -2332,7 +2867,8 @@ and change line 200's filter row to:
 - **Home / End in compare.** `cycleChallenger` walks `findUnrated` once per step, so a whole-list step is O(n²) — 17.6 M scans on a 4,194-frame shoot. The two keys are swallowed there and bound in loupe and grid only, which is what the spec's "first / last frame of the active filter" means anyway (the tablist is hidden in compare).
 - **PgUp / PgDn as a burst hop.** Spec §A: burst groups are advisory, often absent, and upgrade as scores land, so the same key would move a different distance at different moments. `↓` in the grid and the burst brackets still do that job.
 - **A keymap test harness.** `useCullKeymap.ts` has none; the step arithmetic is pure and tested, and the wiring is verified by review (spec §Testing). Building the harness is Phase 4.
-- **The footer's ≥ 1360 worst case.** The absolute worst state (all rated + every photo missing + scrubbing at ×10 + the overlay cluster) already overflows from 1360 to 1427 on `main`; the fifth tab widens that to 1504. Priced in Task 5's comment, ruled by the spec ("At 1360 px and wider the footer simply has a fifth tab"), not fixed here.
+- **The footer's ≥ 1360 worst case.** The absolute worst state (all rated + every photo missing + scrubbing at ×10 + the overlay cluster) already overflows from 1360 to **1513.2** on `main`; the fifth tab widens that to **1590.4**. Closing it would mean firing the shed tier at `< 1620px`, which puts the default 1600 px window permanently inside it — losing the key hint, `.CR3`, the save chip's tail, the all-rated finish label and Smart's count every day to guard four rare states that must all be true at once. Priced in Task 5's comment, ruled by the spec ("At 1360 px and wider the footer simply has a fifth tab"), not fixed here.
+- **The grid's legend rule is not aligned with the strip's.** `strip/burstSegments.ts` labels a group's first segment in display order; the grid labels the stretch holding the run's first frame, so a burst whose opening frame the filter hides draws no ×N in the contact sheet. Pre-existing, left alone deliberately in Task 10b: changing it would alter what a single-folder shoot draws, which is the one thing that task must not do.
 - **Live re-sorting, and sort modes other than capture time.** Everything cursor-shaped is index-keyed; Begin culling is the one safe moment (spec §C, "Out of scope").
 - **Automatic clock matching.** It needs content matching to be trustworthy, and a wrong automatic offset is worse than a manual one (spec §C). The staged rows show the signed delta as a *hint*; the user applies it.
 - **`OffsetTimeOriginal` / any timezone handling.** Not parsed anywhere in the backend, not needed: all times are the cameras' local wall clocks compared with each other, and the sort lives in Rust, never in `Date.parse`.
@@ -2350,24 +2886,27 @@ The controller runs implementers in parallel **only** on disjoint file sets. Wav
 | 1 | **3** The `rejects` value | `types/rating.ts`, `utils/filterModes.ts`+test, `utils/filter.ts`+test | 1, 6, 8, 10 | — |
 | 1 | **6** Rust `read_capture_time` | `src-tauri/src/cr3.rs` | 1, 3, 8, 10 | — |
 | 1 | **8** Settings + staged maths | `types/settings.ts`, `hooks/useSettings.ts`+test, `utils/stagedFolders.ts`(new)+test | 1, 3, 6, 10 | — |
-| 1 | **10** Per-folder burst walk | `smart/groupBursts.ts`+test | 1, 3, 6, 8 | — |
+| 1 | **10a** Per-folder burst + similar walks | `smart/groupBursts.ts`+test, `smart/groupSimilar.ts`+test, `components/strip/burstSegments.ts` (doc) | 1, 3, 6, 8, 10b | — |
+| 1 | **10b** Grid brackets by contiguity | `components/gridBurstSegments.ts`(new)+test, `components/GridView.tsx` | 1, 3, 6, 8, 10a | — (no shared file with 10a; ships correct for today's data too) |
 | 2 | **2** The four keys | `App.tsx`, `app/useCullKeymap.ts` | 5, 7 | 1 |
-| 2 | **7** Rust `analyze_folder` | `src-tauri/src/scan.rs`, `src-tauri/src/lib.rs` | 2, 4, 5 | 6 |
+| 2 | **7** Rust `analyze_folder` | `src-tauri/src/scan.rs`, `src-tauri/src/lib.rs`, `src-tauri/src/cr3.rs`‡ | 2, 4, 5 | 6 |
 | 2 | **4** Rejects tab + key `5` | `components/StatusBar.tsx`, `components/StatusBar.shed.test.tsx`, `components/EmptyFilter.tsx`, `app/useCullKeymap.ts`† | 7 | 3, **2** (`useCullKeymap.ts`) |
 | 3 | **5** The footer budget | `styles/statusbar.css`, `styles/chrome.css`, `styles/layout.test.ts` | 2, 7, 9 | 4 |
-| 3 | **9** The staged screen | `components/StagedFolders.tsx`(new)+test, `styles/staged.css`(new), `styles/index.css`, `App.tsx`, `app/useSessionLifecycle.ts` | 5 | 7, 8, **2** (`App.tsx`) |
+| 3 | **9** The staged screen | `components/StagedFolders.tsx`(new)+test, `styles/staged-sort.css`(new), `styles/index.css`, `App.tsx`, `app/useSessionLifecycle.ts` | 5 | 7, 8, **2** (`App.tsx`) |
 | 4 | **11** Help, README, docs, final gate | `components/HelpOverlay.tsx`, `components/HelpOverlay.test.tsx`, `README.md`, `ARCHITECTURE.md`, `TESTING.md` | — | everything |
 
 † Task 4 edits `useCullKeymap.ts` only to add the `case "5":` block, in the same switch Task 2 adds four cases to. If the controller would rather keep those two apart, hand Task 4's Step 4 to Task 2 instead and say so — but Task 2 then also has to follow Task 3, because `cycleFilter(f, "rejects")` does not compile until the union is widened.
 
-**Serial chains to respect:** 1 → 2; 3 → 4; 2 → 4 (shared `useCullKeymap.ts`); 4 → 5; 6 → 7; {7, 8} → 9; 2 → 9 (shared `App.tsx`); everything → 11.
+‡ Task 7's only edit to `cr3.rs` is deleting the `#[cfg_attr(not(test), allow(dead_code))]` Task 6 added (Step 3b). Task 6 needs it (a `pub fn` in a private module with no lib caller fails `clippy -D warnings`); Task 7 must remove it (the attribute itself lints once `exif_ms_for` calls the function). Exactly the `gridthumb.rs` 8 → 10 dance from Phase 3B, and the reason the two are strictly serial rather than merely ordered.
+
+**Serial chains to respect:** 1 → 2; 3 → 4; 2 → 4 (shared `useCullKeymap.ts`); 4 → 5; 6 → 7; {7, 8} → 9; 2 → 9 (shared `App.tsx`); everything → 11. **10a and 10b are independent of everything else and of each other** — disjoint files, and each leaves the app working alone (10b's contiguity split is a no-op on today's contiguous groups).
 
 **Never parallel:**
 - **2, 4** — both edit `src/app/useCullKeymap.ts`.
 - **2, 9** — both edit `src/App.tsx`. These are the only two tasks that touch it; Task 4 deliberately does not (see its `stats.rejects` ruling).
 - **4, 5** — Task 5's CSS targets markup Task 4 creates (`.cull-statusbar__smart-count`, the fifth tab), and running 5 alone would point the tip-alignment rule at the wrong tab.
-- **6, 7** — 7 calls `cr3::read_capture_time`, and both are Rust gates that must be green on their own.
+- **6, 7** — 7 deletes the `allow(dead_code)` 6 adds, in the same file (see ‡), and both are Rust gates that must be green on their own.
 - **8, 9** — 9's component imports the helpers and settings fields 8 creates.
 - **11 and anything** — it edits the help sheet, the README keys table and the docs against the finished branch, and runs the final gate.
 
-Task 5 is the only owner of `src/styles/layout.test.ts`, `statusbar.css` and `chrome.css`; Task 9 is the only owner of `src/styles/index.css`. No stylesheet has two owners in this phase.
+Task 5 is the only owner of `src/styles/layout.test.ts`, `statusbar.css` and `chrome.css`; Task 9 is the only owner of `src/styles/index.css` and of the new `staged-sort.css`. No stylesheet has two owners in this phase. Task 10b is the only owner of `src/components/GridView.tsx` — Tasks 2 and 9 own `App.tsx`, which is a different file — and Task 10a the only owner of the three `smart/` + `strip/` files it lists.
