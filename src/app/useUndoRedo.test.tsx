@@ -213,9 +213,29 @@ describe("an undo that empties a frame asks for the unrate too", () => {
     );
   });
 
-  it("stays quiet when the frame still carries a verdict or another mark", () => {
+  // Split in two (each fixture carries exactly ONE reason to stay quiet) so
+  // a guard that broke on only ratings, or only labels, would fail its own
+  // test rather than hiding behind the other guard still holding. The
+  // bundled fixture this replaced could not tell which guard a red run meant.
+  it("stays quiet when the frame still carries a verdict", () => {
     const p = makeProps();
-    p.marksRef.current = { ratings: { 1: "keep" }, stars: {}, labels: { 1: "blue" } };
+    p.marksRef.current = { ratings: { 1: "keep" }, stars: {}, labels: {} };
+    const { result } = renderUndo(p);
+    act(() =>
+      result.current.recordAction({
+        changes: [],
+        meta: [{ imgId: 1, path: "/s/1.cr3", field: "star", before: undefined, after: 3 }],
+      }),
+    );
+    act(() => result.current.undo());
+
+    expect(p.persistStar).toHaveBeenCalledWith("/s/1.cr3", null);
+    expect(p.persistRating).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet when the frame still carries another mark", () => {
+    const p = makeProps();
+    p.marksRef.current = { ratings: {}, stars: {}, labels: { 1: "blue" } };
     const { result } = renderUndo(p);
     act(() =>
       result.current.recordAction({
