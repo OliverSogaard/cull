@@ -133,51 +133,7 @@ describe("the staged screen's capture-time controls", () => {
     expect(onOffsetChange).toHaveBeenLastCalledWith("C:\\shoot\\bodyB", 0);
   });
 
-  it("PROBE — documents this jsdom's :focus-visible: modality-aware from OUTSIDE a handler, but not from inside the keydown handler for the key in flight", () => {
-    // Outside any handler, this repo's jsdom (30.0.1) tracks input modality
-    // correctly: a mouse click (fireEvent.click does not itself move focus
-    // in jsdom, unlike a real browser — .focus() reproduces the real
-    // post-click end state) does not count as keyboard focus…
-    const clicked = render(<button type="button">clicked</button>);
-    const clickedBtn = clicked.getByRole("button");
-    fireEvent.click(clickedBtn);
-    clickedBtn.focus();
-    expect(clickedBtn.matches(":focus-visible")).toBe(false);
-    clicked.unmount();
-
-    // …while a keydown immediately before .focus() — what a real Tab press
-    // leaves behind — DOES.
-    const tabbed = render(<button type="button">tabbed</button>);
-    const tabbedBtn = tabbed.getByRole("button");
-    fireEvent.keyDown(document.body, { key: "Tab" });
-    tabbedBtn.focus();
-    expect(tabbedBtn.matches(":focus-visible")).toBe(true);
-    tabbed.unmount();
-
-    // BUT: re-checked from WITHIN a keydown handler for the very key that's
-    // currently being dispatched, it always reads true — regardless of how
-    // focus was acquired — because jsdom treats "a keyboard event is
-    // dispatching right now" as sufficient evidence on its own. Real
-    // Chromium decides `:focus-visible` once, at focus time, and does not
-    // re-derive it from whatever event happens to be in flight, so this is a
-    // jsdom-only confound — but it means a live `fireEvent.keyDown` cannot
-    // exercise `isKeyboardFocused` the way the two tests below need to, and
-    // they stub `Element.prototype.matches` instead.
-    const mouseFocused = render(<button type="button">mouse-focused</button>);
-    const mouseFocusedBtn = mouseFocused.getByRole("button");
-    let insideHandler: boolean | null = null;
-    mouseFocusedBtn.addEventListener("keydown", () => {
-      insideHandler = mouseFocusedBtn.matches(":focus-visible");
-    });
-    fireEvent.click(mouseFocusedBtn);
-    mouseFocusedBtn.focus();
-    expect(mouseFocusedBtn.matches(":focus-visible")).toBe(false); // true just before…
-    fireEvent.keyDown(mouseFocusedBtn, { key: "Enter" });
-    expect(insideHandler).toBe(true); // …but true once inside the Enter handler
-    mouseFocused.unmount();
-  });
-
-  it("keeps Enter inside the row when focus is keyboard-style (:focus-visible) — it must not fall through to the staged screen's begin-culling shortcut", async () => {
+  it("(a) lets Enter fall through after a pointerDown + click on the toggle — a still-focused clicked button must not swallow Enter forever", async () => {
     vi.mocked(invoke).mockResolvedValue([null, null]);
     const windowKeydown = vi.fn();
     window.addEventListener("keydown", windowKeydown);
@@ -190,32 +146,19 @@ describe("the staged screen's capture-time controls", () => {
         onOffsetChange={noop}
       />,
     );
-    const later = await screen.findByRole("button", { name: "bodyB · later" });
-    later.focus();
-    // Pin the exact case the fix branches on, independent of the jsdom
-    // confound the PROBE test above documents: delegate every OTHER selector
-    // to the real implementation, and answer `:focus-visible` ourselves.
-    const originalMatches = Element.prototype.matches;
-    const matchesSpy = vi.spyOn(Element.prototype, "matches").mockImplementation(function (
-      this: Element,
-      selector: string,
-    ): boolean {
-      if (selector === ":focus-visible") return this === later;
-      return originalMatches.call(this, selector);
-    });
-    try {
-      // The staged screen's real Enter shortcut is a window-level keydown
-      // listener (useCullKeymap.ts); a spy standing in for it here is enough
-      // to prove the event never reaches that far.
-      fireEvent.keyDown(later, { key: "Enter" });
-      expect(windowKeydown).not.toHaveBeenCalled();
-    } finally {
-      matchesSpy.mockRestore();
-      window.removeEventListener("keydown", windowKeydown);
-    }
+    const toggle = screen.getByRole("button", { name: "Sort by capture time · on" });
+    fireEvent.pointerDown(toggle);
+    fireEvent.click(toggle);
+    // Chromium leaves focus on a clicked button; jsdom's fireEvent.click does
+    // not itself move focus (unlike a real browser), so .focus() reproduces
+    // that real end state.
+    toggle.focus();
+    fireEvent.keyDown(toggle, { key: "Enter" });
+    expect(windowKeydown).toHaveBeenCalledTimes(1);
+    window.removeEventListener("keydown", windowKeydown);
   });
 
-  it("lets Enter fall through when focus is NOT keyboard-style (a mouse-clicked button) — so a re-activated button cannot swallow Enter forever", async () => {
+  it("(b) keeps Enter inside the toggle when focus arrived with no pointerDown at all", async () => {
     vi.mocked(invoke).mockResolvedValue([null, null]);
     const windowKeydown = vi.fn();
     window.addEventListener("keydown", windowKeydown);
@@ -228,23 +171,70 @@ describe("the staged screen's capture-time controls", () => {
         onOffsetChange={noop}
       />,
     );
-    const later = await screen.findByRole("button", { name: "bodyB · later" });
-    later.focus();
-    const originalMatches = Element.prototype.matches;
-    const matchesSpy = vi.spyOn(Element.prototype, "matches").mockImplementation(function (
-      this: Element,
-      selector: string,
-    ): boolean {
-      if (selector === ":focus-visible") return false; // a mouse-clicked button
-      return originalMatches.call(this, selector);
-    });
-    try {
-      fireEvent.keyDown(later, { key: "Enter" });
-      expect(windowKeydown).toHaveBeenCalledTimes(1);
-    } finally {
-      matchesSpy.mockRestore();
-      window.removeEventListener("keydown", windowKeydown);
-    }
+    const toggle = screen.getByRole("button", { name: "Sort by capture time · on" });
+    // No pointerDown anywhere in the block — e.g. Tab landed here, or this
+    // is the very first thing focused after the screen mounted.
+    toggle.focus();
+    fireEvent.keyDown(toggle, { key: "Enter" });
+    expect(windowKeydown).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", windowKeydown);
+  });
+
+  it("(c) a Tab after a pointerDown switches the block back to keyboard modality — Enter on the newly focused control stays local", async () => {
+    vi.mocked(invoke).mockResolvedValue([null, null]);
+    const windowKeydown = vi.fn();
+    window.addEventListener("keydown", windowKeydown);
+    render(
+      <StagedFolders
+        images={twoFolders}
+        sortByCaptureTime
+        onToggleSort={noop}
+        offsets={{}}
+        onOffsetChange={noop}
+      />,
+    );
+    const earlier = await screen.findByRole("button", { name: "bodyB · earlier" });
+    const later = screen.getByRole("button", { name: "bodyB · later" });
+    fireEvent.pointerDown(earlier);
+    fireEvent.click(earlier);
+    // Tab moves focus BY the keyboard — from here on, whatever ends up
+    // focused inside the block is keyboard focus, even though the last
+    // pointer-ish thing that happened was a click on a sibling control.
+    // The Tab keydown itself legitimately bubbles to the window spy too (our
+    // handler never stops IT, only reads it) — clear the spy right after, so
+    // the assertion below is unambiguously about the ENTER dispatch alone.
+    fireEvent.keyDown(earlier, { key: "Tab" });
+    windowKeydown.mockClear();
+    later.focus(); // simulate the Tab actually landing on the next stepper
+    fireEvent.keyDown(later, { key: "Enter" });
+    expect(windowKeydown).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", windowKeydown);
+  });
+
+  it("(d) focus leaving the block resets modality — a later keyboard re-focus keeps Enter local again", async () => {
+    vi.mocked(invoke).mockResolvedValue([null, null]);
+    const windowKeydown = vi.fn();
+    window.addEventListener("keydown", windowKeydown);
+    render(
+      <StagedFolders
+        images={twoFolders}
+        sortByCaptureTime
+        onToggleSort={noop}
+        offsets={{}}
+        onOffsetChange={noop}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: "Sort by capture time · on" });
+    fireEvent.pointerDown(toggle);
+    fireEvent.click(toggle);
+    toggle.focus();
+    // Focus leaves the block entirely (relatedTarget outside the container)
+    // — this must clear the pointer flag, not leave it stuck true forever.
+    fireEvent.blur(toggle, { relatedTarget: document.body });
+    toggle.focus(); // e.g. Tab back into the block later
+    fireEvent.keyDown(toggle, { key: "Enter" });
+    expect(windowKeydown).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", windowKeydown);
   });
 
   it("bakes each folder's offset into its delta — nudging the stepper moves the delta by exactly the nudge", async () => {

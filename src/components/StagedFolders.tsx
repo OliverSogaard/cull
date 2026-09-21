@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Img } from "../types";
 import {
@@ -23,26 +23,6 @@ function offsetAdjustedDelta(
   referenceOffset: number,
 ): number {
   return first + offset - (reference + referenceOffset);
-}
-
-/**
- * Whether `el`'s current focus arrived via the keyboard (Tab, arrow nav)
- * rather than a mouse click — the same distinction `:focus-visible` makes in
- * a real browser: a clicked button KEEPS focus but does not match
- * `:focus-visible`, while a Tab-focused one does. Named separately from the
- * inline check so its one caller reads as a question, and so
- * `StagedFolders.test.tsx` has something to stub — this repo's jsdom
- * (30.0.1) cannot be trusted to answer it correctly from the one place
- * production code asks: checked from WITHIN a keydown handler for the very
- * key currently being pressed, jsdom's `:focus-visible` always reads true
- * (dispatching that keydown itself counts as "a keyboard interaction just
- * happened"), regardless of how focus was actually acquired. Real Chromium
- * decides `:focus-visible` once, at focus time, and does not re-derive it
- * from whatever event happens to be in flight — see the tests for the
- * jsdom probe that found this.
- */
-function isKeyboardFocused(el: Element): boolean {
-  return el.matches(":focus-visible");
 }
 
 /**
@@ -83,6 +63,11 @@ export function StagedFolders({
     [showRows, folders],
   );
   const [firstTimes, setFirstTimes] = useState<readonly (number | null)[]>([]);
+  // Whether focus currently inside the block arrived via a pointer (mouse
+  // click) rather than the keyboard. See the onKeyDown/onPointerDown/onBlur
+  // trio below for why this is tracked by hand instead of read off
+  // `:focus-visible`.
+  const pointerFocusRef = useRef(false);
 
   useEffect(() => {
     // Reset BEFORE the probe resolves, not after: on a re-stage the folder
@@ -135,18 +120,34 @@ export function StagedFolders({
       // window, lets a focused toggle or stepper button take the Enter
       // itself instead of it falling through to that shortcut.
       //
-      // Gated on `:focus-visible`, not every Enter: Chromium leaves focus on
-      // a clicked button, and a mouse-focused button still matches `:focus`
-      // but NOT `:focus-visible`. Stopping propagation unconditionally (round
-      // 1's fix) meant Enter after a plain mouse click on the sort block
-      // re-activated that same still-focused button on every press — the
-      // toggle flipping back and forth, or the offset stepping again — and
-      // "begin culling" could never fire. Gating on `:focus-visible` lets
-      // Enter fall through to the window keymap in exactly the case where
-      // the browser would NOT re-activate this button on its own.
+      // Gated on whether focus arrived via a POINTER, not every Enter:
+      // Chromium leaves focus on a clicked button, and stopping propagation
+      // unconditionally (round 1's fix) meant Enter after a plain mouse
+      // click re-activated that same still-focused button on every press —
+      // the toggle flipping back and forth, or the offset stepping again —
+      // and "begin culling" could never fire.
+      //
+      // `:focus-visible` (round 2's fix) looked right but isn't: it's a UA
+      // heuristic for where to draw a focus RING, not a record of input
+      // modality, and live testing in the real app (WebView2) showed it
+      // already matches the mouse-focused button from INSIDE the very
+      // keydown handler that follows the click — the opposite of what the
+      // fix needs. So the block tracks modality itself: a pointerdown
+      // anywhere inside marks focus as pointer-derived; Tab (keyboard focus
+      // movement) or focus leaving the block clears that back to
+      // keyboard-style. Enter only falls through to the window keymap while
+      // the ref says "pointer" — exactly the case where the browser would
+      // NOT re-activate this button on its own.
+      onPointerDown={() => {
+        pointerFocusRef.current = true;
+      }}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && e.target instanceof Element && isKeyboardFocused(e.target)) {
-          e.stopPropagation();
+        if (e.key === "Tab") pointerFocusRef.current = false;
+        if (e.key === "Enter" && !pointerFocusRef.current) e.stopPropagation();
+      }}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) {
+          pointerFocusRef.current = false;
         }
       }}
     >
