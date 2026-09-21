@@ -16,14 +16,16 @@ import type {
   Filter,
   Img,
   ImageMetadata,
+  LabelValue,
   NavEntry,
   Phase,
   Rating,
   ScanResult,
   Settings,
+  Star,
   UndoAction,
 } from "../types";
-import { EMPTY_METADATA } from "../types";
+import { EMPTY_METADATA, isLabelValue, isStar } from "../types";
 import type { ScanFailure } from "../components/ScanFailureCard";
 import { recentKey, type RecentEntry } from "../hooks/useRecents";
 import { normalizeRejectedSubfolder, type PerformanceProfile } from "../types/settings";
@@ -59,6 +61,8 @@ export function useSessionLifecycle({
   setFeedback,
   setImages,
   setRatings,
+  setStars,
+  setLabels,
   setMetadata,
   setCurrentIndex,
   setFilter,
@@ -103,6 +107,8 @@ export function useSessionLifecycle({
   setFeedback: Dispatch<SetStateAction<Feedback | null>>;
   setImages: Dispatch<SetStateAction<Img[]>>;
   setRatings: Dispatch<SetStateAction<Record<number, Rating>>>;
+  setStars: Dispatch<SetStateAction<Record<number, Star>>>;
+  setLabels: Dispatch<SetStateAction<Record<number, LabelValue>>>;
   setMetadata: Dispatch<SetStateAction<Record<string, ImageMetadata>>>;
   setCurrentIndex: Dispatch<SetStateAction<number>>;
   setFilter: Dispatch<SetStateAction<Filter>>;
@@ -451,16 +457,32 @@ export function useSessionLifecycle({
       // pass — seedLrcMeta backfills only that null star and never touches the
       // existing EXIF or an existing star.
       const seededMeta: Record<string, ImageMetadata> = {};
+      // A star IS `xmp:Rating`, so it rides `lrcRatings` — the same per-index
+      // array the badge is seeded from, keyed by stable id like the ratings
+      // above. VALIDATED at the boundary, never cast: anything outside 1-5
+      // (a 0, a negative, a courtesy star the backend already filters out) is
+      // dropped rather than believed. Restored regardless of the setting.
+      const restoredStars: Record<number, Star> = {};
       const lrcRatings = result.lrcRatings ?? [];
       lrcRatings.forEach((lrc, origIdx) => {
         if (lrc != null && lrc > 0) {
           seededMeta[images[origIdx].path] = { ...EMPTY_METADATA, lrcRating: lrc };
         }
+        if (isStar(lrc)) restoredStars[images[origIdx].id] = lrc;
+      });
+      // `labels` is a free-text property on disk: the backend hands back one
+      // of the five English names, the word "custom" for a string CULL does
+      // not recognise, or null. Anything else is dropped by the same guard.
+      const restoredLabels: Record<number, LabelValue> = {};
+      (result.labels ?? []).forEach((value, origIdx) => {
+        if (isLabelValue(value)) restoredLabels[images[origIdx].id] = value;
       });
 
       // ids ride along, so the rating map stays valid post-sort.
       setImages(sorted);
       setRatings(restoredRatings);
+      setStars(restoredStars);
+      setLabels(restoredLabels);
       setAnalyzeWarning(summarizeAnalyzeWarnings(result));
       setMetadata((prev) => seedLrcMeta(prev, seededMeta));
       // Point the image store at the (sorted) culling set: revoke any prior
@@ -514,6 +536,8 @@ export function useSessionLifecycle({
     writeSessionRecent,
     setImages,
     setRatings,
+    setStars,
+    setLabels,
     setMetadata,
     setCurrentIndex,
     setFilter,
@@ -544,6 +568,11 @@ export function useSessionLifecycle({
       imagesRef.current = survivors;
       setImages(survivors);
       setRatings((prev) => omitIds(prev, goneIds));
+      // The star / colour-label layer goes with the frame. Left behind, a
+      // moved photo's marks would linger in memory under a dead id — and the
+      // next session, whose ids restart at 0, would inherit them.
+      setStars((prev) => omitIds(prev, goneIds));
+      setLabels((prev) => omitIds(prev, goneIds));
       setMetadata((prev) => {
         const out = { ...prev };
         for (const p of gone) delete out[p];
@@ -575,6 +604,8 @@ export function useSessionLifecycle({
       redoStack,
       setImages,
       setRatings,
+      setStars,
+      setLabels,
       setMetadata,
       setCurrentIndex,
       setChampionIndex,
@@ -597,6 +628,8 @@ export function useSessionLifecycle({
     setImages([]);
     setMetadata({});
     setRatings({});
+    setStars({});
+    setLabels({});
     // Drop the undo/redo history with the session it belonged to. The stacks hold
     // imgIds + paths from THIS in-memory cull; the next-opened folder restarts
     // imgIds at 0, so a stray Ctrl+Z would otherwise replay a stale action against
@@ -640,6 +673,8 @@ export function useSessionLifecycle({
     setImages,
     setMetadata,
     setRatings,
+    setStars,
+    setLabels,
     setCompareMode,
     setGridVisible,
     setNavStack,
