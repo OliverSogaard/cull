@@ -9,6 +9,23 @@ import {
 } from "../utils/stagedFolders";
 
 /**
+ * The delta hint for a folder after the first: how far its first frame sits
+ * from the first folder's first frame, AFTER each folder's own offset is
+ * applied. Baking the offset in (rather than diffing the raw capture times)
+ * is what makes the hint legible as a "done?" signal — nudging a folder's
+ * clock moves this number toward 0 by exactly that nudge, and two bodies that
+ * really did start together read "+0 s" once their offset is right.
+ */
+function offsetAdjustedDelta(
+  first: number,
+  offset: number,
+  reference: number,
+  referenceOffset: number,
+): number {
+  return first + offset - (reference + referenceOffset);
+}
+
+/**
  * The staged screen's capture-time controls: the sort toggle, and — only when
  * the sort is on and two or more folders are staged — one row per folder with
  * its frame count, its first frame's capture time, the signed difference from
@@ -63,7 +80,10 @@ export function StagedFolders({
         const times = await invoke<(number | null)[]>("read_capture_times", {
           paths: [...probePaths],
         });
-        if (live) setFirstTimes(times);
+        // The backend's own contract is an array the same length as the
+        // request, but a probe's response crosses an IPC boundary this
+        // component doesn't control — trust it no further than that.
+        if (live && Array.isArray(times)) setFirstTimes(times);
       } catch {
         // A probe that fails just leaves the rows without their hint — the
         // sort itself does not depend on it.
@@ -76,9 +96,22 @@ export function StagedFolders({
   }, [probePaths]);
 
   const reference = firstTimes[0] ?? null;
+  const referenceOffset = folders.length > 0 ? (offsets[folders[0].path] ?? 0) : 0;
 
   return (
-    <div className="cull-staged-sort">
+    <div
+      className="cull-staged-sort"
+      // The staged screen's Enter shortcut (useCullKeymap.ts) is a WINDOW
+      // keydown listener registered in the bubble phase, and it calls
+      // preventDefault before dispatching "begin culling" — which also
+      // suppresses the browser's own Enter-activates-the-focused-button
+      // behaviour. Stopping propagation here, before the event reaches
+      // window, lets a focused toggle or stepper button take the Enter
+      // itself instead of it falling through to that shortcut.
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.stopPropagation();
+      }}
+    >
       <button
         type="button"
         className="btn btn--sm cull-staged-sort__toggle"
@@ -86,14 +119,20 @@ export function StagedFolders({
         onClick={() => onToggleSort(!sortByCaptureTime)}
         title="Order the shoot by the time each frame was taken, not the time the card wrote it"
       >
-        Sort by capture time
+        {/* The state is IN the label, not colour alone — with one folder
+            staged the toggle looks the same pressed or not (no rows appear
+            either way), so colour would be the only signal there. */}
+        Sort by capture time · {sortByCaptureTime ? "on" : "off"}
       </button>
       {showRows && (
         <ul className="cull-staged-sort__folders" aria-label="Staged folders">
           {folders.map((f, i) => {
             const offset = offsets[f.path] ?? 0;
             const first = firstTimes[i] ?? null;
-            const delta = first !== null && reference !== null && i > 0 ? first - reference : null;
+            const delta =
+              first !== null && reference !== null && i > 0
+                ? offsetAdjustedDelta(first, offset, reference, referenceOffset)
+                : null;
             const step = (dir: 1 | -1) => (e: React.MouseEvent) =>
               onOffsetChange(
                 f.path,

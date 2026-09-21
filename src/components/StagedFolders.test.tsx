@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
@@ -26,7 +27,7 @@ afterEach(cleanup);
 const noop = (): void => {};
 
 describe("the staged screen's capture-time controls", () => {
-  it("offers the sort as one pressed-state button", () => {
+  it("offers the sort as one pressed-state button, and says its state in words", () => {
     render(
       <StagedFolders
         images={twoFolders}
@@ -36,8 +37,24 @@ describe("the staged screen's capture-time controls", () => {
         onOffsetChange={noop}
       />,
     );
-    const toggle = screen.getByRole("button", { name: "Sort by capture time" });
+    // The label carries on/off itself — a single folder staged renders no
+    // rows either way, so colour alone would be the only signal there.
+    const toggle = screen.getByRole("button", { name: "Sort by capture time · on" });
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("says 'off' in the label when the sort is off", () => {
+    render(
+      <StagedFolders
+        images={twoFolders}
+        sortByCaptureTime={false}
+        onToggleSort={noop}
+        offsets={{}}
+        onOffsetChange={noop}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: "Sort by capture time · off" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("shows no folder rows when the sort is off, and probes nothing", () => {
@@ -103,6 +120,9 @@ describe("the staged screen's capture-time controls", () => {
       />,
     );
     const later = await screen.findByRole("button", { name: "bodyB · later" });
+    // A probe that resolves to no times at all pins the "—" fallback, not
+    // just an unasserted default — both rows show it, since both are null.
+    expect(screen.getAllByText("—")).toHaveLength(2);
     // fireEvent, not a raw dispatchEvent: it wraps the dispatch in act(), and
     // its init carries the modifier flags the stepper reads.
     fireEvent.click(later);
@@ -111,5 +131,57 @@ describe("the staged screen's capture-time controls", () => {
     expect(onOffsetChange).toHaveBeenLastCalledWith("C:\\shoot\\bodyB", 65000);
     fireEvent.click(later, { ctrlKey: true });
     expect(onOffsetChange).toHaveBeenLastCalledWith("C:\\shoot\\bodyB", 0);
+  });
+
+  it("keeps Enter inside the row — it must not fall through to the staged screen's begin-culling shortcut", async () => {
+    vi.mocked(invoke).mockResolvedValue([null, null]);
+    const windowKeydown = vi.fn();
+    window.addEventListener("keydown", windowKeydown);
+    render(
+      <StagedFolders
+        images={twoFolders}
+        sortByCaptureTime
+        onToggleSort={noop}
+        offsets={{}}
+        onOffsetChange={noop}
+      />,
+    );
+    const later = await screen.findByRole("button", { name: "bodyB · later" });
+    // The staged screen's real Enter shortcut is a window-level keydown
+    // listener (useCullKeymap.ts); a spy standing in for it here is enough to
+    // prove the event never reaches that far — not just that some handler
+    // somewhere ran.
+    fireEvent.keyDown(later, { key: "Enter" });
+    expect(windowKeydown).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", windowKeydown);
+  });
+
+  it("bakes each folder's offset into its delta — nudging the stepper moves the delta by exactly the nudge", async () => {
+    vi.mocked(invoke).mockResolvedValue([
+      Date.UTC(2026, 8, 20, 14, 2, 11),
+      Date.UTC(2026, 8, 20, 14, 1, 0),
+    ]);
+    function Harness() {
+      const [offsets, setOffsets] = useState<Record<string, number>>({});
+      return (
+        <StagedFolders
+          images={twoFolders}
+          sortByCaptureTime
+          onToggleSort={noop}
+          offsets={offsets}
+          onOffsetChange={(folder, ms) => setOffsets((prev) => ({ ...prev, [folder]: ms }))}
+        />
+      );
+    }
+    render(<Harness />);
+    // Baseline: no offset applied yet, so the delta is the raw gap between
+    // the two folders' first frames (also covered by the probe test above).
+    await waitFor(() => expect(screen.getByText("\u22121 min 11 s")).toBeTruthy());
+    const later = screen.getByRole("button", { name: "bodyB · later" });
+    fireEvent.click(later); // +1 s nudge to bodyB's offset
+    // (first + offset) − (reference + referenceOffset) moved by the same +1 s
+    // the stepper just applied: −1 min 11 s → −1 min 10 s, not still −1:11.
+    await waitFor(() => expect(screen.getByText("\u22121 min 10 s")).toBeTruthy());
+    expect(screen.queryByText("\u22121 min 11 s")).toBeNull();
   });
 });

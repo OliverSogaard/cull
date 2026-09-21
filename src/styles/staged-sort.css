@@ -10,6 +10,28 @@
   margin-top: var(--sp-5);
 }
 
+/* Pressed = "on": the same champagne trio as the footer's overlay toggle
+   chips (chrome.css's `.cull-statusbar__ov.is-on`) — accent-soft fill, accent
+   border, accent ink — so "the sort is on" reads the same everywhere in the
+   chrome, not just here. The label itself also spells out on/off (see the
+   component), so this is reinforcement, not the only signal. */
+.cull-staged-sort__toggle[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* `.btn:hover:not(:disabled)` is (0,3,0) — one class plus two pseudo-classes
+   (:hover, and :disabled inside :not). The rule above is only (0,2,0) (one
+   class, one attribute selector), so without a hover rule at least as
+   specific, hovering a PRESSED toggle would swap its champagne fill for the
+   plain hover fill for as long as the cursor sat on it. */
+.cull-staged-sort__toggle[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .cull-staged-sort__folders {
   display: flex;
   flex-direction: column;
@@ -19,6 +41,14 @@
   padding: 0;
   list-style: none;
   border-top: 1px solid var(--border-soft);
+  /* An unbounded folder list would push "Begin culling" past the app root's
+     `overflow: hidden` on a short window (min-height 500) — scroll the list
+     itself instead. Same convention as the settings pane and the EXIF rail
+     (dialogs.css / exif-rail.css): plain `overflow-y: auto` + a thin native
+     scrollbar, no custom track/thumb chrome. */
+  max-height: min(38vh, 300px);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .cull-staged-sort__row {
