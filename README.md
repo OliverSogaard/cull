@@ -186,6 +186,10 @@ Cheat sheet:
 | `u`        | unrate              | —                    | unrate             |
 | `← →`      | prev / next (hold to scrub) | pick challenger (hold) | prev / next (hold to traverse) |
 | `↑ ↓`      | —                   | —                    | row up / down      |
+| `home` `end` | first / last in filter | —         | first / last in filter |
+| `pgup` `pgdn` | jump one strip-width | jump one strip-width | one screen        |
+| `shift+home` / `shift+end` | — | —                | extend selection to edge |
+| `shift+pgup` / `shift+pgdn` | — | —               | extend selection one screen |
 | `+` `−`    | —                   | —                    | bigger / smaller cells |
 | `Ctrl+0`   | —                   | —                    | medium cells       |
 | `space`    | 1:1 zoom (hold)     | 1:1 zoom (hold)      | —                  |
@@ -197,7 +201,7 @@ Cheat sheet:
 | `p`        | focus peaking       | focus peaking        | —                  |
 | `o`        | rule of thirds      | rule of thirds       | —                  |
 | `t`        | toggle thumb strip  | toggle candidate strip | —                |
-| `1 – 4`    | filter tabs (all / unrated / keeps / smart); re-press cycles sub-modes (keeps→★, smart→rejects/keeps/favs) | — | same |
+| `1 – 5`    | filter tabs (all / unrated / keeps / smart / rejects); re-press cycles sub-modes (keeps→★, smart→rejects/keeps/favs) | — | same |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo | undo / redo | undo / redo |
 | `Ctrl+E`   | finish actions (move rejects / copy keeps) | same | same |
 | `Ctrl+,`   | settings (also from the home screen) | same | same |
@@ -238,6 +242,11 @@ Open with **Ctrl+,** or the gear icon on the home screen.
   clipping, peaking, thirds), default thumbnail strip.
 - **Grid size** — Small / Medium / Large contact-sheet cells (also `+` / `−`
   / `Ctrl+wheel` / `Ctrl+0` in the grid; see "Keyboard reference" above).
+- **Capture-time order** — the staged screen's "Sort by capture time" toggle
+  (on by default) puts the shoot in EXIF `DateTimeOriginal` order instead of
+  file-write order, and, when two or more folders are staged, gives each
+  folder a ± clock offset for a second body whose clock is off. Ordering only
+  — nothing is written to any file.
 - **File operations** — name of the rejected-subfolder created by
   "move rejects", default destination for "copy keeps" (ask each time or
   use a pinned folder).

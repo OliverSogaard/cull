@@ -15,6 +15,40 @@ Design notes for the non-obvious parts of CULL. Source comments cover the
   (NAS, SMB, SSHFS), where opens dominate timing — see the storage-mode
   setting below.
 
+## Session order
+
+The staged set is built incrementally — each folder the user picks is
+scanned and its files are APPENDED to whatever is already staged
+(`openFoldersByPaths`, `src/app/useSessionLifecycle.ts`). `Img.id` is
+assigned at that append (`startId = prev.length`) and stays stable for the
+rest of the session no matter how the visible order changes afterward
+(`types/image.ts:1-5`).
+
+That set is re-sorted **globally once**, at Begin culling, by
+`analyze_folder`. The key is each frame's EXIF `DateTimeOriginal` +
+`SubSecTimeOriginal` when the `sortByCaptureTime` setting is on; a frame
+without a usable EXIF tag falls back to that file's mtime (rebased into the
+same clock frame the EXIF times live in — `mtime_in_capture_frame`,
+`scan.rs`), and a frame with neither falls back to path order last. The
+comparator itself (`order_by_capture`) is unchanged by any of this — only
+the epoch each frame is sorted by changed. A thumb-tier cache hit answers a
+frame's capture time with zero source-file round-trips (its header already
+carries it), so re-opening an already-analyzed shoot costs nothing extra.
+Per-folder clock offsets (`captureOffsets`, the staged screen's steppers) are
+resolved on the TS side into one per-frame millisecond vector before the
+call, and apply to whichever epoch a frame actually got — EXIF or the
+mtime fallback — since the offset describes a body's clock, not a tag.
+They are ordering-only: nothing is ever written to a file.
+
+The sort never runs mid-cull, only at that one moment. `currentIndex`,
+`championIndex`, `challengerIndex`, `selectedIndices`, `selectionAnchor`,
+`visibleIndices`, `NavEntry`, GridView's window math, and imageStore's
+ordered `paths` + `pathIndex` are all index-keyed against the current
+order — re-sorting underneath any of them mid-session would invalidate
+every one at once. Begin culling is the one moment `setImages`,
+`imageStore.reset`, and `overlayService.reset` already happen together, so
+it is the only safe place a new order can land.
+
 ## Read pipeline
 
 Each image resolves through three display stages — **shimmer → thumb → full**
@@ -382,6 +416,19 @@ The design is two-layer:
   and caps aesthetic favorites per session (`capFavorites.ts`). All of it is
   pure and unit-tested; React only subscribes.
 
+The `rejects` filter is not the same thing as `suggestedRejects`: `rejects`
+is the user's OWN verdict — the pile "move rejects" acts on — while
+`suggestedRejects` is an unrated frame the smart pass merely flagged, still
+awaiting a keystroke.
+
+`groupBursts` and `groupSimilar` walk the session order PER SOURCE FOLDER
+(Phase 3C), so when two bodies interleave by capture time a group's members
+are no longer necessarily contiguous in session order; every consumer that
+draws a bracket around a group — the two filmstrips' `strip/burstSegments.ts`
+and the grid's `gridBurstSegments.ts` — accounts for this by drawing one
+segment per contiguous stretch instead of assuming the whole group is one
+solid run.
+
 The in-app switches live in Settings: suggestions master switch, reject
 confidence level, analyze-on-open, and **Deep analysis** (the ML tier's
 user-facing toggle — inert on builds without the model runtime).
@@ -516,6 +563,14 @@ conventions instead of per-component one-offs:
   the app's answer to "how is a shortcut shown", used by the home hero, the
   staged-screen hint, the empty-filter hint, recents, and the settings
   dialog.
+- **A page is a measured screenful, never a burst.** `Home` / `End` /
+  `PgUp` / `PgDn` (Phase 3C) move the cursor within the ACTIVE FILTER, not
+  index 0 or the raw end of the session; in the grid, Shift extends the
+  selection to that same target instead of just moving the cursor. A "page"
+  for `PgUp` / `PgDn` is a screenful measured live at keypress time
+  (`src/utils/pageStep.ts`) — rows × cols in the grid, filmstrip cells across
+  the strip in loupe/compare — deliberately not "the next burst", since burst
+  groups are advisory, often absent, and change size as smart scores land.
 - **Write failures come in two kinds, and only one blocks finishing.**
   `useRatingPersistence` (`src/app/useRatingPersistence.ts`) records each
   exhausted write with a boolean `missing`: true when the backend refused
