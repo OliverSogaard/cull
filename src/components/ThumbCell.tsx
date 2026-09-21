@@ -68,7 +68,11 @@ export const ThumbCell = memo(function ThumbCell({
     .join(" ");
   const outlineColor = (isCurrent || roleVariant) && !isGhost ? "var(--accent)" : "transparent";
 
-  const showLrc = hasLrcRating(lrcRating);
+  // With the star layer on, the LrC badge and the star readout are the SAME
+  // property on disk (`xmp:Rating`) — but `lrcRating` is a snapshot taken at
+  // open while `star` is live, so drawing both would show a stale second
+  // number beside the current one (see GridCell's identical `marks` guard).
+  const showLrc = starsAndLabels !== true && hasLrcRating(lrcRating);
 
   return (
     <div

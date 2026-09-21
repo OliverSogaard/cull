@@ -108,7 +108,9 @@ describe("the grid cell with the layer ON", () => {
 });
 
 describe("the filmstrip cell", () => {
-  const cell = (over: { starsAndLabels?: boolean; label?: LabelValue } = {}) =>
+  const cell = (
+    over: { starsAndLabels?: boolean; label?: LabelValue; lrcRating?: number | null } = {},
+  ) =>
     render(
       <ThumbCell
         img={images[0]}
@@ -132,10 +134,36 @@ describe("the filmstrip cell", () => {
     expect(bar?.className).toContain("cull-label--green");
     expect(container.querySelector(".cull-mark-count")).toBeNull();
     expect(container.querySelector(".cull-mark-stars")).toBeNull();
+    // Positive twin of the two absence checks above: this cell can never
+    // render `.cull-mark-count` or `.cull-mark-stars` under ANY state (no
+    // branch produces them), so those two asserts alone are vacuously true —
+    // they would stay true even if the strip grew a star display under some
+    // OTHER class name. Counting every mark-ish node the frame actually
+    // carries (everything but the thumbnail image itself) catches that case:
+    // it must be exactly the one label bar.
+    const frame = container.querySelector(".cull-thumb__frame");
+    const marks = [...(frame?.children ?? [])].filter(
+      (el) => !el.classList.contains("cull-thumb__img"),
+    );
+    expect(marks).toHaveLength(1);
   });
 
   test("a label CULL did not write still shows, in the neutral ink", () => {
     const { container } = cell({ starsAndLabels: true, label: "custom" });
     expect(container.querySelector(".cull-label-bar")?.className).toContain("cull-label--custom");
+  });
+
+  test("keeps the read-only LrC badge with the layer off — byte-identical to today", () => {
+    const { container } = cell({ lrcRating: 2 });
+    expect(container.querySelector(".cull-thumb__lrc-badge")).not.toBeNull();
+  });
+
+  test("drops the stale read-only LrC badge with the layer on — same property, live now", () => {
+    // `lrcRating` is an open-time snapshot; `star` is live. Drawing both once
+    // starring is possible would leave the strip contradicting the rail and
+    // the grid for the rest of the session (the grid already gates this the
+    // same way — GridView.tsx's `marks` guard on `showLrc`).
+    const { container } = cell({ starsAndLabels: true, lrcRating: 2 });
+    expect(container.querySelector(".cull-thumb__lrc-badge")).toBeNull();
   });
 });
