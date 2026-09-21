@@ -15,6 +15,25 @@ jobs:
       - run: pnpm lint && pnpm lint:css
       - run: pnpm typecheck && pnpm typecheck:tests
       - run: pnpm test
+      # The exact command release.yml's tauri-action runs (`beforeBuildCommand`),
+      # which CI has never once executed: 3.5 s here against finding out at a
+      # tag. Type errors already fail `typecheck`; this catches the rest of the
+      # bundle (a bad import path, a missing asset, a Rollup resolution error).
+      - run: pnpm build
+      # RUNTIME advisories only, and only the ones worth stopping a merge for.
+      # Plain `pnpm audit` reports 21 findings today, every one of them
+      # dev-only (eslint/vite/stylelint transitives) — gating on those would
+      # make a red CI the normal state and teach everyone to ignore it.
+      # `--audit-level=high` is the second half of the same argument: a
+      # MODERATE advisory in a runtime dependency of a single-owner desktop app
+      # is a thing to read on Monday, not a thing that blocks every PR;
+      # high and critical are not. Both dials can be reopened by editing this
+      # one line. `--prod` alone is clean today.
+      #
+      # This step talks to the registry, so a registry outage reds it with a
+      # network error rather than a finding. The remedy is to re-run the job,
+      # never to delete the step.
+      - run: pnpm audit --prod --audit-level=high
   backend:
     runs-on: windows-latest # primary platform; Linux would not compile (by design)
     defaults: { run: { working-directory: src-tauri } }
@@ -31,3 +50,22 @@ jobs:
       # turns slow/flaky on runners, add --no-default-features to both steps.
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+  backend-macos:
+    runs-on: macos-latest # free: the repo is public
+    defaults: { run: { working-directory: src-tauri } }
+    steps:
+      - uses: actions/checkout@v7
+      # No `components:` here, unlike `backend` — this job runs neither fmt
+      # nor clippy, so installing them would be a cold download for nothing.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      # COMPILE ONLY, and with default features on. This is the only job that
+      # ever builds the macOS-only code: memory_pressure.rs's
+      # `#[cfg(target_os = "macos")] mod platform` (libdispatch FFI, five
+      # unsafe blocks), lib.rs's macOS menu that routes Cmd+Q through the quit
+      # guard, and ml_models.rs's `ort::ep::CoreML` behind an exact rc pin —
+      # all of which are invisible until a release tag today. Not `cargo test`
+      # (platform-neutral, already run on windows-latest); not `tauri build`
+      # (slow, and it wants signing).
+      - run: cargo check --all-targets
