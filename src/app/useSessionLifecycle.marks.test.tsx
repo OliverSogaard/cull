@@ -162,8 +162,16 @@ describe("the star and colour-label maps follow the session", () => {
       await result.current.beginCulling();
     });
 
-    expect(starsFrom(props)).toEqual({});
-    expect(labelsFrom(props)).toEqual({});
+    // `toEqual({})` alone is satisfied by an object carrying its own
+    // undefined-valued keys (vitest ignores them) — it would stay green even
+    // if a dropped entry were written in as `id: undefined` instead of never
+    // being set at all. `Object.keys` sees that own key either way.
+    const stars = starsFrom(props);
+    expect(stars).toEqual({});
+    expect(Object.keys(stars)).toHaveLength(0);
+    const labels = labelsFrom(props);
+    expect(labels).toEqual({});
+    expect(Object.keys(labels)).toHaveLength(0);
   });
 
   it("takes a moved frame's star and label out with the frame", () => {
@@ -188,7 +196,13 @@ describe("the star and colour-label maps follow the session", () => {
       result.current.resetSession();
     });
 
-    expect(starsFrom(props)).toEqual({});
-    expect(labelsFrom(props)).toEqual({});
+    // Same loophole as the union-drop test above: an own undefined-valued
+    // key would still satisfy `toEqual({})`.
+    const stars = starsFrom(props);
+    expect(stars).toEqual({});
+    expect(Object.keys(stars)).toHaveLength(0);
+    const labels = labelsFrom(props);
+    expect(labels).toEqual({});
+    expect(Object.keys(labels)).toHaveLength(0);
   });
 });
