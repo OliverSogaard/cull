@@ -15,6 +15,17 @@ jobs:
       - run: pnpm lint && pnpm lint:css
       - run: pnpm typecheck && pnpm typecheck:tests
       - run: pnpm test
+      # The exact command release.yml's tauri-action runs (`beforeBuildCommand`).
+      # Type errors already fail `typecheck`; this catches the rest of the
+      # bundle (a bad import path, a missing asset, a Rollup resolution error)
+      # — cheap here against finding out at a release tag.
+      - run: pnpm build
+      # `--prod` skips dev-only advisories (eslint/vite/stylelint transitives),
+      # which would otherwise make red CI the normal state here.
+      # `--audit-level=high` skips MODERATE too — a thing to read on Monday,
+      # not to block a merge for. A registry outage reds this step with a
+      # network error, not a finding: re-run the job, never delete the step.
+      - run: pnpm audit --prod --audit-level=high
   backend:
     runs-on: windows-latest # primary platform; Linux would not compile (by design)
     defaults: { run: { working-directory: src-tauri } }
@@ -31,3 +42,22 @@ jobs:
       # turns slow/flaky on runners, add --no-default-features to both steps.
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+  backend-macos:
+    runs-on: macos-latest # free: the repo is public
+    defaults: { run: { working-directory: src-tauri } }
+    steps:
+      - uses: actions/checkout@v7
+      # No `components:` here, unlike `backend` — this job runs neither fmt
+      # nor clippy, so installing them would be a cold download for nothing.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      # COMPILE ONLY, and with default features on. This is the only job that
+      # ever builds the macOS-only code: memory_pressure.rs's
+      # `#[cfg(target_os = "macos")] mod platform` (libdispatch FFI, five
+      # unsafe blocks), lib.rs's macOS menu that routes Cmd+Q through the quit
+      # guard, and ml_models.rs's `ort::ep::CoreML` behind an exact rc pin —
+      # all of which are invisible until a release tag today. Not `cargo test`
+      # (platform-neutral, already run on windows-latest); not `tauri build`
+      # (slow, and it wants signing).
+      - run: cargo check --all-targets

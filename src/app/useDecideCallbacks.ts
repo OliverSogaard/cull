@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { Img, NavEntry, Rating, UndoAction } from "../types";
 import { imageStore } from "../image/imageStore";
+import { withChanges } from "../utils/withChanges";
 
 /**
  * The rating decides, verbatim from App (grand cleanup Phase 6): single-frame
@@ -103,11 +104,7 @@ export function useDecideCallbacks({
           .filter((c) => c.before !== c.after);
         if (changes.length === 0) return;
         recordAction({ changes });
-        setRatings((prev) => {
-          const next = { ...prev };
-          for (const c of changes) next[c.imgId] = c.after;
-          return next;
-        });
+        setRatings((prev) => withChanges(prev, changes));
         for (const c of changes) persistRating(c.path, c.after);
         // Feedback flashes once on the current cell so the user sees confirmation
         // without N popping circles. (Grid doesn't render the feedback overlay
@@ -218,11 +215,7 @@ export function useDecideCallbacks({
         }));
       if (changes.length === 0) return;
       recordAction({ changes });
-      setRatings((prev) => {
-        const next = { ...prev };
-        for (const c of changes) delete next[c.imgId];
-        return next;
-      });
+      setRatings((prev) => withChanges(prev, changes));
       for (const c of changes) persistRating(c.path, null);
       return;
     }
@@ -233,14 +226,9 @@ export function useDecideCallbacks({
     // filter the photo isn't displayed (no-match screen), so `u` must not
     // silently strip a hidden frame's rating.
     if (visibleIndices.indexOf(currentIndex) === -1) return;
-    recordAction({
-      changes: [{ imgId: cur.id, path: cur.path, before: ratings[cur.id], after: undefined }],
-    });
-    setRatings((prev) => {
-      const next = { ...prev };
-      delete next[cur.id];
-      return next;
-    });
+    const changes = [{ imgId: cur.id, path: cur.path, before: ratings[cur.id], after: undefined }];
+    recordAction({ changes });
+    setRatings((prev) => withChanges(prev, changes));
     persistRating(cur.path, null); // durable clear (delete sidecar / strip rating)
   }, [
     gridVisible,
@@ -277,8 +265,7 @@ export function useDecideCallbacks({
       const exiting = nextChallenger === -1;
       // The whole next map, by value (not an updater). The caller already
       // derived this same map to ask `nearestUnrated` what is left.
-      const next: Record<number, Rating> = { ...ratings };
-      for (const c of changes) next[c.imgId] = c.after;
+      const next = withChanges(ratings, changes);
 
       recordAction({
         changes,
@@ -371,11 +358,12 @@ export function useDecideCallbacks({
   const challengerLoses = useCallback(() => {
     const challImg = images[challengerIndex];
     if (!challImg) return;
-    const next: Record<number, Rating> = { ...ratings, [challImg.id]: "reject" };
+    const changes: DecideSpec["changes"] = [
+      { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "reject" },
+    ];
+    const next = withChanges(ratings, changes);
     resolveCompareDecide({
-      changes: [
-        { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "reject" },
-      ],
+      changes,
       flash: { rating: "reject", imgId: challImg.id },
       nextChampion: championIndex,
       nextChallenger: nearestUnrated(challengerIndex, next, championIndex),
@@ -391,11 +379,12 @@ export function useDecideCallbacks({
       const challImg = images[challengerIndex];
       if (!challImg) return;
       const verdict: Rating = asFavorite ? "favorite" : "keep";
-      const next: Record<number, Rating> = { ...ratings, [challImg.id]: verdict };
+      const changes: DecideSpec["changes"] = [
+        { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: verdict },
+      ];
+      const next = withChanges(ratings, changes);
       resolveCompareDecide({
-        changes: [
-          { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: verdict },
-        ],
+        changes,
         flash: { rating: verdict, imgId: challImg.id },
         nextChampion: championIndex,
         nextChallenger: nearestUnrated(challengerIndex, next, championIndex),
@@ -411,14 +400,13 @@ export function useDecideCallbacks({
     const challImg = images[challengerIndex];
     if (!champImg || !challImg) return;
     const newChamp = challengerIndex;
-    const next: Record<number, Rating> = { ...ratings };
-    next[champImg.id] = "reject";
-    next[challImg.id] = "keep";
+    const changes: DecideSpec["changes"] = [
+      { imgId: champImg.id, path: champImg.path, before: ratings[champImg.id], after: "reject" },
+      { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "keep" },
+    ];
+    const next = withChanges(ratings, changes);
     resolveCompareDecide({
-      changes: [
-        { imgId: champImg.id, path: champImg.path, before: ratings[champImg.id], after: "reject" },
-        { imgId: challImg.id, path: challImg.path, before: ratings[challImg.id], after: "keep" },
-      ],
+      changes,
       flash: { rating: "keep", imgId: challImg.id },
       nextChampion: newChamp,
       nextChallenger: nearestUnrated(newChamp, next, newChamp),

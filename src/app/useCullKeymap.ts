@@ -14,9 +14,33 @@ const PAN_STEP = 2; // % per arrow press while zoomed
  *   rebuild on every nav step + rating. Dispatch goes through `cullKeyRef`
  *   and the window listeners register ONCE, so the scrub hot path doesn't
  *   churn add/removeEventListener.
- * - Modal precedence order (settings → quitGuard → confirmHome → actionsOpen
- *   → scrub-interrupt → Ctrl combos → Tab/help → Space → ESC → sites) is a
- *   verbatim move.
+ * - Precedence order, which is load-bearing. It started as a verbatim move
+ *   from App, but Phase 4 reordered it to fix three defects, so it is NOT
+ *   the original any more and must not be "restored":
+ *     bare-modifier → scrub-interrupt → settings → quitGuard → phase →
+ *     confirmHome → actionsOpen → Tab/help → Ctrl combos → Ctrl drop →
+ *     Space → ESC → sites.
+ *   The bare-modifier no-op heads the list so that tapping Shift mid-scrub
+ *   falls out before the interrupt below can read it as "some other key"
+ *   and abort the hold. The scrub interrupt then precedes EVERY modal
+ *   return because a held arrow otherwise keeps advancing the cursor behind
+ *   whichever overlay returned first — settings and quitGuard used to let
+ *   it run on while confirmHome and actionsOpen did not, and that asymmetry
+ *   is what made it a bug rather than a choice. The help swallow precedes
+ *   the Ctrl combos because "any other key dismisses AND is swallowed" has
+ *   to cover Ctrl+Z and Ctrl+E as well, which until then undid a rating and
+ *   opened the act-on-cull dialog UNDERNEATH the sheet. (Ctrl+, and Ctrl+O
+ *   are deliberately outside all of this: they live in the chrome effect's
+ *   own listener below, and neither listener stops propagation.)
+ *   Every clause of THIS PRECEDENCE ORDER is pinned in useCullKeymap.test.tsx
+ *   — see the suites "a held scrub is interrupted behind every overlay (fix
+ *   C)" and "nothing acts behind the help sheet (fix B)", whose regression
+ *   guards ("a bare modifier still never interrupts a hold", "a held Tab
+ *   does not dismiss the sheet it is holding open") are what keep the order
+ *   honest, plus "mode keys" for the final "sites" clause (L/G/C ->
+ *   goToSite). The per-key BINDINGS reached once precedence clears — the
+ *   Shift+Arrow grid-selection growth, and the i/h/p/t/o overlay toggles —
+ *   are pinned separately, in "grid Shift+Arrow" and "overlay toggles".
  */
 export function useCullKeymap({
   phase,
@@ -217,6 +241,28 @@ export function useCullKeymap({
 
   useEffect(() => {
     const handleModalKeys = (e: KeyboardEvent): boolean => {
+      // Bare modifier presses (Ctrl/Shift/Alt/Meta alone) carry no cull action —
+      // make them a no-op so e.g. tapping Shift mid-scrub doesn't abort the hold.
+      // FIRST, so it stays above the interrupt below.
+      if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta")
+        return true;
+
+      // A held scrub is sustained ONLY by its own arrow key. Any OTHER key (zoom,
+      // rating, help, esc, compare, digits…) interrupts it, so nothing keeps
+      // scrubbing behind a modal. The opposite arrow is handled in the arrow cases
+      // below — it's ignored entirely (can't redirect or stop the flow).
+      //
+      // ABOVE every modal return below, which is the point: settingsOpen and
+      // quitGuard used to return BEFORE this ran, so a held scrub kept
+      // advancing currentIndex behind those two overlays and not behind the
+      // other two. All four are the same rule now.
+      const isNavArrow = e.key === "ArrowLeft" || e.key === "ArrowRight";
+      if (heldDirRef.current !== 0 && !isNavArrow) stopHold();
+      // Same rule for the grid's vertical hold — sustained only by its own
+      // arrow, interrupted by anything else (rating, esc, mode switch…).
+      const isVertNavArrow = e.key === "ArrowUp" || e.key === "ArrowDown";
+      if (heldGridVertDirRef.current !== 0 && !isVertNavArrow) stopGridVertHold();
+
       // Chrome shortcuts (settings, open folder, begin culling) are handled by
       // the phase-agnostic effect above. While the settings modal is open,
       // swallow all cull keys here so nothing slips through behind it.
@@ -232,22 +278,6 @@ export function useCullKeymap({
         return true;
       }
       if (phase !== "culling") return true; // chrome screens are button-driven
-
-      // Bare modifier presses (Ctrl/Shift/Alt/Meta alone) carry no cull action —
-      // make them a no-op so e.g. tapping Shift mid-scrub doesn't abort the hold.
-      if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta")
-        return true;
-
-      // A held scrub is sustained ONLY by its own arrow key. Any OTHER key (zoom,
-      // rating, help, esc, compare, digits…) interrupts it, so nothing keeps
-      // scrubbing behind a modal. The opposite arrow is handled in the arrow cases
-      // below — it's ignored entirely (can't redirect or stop the flow).
-      const isNavArrow = e.key === "ArrowLeft" || e.key === "ArrowRight";
-      if (heldDirRef.current !== 0 && !isNavArrow) stopHold();
-      // Same rule for the grid's vertical hold — sustained only by its own
-      // arrow, interrupted by anything else (rating, esc, mode switch…).
-      const isVertNavArrow = e.key === "ArrowUp" || e.key === "ArrowDown";
-      if (heldGridVertDirRef.current !== 0 && !isVertNavArrow) stopGridVertHold();
 
       // Leave-to-home confirm owns the keyboard while it's up: Enter leaves, Esc
       // stays. Swallow everything else so no rating slips through behind it.
@@ -293,12 +323,16 @@ export function useCullKeymap({
           break;
         case "k":
         case "K":
-          // Keep both: challenger keeps, champion stays champion.
+          // Keep both: challenger keeps, champion stays champion. Swallowed
+          // like Enter and Backspace above — all four are decide keys, and
+          // only these two were missing it.
+          e.preventDefault();
           if (!e.repeat) challengerKeptBoth(false);
           break;
         case "f":
         case "F":
           // Keep both + star the challenger.
+          e.preventDefault();
           if (!e.repeat) challengerKeptBoth(true);
           break;
         case "ArrowRight":
@@ -396,20 +430,31 @@ export function useCullKeymap({
         // block existed to fight the held Space key re-arming zoom — the carry
         // design goes WITH the held key instead, and the arm guard on Space
         // makes the OS's resumed-repeat keydown a no-op.
+        //
+        // `e.repeat` is dropped on all four (break, not return, so the
+        // preventDefaults still run): a held Enter used to rate frame after
+        // frame at the OS repeat rate, which was never a designed feature —
+        // compare has guarded its own four decide keys since it was written,
+        // and the asymmetry was the accident. The FIRST press is unaffected by
+        // definition: `repeat` is false on the keydown that begins a press.
         case "Enter":
           e.preventDefault();
+          if (e.repeat) break;
           applyRating("keep");
           break;
         case "Backspace":
           e.preventDefault();
+          if (e.repeat) break;
           applyRating("reject");
           break;
         case "f":
         case "F":
+          if (e.repeat) break;
           applyRating("favorite");
           break;
         case "u":
         case "U":
+          if (e.repeat) break;
           unrateCurrent(); // clear rating, stay on frame (zoom unaffected)
           break;
         case "l":
@@ -601,12 +646,17 @@ export function useCullKeymap({
           setCompositionVisible((v) => !v);
           break;
         case "1":
+          // Same one-per-press rule as the rating keys above: a held digit
+          // used to spin its sub-mode cycle at the OS repeat rate.
+          if (e.repeat) break;
           setFilter((f) => cycleFilter(f, "all"));
           break;
         case "2":
+          if (e.repeat) break;
           setFilter((f) => cycleFilter(f, "unrated"));
           break;
         case "3":
+          if (e.repeat) break;
           setFilter((f) => cycleFilter(f, "keeps"));
           chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
           break;
@@ -614,6 +664,7 @@ export function useCullKeymap({
           // Smart tab is a valid filter state even with smart culling off —
           // it lands on the "disabled" empty screen. Only kick off analysis
           // when the feature is actually on.
+          if (e.repeat) break;
           setFilter((f) => cycleFilter(f, "suggested"));
           chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
           if (settings.smartCulling) {
@@ -623,6 +674,7 @@ export function useCullKeymap({
         case "5":
           // No chipsTooltip.pulse(): Rejects has no sub-modes, so there is no
           // sub-chip tooltip to show (same as 1 and 2).
+          if (e.repeat) break;
           setFilter((f) => cycleFilter(f, "rejects"));
           break;
         case "i":
@@ -646,6 +698,39 @@ export function useCullKeymap({
 
     const onKey = (e: KeyboardEvent) => {
       if (handleModalKeys(e)) return;
+
+      // Tab (hold) → keyboard help. Available in both single and compare.
+      // ABOVE the help swallow below, so a held Tab cannot dismiss the sheet
+      // it is holding open. NOT for Ctrl/Meta/Alt+Tab: those belong to the
+      // window manager, and Tab sits above the Ctrl drop further down, so
+      // without this guard Ctrl+Tab opened the sheet. Shift+Tab still does,
+      // like every other Shift+key (see the Ctrl drop's comment).
+      if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        if (!e.repeat) {
+          setHelpVisible(true);
+          setHelpIntro(false);
+        }
+        return;
+      }
+      if (helpVisible) {
+        // Any other key dismisses AND is swallowed — one press closes the
+        // auto-shown intro without also rating a frame. (During a held-Tab
+        // showing this just closes early; Tab-release would have anyway.)
+        // preventDefault too: the dismissing key must not fall through to a
+        // platform default (ESC exiting macOS fullscreen was the live bug).
+        //
+        // ABOVE the Ctrl combos below, not beneath them: with the sheet up,
+        // Ctrl+Z used to undo and Ctrl+E used to open the act-on-cull dialog
+        // UNDERNEATH it, which this comment already claimed could not happen.
+        // (Ctrl+, and Ctrl+O are a different listener — the phase-agnostic
+        // chrome effect above — and still work; Settings is a modal that
+        // then owns the keyboard anyway.)
+        e.preventDefault();
+        setHelpVisible(false);
+        setHelpIntro(false);
+        return;
+      }
 
       // Undo / redo, works in both single and compare. Compound actions
       // (challenger wins/loses) revert as one Ctrl+Z.
@@ -685,27 +770,6 @@ export function useCullKeymap({
       ) {
         e.preventDefault();
         if (gridVisible) resetGridSize();
-        return;
-      }
-
-      // Tab (hold) → keyboard help. Available in both single and compare.
-      if (e.key === "Tab") {
-        e.preventDefault();
-        if (!e.repeat) {
-          setHelpVisible(true);
-          setHelpIntro(false);
-        }
-        return;
-      }
-      if (helpVisible) {
-        // Any other key dismisses AND is swallowed — one press closes the
-        // auto-shown intro without also rating a frame. (During a held-Tab
-        // showing this just closes early; Tab-release would have anyway.)
-        // preventDefault too: the dismissing key must not fall through to a
-        // platform default (ESC exiting macOS fullscreen was the live bug).
-        e.preventDefault();
-        setHelpVisible(false);
-        setHelpIntro(false);
         return;
       }
 

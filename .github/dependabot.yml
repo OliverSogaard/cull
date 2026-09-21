@@ -1,0 +1,29 @@
+# Monthly, grouped, at most three open PRs per ecosystem. The reason this
+# exists is `ort = "=2.0.0-rc.12"` (src-tauri/Cargo.toml): an EXACT pin on a
+# release candidate that ships a downloaded native binary, which nothing else
+# in this repo would ever notice going stale. npm and github-actions ride
+# along for the same money.
+#
+# Each group is capped to minor/patch: a major bump arrives as its own PR
+# instead of riding along with — and turning red alongside — forty unrelated
+# patches, still within the same open-pull-requests-limit.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 3
+    groups:
+      cargo: { patterns: ["*"], update-types: ["minor", "patch"] }
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 3
+    groups:
+      npm: { patterns: ["*"], update-types: ["minor", "patch"] }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 3
+    groups:
+      actions: { patterns: ["*"], update-types: ["minor", "patch"] }

@@ -18,14 +18,18 @@ import { ICON } from "./icons";
  * still weigh the same as the icons in the app below them.
  */
 export function WindowControls({ onSettings }: { onSettings?: () => void }) {
-  const win = getCurrentWindow();
   // Maximized-state for the middle button's icon/title (□ maximize vs ❐
   // restore). Resize is the only signal needed: maximize/restore — by button,
   // double-click on the drag region, Win+arrow or a snap — always resizes.
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
     if (isMac) return undefined;
-    const w = getCurrentWindow();
+    let w: ReturnType<typeof getCurrentWindow>;
+    try {
+      w = getCurrentWindow();
+    } catch {
+      return undefined; // window API unavailable (plain-browser dev / jsdom) — keep the default
+    }
     let unlisten: (() => void) | undefined;
     let dead = false;
     const sync = async () => {
@@ -72,7 +76,7 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
             aria-label="Minimize"
             onClick={(e) => {
               e.currentTarget.blur();
-              void win.minimize();
+              void getCurrentWindow().minimize();
             }}
           >
             <Minus size={13} strokeWidth={ICON.lg.strokeWidth} aria-hidden />
@@ -83,7 +87,7 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
             aria-label={maximized ? "Restore window" : "Maximize window"}
             onClick={(e) => {
               e.currentTarget.blur();
-              void win.toggleMaximize();
+              void getCurrentWindow().toggleMaximize();
             }}
           >
             {maximized ? (
@@ -99,7 +103,7 @@ export function WindowControls({ onSettings }: { onSettings?: () => void }) {
             aria-label="Close"
             onClick={(e) => {
               e.currentTarget.blur();
-              void win.close();
+              void getCurrentWindow().close();
             }}
           >
             <XIcon size={14} strokeWidth={ICON.lg.strokeWidth} aria-hidden />

@@ -97,6 +97,39 @@ describe("MidSweep", () => {
     vi.useRealTimers();
   });
 
+  test("reset() cancels the armed quiet-window timer, and a fresh arm afterwards really fires", () => {
+    vi.useFakeTimers();
+    const { deps, state, attempts } = makeDeps();
+    state.paths = ["a"];
+    const sweep = new MidSweep(deps);
+    const baseline = vi.getTimerCount();
+
+    sweep.noteCursorMove();
+    sweep.pump(); // arms the quiet-window timer
+    expect(vi.getTimerCount()).toBe(baseline + 1);
+
+    sweep.reset();
+    // reset() must CANCEL the pending timer, not merely forget about it — a
+    // dropped `clearTimeout` leaves the real fake-timer entry alive even
+    // though `this.timer` itself gets nulled, so this is the assertion that
+    // can see it: the count must be back to baseline, not baseline + 1.
+    expect(vi.getTimerCount()).toBe(baseline);
+
+    // The dead-window regression: reset() must also leave the sweep ABLE to
+    // arm again. The old stranded-flag bug left it wedged for up to 1.5 s
+    // into a new folder; dropping the handle-null here (clearTimeout without
+    // `this.timer = undefined`) wedges it FOREVER, because armTimer's own
+    // dedupe guard (`if (this.timer !== undefined) return;`) would see the
+    // stale, already-cancelled handle and refuse to schedule a new one. Only
+    // a real fire proves the fresh arm was live, not just counted.
+    sweep.noteCursorMove();
+    sweep.pump();
+    expect(vi.getTimerCount()).toBe(baseline + 1);
+    vi.advanceTimersByTime(MID_SWEEP_QUIET_MS);
+    expect(attempts).toEqual(["a"]); // the fresh arm actually fired and swept
+    vi.useRealTimers();
+  });
+
   test("a completion for a superseded generation neither counts nor re-pumps", async () => {
     let release!: (ok: boolean) => void;
     const { deps, state, attempts, generated } = makeDeps({

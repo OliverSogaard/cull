@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { PERFORMANCE_PROFILES } from "../types/settings";
 import { makeSink, manualScheduler } from "./__fixtures__/metaBatching";
+import { MID_SWEEP_QUIET_MS } from "./midSweep";
 
 // ── Mock @tauri-apps/api/core before importing imageStore ──────────────────
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -58,7 +59,8 @@ afterEach(() => {
  *  left alive keeps issuing reads into whichever test happens to be running
  *  two seconds later — which showed up as intermittent, order-dependent read
  *  counts in the tombstone tests near the end of the file. `hardReset()`
- *  bumps the generation, so every pending timer and in-flight read bails.
+ *  cancels every pending timer and bumps the generation, so in-flight reads
+ *  bail.
  *  Registered after the mock-restoring hook above so it runs BEFORE it
  *  (Vitest unwinds afterEach hooks in reverse registration order) and the
  *  revokes it performs still land on the mocked URL functions. */
@@ -320,13 +322,24 @@ describe("imageStore", () => {
     expect(snap.stage).toBe("thumb");
   });
 
-  it("setProfile changes backgroundFillConcurrency", async () => {
-    const { PERFORMANCE_PROFILES } = await import("../types/settings");
+  it("setProfile swaps the lanes' concurrency caps", async () => {
     const store = await getStore();
     store.hardReset();
-    // Just verify setProfile doesn't throw with valid profiles
-    expect(() => store.setProfile(PERFORMANCE_PROFILES.network)).not.toThrow();
-    expect(() => store.setProfile(PERFORMANCE_PROFILES.local)).not.toThrow();
+    store.setMemoryPressure("normal"); // pressure clamps the caps otherwise
+    const bg = () => store.debugStats().lanes.bg;
+    store.setProfile(PERFORMANCE_PROFILES.network);
+    const net = bg();
+    store.setProfile(PERFORMANCE_PROFILES.local);
+    const loc = bg();
+    // The profiles must actually differ here, or the assertions below would
+    // hold on a setProfile whose body had been emptied — which is exactly the
+    // hole the old `.not.toThrow()` version left (its title claimed to check
+    // backgroundFillConcurrency and its body never read it).
+    expect(PERFORMANCE_PROFILES.network.backgroundFillConcurrency).not.toBe(
+      PERFORMANCE_PROFILES.local.backgroundFillConcurrency,
+    );
+    expect(net).toBe(`0/${PERFORMANCE_PROFILES.network.backgroundFillConcurrency} q0`);
+    expect(loc).toBe(`0/${PERFORMANCE_PROFILES.local.backgroundFillConcurrency} q0`);
   });
 
   it("no double-revoke: calling hardReset twice doesn't revoke already-revoked URLs", async () => {
@@ -359,19 +372,47 @@ describe("imageStore", () => {
     expect(store.snapshot(path).stage).toBe("shimmer");
   });
 
-  it("registerWantFull / unregisterWantFull do not throw", async () => {
-    const store = await getStore();
-    store.hardReset();
-    const path = "/foo/wf.cr3";
-    expect(() => store.registerWantFull(path)).not.toThrow();
-    expect(() => store.unregisterWantFull(path)).not.toThrow();
+  it("registerWantFull queues exactly one nav read per path", async () => {
+    // unregisterWantFull is NOT asserted here: its only observable is the
+    // eviction protection it releases, which needs the profile's keep-window
+    // arithmetic to demonstrate. Better to cover half honestly than to keep a
+    // `.not.toThrow()` that covers neither.
+    vi.mocked(invoke).mockResolvedValue(makePreviewBuf());
+    const Store = await getStoreClass();
+    const store = new Store();
+    const path = "/p/wf.cr3";
+    store.reset([path]);
+    store.registerWantFull(path);
+    await vi.waitUntil(() => store.debugStats().counts.navLoads === 1, { timeout: 2000 });
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      "read_preview",
+      expect.objectContaining({ path }),
+    );
+    const reads = vi.mocked(invoke).mock.calls.filter((c) => c[0] === "read_preview").length;
+    store.registerWantFull(path); // already resolved — must not re-read
+    expect(vi.mocked(invoke).mock.calls.filter((c) => c[0] === "read_preview")).toHaveLength(reads);
+    store.unregisterWantFull(path);
   });
 
-  it("setCursor and setGridRange do not throw", async () => {
-    const store = await getStore();
-    store.hardReset();
-    expect(() => store.setCursor(5)).not.toThrow();
-    expect(() => store.setGridRange(0, 30)).not.toThrow();
+  it("setCursor moves the reported cursor, and scrubbing suppresses the prefetch", async () => {
+    // setGridRange's half of the old `.not.toThrow()` test is gone: it
+    // requests nothing without setGridCellW plus a registerDisplay per path,
+    // and the grid describe below already covers exactly that (see `armed`).
+    vi.mocked(invoke).mockResolvedValue(makePreviewBuf());
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.reset(["/p/0.cr3", "/p/1.cr3", "/p/2.cr3", "/p/3.cr3", "/p/4.cr3"]);
+    // Captured BEFORE the scrubbing move — capturing it after (the earlier
+    // version of this test) would have baked the scrub move's own reads into
+    // the baseline, so deleting `if (!scrubbing)` (imageStore.ts:945) could
+    // never turn this test red.
+    const beforeScrub = vi.mocked(invoke).mock.calls.length;
+    store.setCursor(2, true); // scrubbing: no prefetchFullsAround
+    expect(store.debugStats().cursor).toBe(2);
+    expect(vi.mocked(invoke).mock.calls.length).toBe(beforeScrub);
+    store.setCursor(3); // parked: the prefetch runs
+    expect(store.debugStats().cursor).toBe(3);
+    expect(vi.mocked(invoke).mock.calls.length).toBeGreaterThan(beforeScrub);
   });
 
   it("empty-path sentinel: requestThumbFor('') and registerWantFull('') are no-ops (no invoke fired)", async () => {
@@ -1303,20 +1344,36 @@ describe("mid tier (Phase 8)", () => {
     expect(firstGen).toBeGreaterThan(midRead);
   });
 
-  it("the sweep never runs on the network profile", async () => {
+  it("the sweep never runs on the network profile, even after its quiet window", async () => {
     const { PERFORMANCE_PROFILES } = await import("../types/settings");
     const calls = routeMidInvoke();
     const Store = await getStoreClass();
     const store = new Store();
-    store.setProfile(PERFORMANCE_PROFILES.network);
-    store.reset(["/p/a.cr3", "/p/b.cr3"]);
-    store.setNeedPxProvider(() => 1860);
 
-    store.registerWantFull("/p/a.cr3");
-    store.reevaluateMid();
-    await vi.waitUntil(() => store.snapshot("/p/a.cr3").mid !== undefined, { timeout: 2000 });
-    await new Promise((r) => setTimeout(r, 50)); // give a wrong sweep time to fire
-    expect(genCalls(calls)).toHaveLength(0);
+    // Fake timers BEFORE reset(): reset arms a 2 s background-fill fallback
+    // (the `later()` call at the end of `reset()`), and arming it on the real
+    // clock is precisely the cross-test bleed this file's teardown comment
+    // documents — it would also
+    // leave the `mid` assertion below depending on a promise chain the fake
+    // clock never drives.
+    vi.useFakeTimers();
+    try {
+      store.setProfile(PERFORMANCE_PROFILES.network);
+      store.reset(["/p/a.cr3", "/p/b.cr3"]);
+      store.setNeedPxProvider(() => 1860);
+      store.registerWantFull("/p/a.cr3");
+      store.reevaluateMid();
+      // Was `await new Promise(r => setTimeout(r, 50))` — "give a wrong sweep
+      // time to fire", which a sweep with >50 ms of latency would have
+      // strolled straight past. advanceTimersByTimeAsync flushes the read's
+      // promise chain AND runs the idle sweep's whole quiet window to its end,
+      // so "it never fired" now means the deadline provably passed.
+      await vi.advanceTimersByTimeAsync(MID_SWEEP_QUIET_MS + 1);
+      expect(store.snapshot("/p/a.cr3").mid).toBeDefined();
+      expect(genCalls(calls)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -2490,5 +2547,194 @@ describe("imageStore — reads in flight for a forgotten path", () => {
 
     expect(store.snapshot(PATH).thumbUrl).toBeDefined();
     expect(store.debugStats().caches.thumbs).toBe(1);
+  });
+});
+
+describe("timer hygiene", () => {
+  // hardReset SILENCES timers by bumping the generation — every callback
+  // re-checks `this.generation === gen` and bails. That is not CANCELLING
+  // them: the handles stay armed, so the suite teardown at :66-70 is
+  // architecturally incapable of seeing a leak. These tests assert the
+  // stronger property, one armed path at a time.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reset arms the background-fill fallback, and hardReset cancels it", async () => {
+    vi.useFakeTimers();
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.reset(["/p/a.cr3"]);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    store.hardReset();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a failed thumb read arms a backoff retry, and hardReset cancels it", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockRejectedValue(new Error("nope"));
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.reset(["/p/a.cr3"]);
+    // reset() itself already armed the bg-fill fallback — a bare
+    // `toBeGreaterThan(0)` below would pass on that alone even if the
+    // backoff never armed. Snapshot it first so the assertion is forced to
+    // prove something ELSE got scheduled.
+    const afterReset = vi.getTimerCount();
+    store.requestThumbFor("/p/a.cr3");
+    // Flush the rejection's promise chain without advancing the clock, so
+    // the catch block gets to arm its backoff.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBeGreaterThan(afterReset);
+    store.hardReset();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a failed nav read's scheduled retry is cancelled by hardReset", async () => {
+    vi.useFakeTimers();
+    // Route by command: reject ONLY the nav read (read_preview). If every
+    // command rejected (as a blanket mockRejectedValue would), the first nav
+    // settle's afterSettle starts the bg-fill sweep, which would ALSO fail
+    // its own thumb read for this path and arm ITS OWN backoff
+    // (imageStore.ts:1413) — a confound that satisfies the count assertion
+    // below even with scheduleFullRetry completely broken.
+    vi.mocked(invoke).mockImplementation((cmd: unknown) =>
+      cmd === "read_preview"
+        ? Promise.reject(new Error("nope"))
+        : Promise.resolve(makeThumbnailBuf(60, 40)),
+    );
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.reset(["/p/a.cr3"]);
+    // Same reasoning as the backoff test above: reset()'s own fallback timer
+    // must not be what satisfies the assertion.
+    const afterReset = vi.getTimerCount();
+    store.registerWantFull("/p/a.cr3");
+    await vi.advanceTimersByTimeAsync(0); // the read fails, the error is recorded
+    // The SECOND registration is what hits `inCooldown` and schedules the
+    // retry (imageStore.ts:1106-1110).
+    store.registerWantFull("/p/a.cr3");
+    expect(vi.getTimerCount()).toBeGreaterThan(afterReset);
+    store.hardReset();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("no store timer survives hardReset after a session that armed several", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockRejectedValue(new Error("nope"));
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.reset(["/p/a.cr3", "/p/b.cr3"]);
+    store.requestThumbFor("/p/a.cr3");
+    store.registerWantFull("/p/b.cr3");
+    await vi.advanceTimersByTimeAsync(0);
+    store.registerWantFull("/p/b.cr3");
+    expect(vi.getTimerCount()).toBeGreaterThan(1);
+    store.hardReset();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reset() for a NEW folder also cancels the outgoing session's timers", async () => {
+    vi.useFakeTimers();
+    const Store = await getStoreClass();
+    const store = new Store();
+    store.reset(["/p/a.cr3"]);
+    const first = vi.getTimerCount();
+    store.reset(["/q/a.cr3"]);
+    // One fallback armed by the new reset, not two — the old one is gone.
+    expect(vi.getTimerCount()).toBe(first);
+    store.hardReset();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a grid-thumb pending bounce arms the self-retry timer, and both resets cancel it", async () => {
+    // The spec names the grid pending-retry (armGridThumbPendingRetry /
+    // clearGridThumbPendingRetry) as a timer-hygiene path, but nothing above
+    // drives a REAL "grid thumb pending" bounce under fake timers — the
+    // "nothing is fetched after reset()/hardReset()" test in the grid-thumb
+    // describe pins the same CONTRACT, but by its own comment "does not
+    // discriminate one guard" (three independent things hold it). Removing
+    // clearGridThumbPendingRetry() from reset()/hardReset() alone still left
+    // that test green; only counting the live timer can see it.
+    vi.useFakeTimers();
+    try {
+      vi.mocked(invoke).mockImplementation((cmd: unknown) => {
+        if (cmd === "read_grid_thumb") return Promise.reject(new Error("grid thumb pending"));
+        if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
+        if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(60, 40));
+        return Promise.resolve(new ArrayBuffer(0));
+      });
+      const Store = await getStoreClass();
+
+      // Phase 1: hardReset() cancels a grid retry armed THIS session.
+      const store1 = new Store();
+      store1.setProfile(PERFORMANCE_PROFILES.network); // gridThumbConcurrency 1
+      store1.reset(["/p/grid-a.cr3"]);
+      const afterReset1 = vi.getTimerCount(); // the bg-fill fallback alone
+      store1.registerDisplay("/p/grid-a.cr3"); // only mounted cells are asked for
+      store1.setGridCellW(400); // (400 − 18) × 1 = 382 > 160 — the rule wants it
+      store1.setGridRange(0, 0);
+      await vi.advanceTimersByTimeAsync(0); // the read fires and bounces off "pending"
+      expect(vi.getTimerCount()).toBeGreaterThan(afterReset1); // the self-retry armed
+      store1.hardReset();
+      expect(vi.getTimerCount()).toBe(0);
+
+      // Phase 2: reset() to a NEW folder cancels the OUTGOING session's grid
+      // retry too — reset() and hardReset() each call
+      // clearGridThumbPendingRetry() on their OWN line, so a mutation
+      // removing just one of the two still left the whole file green.
+      const store2 = new Store();
+      store2.setProfile(PERFORMANCE_PROFILES.network);
+      store2.reset(["/p/grid-b.cr3"]);
+      const afterReset2 = vi.getTimerCount();
+      store2.registerDisplay("/p/grid-b.cr3");
+      store2.setGridCellW(400);
+      store2.setGridRange(0, 0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBeGreaterThan(afterReset2);
+      store2.reset(["/q/new.cr3"]); // a whole new folder
+      // One fallback armed by the new reset, not the leftover grid retry too.
+      expect(vi.getTimerCount()).toBe(afterReset2);
+      store2.hardReset();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("every timer in the store and the sweep is tracked, so hardReset can reach it", () => {
+    const src = import.meta.glob<string>("./{imageStore,midSweep}.ts", {
+      query: "?raw",
+      eager: true,
+      import: "default",
+    });
+    const store = src["./imageStore.ts"] ?? "";
+    const sweep = src["./midSweep.ts"] ?? "";
+    // The glob must have returned real text, or every assertion below is
+    // satisfied by the empty string.
+    expect(store).toContain("private later(");
+    expect(sweep).toContain(`const MID_SWEEP_QUIET_MS`);
+
+    // Comments are stripped from `store`/`sweep` first — a stray `setTimeout(`
+    // mentioned in one of THEIR doc comments (not this file's) must not be
+    // counted, or the assertion below fails with a cryptic off-by-one that
+    // has nothing to do with an untracked timer. ANY receiver counts
+    // (`window.setTimeout(`, `globalThis.setTimeout(`, a bare call, …) — the
+    // old `(?<![.\w])` guard let a receiver-qualified call slip through
+    // uncounted — and `setInterval(` counts too, since it is just as much an
+    // escape from `later()`/the tracked `timer` field as `setTimeout` is.
+    const stripComments = (s: string) =>
+      s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const scheduleCalls = (s: string) =>
+      [...stripComments(s).matchAll(/\bset(?:Timeout|Interval)\(/g)].length;
+    const rule = (file: string) =>
+      `${file}: every setTimeout/setInterval must schedule through later() ` +
+      `(imageStore.ts) or the tracked \`timer\` field (midSweep.ts) — a bare, ` +
+      `receiver-qualified, or setInterval call is an escape from that rule`;
+    expect(scheduleCalls(store), rule("imageStore.ts")).toBe(2); // one inside `later`, one for the grid retry
+    expect(store).toContain("this.gridThumbPendingRetry = setTimeout(");
+    expect(store).toContain("private clearTimers(");
+    expect(scheduleCalls(sweep), rule("midSweep.ts")).toBe(1);
+    expect(sweep).toContain("this.timer = setTimeout(");
   });
 });

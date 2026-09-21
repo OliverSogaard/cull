@@ -46,6 +46,128 @@ component test that side-effect-imports a stylesheet (e.g. via `App.tsx`
 importing `styles/index.css`) still gets the cheap default stub, since its
 import has no `?raw` query.
 
+## The keymap harness
+
+`src/app/useCullKeymap.test.tsx` drives the hook under `renderHook`, built
+from a props factory typed as `Parameters<typeof useCullKeymap>[0]` — the
+hook's own props type, so a new prop or a rename is a compile error in the
+test file instead of a silently stale mock.
+
+Three mechanics make a keymap test lie if you miss them:
+
+- Every `KeyboardEvent` needs `cancelable: true`. Without it `preventDefault()`
+  is a silent no-op and every `defaultPrevented` assertion passes vacuously.
+- Escape's `defaultPrevented` is **always** true, in every phase — a
+  capture-phase listener swallows every Escape before the rest of the keymap
+  ever sees it — so it proves nothing except in the one test written to pin
+  that listener.
+- `afterEach(cleanup)` is load-bearing. Vitest runs without `globals`, so
+  React Testing Library's auto-cleanup never registers; an un-unmounted hook
+  leaves its `window` listeners attached, and the next test's keypress fires
+  this test's spies too.
+
+Ordering claims — "X happens before Y" — are asserted with
+`mock.invocationCallOrder`, never by checking that both mocks were merely
+called; two calls in either order both satisfy a "both were called"
+assertion.
+
+## The CR3 mutation fuzzer
+
+`mutation_fuzz_never_panics_hangs_or_returns_an_oversized_result` is a plain
+`#[test]` inside `cr3.rs`'s own test module — zero extra dependencies,
+ungated by any env var or corpus, so it runs in CI alongside every other Rust
+test with no fixtures required. It's deterministic: every input the fuzzer
+tries is a pure function of `(seed, iteration)`, and nothing else feeds the
+mutations — the test itself always reads the three env vars below and always
+clocks each input against a per-input budget, but neither of those changes
+what gets generated. Per input it asserts the parser never panics,
+never hangs (a worker thread acks each input; a missed ack past its
+per-input budget fails the test naming the culprit), and never returns a
+size that couldn't fit the buffer it was handed.
+
+`CULL_FUZZ_SEED` accepts decimal (`20000`) or hex (`0xc0ffee150feed000`,
+either case) — exactly the form the failure line prints it in — and panics
+on anything else instead of silently falling back to the default seed,
+since a silent fallback would run a different input stream than the one
+being reproduced.
+
+To reproduce a red run, verbatim (Git Bash / POSIX):
+
+```bash
+CULL_FUZZ_SEED=<seed> CULL_FUZZ_FROM=<iteration> CULL_FUZZ_ITERS=1 \
+  cargo test mutation_fuzz -- --nocapture
+```
+
+PowerShell — quote the seed, or PowerShell reads an unquoted `0x…` as a
+signed number and the run stops with "is not a u64":
+
+```powershell
+$env:CULL_FUZZ_SEED='<seed>'; $env:CULL_FUZZ_FROM='<iteration>'; $env:CULL_FUZZ_ITERS='1'; `
+  cargo test mutation_fuzz -- --nocapture
+```
+
+The failing input is DERIVED from `(seed, iteration)` rather than replayed
+from a saved corpus, so one iteration reproduces that exact input on its own
+— nothing has to be checked in for a bug report to be actionable. Its limits
+are real, though: random mutation of a well-formed head can flip bits and
+counts, but it cannot CONSTRUCT an adversarial-but-well-formed input such as
+a JPEG built of thousands of tiny repeated segments — that class of bug
+needs a hand-written test, not this fuzzer.
+
+## The mock kit
+
+`src/test/tauriMocks.ts` is the shared Tauri + DOM kit: an `invoke` spy
+routed per test, `listen`/window-command stubs, and `installDomStubs()` /
+`restoreDomStubs()` for the DOM globals jsdom doesn't provide (`matchMedia`,
+`ResizeObserver`, `HTMLImageElement.prototype.decode` — none of which jsdom
+implements; `URL.createObjectURL`/`revokeObjectURL` ARE implemented under
+Vitest's jsdom, but the kit swaps them for spies anyway to count blob
+churn). Call `installDomStubs()` in `beforeEach` and `restoreDomStubs()` in
+`afterEach`.
+
+A `vi.mock` factory can't reference a module-scope import, so a consumer
+uses the async form that imports the kit from inside the factory itself:
+
+```ts
+vi.mock("@tauri-apps/api/window", async () =>
+  (await import("./test/tauriMocks")).windowMock());
+```
+
+The default `invoke` router THROWS `tauriMocks: no invoke router installed
+(<cmd>)` rather than resolving `undefined`, so a test that forgot to install
+a router fails at the call site instead of far downstream with nothing to
+point at the real cause.
+
+## Store timer hygiene
+
+Every wall-clock timer inside `ImageStore` goes through its private
+`later()` wrapper — or, for the one exception, its own directly-tracked
+handle: `gridThumbPendingRetry`, cleared from the three sites that need to
+disarm it. Either way, `reset()` and `hardReset()` can actually cancel
+what's pending, instead of just changing a generation counter that a stale
+callback would still see fire. `MidSweep` keeps its own one handle the same
+way. `imageStore.test.ts`'s `timer hygiene` describe enforces this by
+reading both source files raw, stripping comments, and counting every
+`setTimeout`/`setInterval` call: `imageStore.ts` is allowed exactly two (one
+inside `later()`, one for the grid retry); `midSweep.ts` exactly one. The
+reason it matters: the old by-generation silencing couldn't tell a
+scheduled timer from a leaked one — a stale `setTimeout` fired, no-oped on a
+dead generation, and looked exactly like nothing had happened. Cancelling
+the handle is the only way to prove nothing is still armed.
+
+## Coverage
+
+```bash
+pnpm test:coverage
+```
+
+Uses the v8 provider with text + html reporters; `coverage/` is git-ignored.
+There is no threshold, in config or in CI — Phase 4 measured for the first
+time, and the numbers are recorded in this phase's implementation note
+(`docs/superpowers/plans/2026-09-21-phase-4-tests-and-ci.md`,
+"Implementation note" section) once the branch lands. Per-directory floors
+are a later call, once real numbers exist to set them against.
+
 ## Stylesheet guards
 
 Phase 3B leaned on the `?raw` glob pattern above harder than anything before
@@ -100,6 +222,7 @@ entry). Point the gates at a local folder to activate the corpus layer:
 | `CULL_TEST_CR3_DIR=<folder of .CR3>` | Parser sweeps over a real shoot (`cr3.rs`: preview extraction, zoom-tier range reads vs the legacy scan, moov hint validation), bundle command round-trips (`bundle.rs`), mid-tier generation with orientation checks (`midtier.rs`), classical metrics over the corpus (`analyze.rs`), and — on `smart-ml` builds — the YuNet (`faces.rs`) and embedding/aesthetic (`embed.rs`) graph-contract smoke tests. |
 | `CULL_TEST_CR3=<path to one .CR3>` | Single-file parser deep-dive in `cr3.rs`. |
 | `CULL_BENCH=1` | The mid-tier encoder benchmark (`midtier.rs`, `encoder_benchmark`); uses a real full from `CULL_TEST_CR3_DIR` when set, else a synthetic 6960×4640 frame. |
+| `CULL_FUZZ_SEED` / `CULL_FUZZ_FROM` / `CULL_FUZZ_ITERS` | The opposite of the rows above: the CR3 mutation fuzzer (see "The CR3 mutation fuzzer") runs unconditionally in CI with no corpus; these three only NARROW its seed and iteration range, to reproduce one exact failing input locally. |
 
 Example:
 
