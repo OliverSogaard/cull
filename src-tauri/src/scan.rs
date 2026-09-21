@@ -10,7 +10,7 @@
 //! Both invariants: read-only, no CR3 mutation.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use tauri::Emitter;
@@ -132,24 +132,162 @@ fn wall_clock_ms_at(ms: i64, offset: chrono::FixedOffset) -> Option<i64> {
 /// A file's mtime (a true UTC epoch) moved into the frame EXIF capture times
 /// live in — the camera's naive wall clock read as if it were UTC, which is
 /// what `analyze::captured_at_ms` builds out of a timezone-less
-/// `DateTimeOriginal` via `.and_utc()`.
+/// `DateTimeOriginal` via `.and_utc()`. The two frames are only interchangeable
+/// at UTC+00, and mixing them raw would put a fallback frame the machine's
+/// whole offset away from its true neighbours.
 ///
-/// The two frames are only interchangeable at UTC+00. Mixing them raw would
-/// put every mtime fallback the machine's offset away from its true
-/// neighbours — seven hours, in Los Angeles — so one unreadable head in the
-/// middle of a burst would sort at the far end of the shoot. Only the
-/// `by_capture_time` path needs this: with the flag off every key is an mtime,
-/// one frame throughout, and the raw values are already consistent.
+/// THE LAST RESORT, and only reached when not one frame in the shoot yielded an
+/// EXIF time to measure against (see [`fallback_deltas`], which learns the real
+/// offset from the frames themselves). It is a guess, and it rests on two
+/// assumptions this app cannot check: that the camera's clock was set to the
+/// machine's current timezone — it may have been left on the last trip's, and
+/// the owner's Tokyo-shoot case is exactly that — and that it follows the
+/// machine's DST, when Canon bodies carry DST as a manual toggle the
+/// photographer may never have flipped. Converting at the offset in force AT
+/// THAT INSTANT is the best of the available guesses, not a correct answer.
 ///
-/// The offset is the one in force AT THAT INSTANT, not today's, so frames shot
-/// either side of a DST boundary each convert with the offset the camera's
-/// clock was actually showing. A timestamp outside chrono's range keeps its raw
-/// value: a slightly-misplaced frame still beats a frame with no key at all.
+/// A timestamp outside chrono's range keeps its raw value: a slightly
+/// misplaced frame still beats a frame with no key at all.
 fn mtime_in_capture_frame(ms: i64) -> i64 {
     let Some(utc) = chrono::DateTime::from_timestamp_millis(ms) else {
         return ms;
     };
     wall_clock_ms_at(ms, *utc.with_timezone(&chrono::Local).offset()).unwrap_or(ms)
+}
+
+/// Upper median, in place — `select_nth_unstable` partitions around index
+/// `len / 2` and hands back that element. Deliberately never the average of
+/// the two middles: averaging two i64 clock offsets can overflow, and one real
+/// measured offset is a better answer than a synthetic one anyway.
+fn median(values: &mut [i64]) -> Option<i64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mid = values.len() / 2;
+    let (_, m, _) = values.select_nth_unstable(mid);
+    Some(*m)
+}
+
+/// How far each folder's EXIF clock runs ahead of its files' mtimes, measured
+/// from the frames that have BOTH — per parent directory, plus one figure for
+/// the whole shoot.
+///
+/// This is what lets a frame with no EXIF sort among frames that have one
+/// without knowing anything about anybody's timezone: the camera's offset from
+/// the filesystem clock is a FACT the shoot itself carries, whatever it is
+/// (a body left on Tokyo time while the PC files in Los Angeles is 16 h, and
+/// nothing here needs to know that). Per directory first, because two bodies
+/// on two clocks must not correct each other.
+///
+/// The median, not the mean: a frame whose EXIF is a decade out, or whose mtime
+/// a copy rewrote, is exactly the input to expect, and one such frame moves a
+/// mean by years while it cannot move a median at all. A pair whose difference
+/// overflows i64 is dropped rather than saturated — a saturated delta is not a
+/// measurement, and there is no shortage of other frames to measure.
+fn fallback_deltas(
+    paths: &[String],
+    exif: &[Option<i64>],
+    mtimes: &[Option<i64>],
+) -> (HashMap<PathBuf, i64>, Option<i64>) {
+    let mut per_dir: HashMap<PathBuf, Vec<i64>> = HashMap::new();
+    let mut whole_shoot: Vec<i64> = Vec::new();
+    for (i, path) in paths.iter().enumerate() {
+        let (Some(e), Some(m)) = (
+            exif.get(i).copied().flatten(),
+            mtimes.get(i).copied().flatten(),
+        ) else {
+            continue;
+        };
+        let Some(delta) = e.checked_sub(m) else {
+            continue;
+        };
+        whole_shoot.push(delta);
+        if let Some(dir) = Path::new(path).parent() {
+            per_dir.entry(dir.to_path_buf()).or_default().push(delta);
+        }
+    }
+    let dirs = per_dir
+        .into_iter()
+        .filter_map(|(dir, mut deltas)| Some((dir, median(&mut deltas)?)))
+        .collect();
+    (dirs, median(&mut whole_shoot))
+}
+
+/// One frame's mtime dragged into the EXIF clock, cheapest-and-truest source
+/// first: its own folder's measured offset, then the whole shoot's, and only
+/// if the shoot measured nothing at all the machine's timezone
+/// ([`mtime_in_capture_frame`] — a guess, see its doc). `served` counts which
+/// tier answered, for the one log line the pass emits.
+fn rebased_mtime(
+    ms: i64,
+    dir_delta: Option<i64>,
+    shoot_delta: Option<i64>,
+    served: &mut [usize; 3],
+) -> i64 {
+    if let Some(d) = dir_delta {
+        served[0] += 1;
+        return ms.saturating_add(d);
+    }
+    if let Some(d) = shoot_delta {
+        served[1] += 1;
+        return ms.saturating_add(d);
+    }
+    served[2] += 1;
+    mtime_in_capture_frame(ms)
+}
+
+/// Every frame's final sort key for the capture-time path: its EXIF time when
+/// it has one, otherwise its mtime rebased onto the EXIF clock (see
+/// [`fallback_deltas`]), with the folder's own clock correction on top either
+/// way. Pure, so the whole fallback ladder is unit-testable without a window,
+/// a filesystem or a CR3.
+///
+/// A fallback is not the rare unreadable head it might sound like: it is also
+/// every frame a cancelled pass never reached and every frame of a panicked
+/// worker's chunk, so a whole folder can arrive here at once. The deltas come
+/// from the RAW EXIF values, before any per-frame offset — the offset corrects
+/// a body's clock, and folding it in first would measure it twice.
+fn capture_keys(
+    paths: &[String],
+    exif: &[Option<i64>],
+    mtimes: &[Option<i64>],
+    offsets_ms: Option<&[i64]>,
+) -> Vec<Option<i64>> {
+    let (dir_deltas, shoot_delta) = fallback_deltas(paths, exif, mtimes);
+    let mut served = [0usize; 3];
+    let keys: Vec<Option<i64>> = paths
+        .iter()
+        .enumerate()
+        .map(|(i, path)| {
+            let exif_ms = exif.get(i).copied().flatten();
+            let offset = offsets_ms.and_then(|v| v.get(i).copied()).unwrap_or(0);
+            let mtime_ms = match (exif_ms, mtimes.get(i).copied().flatten()) {
+                // `capture_epoch` prefers the EXIF, so this frame's mtime is
+                // never read — don't spend a conversion deciding it.
+                (Some(_), m) => m,
+                (None, Some(m)) => {
+                    let dir_delta = Path::new(path)
+                        .parent()
+                        .and_then(|d| dir_deltas.get(d).copied());
+                    Some(rebased_mtime(m, dir_delta, shoot_delta, &mut served))
+                }
+                (None, None) => None,
+            };
+            capture_epoch(exif_ms, mtime_ms, offset)
+        })
+        .collect();
+    let fallbacks: usize = served.iter().sum();
+    if fallbacks > 0 {
+        dlog!(
+            "[cull] analyze_folder: {} of {} frames sorted on their mtime ({} rebased by their folder's measured EXIF offset, {} by the shoot's, {} by this machine's timezone)",
+            fallbacks,
+            paths.len(),
+            served[0],
+            served[1],
+            served[2]
+        );
+    }
+    keys
 }
 
 /// The two capture fields of a CACHED thumb-tier header (`bundle::ThumbHeader`),
@@ -564,16 +702,12 @@ fn read_capture_epochs(
 /// subdirectory the recursive walk found it in). Ignored when
 /// `by_capture_time` is off; a short or absent vector reads as 0.
 ///
-/// `gen` is the session generation, the same one `read_preview` / `read_mid` /
-/// `analyze_quality` carry: the capture pass polls it per frame and stops when
-/// it moves, so a superseded Begin culling stops opening files instead of
-/// grinding through the rest of the shoot. `None` never cancels — the mtime
-/// path opens nothing anyway, and a caller that doesn't send a generation
-/// keeps today's behaviour.
-// Eight arguments, over clippy's seven: a Tauri command's parameters ARE its
-// wire protocol, so grouping them into a struct would change the invoke shape
-// for no gain at the only call site there will ever be.
-#[allow(clippy::too_many_arguments)]
+/// There is deliberately no `gen` parameter. The frontend's generation and the
+/// backend's are separate counters, reconciled only by `begin_session` — and
+/// `analyze_folder` runs BEFORE the store reset that sends it, so a number from
+/// the frontend would be a generation behind by construction and, after a
+/// webview reload, wrong outright. The capture pass snapshots
+/// [`crate::io_gate::SessionGate::current`] instead and watches for a change.
 #[tauri::command]
 pub(crate) async fn analyze_folder(
     window: tauri::Window,
@@ -581,7 +715,6 @@ pub(crate) async fn analyze_folder(
     concurrent_restore: Option<bool>,
     by_capture_time: Option<bool>,
     offsets_ms: Option<Vec<i64>>,
-    gen: Option<u64>,
     session: tauri::State<'_, std::sync::Arc<crate::io_gate::SessionGate>>,
     cache: tauri::State<'_, std::sync::Arc<crate::tier_cache::TierCache>>,
 ) -> Result<AnalyzeResult, String> {
@@ -597,7 +730,6 @@ pub(crate) async fn analyze_folder(
             concurrent_restore,
             by_capture_time,
             offsets_ms,
-            gen,
             &session,
             &cache,
         )
@@ -606,14 +738,12 @@ pub(crate) async fn analyze_folder(
     .map_err(|e| format!("analyze task failed: {e}"))?
 }
 
-#[allow(clippy::too_many_arguments)] // mirrors the command's parameters
 fn analyze_folder_sync(
     window: tauri::Window,
     paths: Vec<String>,
     concurrent_restore: Option<bool>,
     by_capture_time: Option<bool>,
     offsets_ms: Option<Vec<i64>>,
-    gen: Option<u64>,
     session: &crate::io_gate::SessionGate,
     cache: &TierCache,
 ) -> Result<AnalyzeResult, String> {
@@ -694,9 +824,13 @@ fn analyze_folder_sync(
             .collect();
         let step_cap = (n / 100).max(1); // ≤ ~100 progress events
 
-        // The generation moves when the frontend resets its store, which is
-        // exactly when this pass's answer stopped mattering.
-        let cancelled = || gen.is_some_and(|g| session.is_cancelled(g));
+        // A session change means the frontend reset its store — a folder
+        // switch, a hard reset, a quit — which is exactly when this pass's
+        // answer stopped mattering. Snapshot the BACKEND's own counter: it is
+        // the only one that cannot disagree with itself.
+        let session_at_start = session.current();
+        let cancelled = || session.current() != session_at_start;
+        let read = std::sync::atomic::AtomicUsize::new(0);
         let exif = read_capture_epochs(
             cache,
             &paths,
@@ -704,6 +838,7 @@ fn analyze_folder_sync(
             concurrent_restore,
             &cancelled,
             &|done| {
+                read.fetch_max(done, std::sync::atomic::Ordering::Relaxed);
                 if done.is_multiple_of(step_cap) || done == n {
                     let _ = window.emit(
                         "analyze-progress",
@@ -716,6 +851,14 @@ fn analyze_folder_sync(
                 }
             },
         );
+        let read = read.load(std::sync::atomic::Ordering::Relaxed);
+        if read < n {
+            dlog!(
+                "[cull] analyze_folder: capture pass stopped after {} of {} frames (the session moved on); the rest sort on their mtime",
+                read,
+                n
+            );
+        }
         // One terminal tick, for the same reason the listing pass emits one.
         let _ = window.emit(
             "analyze-progress",
@@ -725,23 +868,11 @@ fn analyze_folder_sync(
                 phase: "capturing".into(),
             },
         );
-        (0..n)
-            .map(|i| {
-                let offset = offsets_ms
-                    .as_ref()
-                    .and_then(|v| v.get(i).copied())
-                    .unwrap_or(0);
-                // The fallback is rebased onto the EXIF clock frame (see
-                // [`mtime_in_capture_frame`]): on this path the two key kinds
-                // sit side by side in one order, so they must share a frame.
-                let mtime = listing
-                    .mtime
-                    .get(&paths[i])
-                    .copied()
-                    .map(mtime_in_capture_frame);
-                capture_epoch(exif[i], mtime, offset)
-            })
-            .collect()
+        let mtimes: Vec<Option<i64>> = paths
+            .iter()
+            .map(|p| listing.mtime.get(p).copied())
+            .collect();
+        capture_keys(&paths, &exif, &mtimes, offsets_ms.as_deref())
     } else {
         paths
             .iter()
@@ -1161,29 +1292,212 @@ mod tests {
         let _ = fs::remove_dir_all(&work);
     }
 
-    /// read_capture_epochs: a cancel mid-pass stops the reads there and then.
-    /// The frames already read keep their times; the rest come back None and
-    /// fall back to their mtime in the sort, exactly like a panicked chunk —
-    /// a superseded Begin culling must not keep opening thousands of files.
+    /// read_capture_epochs: a session change mid-pass stops the reads there and
+    /// then. The frames already read keep their times; the rest come back None
+    /// and fall back to their mtime in the sort, exactly like a panicked chunk
+    /// — a superseded Begin culling must not keep opening thousands of files.
+    /// Driven through a real `SessionGate` + the snapshot comparison
+    /// `analyze_folder_sync` builds, so the wiring is what is under test.
     #[test]
-    fn read_capture_epochs_stops_reading_once_cancelled() {
+    fn read_capture_epochs_stops_reading_once_the_session_moves() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let work = tmp_dir("capture-cancel");
         let cache = TierCache::new(work.join("tiers"));
         let n = 10;
         let (paths, stats, want) = seed_thumb_capture_times(&cache, &work, n);
 
-        // Cancelled from the 4th check on: 3 frames are read, 7 are not.
+        let session = crate::io_gate::SessionGate::new();
+        session.begin(7);
+        let at_start = session.current();
         let checks = AtomicUsize::new(0);
-        let cancelled = || checks.fetch_add(1, Ordering::Relaxed) >= 3;
+        let cancelled = || {
+            // The user opens another folder three frames in.
+            if checks.fetch_add(1, Ordering::Relaxed) == 3 {
+                session.begin(8);
+            }
+            session.current() != at_start
+        };
         let out = read_capture_epochs(&cache, &paths, &stats, false, &cancelled, &|_| {});
-        assert_eq!(out[..3], want[..3], "frames read before the cancel");
+        assert_eq!(out[..3], want[..3], "frames read before the session moved");
         assert!(
             out[3..].iter().all(Option::is_none),
-            "frames after the cancel stay unread: {:?}",
+            "frames after it stay unread: {:?}",
             &out[3..]
         );
-        assert_eq!(checks.load(Ordering::Relaxed), 4, "stopped at the cancel");
+        assert_eq!(checks.load(Ordering::Relaxed), 4, "stopped at the change");
         let _ = fs::remove_dir_all(&work);
+    }
+
+    /// The concurrent arm honours the cancel too — it is the arm that would
+    /// otherwise keep four threads opening files. The thread split is not
+    /// deterministic, so the invariants are: nothing is read after the cancel
+    /// (at most as many frames as there were permitting checks), the pass does
+    /// not run to completion, and whatever WAS read sits at its own index.
+    #[test]
+    fn read_capture_epochs_cancel_stops_the_concurrent_arm_too() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let work = tmp_dir("capture-cancel-conc");
+        let cache = TierCache::new(work.join("tiers"));
+        let n = 21;
+        let (paths, stats, want) = seed_thumb_capture_times(&cache, &work, n);
+
+        let checks = AtomicUsize::new(0);
+        let cancelled = || checks.fetch_add(1, Ordering::Relaxed) >= 4;
+        let out = read_capture_epochs(&cache, &paths, &stats, true, &cancelled, &|_| {});
+        let read: Vec<usize> = (0..n).filter(|&i| out[i].is_some()).collect();
+        assert!(read.len() <= 4, "read past the cancel: {read:?}");
+        assert!(read.len() < n, "the pass ran to completion regardless");
+        for i in read {
+            assert_eq!(out[i], want[i], "frame {i} landed on another frame's time");
+        }
+
+        // Cancelled before the first check: not one file is opened.
+        let out = read_capture_epochs(&cache, &paths, &stats, true, &|| true, &|_| {});
+        assert!(out.iter().all(Option::is_none));
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// A frame path under `dir`, built the platform's own way.
+    fn frame(dir: &str, i: usize) -> String {
+        Path::new(dir)
+            .join(format!("IMG_{i:04}.CR3"))
+            .to_string_lossy()
+            .to_string()
+    }
+
+    /// fallback_deltas: the EXIF−mtime offset a folder's frames agree on is
+    /// recovered EXACTLY, including the owner's worst case — a body left on
+    /// Tokyo time while the PC files the shoot in Los Angeles. Nothing about
+    /// the machine's timezone enters into it: the frames measure their own.
+    #[test]
+    fn fallback_deltas_recovers_a_folders_whole_clock_offset() {
+        // +9 h (Tokyo against a UTC mtime), and the body's clock 2 s slow.
+        const TOKYO: i64 = 9 * 3600 * 1000 - 2_000;
+        let paths = vec![frame("A", 1), frame("A", 2), frame("A", 3)];
+        let mtimes = vec![Some(1_000_000), Some(1_060_000), Some(1_120_000)];
+        let exif: Vec<Option<i64>> = mtimes.iter().map(|m| m.map(|m| m + TOKYO)).collect();
+
+        let (dirs, session) = fallback_deltas(&paths, &exif, &mtimes);
+        assert_eq!(session, Some(TOKYO));
+        assert_eq!(dirs.get(Path::new("A")).copied(), Some(TOKYO));
+    }
+
+    /// The median is the point of the exercise: one frame whose EXIF is a
+    /// decade out and one whose mtime a copy rewrote cannot drag the folder's
+    /// offset anywhere. An average would have moved it by years.
+    #[test]
+    fn fallback_deltas_median_ignores_wild_outliers() {
+        const DELTA: i64 = -7 * 3600 * 1000;
+        const DECADE: i64 = 10 * 365 * 24 * 3600 * 1000;
+        let paths: Vec<String> = (0..7).map(|i| frame("A", i)).collect();
+        let mtimes: Vec<Option<i64>> = (0..7).map(|i| Some(1_000_000 + i as i64 * 1_000)).collect();
+        let mut exif: Vec<Option<i64>> = mtimes.iter().map(|m| m.map(|m| m + DELTA)).collect();
+        exif[2] = mtimes[2].map(|m| m + DELTA - DECADE); // EXIF a decade early
+        exif[5] = mtimes[5].map(|m| m + DELTA + DECADE); // mtime rewritten by a copy
+
+        let (dirs, session) = fallback_deltas(&paths, &exif, &mtimes);
+        assert_eq!(session, Some(DELTA));
+        assert_eq!(dirs.get(Path::new("A")).copied(), Some(DELTA));
+    }
+
+    /// capture_keys: a frame with no EXIF borrows ITS OWN folder's median
+    /// first — two bodies on two clocks must not correct each other — and a
+    /// folder where nothing has EXIF borrows the shoot's median instead.
+    #[test]
+    fn capture_keys_borrow_the_folder_median_then_the_shoots() {
+        const A_DELTA: i64 = 9 * 3600 * 1000; // body A, Tokyo
+        const B_DELTA: i64 = -7 * 3600 * 1000; // body B, Los Angeles
+                                               // A: two frames with EXIF + one without. B: one with EXIF + one
+                                               // without. C: nothing readable at all, so it has only the shoot.
+        let paths = vec![
+            frame("A", 1),
+            frame("A", 2),
+            frame("A", 3),
+            frame("B", 1),
+            frame("B", 2),
+            frame("C", 1),
+        ];
+        let mtimes: Vec<Option<i64>> = (0..6).map(|i| Some(1_000_000 + i as i64 * 1_000)).collect();
+        let exif = vec![
+            mtimes[0].map(|m| m + A_DELTA),
+            mtimes[1].map(|m| m + A_DELTA),
+            None,
+            mtimes[3].map(|m| m + B_DELTA),
+            None,
+            None,
+        ];
+
+        let keys = capture_keys(&paths, &exif, &mtimes, None);
+        assert_eq!(keys[0], exif[0], "a frame with EXIF keeps it");
+        assert_eq!(
+            keys[2],
+            mtimes[2].map(|m| m + A_DELTA),
+            "A's own median, not the shoot's"
+        );
+        assert_eq!(keys[4], mtimes[4].map(|m| m + B_DELTA), "B's own median");
+        // The shoot's median over {A, A, B} is A_DELTA (the upper middle of
+        // three), which is what C — having nothing of its own — must borrow.
+        assert_eq!(
+            keys[5],
+            mtimes[5].map(|m| m + A_DELTA),
+            "the shoot's median"
+        );
+    }
+
+    /// The per-frame offset still rides on top of a borrowed delta, and a
+    /// frame with neither EXIF nor mtime still has no key at all.
+    #[test]
+    fn capture_keys_apply_the_per_frame_offset_over_the_fallback() {
+        const DELTA: i64 = 3_600_000;
+        const OFFSET: i64 = 500;
+        let paths = vec![frame("A", 1), frame("A", 2), frame("A", 3)];
+        let mtimes = vec![Some(1_000_000), Some(1_001_000), None];
+        let exif = vec![mtimes[0].map(|m| m + DELTA), None, None];
+
+        let keys = capture_keys(&paths, &exif, &mtimes, Some(&[OFFSET; 3]));
+        assert_eq!(keys[0], exif[0].map(|e| e + OFFSET));
+        assert_eq!(keys[1], mtimes[1].map(|m| m + DELTA + OFFSET));
+        assert_eq!(keys[2], None, "no EXIF and no mtime is no key");
+    }
+
+    /// When NOTHING in the shoot has EXIF there is no measured offset to
+    /// borrow, so the machine's own clock is the last resort — the assumption
+    /// of last resort, not the first.
+    #[test]
+    fn capture_keys_fall_back_to_the_local_clock_when_no_frame_has_exif() {
+        let paths = vec![frame("A", 1), frame("A", 2)];
+        let mtimes = vec![Some(1_700_000_000_000), None];
+        let keys = capture_keys(&paths, &[None, None], &mtimes, None);
+        assert_eq!(keys[0], Some(mtime_in_capture_frame(1_700_000_000_000)));
+        assert_eq!(keys[1], None);
+    }
+
+    /// Pathological clocks (an EXIF at the end of time against an mtime at the
+    /// beginning) must not panic in debug: the delta that would overflow is
+    /// skipped, and every arithmetic step saturates.
+    #[test]
+    fn capture_keys_survive_pathological_clocks() {
+        let paths = vec![frame("A", 1), frame("A", 2), frame("A", 3)];
+        let mtimes = vec![Some(i64::MIN), Some(i64::MAX), Some(0)];
+        let exif = vec![Some(i64::MAX), Some(i64::MIN), None];
+
+        // Both deltas overflow i64 and are skipped, so nothing is learned and
+        // frame 2 takes the local conversion of its own mtime.
+        let (dirs, session) = fallback_deltas(&paths, &exif, &mtimes);
+        assert!(dirs.is_empty() && session.is_none());
+        let keys = capture_keys(
+            &paths,
+            &exif,
+            &mtimes,
+            Some(&[i64::MAX, i64::MIN, i64::MAX]),
+        );
+        assert_eq!(keys[0], Some(i64::MAX), "saturates instead of wrapping");
+        assert_eq!(keys[1], Some(i64::MIN));
+
+        // And a delta that IS measurable but enormous saturates on the way in.
+        let mtimes = vec![Some(0), Some(1_000)];
+        let exif = vec![Some(i64::MAX), None];
+        let keys = capture_keys(&paths[..2], &exif, &mtimes, None);
+        assert_eq!(keys[1], Some(i64::MAX));
     }
 }
