@@ -15,24 +15,16 @@ jobs:
       - run: pnpm lint && pnpm lint:css
       - run: pnpm typecheck && pnpm typecheck:tests
       - run: pnpm test
-      # The exact command release.yml's tauri-action runs (`beforeBuildCommand`),
-      # which CI has never once executed: 3.5 s here against finding out at a
-      # tag. Type errors already fail `typecheck`; this catches the rest of the
-      # bundle (a bad import path, a missing asset, a Rollup resolution error).
+      # The exact command release.yml's tauri-action runs (`beforeBuildCommand`).
+      # Type errors already fail `typecheck`; this catches the rest of the
+      # bundle (a bad import path, a missing asset, a Rollup resolution error)
+      # — cheap here against finding out at a release tag.
       - run: pnpm build
-      # RUNTIME advisories only, and only the ones worth stopping a merge for.
-      # Plain `pnpm audit` reports 21 findings today, every one of them
-      # dev-only (eslint/vite/stylelint transitives) — gating on those would
-      # make a red CI the normal state and teach everyone to ignore it.
-      # `--audit-level=high` is the second half of the same argument: a
-      # MODERATE advisory in a runtime dependency of a single-owner desktop app
-      # is a thing to read on Monday, not a thing that blocks every PR;
-      # high and critical are not. Both dials can be reopened by editing this
-      # one line. `--prod` alone is clean today.
-      #
-      # This step talks to the registry, so a registry outage reds it with a
-      # network error rather than a finding. The remedy is to re-run the job,
-      # never to delete the step.
+      # `--prod` skips dev-only advisories (eslint/vite/stylelint transitives),
+      # which would otherwise make red CI the normal state here.
+      # `--audit-level=high` skips MODERATE too — a thing to read on Monday,
+      # not to block a merge for. A registry outage reds this step with a
+      # network error, not a finding: re-run the job, never delete the step.
       - run: pnpm audit --prod --audit-level=high
   backend:
     runs-on: windows-latest # primary platform; Linux would not compile (by design)
