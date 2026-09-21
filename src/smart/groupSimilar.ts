@@ -112,48 +112,64 @@ export function groupSimilar(
   eligible: Readonly<Record<number, boolean>>,
 ): Map<number, SimilarCtx> {
   const out = new Map<number, SimilarCtx>();
-  let run: number[] = [];
   let groupId = 0;
 
-  const flush = () => {
-    if (run.length >= 2) {
-      const { winnerIdx: w, winnerAf } = pickWinner(run, sharp, eligible);
-      run.forEach((id, i) => {
+  /**
+   * Walk state PER SOURCE FOLDER — the same shape, and for the same reason,
+   * as groupBursts': a capture-time session order interleaves two bodies
+   * frame by frame, and one shared `prev` made every switch break both runs.
+   */
+  type Walk = { run: number[]; prev: { img: Img; input: SimilarInput } | null };
+  const walks = new Map<string, Walk>();
+
+  const flush = (w: Walk) => {
+    if (w.run.length >= 2) {
+      const { winnerIdx: wi, winnerAf } = pickWinner(w.run, sharp, eligible);
+      w.run.forEach((id, i) => {
         out.set(id, {
           group: groupId,
           pos: i + 1,
-          len: run.length,
-          isWinner: i === w,
-          marginToWinner: w >= 0 && i !== w ? winnerAf - sharp[id].afSharpness : 0,
+          len: w.run.length,
+          isWinner: i === wi,
+          marginToWinner: wi >= 0 && i !== wi ? winnerAf - sharp[id].afSharpness : 0,
         });
       });
       groupId += 1;
     }
-    run = [];
+    w.run = [];
   };
 
-  let prev: { img: Img; input: SimilarInput } | null = null;
   for (const img of images) {
+    let w = walks.get(img.srcFolder);
+    if (!w) {
+      w = { run: [], prev: null };
+      walks.set(img.srcFolder, w);
+    }
     const input = inputs[img.id];
-    // Transparent walls: no standing input yet, and burst members, both split.
+    // Transparent walls: no standing input yet, and burst members, both split
+    // — but ONLY their own folder's run.
     if (!input || bursts.has(img.id)) {
-      flush();
-      prev = null;
+      flush(w);
+      w.prev = null;
       continue;
     }
     const embCur = scores[img.id]?.embedding ?? null;
     if (
-      prev &&
-      prev.img.srcFolder === img.srcFolder &&
-      linked(prev.input, input, scores[prev.img.id]?.embedding ?? null, embCur)
+      w.prev &&
+      // Invariant since the per-folder walk: prev and img always share a
+      // folder. Kept so the condition stays correct on its own terms.
+      w.prev.img.srcFolder === img.srcFolder &&
+      linked(w.prev.input, input, scores[w.prev.img.id]?.embedding ?? null, embCur)
     ) {
-      if (run.length === 0) run = [prev.img.id];
-      run.push(img.id);
+      if (w.run.length === 0) w.run = [w.prev.img.id];
+      w.run.push(img.id);
     } else {
-      flush();
+      flush(w);
     }
-    prev = { img, input };
+    w.prev = { img, input };
   }
-  flush();
+  // Map iteration is insertion order, so the trailing flushes are
+  // deterministic: folders get their last group ids in first-seen order.
+  for (const w of walks.values()) flush(w);
   return out;
 }

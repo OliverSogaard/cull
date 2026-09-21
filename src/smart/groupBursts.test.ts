@@ -178,6 +178,81 @@ describe("groupBursts", () => {
     };
     expect(groupBursts(images, inputs, sharp).get(2)!.isWinner).toBe(true);
   });
+
+  test("two bodies interleaved by capture time keep BOTH their bursts", () => {
+    // A,B,A,B — what a true capture-time sort produces when two cameras shoot
+    // the same moment. Before the per-folder walk this collapsed to nothing.
+    const images = [
+      img(1, "/shoot/a"),
+      img(2, "/shoot/b"),
+      img(3, "/shoot/a"),
+      img(4, "/shoot/b"),
+    ];
+    const inputs = {
+      1: input(0),
+      2: input(0, { srcFolder: "/shoot/b" }),
+      3: input(1),
+      4: input(1, { srcFolder: "/shoot/b" }),
+    };
+    const ctx = groupBursts(images, inputs);
+    expect(ctx.get(1)!.len).toBe(2);
+    expect(ctx.get(3)!.len).toBe(2);
+    expect(ctx.get(2)!.len).toBe(2);
+    expect(ctx.get(4)!.len).toBe(2);
+    expect(ctx.get(1)!.group).toBe(ctx.get(3)!.group);
+    expect(ctx.get(2)!.group).toBe(ctx.get(4)!.group);
+    // Group ids stay session-global: two runs, two distinct ids.
+    expect(ctx.get(1)!.group).not.toBe(ctx.get(2)!.group);
+  });
+
+  test("the cadence gate measures between SAME-FOLDER neighbours, not list neighbours", () => {
+    // The foreign frame in the middle carries a cadence that would look like a
+    // burst against either of its list neighbours; the gate must ignore it and
+    // compare frames 1 and 3, which are 83ms apart.
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/a")];
+    const inputs = {
+      1: input(0),
+      2: input(0, { srcFolder: "/shoot/b", capturedAtMs: 1_000_040 }),
+      3: input(1),
+    };
+    const ctx = groupBursts(images, inputs);
+    expect(ctx.get(1)!.len).toBe(2);
+    expect(ctx.get(3)!.len).toBe(2);
+    expect(ctx.get(2)).toBeUndefined(); // lone frame in its own folder
+  });
+
+  test("a foreign frame does NOT weld two same-folder frames that are not a burst", () => {
+    // Skipping over the foreign frame must not also skip the cadence check:
+    // frames 1 and 3 are 5 seconds apart and stay two lone frames.
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/a")];
+    const inputs = {
+      1: input(0),
+      2: input(0, { srcFolder: "/shoot/b" }),
+      3: input(0, { capturedAtMs: 1_005_000, mtimeMs: 2_005_000 }),
+    };
+    expect(groupBursts(images, inputs).size).toBe(0);
+  });
+
+  test("a frame with no input walls off ITS OWN folder's run, not the other body's", () => {
+    const images = [
+      img(1, "/shoot/a"),
+      img(2, "/shoot/b"),
+      img(3, "/shoot/b"),
+      img(4, "/shoot/a"),
+    ];
+    // Frame 2 (folder b) has no input; a and b are both cadence-tight.
+    const inputs = {
+      1: input(0),
+      3: input(1, { srcFolder: "/shoot/b" }),
+      4: input(1),
+    };
+    const ctx = groupBursts(images, inputs);
+    // Vitest's message goes in `expect`, never in the matcher — `toBe` takes
+    // exactly one argument (@vitest/expect), so a second one is TS2554.
+    expect(ctx.get(1)!.len, "folder a's run survives the foreign gap").toBe(2);
+    expect(ctx.get(4)!.len).toBe(2);
+    expect(ctx.get(3)).toBeUndefined(); // folder b's run was walled off
+  });
 });
 
 describe("buildBurstInputs", () => {

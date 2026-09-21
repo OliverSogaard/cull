@@ -59,6 +59,8 @@ function extendsRun(
   if (!(a.driveMode != null && a.driveMode > 0) || !(b.driveMode != null && b.driveMode > 0)) {
     return false;
   }
+  // Invariant since the per-folder walk below: prev and cur always share a
+  // folder. Kept as a gate so the function stays correct on its own terms.
   if (prev.img.srcFolder !== cur.img.srcFolder) return false;
   if (a.focalLengthMm == null || b.focalLengthMm == null) return false;
   if (Math.abs(a.focalLengthMm - b.focalLengthMm) > 0.01) return false;
@@ -98,44 +100,62 @@ export function groupBursts(
   eligible?: Readonly<Record<number, boolean>>,
 ): Map<number, BurstCtx> {
   const out = new Map<number, BurstCtx>();
-  let run: { id: number }[] = [];
   let groupId = 0;
 
-  const flush = () => {
-    if (run.length >= 2) {
-      const ids = run.map((r) => r.id);
-      const { winnerIdx: w, winnerAf } = pickWinner(ids, sharp, eligible);
-      run.forEach((r, i) => {
+  /**
+   * Walk state PER SOURCE FOLDER. The session order is capture time, so two
+   * bodies shooting the same moment interleave frame by frame — with one
+   * shared `prev` every switch broke both runs and two simultaneous bursts
+   * collapsed into singletons. A run now continues across foreign-folder
+   * frames; the gates (including the srcFolder one, which can no longer fire)
+   * are unchanged, and group ids stay session-global.
+   */
+  type Walk = { run: { id: number }[]; prev: { img: Img; input: BurstInput } | null };
+  const walks = new Map<string, Walk>();
+
+  const flush = (w: Walk) => {
+    if (w.run.length >= 2) {
+      const ids = w.run.map((r) => r.id);
+      const { winnerIdx: wi, winnerAf } = pickWinner(ids, sharp, eligible);
+      w.run.forEach((r, i) => {
         out.set(r.id, {
           group: groupId,
           pos: i + 1,
-          len: run.length,
-          isWinner: i === w,
-          marginToWinner: w >= 0 && i !== w ? winnerAf - sharp![r.id].afSharpness : 0,
+          len: w.run.length,
+          isWinner: i === wi,
+          marginToWinner: wi >= 0 && i !== wi ? winnerAf - sharp![r.id].afSharpness : 0,
         });
       });
       groupId += 1;
     }
-    run = [];
+    w.run = [];
   };
 
-  let prev: { img: Img; input: BurstInput } | null = null;
   for (const img of images) {
+    let w = walks.get(img.srcFolder);
+    if (!w) {
+      w = { run: [], prev: null };
+      walks.set(img.srcFolder, w);
+    }
     const input = inputs[img.id];
     if (!input) {
-      flush();
-      prev = null;
+      // A frame without usable inputs is a transparent wall for ITS OWN
+      // folder only — the other body's run is none of its business.
+      flush(w);
+      w.prev = null;
       continue;
     }
     const cur = { img, input };
-    if (prev && extendsRun(prev, cur)) {
-      run.push({ id: img.id });
+    if (w.prev && extendsRun(w.prev, cur)) {
+      w.run.push({ id: img.id });
     } else {
-      flush();
-      run = [{ id: img.id }];
+      flush(w);
+      w.run = [{ id: img.id }];
     }
-    prev = cur;
+    w.prev = cur;
   }
-  flush();
+  // Map iteration is insertion order, so the trailing flushes are
+  // deterministic: folders get their last group ids in first-seen order.
+  for (const w of walks.values()) flush(w);
   return out;
 }

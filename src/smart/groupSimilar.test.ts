@@ -145,6 +145,62 @@ describe("groupSimilar", () => {
     const inputs = { 1: input(0), 2: input(1000) };
     expect(groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {}).size).toBe(0);
   });
+
+  test("two bodies interleaved by capture time keep BOTH their similar sets", () => {
+    const images = [
+      img(1, "/shoot/a"),
+      img(2, "/shoot/b"),
+      img(3, "/shoot/a"),
+      img(4, "/shoot/b"),
+    ];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "ffffffffffffffff" }),
+      3: input(1000, { phash: "0000000000000003" }), // hamming 2 from #1
+      4: input(1000, { phash: "ffffffffffffffff" }), // identical to #2
+    };
+    const out = groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {});
+    expect(out.get(1)?.group).toBe(out.get(3)?.group);
+    expect(out.get(2)?.group).toBe(out.get(4)?.group);
+    expect(out.get(1)?.group).not.toBe(out.get(2)?.group);
+    expect(out.get(1)?.len).toBe(2);
+    expect(out.get(2)?.len).toBe(2);
+  });
+
+  test("a foreign frame does NOT weld two same-folder frames that are not alike", () => {
+    // Skipping the foreign frame must not also skip the link test.
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/a")];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "0000000000000001" }),
+      3: input(1000, { phash: "ffffffffffffffff" }), // far from #1
+    };
+    expect(groupSimilar(images, inputs, NO_SCORES, NO_BURSTS, {}, {}).size).toBe(0);
+  });
+
+  test("a burst member still walls off ITS OWN folder's run, not the other body's", () => {
+    const images = [
+      img(1, "/shoot/a"),
+      img(2, "/shoot/b"),
+      img(3, "/shoot/b"),
+      img(4, "/shoot/a"),
+    ];
+    const inputs = {
+      1: input(0, { phash: "0000000000000000" }),
+      2: input(0, { phash: "ffffffffffffffff" }),
+      3: input(1000, { phash: "ffffffffffffffff" }),
+      4: input(1000, { phash: "0000000000000003" }),
+    };
+    // Frame 3 is a burst member -> folder b's run is walled; folder a's is not.
+    const bursts: ReadonlyMap<number, BurstCtx> = new Map([
+      [3, { group: 0, pos: 1, len: 2, isWinner: false, marginToWinner: 0 }],
+    ]);
+    const out = groupSimilar(images, inputs, NO_SCORES, bursts, {}, {});
+    expect(out.get(1)?.len, "folder a's run survives the foreign gap").toBe(2);
+    expect(out.get(4)?.len).toBe(2);
+    expect(out.has(2)).toBe(false);
+    expect(out.has(3)).toBe(false);
+  });
 });
 
 describe("buildSimilarInputs", () => {

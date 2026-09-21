@@ -26,11 +26,13 @@ export type BurstSegment = {
 
 /**
  * Shared burst-overlay derivation for both filmstrips. `ids` is the strip's
- * items in display order — the loupe strip passes every image (runs come out
- * contiguous), the compare strip passes the candidate SUBSET, where a run
- * interrupted by filtered-out frames yields one segment per contiguous
- * stretch (the first labeled). Also builds the gap prefix (extra track space
- * around each segment) consumed by the prefix-aware virtualizer.
+ * items in display order. A run can be interrupted in BOTH strips now: the
+ * compare strip passes the candidate SUBSET, and since the per-folder burst
+ * walk (groupBursts) a group's members need not be contiguous in session
+ * order at all — two bodies interleaved by capture time put another body's
+ * frames between them. Either way the group yields one segment per
+ * contiguous stretch, the first labeled. Also builds the gap prefix (extra
+ * track space around each segment) consumed by the prefix-aware virtualizer.
  */
 export function computeBurstSegments(
   ids: readonly number[],
