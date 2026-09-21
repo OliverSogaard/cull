@@ -90,6 +90,14 @@ fresh per request with ~100 px of hysteresis around ~1700) exceeds what the
 preview can show sharply; the fallback chain mid → preview always renders.
 An evicted nav blob falls back to its thumb, never back to shimmer.
 
+Every IFD entry's component count is file-supplied, and reading metadata
+trusts it just enough to be dangerous: before this phase, a CR3 declaring a
+4-billion-component GPS RATIONAL array made `Tiff::rationals` spin about a
+second per tag on every read path, for a value the UI never even displays.
+`Tiff::find_entry` now clamps that count to what the buffer actually holds,
+so no reader — GPS, EXIF, any future tag — can be made to iterate past its
+own bytes.
+
 The **grid tier** (Phase 3B) is NOT a fourth display stage — `resolveStage`
 never sees it. It exists only inside the contact sheet: a second `<img>`
 layered, absolutely positioned, over the cell's THMB and faded in on `load`
@@ -593,6 +601,18 @@ conventions instead of per-component one-offs:
   the app's answer to "how is a shortcut shown", used by the home hero, the
   staged-screen hint, the empty-filter hint, recents, and the settings
   dialog.
+- **The keymap dispatches in one fixed order, and it is load-bearing.**
+  `useCullKeymap.ts`'s precedence — bare-modifier no-op, then the scrub
+  interrupt (ahead of every modal return), then settings, quitGuard, phase,
+  confirmHome, actionsOpen, the Tab/help swallow, the Ctrl combos, the Ctrl
+  drop, Space, Escape, then site switching — replaced a verbatim move from
+  App that let a held arrow keep advancing the cursor behind whichever
+  overlay returned first, and let Ctrl+Z / Ctrl+E act underneath the open
+  help sheet. Every clause is pinned in `useCullKeymap.test.tsx` (Phase 4).
+  The same pass made a rating key, a filter digit, and a page key act
+  **once per press** — the OS's auto-repeat keydown is dropped (`e.repeat`)
+  instead of spamming the action at the repeat rate — while the arrows keep
+  their one deliberate hold-to-repeat gesture, the scrub.
 - **A page is a measured screenful, never a burst.** `Home` / `End` /
   `PgUp` / `PgDn` (Phase 3C) move the cursor within the ACTIVE FILTER, not
   index 0 or the raw end of the session; in the grid, Shift extends the
@@ -741,7 +761,8 @@ overlays/    — clipping/peaking mask scans + histogram (inline + worker paths)
 hooks/       — component-shared hooks: useSettings, useRecents, focus trap,
                armed confirm
   ↓ imports
-utils/       — pure helpers (format, filter, path, snap, bundle, dlog)
+utils/       — pure helpers (format, filter, path, snap, bundle, dlog,
+               withChanges)
   ↓ imports
 types/       — shared TypeScript types
 ```

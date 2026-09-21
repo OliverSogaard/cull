@@ -229,6 +229,9 @@ Cheat sheet:
 
 `Ctrl` + wheel over the contact sheet steps the grid size too.
 
+Rating keys, the filter digits and the page keys act **once per press** — only
+the arrows repeat while held (that is the scrub).
+
 ## Rating model
 
 Three states plus the absence of any rating. The pick/good flags (and any star)
