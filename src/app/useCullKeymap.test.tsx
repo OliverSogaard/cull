@@ -4,6 +4,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { cleanup, renderHook } from "@testing-library/react";
 import type { Filter, Img, NavSite, Rating } from "../types";
 import { DEFAULT_SETTINGS } from "../types/settings";
+import { cycleFilter } from "../utils/filterModes";
 import { useCullKeymap } from "./useCullKeymap";
 
 /**
@@ -544,5 +545,312 @@ describe("compare swallows its decide keys (fix D)", () => {
     renderKeymap(p);
     expect(press("k").defaultPrevented).toBe(true);
     expect(press("F").defaultPrevented).toBe(true);
+  });
+});
+
+describe("page keys", () => {
+  it("Home and End cross the whole filter; PgUp and PgDn move one screenful", () => {
+    const p = props();
+    renderKeymap(p);
+    press("End");
+    press("Home");
+    press("PageDown");
+    press("PageUp");
+    expect(p.advance).toHaveBeenNthCalledWith(1, 1, IMAGES.length);
+    expect(p.advance).toHaveBeenNthCalledWith(2, -1, IMAGES.length);
+    expect(p.advance).toHaveBeenNthCalledWith(3, 1, 24); // props().pageStep() === 24
+    expect(p.advance).toHaveBeenNthCalledWith(4, -1, 24);
+  });
+
+  it("all four are swallowed — an unhandled PageDown would scroll the grid", () => {
+    renderKeymap(props({ gridVisible: true }));
+    for (const key of ["Home", "End", "PageUp", "PageDown"]) {
+      expect(press(key).defaultPrevented).toBe(true);
+    }
+  });
+
+  it("they act once per press and rest while zoomed", () => {
+    const held = props();
+    const { unmount } = renderKeymap(held);
+    press("End");
+    press("End", { repeat: true });
+    expect(held.advance).toHaveBeenCalledTimes(1);
+    unmount();
+
+    const zoomed = props({ isZooming: true });
+    renderKeymap(zoomed);
+    press("PageDown");
+    press("End");
+    expect(zoomed.advance).not.toHaveBeenCalled();
+  });
+
+  it("in the grid a plain page key clears the selection BEFORE it moves", () => {
+    const p = props({ gridVisible: true });
+    renderKeymap(p);
+    press("End");
+    expect(p.clearMultiSelection).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(p.clearMultiSelection).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(p.advance).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("in the grid Shift extends the selection instead of moving the cursor", () => {
+    const p = props({ gridVisible: true });
+    renderKeymap(p);
+    press("End", { shiftKey: true });
+    press("PageDown", { shiftKey: true });
+    expect(p.growGridSelection).toHaveBeenNthCalledWith(1, IMAGES.length);
+    expect(p.growGridSelection).toHaveBeenNthCalledWith(2, 24);
+    expect(p.advance).not.toHaveBeenCalled();
+    expect(p.clearMultiSelection).not.toHaveBeenCalled();
+  });
+
+  it("compare gets the page keys only — Home and End are swallowed there, not bound", () => {
+    const p = props({ compareMode: true });
+    renderKeymap(p);
+    expect(press("Home").defaultPrevented).toBe(true);
+    expect(press("End").defaultPrevented).toBe(true);
+    expect(p.cycleChallenger).not.toHaveBeenCalled();
+    press("PageDown");
+    expect(p.cycleChallenger).toHaveBeenCalledWith(1, 24);
+  });
+
+  it("compare's page keys also act once per press and rest while zoomed", () => {
+    const held = props({ compareMode: true });
+    const { unmount } = renderKeymap(held);
+    press("PageDown");
+    press("PageDown", { repeat: true });
+    expect(held.cycleChallenger).toHaveBeenCalledTimes(1);
+    unmount();
+
+    const zoomed = props({ compareMode: true, isZooming: true });
+    renderKeymap(zoomed);
+    press("PageDown");
+    expect(zoomed.cycleChallenger).not.toHaveBeenCalled();
+  });
+});
+
+describe("grid size", () => {
+  it("+ / = grow and − shrinks, grid only", () => {
+    const p = props({ gridVisible: true });
+    renderKeymap(p);
+    press("+");
+    press("=");
+    press("-");
+    expect(p.stepGridSizeBy).toHaveBeenNthCalledWith(1, 1);
+    expect(p.stepGridSizeBy).toHaveBeenNthCalledWith(2, 1);
+    expect(p.stepGridSizeBy).toHaveBeenNthCalledWith(3, -1);
+  });
+
+  it("a held + steps once, but is still swallowed", () => {
+    const p = props({ gridVisible: true });
+    renderKeymap(p);
+    press("+");
+    expect(press("+", { repeat: true }).defaultPrevented).toBe(true);
+    expect(p.stepGridSizeBy).toHaveBeenCalledTimes(1);
+  });
+
+  it("outside the grid it is neither bound nor swallowed", () => {
+    const p = props();
+    renderKeymap(p);
+    expect(press("+").defaultPrevented).toBe(false);
+    expect(p.stepGridSizeBy).not.toHaveBeenCalled();
+  });
+});
+
+describe("filter digits", () => {
+  /** `setFilter` takes an UPDATER, so read it back and apply it. */
+  function applyUpdater(setFilter: KeymapProps["setFilter"], from: Filter): Filter {
+    const calls = vi.mocked(setFilter).mock.calls;
+    expect(calls).toHaveLength(1);
+    const updater = calls[0][0];
+    if (typeof updater !== "function") throw new Error("setFilter was called with a value");
+    return updater(from);
+  }
+
+  // Asserted THROUGH cycleFilter, so renaming a Filter value or reordering a
+  // CYCLES entry (utils/filterModes.ts:13-19) breaks this test. A hard-coded
+  // "keepsFavs" would sail straight past both.
+  const CASES: [string, Parameters<typeof cycleFilter>[1]][] = [
+    ["1", "all"],
+    ["2", "unrated"],
+    ["3", "keeps"],
+    ["4", "suggested"],
+    ["5", "rejects"],
+  ];
+  for (const [key, top] of CASES) {
+    it(`${key} selects the ${top} tab, and re-pressing it cycles the sub-modes`, () => {
+      const p = props();
+      renderKeymap(p);
+      press(key);
+      expect(applyUpdater(p.setFilter, "all")).toBe(cycleFilter("all", top));
+      expect(applyUpdater(p.setFilter, "keepsFavs")).toBe(cycleFilter("keepsFavs", top));
+    });
+  }
+
+  it("only the two tabs with sub-modes pulse the chip tooltip", () => {
+    for (const key of ["1", "2", "5"]) {
+      const p = props();
+      const { unmount } = renderKeymap(p);
+      press(key);
+      expect(p.chipsTooltip.pulse).not.toHaveBeenCalled();
+      unmount();
+    }
+    for (const key of ["3", "4"]) {
+      const p = props();
+      const { unmount } = renderKeymap(p);
+      press(key);
+      expect(p.chipsTooltip.pulse).toHaveBeenCalledTimes(1);
+      unmount();
+    }
+  });
+
+  it("4 kicks off analysis only when smart culling is on", () => {
+    const on = props();
+    const { unmount } = renderKeymap(on);
+    press("4");
+    expect(on.startAnalysis).toHaveBeenCalledTimes(1);
+    unmount();
+
+    const off = props({ settings: { ...DEFAULT_SETTINGS, smartCulling: false } });
+    renderKeymap(off);
+    press("4");
+    expect(off.startAnalysis).not.toHaveBeenCalled();
+  });
+});
+
+describe("holds", () => {
+  it("an arrow starts a scrub; its OS repeat does not restart it", () => {
+    const p = props();
+    renderKeymap(p);
+    press("ArrowRight");
+    press("ArrowRight", { repeat: true });
+    expect(p.startHold).toHaveBeenCalledTimes(1);
+    expect(p.startHold).toHaveBeenCalledWith(1);
+  });
+
+  it("the OPPOSITE arrow mid-scrub is ignored entirely", () => {
+    const p = props({ heldDirRef: ref<0 | 1 | -1>(1) });
+    renderKeymap(p);
+    press("ArrowLeft");
+    expect(p.startHold).not.toHaveBeenCalled();
+    expect(p.stopHold).not.toHaveBeenCalled();
+  });
+
+  it("a rating key mid-scrub stops the hold BEFORE it rates", () => {
+    const p = props({ heldDirRef: ref<0 | 1 | -1>(1) });
+    renderKeymap(p);
+    press("f");
+    expect(p.stopHold).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(p.stopHold).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(p.applyRating).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("only the HELD arrow's release stops the scrub", () => {
+    const p = props({ heldDirRef: ref<0 | 1 | -1>(1) });
+    renderKeymap(p);
+    release("ArrowLeft");
+    expect(p.stopHold).not.toHaveBeenCalled();
+    release("ArrowRight");
+    expect(p.stopHold).toHaveBeenCalledTimes(1);
+  });
+
+  it("a mangled key on release still stops it, via e.code", () => {
+    // The fallback that fixed the forever-scrub: a modifier still held at
+    // release can blank e.key (useCullKeymap.ts:764-770).
+    const p = props({ heldDirRef: ref<0 | 1 | -1>(1) });
+    renderKeymap(p);
+    release("", { code: "ArrowRight" });
+    expect(p.stopHold).toHaveBeenCalledTimes(1);
+  });
+
+  it("the grid's row-jump starts on a bare down-arrow and drops the selection", () => {
+    const p = props({ gridVisible: true });
+    renderKeymap(p);
+    press("ArrowDown");
+    expect(p.clearMultiSelection).toHaveBeenCalledTimes(1);
+    expect(p.startGridVertHold).toHaveBeenCalledWith(1);
+  });
+
+  it("Shift added mid row-jump kills the loop before it grows the selection", () => {
+    const p = props({ gridVisible: true, heldGridVertDirRef: ref<0 | 1 | -1>(1) });
+    renderKeymap(p);
+    press("ArrowDown", { shiftKey: true });
+    expect(p.stopGridVertHold).toHaveBeenCalledTimes(1);
+    expect(p.growGridSelection).toHaveBeenCalledWith(6); // props().gridCols
+    expect(vi.mocked(p.stopGridVertHold).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(p.growGridSelection).mock.invocationCallOrder[0],
+    );
+  });
+});
+
+describe("zoom", () => {
+  it("Space arms 1:1, Shift+Space 2:1, and both re-centre the pan", () => {
+    const plain = props();
+    const { unmount } = renderKeymap(plain);
+    expect(press(" ", { code: "Space" }).defaultPrevented).toBe(true);
+    expect(plain.setIsZooming).toHaveBeenCalledWith(true);
+    expect(plain.setZoomLevel).toHaveBeenCalledWith(1);
+    expect(plain.setPanOffset).toHaveBeenCalledWith({ x: 0, y: 0 });
+    unmount();
+
+    const shifted = props();
+    renderKeymap(shifted);
+    press(" ", { code: "Space", shiftKey: true });
+    expect(shifted.setZoomLevel).toHaveBeenCalledWith(2);
+  });
+
+  it("an already-zoomed Space changes nothing — the macOS phantom-repeat pin", () => {
+    // 7bf33e8: after a rating keypress macOS resumes the still-held Space's
+    // auto-repeat as a NON-repeat keydown. With zoom carried, it must be inert.
+    const p = props({ isZoomingRef: ref(true) });
+    renderKeymap(p);
+    press(" ", { code: "Space" });
+    expect(p.setIsZooming).not.toHaveBeenCalled();
+  });
+
+  it("Space in the grid is swallowed but does nothing", () => {
+    const p = props({ gridVisible: true });
+    renderKeymap(p);
+    expect(press(" ", { code: "Space" }).defaultPrevented).toBe(true);
+    expect(p.setIsZooming).not.toHaveBeenCalled();
+  });
+
+  it("releasing Space exits zoom — unless the MOUSE owns it", () => {
+    const keyboard = props();
+    const { unmount } = renderKeymap(keyboard);
+    release(" ", { code: "Space" });
+    expect(keyboard.resetZoom).toHaveBeenCalledTimes(1);
+    unmount();
+
+    const mouse = props({ mouseZooming: true });
+    renderKeymap(mouse);
+    release(" ", { code: "Space" });
+    expect(mouse.resetZoom).not.toHaveBeenCalled();
+  });
+
+  it("arrows pan while zoomed instead of moving the cursor", () => {
+    const p = props({ isZooming: true });
+    renderKeymap(p);
+    press("ArrowRight");
+    press("ArrowDown");
+    expect(p.pan).toHaveBeenNthCalledWith(1, 2, 0); // PAN_STEP
+    expect(p.pan).toHaveBeenNthCalledWith(2, 0, 2);
+    expect(p.advance).not.toHaveBeenCalled();
+    expect(p.startHold).not.toHaveBeenCalled();
+  });
+});
+
+describe("a state flip between renders", () => {
+  it("opening the help sheet mid-session starts swallowing immediately", () => {
+    const p = props();
+    const { rerender } = renderKeymap(p);
+    press("Enter");
+    expect(p.applyRating).toHaveBeenCalledTimes(1);
+    // Same spy, new props object: the effect rebuilds cullKeyRef's closures.
+    rerender(props({ helpVisible: true, applyRating: p.applyRating }));
+    press("Enter");
+    expect(p.applyRating).toHaveBeenCalledTimes(1); // still one
   });
 });
