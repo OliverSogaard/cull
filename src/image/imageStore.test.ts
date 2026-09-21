@@ -401,12 +401,17 @@ describe("imageStore", () => {
     const Store = await getStoreClass();
     const store = new Store();
     store.reset(["/p/0.cr3", "/p/1.cr3", "/p/2.cr3", "/p/3.cr3", "/p/4.cr3"]);
+    // Captured BEFORE the scrubbing move — capturing it after (the earlier
+    // version of this test) would have baked the scrub move's own reads into
+    // the baseline, so deleting `if (!scrubbing)` (imageStore.ts:945) could
+    // never turn this test red.
+    const beforeScrub = vi.mocked(invoke).mock.calls.length;
     store.setCursor(2, true); // scrubbing: no prefetchFullsAround
     expect(store.debugStats().cursor).toBe(2);
-    const whileScrubbing = vi.mocked(invoke).mock.calls.length;
+    expect(vi.mocked(invoke).mock.calls.length).toBe(beforeScrub);
     store.setCursor(3); // parked: the prefetch runs
     expect(store.debugStats().cursor).toBe(3);
-    expect(vi.mocked(invoke).mock.calls.length).toBeGreaterThan(whileScrubbing);
+    expect(vi.mocked(invoke).mock.calls.length).toBeGreaterThan(beforeScrub);
   });
 
   it("empty-path sentinel: requestThumbFor('') and registerWantFull('') are no-ops (no invoke fired)", async () => {
@@ -2569,27 +2574,45 @@ describe("timer hygiene", () => {
     const Store = await getStoreClass();
     const store = new Store();
     store.reset(["/p/a.cr3"]);
+    // reset() itself already armed the bg-fill fallback — a bare
+    // `toBeGreaterThan(0)` below would pass on that alone even if the
+    // backoff never armed. Snapshot it first so the assertion is forced to
+    // prove something ELSE got scheduled.
+    const afterReset = vi.getTimerCount();
     store.requestThumbFor("/p/a.cr3");
     // Flush the rejection's promise chain without advancing the clock, so
     // the catch block gets to arm its backoff.
     await vi.advanceTimersByTimeAsync(0);
-    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    expect(vi.getTimerCount()).toBeGreaterThan(afterReset);
     store.hardReset();
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it("a failed nav read's scheduled retry is cancelled by hardReset", async () => {
     vi.useFakeTimers();
-    vi.mocked(invoke).mockRejectedValue(new Error("nope"));
+    // Route by command: reject ONLY the nav read (read_preview). If every
+    // command rejected (as a blanket mockRejectedValue would), the first nav
+    // settle's afterSettle starts the bg-fill sweep, which would ALSO fail
+    // its own thumb read for this path and arm ITS OWN backoff
+    // (imageStore.ts:1413) — a confound that satisfies the count assertion
+    // below even with scheduleFullRetry completely broken.
+    vi.mocked(invoke).mockImplementation((cmd: unknown) =>
+      cmd === "read_preview"
+        ? Promise.reject(new Error("nope"))
+        : Promise.resolve(makeThumbnailBuf(60, 40)),
+    );
     const Store = await getStoreClass();
     const store = new Store();
     store.reset(["/p/a.cr3"]);
+    // Same reasoning as the backoff test above: reset()'s own fallback timer
+    // must not be what satisfies the assertion.
+    const afterReset = vi.getTimerCount();
     store.registerWantFull("/p/a.cr3");
     await vi.advanceTimersByTimeAsync(0); // the read fails, the error is recorded
     // The SECOND registration is what hits `inCooldown` and schedules the
     // retry (imageStore.ts:1106-1110).
     store.registerWantFull("/p/a.cr3");
-    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    expect(vi.getTimerCount()).toBeGreaterThan(afterReset);
     store.hardReset();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -2635,14 +2658,26 @@ describe("timer hygiene", () => {
     expect(store).toContain("private later(");
     expect(sweep).toContain(`const MID_SWEEP_QUIET_MS`);
 
-    // A bare call, not a `ReturnType<typeof setTimeout>` annotation and not
-    // `window.setTimeout`. Keep the literal `setTimeout(` out of comments in
-    // both files, or this counts them.
-    const bare = (s: string) => [...s.matchAll(/(?<![.\w])setTimeout\(/g)].length;
-    expect(bare(store)).toBe(2); // one inside `later`, one for the grid retry
+    // Comments are stripped from `store`/`sweep` first — a stray `setTimeout(`
+    // mentioned in one of THEIR doc comments (not this file's) must not be
+    // counted, or the assertion below fails with a cryptic off-by-one that
+    // has nothing to do with an untracked timer. ANY receiver counts
+    // (`window.setTimeout(`, `globalThis.setTimeout(`, a bare call, …) — the
+    // old `(?<![.\w])` guard let a receiver-qualified call slip through
+    // uncounted — and `setInterval(` counts too, since it is just as much an
+    // escape from `later()`/the tracked `timer` field as `setTimeout` is.
+    const stripComments = (s: string) =>
+      s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const scheduleCalls = (s: string) =>
+      [...stripComments(s).matchAll(/\bset(?:Timeout|Interval)\(/g)].length;
+    const rule = (file: string) =>
+      `${file}: every setTimeout/setInterval must schedule through later() ` +
+      `(imageStore.ts) or the tracked \`timer\` field (midSweep.ts) — a bare, ` +
+      `receiver-qualified, or setInterval call is an escape from that rule`;
+    expect(scheduleCalls(store), rule("imageStore.ts")).toBe(2); // one inside `later`, one for the grid retry
     expect(store).toContain("this.gridThumbPendingRetry = setTimeout(");
     expect(store).toContain("private clearTimers(");
-    expect(bare(sweep)).toBe(1);
+    expect(scheduleCalls(sweep), rule("midSweep.ts")).toBe(1);
     expect(sweep).toContain("this.timer = setTimeout(");
   });
 });
