@@ -1173,7 +1173,7 @@ mod tests {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let (user, _lrc) = crate::xmp::read_ratings(p).unwrap_or((None, None));
+            let user = crate::xmp::read_ratings(p).ok().and_then(|r| r.rating);
             let suggest_reject =
                 s.decode_ok && s.af_sharpness < SHARP_REJECT && s.af_texture >= TEXTURE_MIN;
             let suggest = if suggest_reject { "reject" } else { "-" };

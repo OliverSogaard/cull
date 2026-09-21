@@ -408,6 +408,10 @@ pub(crate) struct AnalyzeResult {
     /// ratings on the grid + EXIF panel. Same sidecar pass as `ratings`, so
     /// it's free to extract here.
     lrc_ratings: Vec<Option<u8>>,
+    /// Per input index: the frame's colour label as CULL's lowercase key
+    /// ("red"…"purple"), "custom" for an `xmp:Label` string CULL does not
+    /// recognise, or null. Same sidecar pass as `ratings`, so it is free here.
+    labels: Vec<Option<String>>,
     /// Parent directories the analyze pass could not list, `"<dir>: <error>"`.
     /// Every frame in one lost its mtime (sorts last) and its sidecar was
     /// never discovered (reads back unrated) — the UI surfaces this instead of
@@ -530,6 +534,7 @@ fn list_parents(paths: &[String], on_progress: &mut dyn FnMut(usize)) -> Listing
 struct Restore {
     ratings: Vec<Option<String>>,
     lrc_ratings: Vec<Option<u8>>,
+    labels: Vec<Option<String>>,
     /// Sidecars that exist but could not be read, `"<path>: <error>"`, capped.
     errors: Vec<String>,
     error_count: u32,
@@ -555,10 +560,11 @@ fn restore_ratings(
     let mut out = Restore {
         ratings: vec![None; n],
         lrc_ratings: vec![None; n],
+        labels: vec![None; n],
         errors: Vec::new(),
         error_count: 0,
     };
-    type Read = (usize, Result<(Option<String>, Option<u8>), String>);
+    type Read = (usize, Result<crate::xmp::SidecarRead, String>);
     let reads: Vec<Read> = if concurrent && to_read.len() > RESTORE_WORKERS {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let done_counter = AtomicUsize::new(0);
@@ -608,9 +614,10 @@ fn restore_ratings(
     };
     for (i, r) in reads {
         match r {
-            Ok((rating, lrc)) => {
-                out.ratings[i] = rating;
-                out.lrc_ratings[i] = lrc;
+            Ok(read) => {
+                out.ratings[i] = read.rating;
+                out.lrc_ratings[i] = read.star;
+                out.labels[i] = read.label;
             }
             Err(e) => note_restore_error(&mut out, e),
         }
@@ -767,6 +774,7 @@ fn analyze_folder_sync(
             order: vec![],
             ratings: vec![],
             lrc_ratings: vec![],
+            labels: vec![],
             unreadable_dirs: vec![],
             restore_errors: vec![],
             restore_error_count: 0,
@@ -942,6 +950,7 @@ fn analyze_folder_sync(
         order,
         ratings: restore.ratings,
         lrc_ratings: restore.lrc_ratings,
+        labels: restore.labels,
         unreadable_dirs: listing.unreadable,
         restore_errors: restore.errors,
         restore_error_count: restore.error_count,

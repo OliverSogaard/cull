@@ -41,6 +41,9 @@ const XMPDM_NS: &str = "http://ns.adobe.com/xmp/1.0/DynamicMedia/";
 /// everything except CULL.
 const CULL_NS: &str = "http://ns.cull.photo/1.0/";
 
+/// The core xmp namespace URI — `xmp:Rating` and `xmp:Label` live here.
+const XMP_NS: &str = "http://ns.adobe.com/xap/1.0/";
+
 /// Process-wide unique sequence for atomic-write temp files, shared by every
 /// sidecar writer (write + clear) so two overlapping operations on the same
 /// sidecar — e.g. a fast re-rate, or an unrate racing a prior write — can never
@@ -107,7 +110,25 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
         .map_err(|e| format!("write_xmp_rating task failed: {e}"))?
 }
 
-fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
+/// The shared body of EVERY sidecar write. In order: refuse when the CR3 is
+/// not at its path, read the existing sidecar or start a fresh one, apply
+/// `edit`, skip the temp+fsync+rename when the bytes are unchanged, write
+/// atomically.
+///
+/// Every write command goes through here so [`require_source`] — the guard
+/// behind the 2026-09-13 CRITICAL, an orphaned `.xmp` written into the folder
+/// a moved photo came from — cannot be forgotten by the next one.
+///
+/// The unchanged-bytes skip is what keeps a re-pressed key off the NAS. A
+/// brand-new sidecar always differs from `fresh_xmp()` when something was
+/// actually set, so that path still writes; setting nothing on a frame with
+/// no sidecar (e.g. clearing a star that was never there) correctly writes
+/// no file at all.
+fn write_sidecar_sync(
+    path: &str,
+    what: &str,
+    edit: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<(), String> {
     let cr3 = Path::new(path);
     require_source(cr3)?;
     let xmp_path = cr3.with_extension("xmp");
@@ -118,21 +139,31 @@ fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
         Err(e) => return Err(format!("read existing xmp: {e}")),
     };
 
-    let contents = apply_rating_to_xmp(&base, rating)?;
-    // Re-rating to the value already on disk (idempotent retries, a same-key
-    // re-press) needs no write — skip the temp+fsync+rename round-trip, which is
-    // the expensive part on the NAS this design targets. A brand-new sidecar always
-    // differs from fresh_xmp() (a flag was added), so that path still writes.
+    let contents = edit(&base)?;
     if contents == base {
         dlog!(
-            "[cull] write_xmp_rating({}): {rating} (unchanged, skipped)",
+            "[cull] write_sidecar({}): {what} (unchanged, skipped)",
             xmp_path.display()
         );
         return Ok(());
     }
     atomic_write_xmp(&xmp_path, &contents)?;
-    dlog!("[cull] write_xmp_rating({}): {rating}", xmp_path.display());
+    dlog!("[cull] write_sidecar({}): {what}", xmp_path.display());
     Ok(())
+}
+
+fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
+    write_sidecar_sync(path, rating, &|base| apply_rating_to_xmp(base, rating))
+}
+
+fn write_xmp_star_sync(path: &str, star: Option<u8>) -> Result<(), String> {
+    let what = star.map_or_else(|| "star cleared".to_string(), |n| format!("{n} star"));
+    write_sidecar_sync(path, &what, &|base| apply_star_to_xmp(base, star))
+}
+
+fn write_xmp_label_sync(path: &str, label: Option<&str>) -> Result<(), String> {
+    let what = label.unwrap_or("label cleared");
+    write_sidecar_sync(path, what, &|base| apply_label_to_xmp(base, label))
 }
 
 /// Unrate: clear CULL's rating fields from the sidecar.
@@ -159,6 +190,27 @@ pub(crate) async fn clear_xmp_rating(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || clear_xmp_rating_sync(&path))
         .await
         .map_err(|e| format!("clear_xmp_rating task failed: {e}"))?
+}
+
+/// Set or clear the star rating (`xmp:Rating` 1–5) on the CR3's sidecar.
+/// `None` clears it. Orthogonal to the pick/good verdict flags: a starred
+/// frame with no verdict is still unrated.
+#[tauri::command]
+pub(crate) async fn write_xmp_star(path: String, star: Option<u8>) -> Result<(), String> {
+    // Spawn-blocking for the same reason as write_xmp_rating: sync fs I/O
+    // (including an fsync, possibly over SMB) off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || write_xmp_star_sync(&path, star))
+        .await
+        .map_err(|e| format!("write_xmp_star task failed: {e}"))?
+}
+
+/// Set or clear the colour label (`xmp:Label`) on the CR3's sidecar. `label`
+/// is CULL's lowercase key ("red"…"purple"); `None` clears it.
+#[tauri::command]
+pub(crate) async fn write_xmp_label(path: String, label: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_xmp_label_sync(&path, label.as_deref()))
+        .await
+        .map_err(|e| format!("write_xmp_label task failed: {e}"))?
 }
 
 fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
@@ -207,30 +259,55 @@ fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Read a sidecar ONCE and derive both CULL's pick rating and the user's LrC
-/// star rating from the same in-memory string.
+/// Everything one sidecar read yields. A struct rather than a tuple because
+/// there are now three values and their types no longer tell them apart.
+/// `Debug` so `Result::unwrap_err` on a failed read still prints in tests.
+#[derive(Debug)]
+pub(crate) struct SidecarRead {
+    /// CULL's verdict — "keep" / "reject" / "favorite" — or None (unrated).
+    pub rating: Option<String>,
+    /// The user's 1–5★ (`xmp:Rating`), with CULL's own courtesy favorite
+    /// stamp filtered out. This is the star the UI shows and CULL writes.
+    pub star: Option<u8>,
+    /// The colour label as CULL's lowercase key, or "custom" for a string
+    /// CULL does not recognise, or None.
+    pub label: Option<String>,
+}
+
+/// Read a sidecar ONCE and derive CULL's pick rating, the user's LrC star
+/// rating and the colour label from the same in-memory string.
 ///
-/// The analyze restore pass needs both per file; reading the sidecar twice (one
-/// open for the pick rating, another for the star) doubled the open count on
-/// exactly the high-latency NAS path the whole design optimises around
-/// ("one open per file" — see ARCHITECTURE.md). Both values come from the same
-/// bytes, so a single read serves both.
+/// The analyze restore pass needs all of them per file; reading the sidecar
+/// twice (one open for the pick rating, another for the star) doubled the open
+/// count on exactly the high-latency NAS path the whole design optimises around
+/// ("one open per file" — see ARCHITECTURE.md). Every value comes from the same
+/// bytes, so a single read serves them all.
 ///
 /// The pick value follows the LrC-compatible flag scheme — `xmpDM:pick > 0` →
-/// keep (favorite when the star is exactly 1), `pick < 0` → reject, `pick == 0`
-/// → deliberately unflagged. Fallback (no pick attr present): older CULL
-/// sidecars that stored only `xmp:Rating` with a Cull CreatorTool (keep→0,
-/// reject→-1, favorite→5), so existing culls still resume after the format
-/// change. The star value is the raw `xmp:Rating` (1–5), or `None`.
+/// keep (favorite when `cull:fav` says so, or, with no marker at all, when the
+/// star is exactly 1), `pick < 0` → reject, `pick == 0` → deliberately
+/// unflagged. Fallback (no pick attr present): older CULL sidecars that stored
+/// only `xmp:Rating` with a Cull CreatorTool (keep→0, reject→-1, favorite→5),
+/// so existing culls still resume after the format change. The star value is
+/// the raw `xmp:Rating` (1–5), or `None`. The colour label rides the same bytes
+/// ([`parse_label`]), so the analyze pass still opens each sidecar exactly once.
 ///
-/// Absent sidecar → `Ok((None, None))` (unrated). Any other read failure is
-/// an `Err` the analyze pass counts and reports — a sidecar that IS there but
-/// can't be read must not silently become "no rating".
-pub(crate) fn read_ratings(cr3_path: &str) -> Result<(Option<String>, Option<u8>), String> {
+/// Absent sidecar → an all-`None` [`SidecarRead`] (unrated). Any other read
+/// failure is an `Err` the analyze pass counts and reports — a sidecar that IS
+/// there but can't be read must not silently become "no rating".
+pub(crate) fn read_ratings(cr3_path: &str) -> Result<SidecarRead, String> {
     let xmp = Path::new(cr3_path).with_extension("xmp");
     match std::fs::read_to_string(&xmp) {
-        Ok(content) => Ok((classify_xmp(&content), parse_lrc_rating(&content))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, None)),
+        Ok(content) => Ok(SidecarRead {
+            rating: classify_xmp(&content),
+            star: parse_lrc_rating(&content),
+            label: parse_label(&content),
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SidecarRead {
+            rating: None,
+            star: None,
+            label: None,
+        }),
         Err(e) => Err(format!("{}: {e}", xmp.display())),
     }
 }
@@ -327,7 +404,20 @@ fn cull_owned_fav_star(xmp: &str) -> bool {
         // leaves in SOMEONE ELSE's file — and an unrate strips the marker but
         // not the declaration, so trusting it would let the next write delete a
         // genuine Lightroom 1★ as if it were CULL's own courtesy stamp.
-        None => created_by_cull(xmp) && parse_xmp_rating(xmp) == Some(1),
+        //
+        // It also requires a POSITIVE `xmpDM:pick`, because a courtesy star was
+        // only ever written alongside one: the pre-marker favorite was
+        // `pick="1"` + a lone 1★, and the older Rating-only scheme spelled a
+        // favorite `5`, never `1`. Without that clause a 1★ the user sets
+        // THROUGH CULL — a CULL-created sidecar, no marker, no verdict — would
+        // be read as CULL's own stamp: hidden from the UI, and deleted by the
+        // next rating write. Stars are a Phase 5A feature; CULL is an author of
+        // 1★s now, so ownership can no longer be inferred from the value alone.
+        None => {
+            created_by_cull(xmp)
+                && parse_xmp_rating(xmp) == Some(1)
+                && matches!(parse_attr_i32(xmp, "xmpDM:pick"), Some(p) if p > 0)
+        }
     }
 }
 
@@ -363,6 +453,18 @@ fn ensure_cull_ns(xmp: &str) -> String {
         return xmp.to_string();
     }
     insert_after_about(xmp, &format!("\n    xmlns:cull=\"{CULL_NS}\""))
+}
+
+/// Ensure the core xmp namespace is declared before an `xmp:Rating` or
+/// `xmp:Label` attribute is written into a sidecar that never declared it.
+/// Every fresh CULL sidecar and every LrC one already do; a minimal
+/// third-party one may not, and prefixed XML with no declaration is XML a
+/// strict reader rejects.
+fn ensure_xmp_ns(xmp: &str) -> String {
+    if xmp.contains("xmlns:xmp=") {
+        return xmp.to_string();
+    }
+    insert_after_about(xmp, &format!("\n    xmlns:xmp=\"{XMP_NS}\""))
 }
 
 /// Read CULL's private favorite marker: `Some("star")` (CULL also wrote the
@@ -476,27 +578,132 @@ fn set_rating(xmp: &str, n: i32) -> String {
     set_desc_attr(xmp, "xmp:Rating", &n.to_string())
 }
 
+/// Lightroom's DEFAULT (English) colour-label set, in keyboard order —
+/// `6` `7` `8` `9` `Shift+6`. Left is CULL's wire key, right is the string
+/// written into `xmp:Label`.
+///
+/// `xmp:Label` is a LOCALISED free-text string, not an enum: a German
+/// Lightroom writes "Rot", and a user with a custom label set writes whatever
+/// they named it. These five are right for an English LrC on the default set
+/// and merely unnamed (a white swatch) anywhere else. `xmp:LabelColor` — the
+/// LrC 15.0+ companion field that carries the colour independently of the
+/// name — is deliberately NOT written: unverifiable from here.
+const LABEL_STRINGS: [(&str, &str); 5] = [
+    ("red", "Red"),
+    ("yellow", "Yellow"),
+    ("green", "Green"),
+    ("blue", "Blue"),
+    ("purple", "Purple"),
+];
+
+/// Set `xmp:Label` (replacing an existing ELEMENT form in place if present,
+/// else as an attribute matching LrC's style) — the same two-form handling
+/// [`set_rating`] does.
+fn set_label(xmp: &str, value: &str) -> String {
+    if let Some(start) = xmp.find("<xmp:Label>") {
+        let inner = start + "<xmp:Label>".len();
+        if let Some(rel) = xmp[inner..].find("</xmp:Label>") {
+            let end = inner + rel;
+            return format!("{}{}{}", &xmp[..inner], value, &xmp[end..]);
+        }
+    }
+    set_desc_attr(xmp, "xmp:Label", value)
+}
+
+/// Apply a star (1–5) or a clear to a sidecar string, preserving everything
+/// else. The sidecar says whether the frame is a favorite (`cull:fav` is
+/// "star" or "flag"), so this needs no rating argument:
+///   - 1–5 on a favorite → write the star, flip the marker to "flag" (the
+///     favorite now rides the user's star);
+///   - clear on a favorite → the courtesy 1★ comes back, marker "star";
+///   - 1–5 otherwise → write the star, touch no marker;
+///   - clear otherwise → remove `xmp:Rating` entirely. Lightroom's own `0`
+///     means "remove rating", and the user asked.
+fn apply_star_to_xmp(xmp: &str, star: Option<u8>) -> Result<String, String> {
+    if let Some(n) = star {
+        if !(1..=5).contains(&n) {
+            return Err(format!("star out of range: {n}"));
+        }
+    }
+    let is_fav = matches!(cull_fav_value(xmp).as_deref(), Some("star") | Some("flag"));
+    Ok(match star {
+        Some(n) => {
+            let out = set_rating(&ensure_xmp_ns(xmp), i32::from(n));
+            if is_fav {
+                set_desc_attr(&out, "cull:fav", "flag")
+            } else {
+                out
+            }
+        }
+        None if is_fav => {
+            let out = set_rating(&ensure_xmp_ns(xmp), 1);
+            set_desc_attr(&out, "cull:fav", "star")
+        }
+        None => remove_property(xmp, "xmp:Rating"),
+    })
+}
+
+/// Apply a colour label, or clear it. An unknown key is refused rather than
+/// written — the same strict boundary `apply_rating_to_xmp` applies to an
+/// unknown rating string. A label CULL does not recognise (`"custom"`) is
+/// never passed here: it is the user's, and only a real label key replaces it.
+fn apply_label_to_xmp(xmp: &str, label: Option<&str>) -> Result<String, String> {
+    match label {
+        Some(key) => {
+            let Some((_, text)) = LABEL_STRINGS.iter().find(|(k, _)| *k == key) else {
+                return Err(format!("unknown label: {key}"));
+            };
+            Ok(set_label(&ensure_xmp_ns(xmp), text))
+        }
+        None => Ok(remove_property(xmp, "xmp:Label")),
+    }
+}
+
+/// The colour label a sidecar carries, as CULL's lowercase wire key — or
+/// `"custom"` for any other non-empty `xmp:Label` string. Matching the five
+/// English defaults case-insensitively is what CULL can honestly claim to
+/// understand; everything else is the user's, is shown as "custom", and is
+/// never rewritten or cleared by a key that did not set it.
+fn parse_label(content: &str) -> Option<String> {
+    let raw = read_property(content, "xmp:Label")?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let key = LABEL_STRINGS
+        .iter()
+        .find(|(_, text)| text.eq_ignore_ascii_case(trimmed))
+        .map(|(key, _)| *key)
+        .unwrap_or("custom");
+    Some(key.to_string())
+}
+
 /// Remove `xmp:Rating` ONLY when it's the 1★ CULL writes for favorites — a
 /// user's 2–5★ LrC rating is left untouched.
 fn remove_fav_star(xmp: &str) -> String {
     if parse_xmp_rating(xmp) == Some(1) {
-        remove_rating_from_xmp(xmp)
+        remove_property(xmp, "xmp:Rating")
     } else {
         xmp.to_string()
     }
 }
 
-/// Strip `xmp:Rating` from a sidecar (element form AND Lightroom's attribute
+/// Strip a property from a sidecar (element form AND Lightroom's attribute
 /// form), leaving every other field intact. The element form swallows its
 /// leading indentation + trailing newline so we don't leave a dangling blank
-/// line.
-fn remove_rating_from_xmp(xmp: &str) -> String {
+/// line. Written once and used for `xmp:Rating` and `xmp:Label`: LrC writes
+/// either form depending on version and packet, so a writer that handled only
+/// one would silently leave the other behind.
+fn remove_property(xmp: &str, name: &str) -> String {
+    let open = format!("<{name}>");
+    let close = format!("</{name}>");
+    let attr = format!("{name}=\"");
     let mut out = xmp.to_string();
 
-    if let Some(open) = out.find("<xmp:Rating>") {
-        if let Some(rel) = out[open..].find("</xmp:Rating>") {
-            let mut start = open;
-            let mut end = open + rel + "</xmp:Rating>".len();
+    if let Some(start_tag) = out.find(&open) {
+        if let Some(rel) = out[start_tag..].find(&close) {
+            let mut start = start_tag;
+            let mut end = start_tag + rel + close.len();
             let b = out.as_bytes();
             // eat leading spaces/tabs on this line
             while start > 0 && (b[start - 1] == b' ' || b[start - 1] == b'\t') {
@@ -513,10 +720,10 @@ fn remove_rating_from_xmp(xmp: &str) -> String {
         }
     }
 
-    if let Some(open) = out.find("xmp:Rating=\"") {
-        let inner = open + "xmp:Rating=\"".len();
+    if let Some(open_at) = out.find(&attr) {
+        let inner = open_at + attr.len();
         if let Some(rel) = out[inner..].find('"') {
-            let mut start = open;
+            let mut start = open_at;
             let end = inner + rel + 1;
             // eat one leading space so we don't leave a double space between attrs
             let b = out.as_bytes();
@@ -528,6 +735,22 @@ fn remove_rating_from_xmp(xmp: &str) -> String {
     }
 
     out
+}
+
+/// Read a property's raw string value — element form OR attribute form.
+fn read_property(xmp: &str, name: &str) -> Option<String> {
+    let open = format!("<{name}>");
+    let close = format!("</{name}>");
+    if let Some(s) = xmp.find(&open) {
+        let inner = s + open.len();
+        if let Some(e) = xmp[inner..].find(&close) {
+            return Some(xmp[inner..inner + e].to_string());
+        }
+    }
+    let needle = format!("{name}=\"");
+    let s = xmp.find(&needle)? + needle.len();
+    let rel = xmp[s..].find('"')?;
+    Some(xmp[s..s + rel].to_string())
 }
 
 /// True if the sidecar carries user/edit data we must never delete. CULL's own
@@ -937,10 +1160,20 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
             parse_lrc_rating("xmp:Rating=\"1\" cull:fav=\"flag\" xmpDM:pick=\"1\""),
             Some(1)
         );
-        // Legacy CULL favorite (pre-marker: CULL-authored + lone 1★) → stamp.
+        // Legacy CULL favorite (pre-marker: CULL-created + a lone 1★ + the
+        // pick flag it was always written with) → stamp.
+        assert_eq!(
+            parse_lrc_rating("x:xmptk=\"Cull 1.0\" xmpDM:pick=\"1\" <xmp:Rating>1</xmp:Rating>"),
+            None
+        );
+        // WITHOUT the pick flag the same bytes are a user 1★, not a stamp:
+        // no CULL scheme ever wrote a courtesy star without a verdict beside
+        // it (the Rating-only scheme spelled a favorite `5`), and Phase 5A
+        // makes CULL an author of user 1★s. Reading this as a stamp hid the
+        // star from the UI and let the next rating write delete it.
         assert_eq!(
             parse_lrc_rating("x:xmptk=\"Cull 1.0\" <xmp:Rating>1</xmp:Rating>"),
-            None
+            Some(1)
         );
         // A genuine LrC 1★ with no CULL involvement is a real user rating.
         assert_eq!(
@@ -994,7 +1227,7 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
 
         let write = tauri::async_runtime::block_on(write_xmp_rating(p.clone(), "keep".into()));
         assert_eq!(write, Ok(()));
-        assert_eq!(read_ratings(&p).unwrap().0.as_deref(), Some("keep"));
+        assert_eq!(read_ratings(&p).unwrap().rating.as_deref(), Some("keep"));
 
         // Re-rating to the value already on disk takes the no-write skip path.
         let rewrite = tauri::async_runtime::block_on(write_xmp_rating(p.clone(), "keep".into()));
@@ -1019,7 +1252,8 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&work).unwrap();
         let absent = work.join("absent.cr3");
-        assert_eq!(read_ratings(&absent.to_string_lossy()), Ok((None, None)));
+        let r = read_ratings(&absent.to_string_lossy()).unwrap();
+        assert!(r.rating.is_none() && r.star.is_none() && r.label.is_none());
 
         let blocked = work.join("blocked.cr3");
         std::fs::create_dir_all(blocked.with_extension("xmp")).unwrap();
@@ -1195,5 +1429,343 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
             Some(1),
             "a second keep must never eat a star CULL did not write"
         );
+    }
+
+    // ── Stars ────────────────────────────────────────────────────────────
+
+    /// A star round-trips in BOTH XMP forms — LrC writes the attribute form,
+    /// older packets the element form, and set_rating handles both.
+    #[test]
+    fn a_star_round_trips_in_both_xmp_forms() {
+        for n in 1..=5u8 {
+            let attr = apply_star_to_xmp(&fresh_xmp(), Some(n)).unwrap();
+            assert_eq!(
+                parse_xmp_rating(&attr),
+                Some(i32::from(n)),
+                "attribute form {n}"
+            );
+            assert_eq!(
+                parse_lrc_rating(&attr),
+                Some(n),
+                "reads back as a user star"
+            );
+        }
+        let element = "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\
+                       <xmp:Rating>2</xmp:Rating></rdf:Description>";
+        let out = apply_star_to_xmp(element, Some(4)).unwrap();
+        assert!(
+            out.contains("<xmp:Rating>4</xmp:Rating>"),
+            "element form replaced in place"
+        );
+        assert!(
+            !out.contains("xmp:Rating=\""),
+            "no second attribute copy was added"
+        );
+    }
+
+    /// Clearing removes the property outright — Lightroom's `0` means
+    /// "remove rating", not "rating zero".
+    #[test]
+    fn clearing_a_star_removes_the_property() {
+        let three = apply_star_to_xmp(&fresh_xmp(), Some(3)).unwrap();
+        let cleared = apply_star_to_xmp(&three, None).unwrap();
+        assert_eq!(parse_xmp_rating(&cleared), None);
+        assert!(
+            !cleared.contains("xmp:Rating"),
+            "no empty attribute left behind"
+        );
+    }
+
+    /// Out of range is a refusal, not a clamp — the one strict boundary this
+    /// module already applies to an unknown rating string.
+    #[test]
+    fn a_star_outside_one_to_five_is_refused() {
+        assert!(apply_star_to_xmp(&fresh_xmp(), Some(0)).is_err());
+        assert!(apply_star_to_xmp(&fresh_xmp(), Some(6)).is_err());
+    }
+
+    /// The favourite's courtesy star, both directions (spec §2). Setting a
+    /// real star on a courtesy-star favourite flips the marker to "flag";
+    /// clearing it brings the courtesy 1★ back. The frame stays a favourite
+    /// throughout — a star is orthogonal to the verdict.
+    #[test]
+    fn a_star_on_a_favorite_flips_the_marker_and_clearing_restores_the_courtesy_star() {
+        let fav = apply_rating_to_xmp(&fresh_xmp(), "favorite").unwrap();
+        assert_eq!(cull_fav_value(&fav).as_deref(), Some("star"));
+
+        let starred = apply_star_to_xmp(&fav, Some(4)).unwrap();
+        assert_eq!(parse_xmp_rating(&starred), Some(4));
+        assert_eq!(
+            cull_fav_value(&starred).as_deref(),
+            Some("flag"),
+            "the star is the user's now"
+        );
+        assert_eq!(
+            classify_xmp(&starred).as_deref(),
+            Some("favorite"),
+            "still a favorite"
+        );
+        assert_eq!(
+            parse_lrc_rating(&starred),
+            Some(4),
+            "and the star is visible"
+        );
+
+        let cleared = apply_star_to_xmp(&starred, None).unwrap();
+        assert_eq!(
+            parse_xmp_rating(&cleared),
+            Some(1),
+            "courtesy star restored"
+        );
+        assert_eq!(
+            cull_fav_value(&cleared).as_deref(),
+            Some("star"),
+            "CULL owns it again"
+        );
+        assert_eq!(classify_xmp(&cleared).as_deref(), Some("favorite"));
+        assert_eq!(
+            parse_lrc_rating(&cleared),
+            None,
+            "a courtesy star is not a user star"
+        );
+    }
+
+    /// Favouriting a frame that ALREADY carries a CULL-set star must not
+    /// overwrite it — the same promise `favorite_never_clobbers_a_user_star`
+    /// makes about a Lightroom star, now that CULL is an author too.
+    #[test]
+    fn favoriting_a_cull_starred_frame_keeps_the_star() {
+        let starred = apply_star_to_xmp(&fresh_xmp(), Some(3)).unwrap();
+        let fav = apply_rating_to_xmp(&starred, "favorite").unwrap();
+        assert_eq!(parse_xmp_rating(&fav), Some(3), "3★ survives the favorite");
+        assert_eq!(cull_fav_value(&fav).as_deref(), Some("flag"));
+        let keep = apply_rating_to_xmp(&fav, "keep").unwrap();
+        assert_eq!(parse_xmp_rating(&keep), Some(3), "3★ survives the demote");
+        assert_eq!(classify_xmp(&keep).as_deref(), Some("keep"));
+    }
+
+    // ── Labels ───────────────────────────────────────────────────────────
+
+    /// Every label round-trips through both XMP forms as Lightroom's default
+    /// English string, and reads back as CULL's lowercase key.
+    #[test]
+    fn a_label_round_trips_in_both_xmp_forms() {
+        for (key, text) in LABEL_STRINGS {
+            let out = apply_label_to_xmp(&fresh_xmp(), Some(key)).unwrap();
+            assert!(
+                out.contains(&format!("xmp:Label=\"{text}\"")),
+                "{key} writes {text}"
+            );
+            assert_eq!(parse_label(&out).as_deref(), Some(key), "{key} reads back");
+        }
+        let element = "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\
+                       <xmp:Label>Blue</xmp:Label></rdf:Description>";
+        assert_eq!(
+            parse_label(element).as_deref(),
+            Some("blue"),
+            "element form reads"
+        );
+        let out = apply_label_to_xmp(element, Some("green")).unwrap();
+        assert!(
+            out.contains("<xmp:Label>Green</xmp:Label>"),
+            "element form replaced in place"
+        );
+        assert!(
+            !out.contains("xmp:Label=\""),
+            "no second attribute copy was added"
+        );
+    }
+
+    /// Case-insensitive on read (LrC has shipped both "Red" and "red"), and
+    /// ANY other non-empty string is the user's own label: reported as
+    /// "custom", never rewritten by a read.
+    #[test]
+    fn an_unknown_label_string_is_custom_and_is_preserved() {
+        assert_eq!(parse_label("xmp:Label=\"RED\"").as_deref(), Some("red"));
+        assert_eq!(
+            parse_label("xmp:Label=\"Urgent\"").as_deref(),
+            Some("custom")
+        );
+        assert_eq!(parse_label("xmp:Label=\"Rot\"").as_deref(), Some("custom"));
+        assert_eq!(
+            parse_label("xmp:Label=\"\""),
+            None,
+            "an empty label is no label"
+        );
+        assert_eq!(parse_label("no label here"), None);
+        // A rating write never touches someone else's label.
+        let custom = "<rdf:Description rdf:about=\"\" xmp:Label=\"Urgent\"></rdf:Description>";
+        let rated = apply_rating_to_xmp(custom, "reject").unwrap();
+        assert_eq!(
+            parse_label(&rated).as_deref(),
+            Some("custom"),
+            "still theirs"
+        );
+        assert!(
+            rated.contains("xmp:Label=\"Urgent\""),
+            "byte-for-byte theirs"
+        );
+    }
+
+    /// Clearing removes the property; an unknown label key is refused.
+    #[test]
+    fn clearing_a_label_removes_the_property_and_an_unknown_key_is_refused() {
+        let red = apply_label_to_xmp(&fresh_xmp(), Some("red")).unwrap();
+        let cleared = apply_label_to_xmp(&red, None).unwrap();
+        assert_eq!(parse_label(&cleared), None);
+        assert!(
+            !cleared.contains("xmp:Label"),
+            "no empty attribute left behind"
+        );
+        assert!(apply_label_to_xmp(&fresh_xmp(), Some("teal")).is_err());
+    }
+
+    /// A third-party sidecar that never declared the xmp namespace must get
+    /// the declaration before a prefixed attribute is written into it —
+    /// otherwise CULL emits XML a strict reader rejects.
+    #[test]
+    fn writing_into_a_sidecar_without_the_xmp_namespace_declares_it() {
+        let bare = "<rdf:Description rdf:about=\"\"\n   dc:title=\"x\">\n  </rdf:Description>";
+        assert!(!bare.contains("xmlns:xmp="));
+        let labelled = apply_label_to_xmp(bare, Some("blue")).unwrap();
+        assert!(labelled.contains("xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\""));
+        let starred = apply_star_to_xmp(bare, Some(2)).unwrap();
+        assert!(starred.contains("xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\""));
+    }
+
+    // ── The delete gate, with CULL-set user content ──────────────────────
+
+    /// A star or a label CULL set IS user content: unrating such a frame must
+    /// keep the sidecar, because the sidecar still holds something the user
+    /// asked for. This is the spec's "no ownership marker is needed" claim,
+    /// pinned rather than assumed.
+    #[test]
+    fn unrate_keeps_a_sidecar_that_still_holds_a_cull_set_star_or_label() {
+        for apply in [
+            &(|x: &str| apply_star_to_xmp(x, Some(3)).unwrap()) as &dyn Fn(&str) -> String,
+            &(|x: &str| apply_label_to_xmp(x, Some("red")).unwrap()) as &dyn Fn(&str) -> String,
+        ] {
+            let marked = apply(&apply_rating_to_xmp(&fresh_xmp(), "keep").unwrap());
+            let stripped = strip_cull_fields(&marked);
+            assert_eq!(classify_xmp(&stripped), None, "the verdict is gone");
+            assert!(
+                xmp_has_user_content(&stripped),
+                "a CULL-set star/label keeps the sidecar alive"
+            );
+        }
+        // …and once BOTH are cleared, the file is litter again.
+        let keep = apply_rating_to_xmp(&fresh_xmp(), "keep").unwrap();
+        let bare = apply_label_to_xmp(&apply_star_to_xmp(&keep, None).unwrap(), None).unwrap();
+        assert!(
+            !xmp_has_user_content(&strip_cull_fields(&bare)),
+            "nothing left to keep"
+        );
+    }
+
+    // ── The commands ─────────────────────────────────────────────────────
+
+    /// Every write command refuses when the CR3 is not at its path — the
+    /// guard behind the audit's one CRITICAL (an orphaned sidecar left in the
+    /// folder a moved photo came from). Same shape as
+    /// `write_refuses_when_cr3_is_missing`, extended to the two new writers.
+    #[test]
+    fn star_and_label_writes_refuse_when_the_cr3_is_missing() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-nosrc2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("moved.cr3"); // never created
+        let p = cr3.to_string_lossy().to_string();
+
+        let star_err = write_xmp_star_sync(&p, Some(3)).unwrap_err();
+        assert!(star_err.starts_with(MISSING_SOURCE), "{star_err}");
+        let label_err = write_xmp_label_sync(&p, Some("red")).unwrap_err();
+        assert!(label_err.starts_with(MISSING_SOURCE), "{label_err}");
+        // Clearing is a write too, and must refuse identically.
+        assert!(write_xmp_star_sync(&p, None)
+            .unwrap_err()
+            .starts_with(MISSING_SOURCE));
+        assert!(write_xmp_label_sync(&p, None)
+            .unwrap_err()
+            .starts_with(MISSING_SOURCE));
+        assert!(
+            !cr3.with_extension("xmp").exists(),
+            "no orphan sidecar written"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// End to end on disk: set a star and a label, read both back through the
+    /// one sidecar read the analyze pass uses, then clear them.
+    #[test]
+    fn star_and_label_commands_round_trip_on_disk() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-sl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("s.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let p = cr3.to_string_lossy().to_string();
+
+        assert_eq!(
+            tauri::async_runtime::block_on(write_xmp_star(p.clone(), Some(4))),
+            Ok(())
+        );
+        assert_eq!(
+            tauri::async_runtime::block_on(write_xmp_label(p.clone(), Some("green".into()))),
+            Ok(())
+        );
+        let read = read_ratings(&p).unwrap();
+        assert_eq!(
+            read.rating, None,
+            "a star is not a verdict — the frame is unrated"
+        );
+        assert_eq!(read.star, Some(4));
+        assert_eq!(read.label.as_deref(), Some("green"));
+
+        assert_eq!(
+            tauri::async_runtime::block_on(write_xmp_star(p.clone(), None)),
+            Ok(())
+        );
+        assert_eq!(
+            tauri::async_runtime::block_on(write_xmp_label(p.clone(), None)),
+            Ok(())
+        );
+        let cleared = read_ratings(&p).unwrap();
+        assert_eq!(cleared.star, None);
+        assert_eq!(cleared.label, None);
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Clearing a star on a frame that has no sidecar must not CREATE one: the
+    /// edit changes nothing against `fresh_xmp()`, so the unchanged-bytes skip
+    /// fires and no litter lands next to the photo.
+    #[test]
+    fn clearing_a_star_on_a_frame_with_no_sidecar_writes_no_file() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-nolit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("n.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let p = cr3.to_string_lossy().to_string();
+
+        assert_eq!(write_xmp_star_sync(&p, None), Ok(()));
+        assert_eq!(write_xmp_label_sync(&p, None), Ok(()));
+        assert!(
+            !cr3.with_extension("xmp").exists(),
+            "clearing nothing creates nothing"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Re-writing the value already on disk takes the no-write skip path —
+    /// what keeps a re-pressed key off the NAS.
+    #[test]
+    fn re_setting_the_same_star_or_label_changes_no_bytes() {
+        let once = apply_star_to_xmp(&fresh_xmp(), Some(3)).unwrap();
+        assert_eq!(apply_star_to_xmp(&once, Some(3)).unwrap(), once);
+        let lbl = apply_label_to_xmp(&fresh_xmp(), Some("blue")).unwrap();
+        assert_eq!(apply_label_to_xmp(&lbl, Some("blue")).unwrap(), lbl);
     }
 }
