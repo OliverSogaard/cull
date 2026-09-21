@@ -146,7 +146,11 @@ export function StagedFolders({
         if (e.key === "Enter" && !pointerFocusRef.current) e.stopPropagation();
       }}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) {
+        // Only focus moving to ANOTHER element outside the block ends pointer
+        // focus. A null relatedTarget is the window losing focus (Alt+Tab):
+        // focus comes back to the same button, still put there by the mouse.
+        const next = e.relatedTarget;
+        if (next && !e.currentTarget.contains(next)) {
           pointerFocusRef.current = false;
         }
       }}
