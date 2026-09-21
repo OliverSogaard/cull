@@ -36,25 +36,33 @@ const PREVIEW_UUID: [u8; 16] = [
     0xea, 0xf4, 0x2b, 0x5e, 0x1c, 0x98, 0x4b, 0x88, 0xb9, 0xfb, 0xb7, 0xdc, 0x40, 0x6e, 0x4d, 0x16,
 ];
 
+// `checked_add`, not `i + N`: every caller derives `i` from a file-supplied box
+// size, so a hostile 64-bit large-size header can push it to within a few bytes
+// of usize::MAX. The add would then wrap (release) or panic (debug) before
+// `get` ever got a chance to answer None. Overflow reads back as "out of
+// range", which is what the callers already handle.
 fn be_u32(d: &[u8], i: usize) -> Option<u32> {
-    d.get(i..i + 4)
+    d.get(i..i.checked_add(4)?)
         .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
 }
 fn be_u64(d: &[u8], i: usize) -> Option<u64> {
-    d.get(i..i + 8)
+    d.get(i..i.checked_add(8)?)
         .map(|b| u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
 }
 
 /// Top-level / sibling boxes in [start, end) → (fourcc, content_start, box_end).
 ///
-/// `end` is caller-supplied and `full_jpeg_location` is `pub`, so it can
-/// exceed the buffer. Clamping it here makes `i + 8 <= end <= d.len()` an
-/// invariant, which is what proves the four DIRECT indices at the push below
-/// safe — previously they rested on a promise every caller happened to keep.
+/// BOTH bounds are caller-supplied and `full_jpeg_location` is `pub`, so
+/// either can exceed the buffer. Clamping them here makes
+/// `start <= i + 8 <= end <= d.len()` an invariant, which is what proves the
+/// four DIRECT indices at the push below safe — previously they rested on a
+/// promise every caller happened to keep. `start` needs the clamp as much as
+/// `end` does: left alone, a `start` near `usize::MAX` wraps the `i + 8` in
+/// the loop condition below before any bounds check can run.
 fn boxes(d: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
     let end = end.min(d.len());
     let mut out = Vec::new();
-    let mut i = start;
+    let mut i = start.min(end);
     while i + 8 <= end {
         let Some(s32) = be_u32(d, i) else { break };
         let mut hdr = 8usize;
@@ -95,7 +103,10 @@ fn find_soi(d: &[u8], start: usize, end: usize) -> Option<usize> {
 /// always precedes the JPEG payload, so the first match is the real box.
 fn jpeg_in_box(d: &[u8], start: usize, end: usize, want: &[u8; 4]) -> Option<Vec<u8>> {
     let hi = end.min(d.len());
-    let mut i = start;
+    // `start.min(hi)`, for the same reason `boxes` clamps its own: the `i + 8`
+    // in the loop condition wraps on a start near usize::MAX. A no-op for every
+    // caller today, which all pass an offset already inside the buffer.
+    let mut i = start.min(hi);
     while i + 8 <= hi {
         // Jump to the next candidate first byte instead of scanning every byte
         // (mirrors jpeg_extent's memchr idiom). Same bound + first-match semantics.
@@ -440,7 +451,15 @@ fn io_err(msg: &str) -> std::io::Error {
 /// uuid) are small and fully present, so skipping by size reaches the target.
 fn top_box_content_start(d: &[u8], want: &[u8; 4]) -> Option<usize> {
     let mut i = 0usize;
-    while i + 8 <= d.len() {
+    // Checked, not `i + 8 <= d.len()`: `i` advances by a file-supplied box
+    // size, and a 64-bit large-size header can land it within 8 bytes of
+    // usize::MAX — where the plain add wraps before the comparison runs.
+    // `i.checked_add(size)` below already guards the jump itself; this guards
+    // the step after it.
+    while let Some(probe) = i.checked_add(8) {
+        if probe > d.len() {
+            break;
+        }
         let s32 = be_u32(d, i)?;
         let fourcc = [d[i + 4], d[i + 5], d[i + 6], d[i + 7]];
         let (size, hdr) = if s32 == 1 {
@@ -497,9 +516,10 @@ fn child_box(d: &[u8], start: usize, end: usize, want: &[u8; 4]) -> Option<(usiz
 /// the legacy scan as the fallback, and from the corpus gate test that asserts
 /// hint == mdat-scan for every sample CR3.
 ///
-/// `moov_start` / `moov_end` are NOT a precondition: `boxes` clamps its `end`
-/// to the buffer, so any range is safe (an out-of-range one simply yields no
-/// boxes and therefore `None`).
+/// `moov_start` / `moov_end` are NOT a precondition: `boxes` clamps BOTH its
+/// `start` and its `end` to the buffer, so any pair of offsets is safe — up to
+/// and including `usize::MAX` for either. An out-of-range range simply yields
+/// no boxes and therefore `None`.
 pub fn full_jpeg_location(d: &[u8], moov_start: usize, moov_end: usize) -> Option<(u64, u64)> {
     let mut best: Option<(u64, u64)> = None;
     for (fourcc, ts, te) in boxes(d, moov_start, moov_end) {
@@ -592,7 +612,11 @@ fn grow(f: &mut File, buf: &mut Vec<u8>, by: usize, flen: usize) -> std::io::Res
 fn jpeg_extent(d: &[u8], soi: usize) -> Option<usize> {
     let mut i = soi.checked_add(2)?;
     loop {
-        if i + 1 >= d.len() {
+        // `i >= len - 1` rather than `i + 1 >= len`: `i` advances by a
+        // file-supplied segment length, so the plain add can wrap. Identical
+        // for every in-range `i`, and `saturating_sub` keeps the empty-buffer
+        // case (len 0 or 1) answering None exactly as before.
+        if i >= d.len().saturating_sub(1) {
             return None;
         }
         if d[i] != 0xFF {
@@ -612,7 +636,7 @@ fn jpeg_extent(d: &[u8], soi: usize) -> Option<usize> {
             0xDA => break,                  // SOS → entropy data follows
             0x01 | 0xD0..=0xD7 => continue, // standalone markers, no length
             _ => {
-                if i + 1 >= d.len() {
+                if i >= d.len().saturating_sub(1) {
                     return None;
                 }
                 let len = ((d[i] as usize) << 8) | (d[i + 1] as usize);
@@ -624,7 +648,7 @@ fn jpeg_extent(d: &[u8], soi: usize) -> Option<usize> {
         }
     }
     // `i` is at the SOS segment's length field; skip the SOS header to the entropy.
-    if i + 1 >= d.len() {
+    if i >= d.len().saturating_sub(1) {
         return None;
     }
     let sos_len = ((d[i] as usize) << 8) | (d[i + 1] as usize);
@@ -635,7 +659,7 @@ fn jpeg_extent(d: &[u8], soi: usize) -> Option<usize> {
     // Entropy stream: scan for the real FF D9 (EOI), skipping FF 00 stuffing and
     // FF D0–D7 restart markers. memchr (SIMD) jumps between FF bytes instead of
     // touching every byte of the multi-MB stream — the per-image hot loop.
-    while i + 1 < d.len() {
+    while i < d.len().saturating_sub(1) {
         let rel = memchr::memchr(0xFF, &d[i..d.len() - 1])?;
         let p = i + rel; // p + 1 < d.len() guaranteed (searched only up to len-1)
         match d[p + 1] {
@@ -1679,30 +1703,19 @@ mod tests {
             "clamped to (len - voff) / 8, not the declared {HOSTILE}"
         );
 
-        // 2. The consequence: the three real components, returned AT ONCE.
-        //    The budget is ~1000x a healthy parse and ~4x under the measured
-        //    pre-clamp spin, so this cannot pass merely by being fast.
-        let t0 = std::time::Instant::now();
-        let parts = t.rationals(ifd, 0x0002);
-        let elapsed = t0.elapsed();
-        assert_eq!(parts, vec![51.0, 30.0, 0.0]);
-        assert!(
-            elapsed < std::time::Duration::from_millis(200),
-            "rationals took {elapsed:?} — an unbounded IFD count is back"
-        );
+        // 2. The consequence: the three real components, and only those. No
+        //    wall-clock assertion — the clamped `cnt` above is the
+        //    deterministic proof, and a timing bound would only add flake on a
+        //    loaded runner. The fuzzer's per-input deadline covers the
+        //    spin-forever shape.
+        assert_eq!(t.rationals(ifd, 0x0002), vec![51.0, 30.0, 0.0]);
 
         // 3. The PRODUCTION route the bug actually lived on, end to end:
         //    metadata_from_prefix -> gps_coord -> rationals, on a whole CR3
         //    head. Asserting only on `rationals` would leave the path every
         //    real image takes untested.
         let head = synth_cr3_head_with_cmt(b"CMT4", &blob);
-        let t1 = std::time::Instant::now();
         let m = metadata_from_prefix(&head);
-        assert!(
-            t1.elapsed() < std::time::Duration::from_millis(200),
-            "metadata_from_prefix took {:?}",
-            t1.elapsed()
-        );
         assert_eq!(m.gps_lat, Some(51.5), "51 deg 30 min 0 sec, N");
     }
 
@@ -1735,6 +1748,38 @@ mod tests {
         assert_eq!(full_jpeg_location(&d, 0, usize::MAX), None);
     }
 
+    /// A 64-bit large-size box (`size == 1`) whose declared size lands `i`
+    /// within 8 bytes of `usize::MAX`. `checked_add` accepts it — the wrap is
+    /// one step later, in the LOOP CONDITION `i + 8 <= d.len()`, which is a
+    /// plain add on a file-derived offset. Found by the fuzzer at 2,000,000
+    /// iterations (iteration 1272142); pinned here deterministically because
+    /// the default 20,000-iteration run does not reach it.
+    #[test]
+    fn top_box_content_start_does_not_overflow_on_a_size_near_usize_max() {
+        let mut d = Vec::new();
+        d.extend_from_slice(&1u32.to_be_bytes()); // size == 1 -> 64-bit size follows
+        d.extend_from_slice(b"free"); // not the box we are looking for
+        d.extend_from_slice(&(u64::MAX - 3).to_be_bytes()); // i jumps to usize::MAX - 3
+        d.extend_from_slice(&[0u8; 8]); // 24 bytes total
+        assert_eq!(d.len(), 24);
+        assert_eq!(top_box_content_start(&d, b"mdat"), None);
+    }
+
+    /// The `start` argument gets the same treatment as `end`. Every walker
+    /// that takes a caller-supplied offset and opens with `while i + N <= …`
+    /// wraps when that offset is near `usize::MAX`, so each one clamps it.
+    /// No production caller passes such a start today — this keeps the
+    /// invariant unconditional rather than resting on that.
+    #[test]
+    fn the_walkers_clamp_a_start_past_the_buffer() {
+        let d = [0u8, 0, 0, 8, b'f', b'r', b'e', b'e'];
+        assert!(boxes(&d, usize::MAX, usize::MAX).is_empty());
+        assert!(boxes(&d, usize::MAX, 0).is_empty());
+        assert_eq!(jpeg_in_box(&d, usize::MAX, usize::MAX, b"PRVW"), None);
+        assert_eq!(jpeg_extent(&d, usize::MAX - 2), None);
+        assert_eq!(find_soi(&d, usize::MAX, usize::MAX), None);
+    }
+
     /// A box whose declared size is smaller than its own header is malformed.
     /// `boxes` has always ended the walk there; `top_box_content_start`
     /// checked after the fourcc match and reported it as found.
@@ -1755,7 +1800,9 @@ mod tests {
     //
     // A deterministic, dependency-free fuzzer over every `&[u8]` parse entry
     // point in this file, as an ordinary `#[test]`, so it rides the existing
-    // `cargo test` step on BOTH CI runners and needs no CR3 corpus.
+    // `cargo test` step — the backend job, on windows-latest — and needs no
+    // CR3 corpus. (The macOS job is `cargo check --all-targets`, compile-only,
+    // so it builds the fuzzer but never runs it.)
     //
     // Why hand-rolled: `cargo fuzz` needs nightly + libFuzzer and a separate
     // crate that would link tauri and ort; `proptest` is ten crates plus a
