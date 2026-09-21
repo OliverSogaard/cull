@@ -26,6 +26,26 @@ function offsetAdjustedDelta(
 }
 
 /**
+ * Whether `el`'s current focus arrived via the keyboard (Tab, arrow nav)
+ * rather than a mouse click — the same distinction `:focus-visible` makes in
+ * a real browser: a clicked button KEEPS focus but does not match
+ * `:focus-visible`, while a Tab-focused one does. Named separately from the
+ * inline check so its one caller reads as a question, and so
+ * `StagedFolders.test.tsx` has something to stub — this repo's jsdom
+ * (30.0.1) cannot be trusted to answer it correctly from the one place
+ * production code asks: checked from WITHIN a keydown handler for the very
+ * key currently being pressed, jsdom's `:focus-visible` always reads true
+ * (dispatching that keydown itself counts as "a keyboard interaction just
+ * happened"), regardless of how focus was actually acquired. Real Chromium
+ * decides `:focus-visible` once, at focus time, and does not re-derive it
+ * from whatever event happens to be in flight — see the tests for the
+ * jsdom probe that found this.
+ */
+function isKeyboardFocused(el: Element): boolean {
+  return el.matches(":focus-visible");
+}
+
+/**
  * The staged screen's capture-time controls: the sort toggle, and — only when
  * the sort is on and two or more folders are staged — one row per folder with
  * its frame count, its first frame's capture time, the signed difference from
@@ -65,8 +85,14 @@ export function StagedFolders({
   const [firstTimes, setFirstTimes] = useState<readonly (number | null)[]>([]);
 
   useEffect(() => {
+    // Reset BEFORE the probe resolves, not after: on a re-stage the folder
+    // set (and so `probePaths`) can change while an earlier probe is still
+    // in flight, and without this an old folder's time could sit under a
+    // new folder's name for the instant between the re-stage and the new
+    // probe answering. `first !== null ? … : "—"` below then shows the dash
+    // immediately, for every row, until the new answer lands.
+    setFirstTimes([]);
     if (probePaths.length === 0) {
-      setFirstTimes([]);
       return;
     }
     let live = true;
@@ -108,8 +134,20 @@ export function StagedFolders({
       // behaviour. Stopping propagation here, before the event reaches
       // window, lets a focused toggle or stepper button take the Enter
       // itself instead of it falling through to that shortcut.
+      //
+      // Gated on `:focus-visible`, not every Enter: Chromium leaves focus on
+      // a clicked button, and a mouse-focused button still matches `:focus`
+      // but NOT `:focus-visible`. Stopping propagation unconditionally (round
+      // 1's fix) meant Enter after a plain mouse click on the sort block
+      // re-activated that same still-focused button on every press — the
+      // toggle flipping back and forth, or the offset stepping again — and
+      // "begin culling" could never fire. Gating on `:focus-visible` lets
+      // Enter fall through to the window keymap in exactly the case where
+      // the browser would NOT re-activate this button on its own.
       onKeyDown={(e) => {
-        if (e.key === "Enter") e.stopPropagation();
+        if (e.key === "Enter" && e.target instanceof Element && isKeyboardFocused(e.target)) {
+          e.stopPropagation();
+        }
       }}
     >
       <button
