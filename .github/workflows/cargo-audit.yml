@@ -1,0 +1,29 @@
+# RustSec advisories against Cargo.lock. Weekly and on demand — NOT on pull
+# requests: a new advisory published on a Tuesday is not a reason to block a
+# Tuesday afternoon's merge, and `cargo install` costs two to three minutes
+# that a PR should not pay. The npm side of this runs per-PR instead, as
+# `pnpm audit --prod --audit-level=high` in ci.yml, because that one is a
+# download rather than a build. This job has no severity floor: a weekly
+# report should say everything it knows.
+#
+# GitHub disables a scheduled workflow after 60 days without repository
+# activity and emails the owner; `workflow_dispatch` is the manual escape
+# hatch, and pushing anything re-arms the schedule.
+name: cargo audit
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+# Explicit beats inherited: this job reads the lockfile and nothing else.
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # --locked so the audit tool's own dependency tree cannot drift and turn
+      # a green week red for reasons that have nothing to do with this repo.
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit --file src-tauri/Cargo.lock
