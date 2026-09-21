@@ -3020,3 +3020,60 @@ The controller runs implementers in parallel **only** on disjoint file sets, up 
 Task 7 is the only owner of `src/image/**`; Task 8 the only owner of `src/app/useDecideCallbacks*`; Task 9 the only owner of `src/components/WindowControls*`, `src/test/**` and `src/App.smoke.test.tsx`; Task 1 the only owner of anything under `src-tauri/`. No source file has two owners in this phase.
 
 **Cross-task sanity, not a file conflict:** Task 7 changes `imageStore.ts` while Task 9's smoke test mounts a tree that uses it, and Task 5 changes the keymap the same smoke test presses a key into. Both changes are behaviour-preserving for that path (a tracked timer is still a timer; `Enter` with `repeat: false` still rates), and each task's own gate runs the whole suite — so a real interaction fails loudly at whichever lands second.
+
+---
+
+## Implementation note (2026-09-21)
+
+Executed with subagent-driven development under Oliver's standing instruction of 2026-09-20 to make the calls and keep moving; every choice is a ruling. Before any code, two fresh checkers fact-checked this plan against the repository (2 blockers, 12 should-fixes — see "Pre-flight corrections"). Then a fresh implementer and a fresh reviewer per task, up to six in parallel on disjoint files; fix rounds on Tasks 1, 5, 6, 7 and 9; a scoped re-review of the Rust fix round; a whole-branch review on the strongest model split in two (Rust + CI + docs; everything under `src/`); ONE fix wave by five implementers; ONE scoped re-review. Gates at the tip, run by the controller: 931 tests in 84 files (801 in 80 before), lint, lint:css, typecheck, typecheck:tests, build, `pnpm audit --prod --audit-level=high`; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, 166 Rust tests (154 before).
+
+### What shipped
+
+- **The one real bug.** A CR3 whose GPS IFD declared a huge RATIONAL count spun for seconds per file on every read path. `Tiff::find_entry` now clamps every file-supplied count to what the buffer can hold, and `rationals` stops at the first out-of-bounds read — either alone ends the hang.
+- **A mutation fuzzer for the CR3 parser** — an ordinary `#[test]`, no new dependency, deterministic from a constant seed, 20,000 inputs in about 30 ms. It found the clamp's assertion form at iteration 0 and an overflow in `boxes` at iteration 3; run at 2,000,000 iterations it found a second overflow near `usize::MAX`, and a sweep of the same pattern fixed five sites (two of which panicked in release builds too). Ten seeds reach every parser path — preview, thumbnail, the sample tables, AF data, big-endian TIFF — and a test asserts that reach, so it cannot silently rot. `CULL_FUZZ_SEED` / `_FROM` / `_ITERS` take decimal or hex and panic on garbage; the failure line pastes back unchanged. 12 million inputs across six seeds: no further parser defect.
+- **The Exif strip runs in one pass.** The old draining loop was quadratic (2.69 s on 200,000 tiny segments — the same class as the hang, and something random corruption cannot construct). Byte-identical to the old code, which is kept in the tests as an oracle.
+- **A harness for the keymap** — `renderHook` under jsdom, a props factory typed against the hook's own parameter type (a new or renamed prop is a compile error) — and 112 tests. Five defects fixed test-first: a held rating key or filter digit acted at the OS repeat rate (now once per press; holding an arrow still flies); Ctrl combos acted underneath the Tab help sheet; a held scrub survived the quit guard and Settings; compare's `k` / `f` lacked `preventDefault`; Ctrl+Tab opened the help sheet.
+- **One App-level smoke test** — start → staged → culling → Enter → `write_xmp_rating` with `keep` — on a shared Tauri + DOM mock kit whose default router throws on an unrouted command. 10 of 10 consecutive passes; it stays.
+- **Store timers are cancelled on reset, not silenced**, through one `later()` helper; the idle sweep keeps its timer handle. Side effect: an old 1.5 s window after a folder switch in which the sweep could not arm is gone.
+- **CI**: `pnpm build` and a production audit on every PR; a `backend-macos` job that compiles the macOS-only code CI had never compiled (green on its first run); monthly grouped Dependabot with majors on their own PRs; a weekly `cargo audit`.
+- **Coverage plumbing**, measured and not gated.
+
+### Coverage
+
+| Scope | Before (stmts / branches / funcs / lines) | At the tip |
+|---|---|---|
+| Total | 74.9 / 61.5 / 67.9 / 77.3 | 73.7 / 60.0 / 69.4 / 76.1 |
+| `src/utils` | 93 / 86 / 89 / 93 | 94 / 86 / 91 / 94 |
+| `src/smart` | 93 / 89 / 86 / 96 | 93 / 89 / 86 / 96 |
+| `src/image` | 87 / 79 / 84 / 91 | 92 / 83 / 94 / 95 |
+| `src/app` | 60 / 54 / 54 / 63 | 67 / 60 / 67 / 70 |
+| `src/hooks` | 55 / 55 / 64 / 58 | 72 / 64 / 80 / 77 |
+| `src/components` | 56 / 36 / 47 / 57 | 49 / 35 / 37 / 50 |
+| `src` (`App.tsx`) | never loaded | 45 / 31 / 45 / 48 |
+
+The total FELL 1.2 points while every directory that gained tests rose: the smoke test loads `App.tsx` and the components it mounts for the first time, so their lines now count in the denominator. That is the measurement getting more honest, and it is why no threshold is gated — if one is added later, per-directory floors, never a global figure.
+
+### Where the spec or the plan was wrong, and what was ruled instead
+
+- `top_box_content_start` could not return out of bounds as the scout claimed; the real panics were in `boxes`' direct indices and, later, its loop bound. Found by the planner, confirmed by the fuzzer.
+- The plan's timer-hygiene list silently dropped the grid pending-retry the spec names; the whole-branch review caught it, and both resets' cancel is now pinned.
+- None of the seven duplicated `vi.mock` factories migrated onto the kit: the kit's default router throws while theirs resolve `undefined`, and `imageStore.test.ts` sends `begin_session` through `invoke` on every reset, so a swap changes behaviour per file.
+- `pnpm audit --prod --audit-level=high`, not a bare `--prod`.
+- The quadratic Exif strip was fixed rather than listed as a fuzzer limit: same class as the bug this phase exists for.
+- Vitest went 4.1.7 → 4.1.11 to match its coverage provider's exact peer (lockfile-level; the caret already allowed it).
+
+### What review caught
+
+Tests that could not fail, in four of the ten tasks — each now watched red under a named production mutation: the scrub half of a store test; two hygiene tests satisfied by the reset fallback alone (one hid a second confound); a source guard blind to `window.setTimeout` and `setInterval`; a rerender test that minted fresh spies, so the dependency array it existed for was never exercised; no positive test for `ArrowLeft`; zoom tests that never separated `e.code` from `e.key`; the digit repeat guard pinned only for `3`; the L / G / C mode keys, grid Shift+Arrow and the overlay toggles asserted nowhere; three of five `withChanges` call sites invisible to any test; the idle sweep's cancel unpinned. Also: a "contract" docblock in the keymap that still described the pre-fix order and would have told the next developer to restore two of the bugs; a fuzzer that called every entry point while its seeds reached about half the parser; a fuzz seed variable that silently ignored hex — so every "reproduction" was a fresh run; and doc claims that were false on the day they were written.
+
+### Verification
+
+Tests and static gates; the parser on the 12 scratch CR3 copies (never the real folders): 2.65 million exhaustive old-versus-new comparisons and 4,275 truncation points per file, zero mismatches. No live run this phase — the one visible change (one action per press) is pinned by the harness. Not seen live: real WebView key-repeat behaviour. The weekly `cargo audit` has never run — trigger it once after the merge.
+
+### Left for later
+
+- A Tab keydown carrying `repeat` AND a modifier slips the Ctrl+Tab guard and closes a held sheet — unreachable in practice.
+- The reach test proves reach, not depth; real Rust coverage needs `cargo llvm-cov`. The fuzz seeds embed a JPEG from the `image` crate, so a (seed, iteration) pair reproduces only at a given commit.
+- An injected scheduler for the store timers; a fuzz seam for the file-reading grow loops.
+- `useCullKeymap.ts` and `imageStore.test.ts` are past the 800-line guidance.
+- Carried from 3C, unchanged: the strip's one-cell burst "fence"; no Cancel during "analyzing"; the stepper's far `−`; `C` from Rejects is a silent no-op; filter tabs lack `role="tab"`.
