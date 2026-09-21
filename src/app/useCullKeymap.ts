@@ -1,8 +1,23 @@
 import { useEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
-import type { Filter, Img, NavSite, Phase, Rating, Settings } from "../types";
-import { cycleFilter } from "../utils/filterModes";
+import type { Filter, Img, Label, NavSite, Phase, Rating, Settings, Star } from "../types";
+import { cycleFilter, type TopFilter } from "../utils/filterModes";
 
 const PAN_STEP = 2; // % per arrow press while zoomed
+
+/**
+ * The Shift+digit row, live only while `settings.starsAndLabels` is on.
+ * Keyed by `e.code` (layout-stable) rather than `e.key` (which reports the
+ * shifted SYMBOL, different on every keyboard layout). Purple rides
+ * `Shift+6` because Lightroom ships no default shortcut for it.
+ */
+const SHIFT_DIGIT: Record<string, TopFilter | "purple" | undefined> = {
+  Digit1: "all",
+  Digit2: "unrated",
+  Digit3: "keeps",
+  Digit4: "suggested",
+  Digit5: "rejects",
+  Digit6: "purple",
+};
 
 /**
  * The keyboard, verbatim from App (grand cleanup Phase 7): the phase-agnostic
@@ -41,6 +56,16 @@ const PAN_STEP = 2; // % per arrow press while zoomed
  *   goToSite). The per-key BINDINGS reached once precedence clears — the
  *   Shift+Arrow grid-selection growth, and the i/h/p/t/o overlay toggles —
  *   are pinned separately, in "grid Shift+Arrow" and "overlay toggles".
+ * - TWO KEYMAP SHAPES, selected by `settings.starsAndLabels` (Phase 5A).
+ *   OFF (the default) is today's keymap exactly: `1`–`5` are the filter
+ *   tabs and `0`, `6`–`9` are unbound everywhere. ON, the digit row is
+ *   Lightroom's — `1`–`5` set stars, `0` clears them, `6`–`9` and `Shift+6`
+ *   set the five colour labels — and the filters move to `Shift+1`–`Shift+5`,
+ *   matched on `e.code` because Shift+1 is `!` on his layout and something
+ *   else on another. Neither shape binds a digit in COMPARE. The proof that
+ *   OFF costs nothing is structural and is pinned in useCullKeymap.test.tsx:
+ *   every assertion written before this feature runs against the default
+ *   settings object, unchanged.
  */
 export function useCullKeymap({
   phase,
@@ -98,6 +123,8 @@ export function useCullKeymap({
   challengerKeptBoth,
   applyRating,
   unrateCurrent,
+  applyStar,
+  applyLabel,
   setFilter,
   chipsTooltip,
   startAnalysis,
@@ -169,6 +196,16 @@ export function useCullKeymap({
   challengerKeptBoth: (asFavorite: boolean) => void;
   applyRating: (rating: Rating) => void;
   unrateCurrent: () => void;
+  /** Set the star on the current frame, or on the whole grid selection.
+   *  `null` clears it (the `0` key). Only reachable with
+   *  `settings.starsAndLabels` on. */
+  applyStar: (star: Star | null) => void;
+  /** Set the colour label on the current frame, or on the whole grid
+   *  selection — toggling it OFF when that label is already the frame's, as
+   *  Lightroom does. This hook does not hold the labels map, so the toggle
+   *  decision lives in the callback. Only reachable with
+   *  `settings.starsAndLabels` on. */
+  applyLabel: (label: Label) => void;
   setFilter: Dispatch<SetStateAction<Filter>>;
   chipsTooltip: { pulse: () => void };
   startAnalysis: () => void;
@@ -423,7 +460,38 @@ export function useCullKeymap({
       }
     };
 
+    /** One filter digit's dispatch — the three statements the five `case "1"`
+     *  … `case "5"` bodies used to repeat, in the same order. Shared by the
+     *  bare digits (layer off) and Shift+digit (layer on) so the two keymap
+     *  shapes cannot drift apart. The per-case `if (e.repeat) break;` stays
+     *  in each case: the harness pins all five separately, because each guard
+     *  is its own statement and losing one is invisible from the others. */
+    const selectFilterTop = (top: TopFilter): void => {
+      setFilter((f) => cycleFilter(f, top));
+      // Only the two tabs with sub-modes have a sub-chip tooltip to show.
+      if (top === "keeps" || top === "suggested") chipsTooltip.pulse();
+      // Smart is a valid filter state even with smart culling off — it lands
+      // on the "disabled" empty screen. Only kick off analysis when the
+      // feature is actually on.
+      if (top === "suggested" && settings.smartCulling) startAnalysis();
+    };
+
     const handleSingleModeKey = (e: KeyboardEvent): void => {
+      // Stars and labels own the bare digit row while the layer is on, so the
+      // five filters move to Shift+digit and Purple — which Lightroom gives
+      // no key at all — takes Shift+6. Matched on `e.code`: Shift+1 reports
+      // `e.key === "!"` on a US layout and a different symbol on every other
+      // one, so `e.key` cannot see this row. Returns ONLY on a digit code, so
+      // Shift+F, Shift+Arrow and Shift+Space fall through untouched.
+      if (settings.starsAndLabels && e.shiftKey) {
+        const shifted = SHIFT_DIGIT[e.code];
+        if (shifted !== undefined) {
+          if (e.repeat) return; // one action per press, like every digit
+          if (shifted === "purple") applyLabel("purple");
+          else selectFilterTop(shifted);
+          return;
+        }
+      }
       switch (e.key) {
         // Rating works WHILE ZOOMED: the advance carries the zoom to the next
         // frame at its own AF anchor (see applyRating's advanceTo). The old
@@ -645,37 +713,66 @@ export function useCullKeymap({
         case "O":
           setCompositionVisible((v) => !v);
           break;
-        case "1":
-          // Same one-per-press rule as the rating keys above: a held digit
-          // used to spin its sub-mode cycle at the OS repeat rate.
+        // The digit row has two shapes (see the contract above). OFF — the
+        // default — is exactly what it has always been: the filter tabs, one
+        // action per press. ON, it is Lightroom's: stars on 1–5, clear on 0,
+        // labels on 6–9, and the filters up on Shift+digit.
+        //
+        // `e.repeat` is dropped per case, not once above: each guard is its
+        // own statement and the harness pins all five separately, because a
+        // held "4" that lost its guard would call startAnalysis on every OS
+        // repeat tick with nothing else failing.
+        case "0":
+          // Unbound with the layer off — byte-for-byte today's behaviour,
+          // where no `case "0"` existed at all (no preventDefault, no call).
+          if (!settings.starsAndLabels) break;
           if (e.repeat) break;
-          setFilter((f) => cycleFilter(f, "all"));
+          applyStar(null);
+          break;
+        case "1":
+          if (e.repeat) break;
+          if (settings.starsAndLabels) applyStar(1);
+          else selectFilterTop("all");
           break;
         case "2":
           if (e.repeat) break;
-          setFilter((f) => cycleFilter(f, "unrated"));
+          if (settings.starsAndLabels) applyStar(2);
+          else selectFilterTop("unrated");
           break;
         case "3":
           if (e.repeat) break;
-          setFilter((f) => cycleFilter(f, "keeps"));
-          chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
+          if (settings.starsAndLabels) applyStar(3);
+          else selectFilterTop("keeps");
           break;
         case "4":
-          // Smart tab is a valid filter state even with smart culling off —
-          // it lands on the "disabled" empty screen. Only kick off analysis
-          // when the feature is actually on.
           if (e.repeat) break;
-          setFilter((f) => cycleFilter(f, "suggested"));
-          chipsTooltip.pulse(); // show the sub-mode tooltip immediately on cycle
-          if (settings.smartCulling) {
-            startAnalysis(); // no-op unless "analyze on open" is off and unrun
-          }
+          if (settings.starsAndLabels) applyStar(4);
+          else selectFilterTop("suggested");
           break;
         case "5":
-          // No chipsTooltip.pulse(): Rejects has no sub-modes, so there is no
-          // sub-chip tooltip to show (same as 1 and 2).
           if (e.repeat) break;
-          setFilter((f) => cycleFilter(f, "rejects"));
+          if (settings.starsAndLabels) applyStar(5);
+          else selectFilterTop("rejects");
+          break;
+        case "6":
+          if (!settings.starsAndLabels) break;
+          if (e.repeat) break;
+          applyLabel("red");
+          break;
+        case "7":
+          if (!settings.starsAndLabels) break;
+          if (e.repeat) break;
+          applyLabel("yellow");
+          break;
+        case "8":
+          if (!settings.starsAndLabels) break;
+          if (e.repeat) break;
+          applyLabel("green");
+          break;
+        case "9":
+          if (!settings.starsAndLabels) break;
+          if (e.repeat) break;
+          applyLabel("blue");
           break;
         case "i":
         case "I":
@@ -865,6 +962,8 @@ export function useCullKeymap({
     resetGridSize,
     applyRating,
     unrateCurrent,
+    applyStar,
+    applyLabel,
     undo,
     redo,
     openActions,
@@ -891,6 +990,7 @@ export function useCullKeymap({
     growGridSelection,
     selectAllInGrid,
     settings.smartCulling,
+    settings.starsAndLabels,
     startAnalysis,
   ]);
 
