@@ -34,6 +34,21 @@
   --scrim: rgba(8, 8, 10, 0.82);
   --scrim-modal: rgba(8, 8, 10, 0.7);
 
+  /* Colour labels (Phase 5A) — Lightroom's five, desaturated into this
+     palette the way --ok and --bad already are, and deliberately NOT the
+     verdict tokens: red means reject here, green means keep, purple means
+     favourite. A label is told from a verdict by SHAPE and PLACE first (a
+     verdict is a glyph in a circle, a label is a bar or a square swatch), so
+     these only have to be legible and distinct from each other — not to
+     carry the meaning on their own. Plain 6-digit hex, because
+     contrast.test.ts reads them by name and accepts nothing else; each
+     clears 3:1 (WCAG 1.4.11, non-text) on all three dark surfaces. */
+  --label-red: #e08a8a;
+  --label-yellow: #dcd06a;
+  --label-green: #6fd39b;
+  --label-blue: #74bdf2;
+  --label-purple: #c98ef2;
+
   /* type */
   /* stylelint-disable-next-line value-keyword-case */
   --font-ui: Inter, -apple-system, system-ui, sans-serif;

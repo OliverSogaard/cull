@@ -26,6 +26,9 @@ const ratio = (a: string, b: string): number => {
 /** The champagne accent, as it is written when a rule spells it out by hand. */
 const ACCENT_RGB = "212, 175, 106";
 
+/** The five colour-label tokens, in keyboard order (`6` `7` `8` `9` `Shift+6`). */
+const LABEL_TOKENS = ["label-red", "label-yellow", "label-green", "label-blue", "label-purple"];
+
 /**
  * One rule body, looked up by the selector that opens it. `lastIndexOf` on
  * purpose: the three flash selectors first appear together in the grouped
@@ -76,5 +79,26 @@ describe("colour tokens", () => {
   });
   test("ink on the danger fill clears AA", () => {
     expect(ratio(token("ink"), token("bad"))).toBeGreaterThanOrEqual(4.5);
+  });
+  test("the five colour-label tokens clear the non-text 3:1 bar on every dark surface", () => {
+    // 3:1, not 4.5:1: a label is a BAR and a SWATCH — a non-text graphic
+    // (WCAG 1.4.11) — never a text colour. The verdict/text tokens above
+    // keep their 4.5:1 bar.
+    for (const label of LABEL_TOKENS) {
+      for (const bg of ["bg", "surface", "surface-2"]) {
+        expect(ratio(token(label), token(bg)), `--${label} on --${bg}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  test("no colour label reuses a verdict or chrome colour", () => {
+    // Red is reject, green is keep, purple is favourite and the cool blue is
+    // the Similar-set grouping. A label that borrowed one of those hues
+    // would make a red-labelled keep and a reject look alike at thumbnail
+    // size — the reason labels are told apart by SHAPE and PLACE first.
+    const taken = ["ok", "bad", "fav", "accent", "accent-cool"].map((n) => token(n).toLowerCase());
+    for (const label of LABEL_TOKENS) {
+      expect(taken, `--${label}`).not.toContain(token(label).toLowerCase());
+    }
   });
 });
