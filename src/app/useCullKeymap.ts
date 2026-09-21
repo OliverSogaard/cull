@@ -330,27 +330,29 @@ export function useCullKeymap({
         // repeat tick for frames the user is flying straight past, with
         // nothing to dequeue them (a 2-second hold floods 200+ reads at the
         // NAS). One step per press; flying through a shoot stays the arrows'
-        // job, which has the scrub machinery built for exactly that.
+        // job, which has the scrub machinery built for exactly that. Also
+        // swallowed while zoomed (Space held): both panes already hold a
+        // decoded zoom full (~130 MB each), and moving the challenger would
+        // request a THIRD full for the incoming frame before the old pair's
+        // are dropped — the same jetsam class `dropZoomFullsExcept` above
+        // exists to avoid. Release Space first, same rule as a strip click.
         case "PageUp":
           e.preventDefault();
           if (e.repeat) break;
+          if (isZooming) break;
           cycleChallenger(-1, pageStep());
           break;
         case "PageDown":
           e.preventDefault();
           if (e.repeat) break;
+          if (isZooming) break;
           cycleChallenger(1, pageStep());
           break;
-        // Home / End are LOUPE + GRID only — they mean "first / last frame of
-        // the active FILTER", and the filter tablist is hidden in compare
-        // (StatusBar.tsx:295), so there's no filter-relative target for them
-        // to jump to here. The repeat guard is a no-op beside the bare
-        // preventDefault below, but matches PageUp / PageDown for
-        // uniformity across the four keys.
+        // Filter-relative keys with no target in compare (the filter tablist
+        // is hidden there) — preventDefault just stops any platform default.
         case "Home":
         case "End":
           e.preventDefault();
-          if (e.repeat) break;
           break;
         case "i":
         case "I":
@@ -516,9 +518,16 @@ export function useCullKeymap({
         // already reaches the same endpoint on every repeat, so a held
         // Home/End was already harmless — the guard just makes that explicit
         // instead of relying on the clamp.
+        //
+        // Also swallowed while zoomed (Space held), same rule as a strip
+        // click ("changing the frame mid-zoom is disabled"): the loupe's own
+        // zoom would just drop out from under the held key otherwise, so
+        // release Space first instead of letting the page key silently end
+        // the zoom behind it.
         case "Home":
           e.preventDefault();
           if (e.repeat) break;
+          if (isZooming) break;
           if (gridVisible && e.shiftKey) {
             growGridSelection(-images.length);
             break;
@@ -529,6 +538,7 @@ export function useCullKeymap({
         case "End":
           e.preventDefault();
           if (e.repeat) break;
+          if (isZooming) break;
           if (gridVisible && e.shiftKey) {
             growGridSelection(images.length);
             break;
@@ -541,6 +551,7 @@ export function useCullKeymap({
         case "PageUp":
           e.preventDefault();
           if (e.repeat) break;
+          if (isZooming) break;
           if (gridVisible && e.shiftKey) {
             growGridSelection(-pageStep());
             break;
@@ -551,6 +562,7 @@ export function useCullKeymap({
         case "PageDown":
           e.preventDefault();
           if (e.repeat) break;
+          if (isZooming) break;
           if (gridVisible && e.shiftKey) {
             growGridSelection(pageStep());
             break;

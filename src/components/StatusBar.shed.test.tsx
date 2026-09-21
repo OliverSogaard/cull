@@ -123,6 +123,18 @@ describe("the Rejects tab", () => {
     const rejects = container.querySelector<HTMLElement>(".cull-filter-tabs > button:last-child");
     if (!rejects) throw new Error("no Rejects tab");
     expect(rejects.getAttribute("data-tip")).toBe("5 · show rejects");
+
+    const base = props();
+    const { container: activeContainer } = render(
+      <StatusBar {...base} filter={{ ...base.filter, filter: "rejects" }} />,
+    );
+    const activeRejects = activeContainer.querySelector<HTMLElement>(
+      ".cull-filter-tabs > button:last-child",
+    );
+    if (!activeRejects) throw new Error("no active Rejects tab");
+    expect(activeRejects.getAttribute("data-tip")).toBeNull();
+    // Same active class the other four tabs use (All / Unrated / Keeps / Smart).
+    expect(activeRejects.className).toBe("is-active");
   });
 
   it("splits Smart's count suffix into its own element, leaving the name whole", () => {
