@@ -95,6 +95,13 @@ const GRID_THUMB_PENDING_RETRY_MS = 250;
  *  returns, plus slack for the MidGen queue. */
 const MID_REPROBE_MS = 1500;
 
+/** How long `reset()` waits before starting the background thumb sweep on its
+ *  own, for a session that never asks for a full (grid-first entry). Long
+ *  enough that a normal loupe entry's first full always wins the race, and a
+ *  wall clock rather than an animation frame: the display is 240 Hz and this
+ *  is a deadline, not a paint. Was an unnamed literal until Phase 4. */
+const BG_FILL_FALLBACK_MS = 2000;
+
 /** Constructor options (test-only knobs kept minimal). */
 export type ImageStoreOptions = {
   /** Override the thumb LRU cap (test-only — exercise eviction with a small N). */
@@ -226,6 +233,13 @@ export class ImageStore {
    *  visible RANGE, which is where every grid request comes from anyway.
    *  Cleared by reset()/hardReset() so it can never fire into a dead session. */
   private gridThumbPendingRetry: ReturnType<typeof setTimeout> | undefined;
+  /** Every OTHER wall-clock timer this store owns, so reset()/hardReset() can
+   *  CANCEL them rather than merely silence them. hardReset bumps the
+   *  generation and each callback re-checks it — but a silenced timer is
+   *  still armed, so a leaked one (or a future one without a generation
+   *  guard) used to be invisible. The grid tier's pending-retry above keeps
+   *  its own named handle because it needs identity for its dedupe check. */
+  private timers = new Set<ReturnType<typeof setTimeout>>();
   /** Hysteresis latch for the display-adaptive choice (midSelect.ts):
    *  engage >1750 device px, release <1650, hold in between. */
   private midEngaged = false;
@@ -680,6 +694,7 @@ export class ImageStore {
     this.gridThumbUnavailable.clear();
     this.gridThumbPending.clear();
     this.clearGridThumbPendingRetry();
+    this.clearTimers();
     // The pool's decoded refs point at blob URLs this reset revokes.
     this.pool?.clear();
     // old-gen thumb loads bailed without populating `thumbs`; if we keep
@@ -723,7 +738,7 @@ export class ImageStore {
     // lane's afterSettle). Fallback: if no full is requested within 2s (e.g. grid-first),
     // start it anyway so off-screen thumbs still fill. gen-scoped.
     this.bgStarted = false;
-    setTimeout(() => {
+    this.later(() => {
       // Fallback for an entry that never requests a full (e.g. grid-first): start
       // the sweep so off-screen thumbs still fill — but NOT while a full is mid-read
       // (a slow first full would otherwise get the stampede the deferral prevents;
@@ -732,7 +747,7 @@ export class ImageStore {
         this.bgStarted = true;
         this.scheduleBgFill(gen);
       }
-    }, 2000);
+    }, BG_FILL_FALLBACK_MS);
     // Re-pump the on-demand lanes so visible thumbs + the first full load now.
     this.thumbLane.pump();
     this.navLane.pump();
@@ -882,6 +897,7 @@ export class ImageStore {
     this.gridThumbUnavailable.clear();
     this.gridThumbPending.clear();
     this.clearGridThumbPendingRetry();
+    this.clearTimers();
     this.fullHints.clear();
     this.nativeDims.clear();
     this.stats.clearTimings();
@@ -1394,7 +1410,7 @@ export class ImageStore {
       this.requestedThumb.delete(path);
       if (te.attempts < MAX_TIER_ATTEMPTS && !this.trouble.isTroubled) {
         if (!this.bgLane.queue.includes(path)) this.bgLane.queue.push(path);
-        setTimeout(() => {
+        this.later(() => {
           if (this.generation === gen && !this.trouble.isTroubled) this.bgLane.pump();
         }, backoffMs(te.attempts));
       }
@@ -1654,7 +1670,7 @@ export class ImageStore {
    *  register/unregister churn are harmless no-ops. */
   private scheduleFullRetry(path: string, te: TierError, gen: number): void {
     if (te.attempts >= MAX_TIER_ATTEMPTS || this.trouble.isTroubled) return;
-    setTimeout(
+    this.later(
       () => {
         if (this.generation !== gen || this.trouble.isTroubled) return;
         if (!this.wantFull.has(path)) return; // nobody's looking — re-register retries
@@ -1921,6 +1937,28 @@ export class ImageStore {
     this.gridThumbPendingRetry = undefined;
   }
 
+  /** Schedule, tracked. Self-removing, so the set never outgrows the timers
+   *  actually pending. The ONLY sanctioned way to schedule in this class
+   *  apart from the grid retry above — imageStore.test.ts's "timer hygiene"
+   *  describe reads this file and asserts it. */
+  private later(fn: () => void, ms: number): void {
+    // `h` is read inside its own initialiser's callback — legal and correct
+    // (the callback runs long after the binding is initialised), TS-strict
+    // clean, and no `no-use-before-define` rule is in this repo's eslint
+    // chain. Do not "fix" it into a `let h: … | undefined`.
+    const h = setTimeout(() => {
+      this.timers.delete(h);
+      fn();
+    }, ms);
+    this.timers.add(h);
+  }
+
+  /** Cancel every tracked timer. Called from reset() and hardReset(). */
+  private clearTimers(): void {
+    for (const h of this.timers) clearTimeout(h);
+    this.timers.clear();
+  }
+
   /** One delayed re-probe after a quiet miss: the opportunistic generator
    *  needs ~300–400 ms of CPU after its zoom read returns. Fires only when a
    *  zoom-tier read is in play for the path (otherwise nothing will have
@@ -1929,7 +1967,7 @@ export class ImageStore {
   private scheduleMidReprobe(path: string, gen: number): void {
     const z = this.zoomFulls.get(path);
     if (!z || z.status === "error") return;
-    setTimeout(() => {
+    this.later(() => {
       if (this.generation !== gen) return;
       this.midUncached.delete(path);
       if (this.paths[this.cursor] === path) this.maybeRequestMid(path);
