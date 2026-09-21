@@ -137,8 +137,53 @@ describe("App, end to end on one path", () => {
     // nothing. This is the one assertion that covers App's own wiring of the
     // two keymap shapes, rather than the hook harness's props object.
     fireEvent.keyDown(window, { key: "3", code: "Digit3", bubbles: true, cancelable: true });
-    await screen.findByRole("button", { name: "Keeps" });
+    // `findByRole` alone only proves the tab EXISTS — StatusBar renders it in
+    // every filter state, so a `3` that did nothing at all would leave this
+    // green too. `is-active` is the actual claim: the press selected it.
+    const keepsTab = await screen.findByRole("button", { name: "Keeps" });
+    await waitFor(() => expect(keepsTab.className).toContain("is-active"));
     expect(invoke).not.toHaveBeenCalledWith("write_xmp_star", expect.anything());
+  });
+
+  it("with the setting on, undoing a star never clears a kept frame's verdict", async () => {
+    // App.tsx:347's `marksRef` is the only thing the undo replay's
+    // empty-sidecar sweep has to answer "is this frame empty now?" — nothing
+    // else in the suite exercises it through a real undo. Dropping `ratings`
+    // from that ref would make this sweep see no verdict either, and clear
+    // one on a frame that is still a keep.
+    localStorage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ ...DEFAULT_SETTINGS, starsAndLabels: true }),
+    );
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Open folders/ }));
+    await waitFor(() => expect(dialogOpen).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: "Begin culling →" }));
+    await screen.findByRole("button", { name: "Rejects" });
+
+    fireEvent.keyDown(window, { key: "Enter", bubbles: true, cancelable: true });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("write_xmp_rating", { path: PATHS[0], rating: "keep" }),
+    );
+
+    // A keep advances the cursor to the next frame — jump back to the one
+    // that was just kept, so the star and the undo below land on the SAME
+    // frame the verdict is on (Home is a synchronous jump, not the held-arrow
+    // scrub, so no fake timers are needed).
+    fireEvent.keyDown(window, { key: "Home", bubbles: true, cancelable: true });
+
+    fireEvent.keyDown(window, { key: "3", code: "Digit3", bubbles: true, cancelable: true });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("write_xmp_star", { path: PATHS[0], star: 3 }),
+    );
+
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true, bubbles: true, cancelable: true });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("write_xmp_star", { path: PATHS[0], star: null }),
+    );
+
+    expect(invoke).not.toHaveBeenCalledWith("clear_xmp_rating", expect.anything());
   });
 
   it("with the setting on, 3 stars the frame and 6 labels it red", async () => {
