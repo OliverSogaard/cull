@@ -2645,6 +2645,61 @@ describe("timer hygiene", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("a grid-thumb pending bounce arms the self-retry timer, and both resets cancel it", async () => {
+    // The spec names the grid pending-retry (armGridThumbPendingRetry /
+    // clearGridThumbPendingRetry) as a timer-hygiene path, but nothing above
+    // drives a REAL "grid thumb pending" bounce under fake timers — the
+    // "nothing is fetched after reset()/hardReset()" test in the grid-thumb
+    // describe pins the same CONTRACT, but by its own comment "does not
+    // discriminate one guard" (three independent things hold it). Removing
+    // clearGridThumbPendingRetry() from reset()/hardReset() alone still left
+    // that test green; only counting the live timer can see it.
+    vi.useFakeTimers();
+    try {
+      vi.mocked(invoke).mockImplementation((cmd: unknown) => {
+        if (cmd === "read_grid_thumb") return Promise.reject(new Error("grid thumb pending"));
+        if (cmd === "read_preview") return Promise.resolve(makePreviewBuf());
+        if (cmd === "extract_thumbnail") return Promise.resolve(makeThumbnailBuf(60, 40));
+        return Promise.resolve(new ArrayBuffer(0));
+      });
+      const Store = await getStoreClass();
+
+      // Phase 1: hardReset() cancels a grid retry armed THIS session.
+      const store1 = new Store();
+      store1.setProfile(PERFORMANCE_PROFILES.network); // gridThumbConcurrency 1
+      store1.reset(["/p/grid-a.cr3"]);
+      const afterReset1 = vi.getTimerCount(); // the bg-fill fallback alone
+      store1.registerDisplay("/p/grid-a.cr3"); // only mounted cells are asked for
+      store1.setGridCellW(400); // (400 − 18) × 1 = 382 > 160 — the rule wants it
+      store1.setGridRange(0, 0);
+      await vi.advanceTimersByTimeAsync(0); // the read fires and bounces off "pending"
+      expect(vi.getTimerCount()).toBeGreaterThan(afterReset1); // the self-retry armed
+      store1.hardReset();
+      expect(vi.getTimerCount()).toBe(0);
+
+      // Phase 2: reset() to a NEW folder cancels the OUTGOING session's grid
+      // retry too — reset() (:696) and hardReset() (:899) each call
+      // clearGridThumbPendingRetry() on their OWN line, so a mutation
+      // removing just one of the two still left the whole file green.
+      const store2 = new Store();
+      store2.setProfile(PERFORMANCE_PROFILES.network);
+      store2.reset(["/p/grid-b.cr3"]);
+      const afterReset2 = vi.getTimerCount();
+      store2.registerDisplay("/p/grid-b.cr3");
+      store2.setGridCellW(400);
+      store2.setGridRange(0, 0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBeGreaterThan(afterReset2);
+      store2.reset(["/q/new.cr3"]); // a whole new folder
+      // One fallback armed by the new reset, not the leftover grid retry too.
+      expect(vi.getTimerCount()).toBe(afterReset2);
+      store2.hardReset();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("every timer in the store and the sweep is tracked, so hardReset can reach it", () => {
     const src = import.meta.glob<string>("./{imageStore,midSweep}.ts", {
       query: "?raw",
