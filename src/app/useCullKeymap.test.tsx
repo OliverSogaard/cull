@@ -48,6 +48,20 @@ const IMAGES: Img[] = [0, 1, 2].map((id) => ({
   srcFolder: "/s",
 }));
 
+// The five filter-digit keys and the top each activates — shared by "a held
+// key acts once (fix A)" (the repeat guard, one row per digit) and "filter
+// digits" (the digit→top mapping and cycle behaviour), so both suites pin
+// the same table instead of silently drifting apart. CASES' own type
+// (`Parameters<typeof cycleFilter>[1]`) makes a Filter rename a compile
+// error wherever it is used.
+const CASES: [string, Parameters<typeof cycleFilter>[1]][] = [
+  ["1", "all"],
+  ["2", "unrated"],
+  ["3", "keeps"],
+  ["4", "suggested"],
+  ["5", "rejects"],
+];
+
 function props(over: Partial<KeymapProps> = {}): KeymapProps {
   return {
     phase: "culling",
@@ -146,7 +160,8 @@ afterEach(cleanup);
 describe("the harness itself", () => {
   it("dispatches cancelable events, so defaultPrevented means something", () => {
     renderKeymap(props());
-    // Tab preventDefaults unconditionally (useCullKeymap.ts:693).
+    // Tab preventDefaults unconditionally (the Tab branch of the big cull
+    // keymap's onKey handler, above the help swallow).
     expect(press("Tab").defaultPrevented).toBe(true);
     // Ctrl+S deliberately does NOT (the Ctrl drop at :722 returns without
     // preventDefault) — so a `true` here would mean the events are not
@@ -332,8 +347,9 @@ describe("Ctrl combinations", () => {
   it("an unbound Ctrl or Alt combo does nothing AND is left to the platform", () => {
     const p = props();
     renderKeymap(p);
-    // :718-721 deliberately does not preventDefault here, so Ctrl+Home and
-    // friends still reach whatever the platform does with them.
+    // The Ctrl/Meta/Alt drop (onKey's final catch-all before Space/ESC/sites)
+    // deliberately does not preventDefault here, so Ctrl+Home and friends
+    // still reach whatever the platform does with them.
     expect(press("s", { ctrlKey: true }).defaultPrevented).toBe(false);
     expect(press("f", { altKey: true }).defaultPrevented).toBe(false);
     expect(p.applyRating).not.toHaveBeenCalled();
@@ -425,15 +441,26 @@ describe("a held key acts once (fix A)", () => {
     expect(p.unrateCurrent).toHaveBeenCalledTimes(1);
   });
 
-  it("a held filter digit cycles its sub-modes once per press", () => {
-    const p = props();
-    renderKeymap(p);
-    press("3");
-    press("3", { repeat: true });
-    press("3", { repeat: true });
-    expect(p.setFilter).toHaveBeenCalledTimes(1);
-    expect(p.chipsTooltip.pulse).toHaveBeenCalledTimes(1);
-  });
+  // One row per digit, over the shared CASES table: each digit's repeat
+  // guard is its own `if (e.repeat) break;`, so pinning only "3" left "1"
+  // and "4" free to lose theirs with the suite still green — a held "4"
+  // would then call startAnalysis on every OS repeat tick.
+  for (const [key, top] of CASES) {
+    it(`a held ${key} (${top}) cycles its sub-modes once per press, not once per OS repeat`, () => {
+      const p = props();
+      renderKeymap(p);
+      press(key);
+      press(key, { repeat: true });
+      press(key, { repeat: true });
+      expect(p.setFilter).toHaveBeenCalledTimes(1);
+      if (top === "keeps" || top === "suggested") {
+        expect(p.chipsTooltip.pulse).toHaveBeenCalledTimes(1);
+      }
+      if (top === "suggested") {
+        expect(p.startAnalysis).toHaveBeenCalledTimes(1); // smartCulling is on by default
+      }
+    });
+  }
 
   it("compare's decide keys already guarded it — the two modes now agree", () => {
     const p = props({ compareMode: true });
@@ -480,10 +507,12 @@ describe("nothing acts behind the help sheet (fix B)", () => {
   });
 
   it("Ctrl+, still opens Settings — that is a different listener, by design", () => {
-    // The chrome effect (useCullKeymap.ts:160-208) is its own window listener
-    // and neither handler stops propagation, so the help swallow cannot reach
-    // it. Settings is itself a modal that then owns the keyboard, so this is
-    // harmless — pinned so it reads as considered rather than missed.
+    // The chrome effect — useCullKeymap.ts's phase-agnostic keydown listener,
+    // its own `useEffect` above the big cull keymap — is its own window
+    // listener and neither handler stops propagation, so the help swallow
+    // cannot reach it. Settings is itself a modal that then owns the
+    // keyboard, so this is harmless — pinned so it reads as considered
+    // rather than missed.
     const p = props({ helpVisible: true });
     renderKeymap(p);
     press(",", { ctrlKey: true, code: "Comma" });
@@ -522,8 +551,8 @@ describe("a held scrub is interrupted behind every overlay (fix C)", () => {
   }
 
   it("a bare modifier still never interrupts a hold", () => {
-    // The regression guard for the reorder: :236-237 exists so tapping Shift
-    // mid-scrub does not abort the flow.
+    // The regression guard for the reorder: handleModalKeys' bare-modifier
+    // no-op check exists so tapping Shift mid-scrub does not abort the flow.
     const p = props({ heldDirRef: ref<0 | 1 | -1>(1) });
     renderKeymap(p);
     press("Shift");
@@ -670,19 +699,11 @@ describe("filter digits", () => {
     return updater(from);
   }
 
-  // What this pins: the digit→top mapping (key "3" reaches "keeps", etc.)
-  // and that the keymap dispatches through cycleFilter — CASES' own type
-  // (`Parameters<typeof cycleFilter>[1]`) makes a Filter rename a compile
-  // error here. Both sides of the assertion call the SAME cycleFilter, so a
-  // CYCLES reorder (utils/filterModes.ts:13-19) cancels out; the actual
-  // sub-mode order is pinned instead by filterModes.test.ts:47-65.
-  const CASES: [string, Parameters<typeof cycleFilter>[1]][] = [
-    ["1", "all"],
-    ["2", "unrated"],
-    ["3", "keeps"],
-    ["4", "suggested"],
-    ["5", "rejects"],
-  ];
+  // Asserted THROUGH cycleFilter: both sides of the equality call the SAME
+  // cycleFilter, so a CYCLES reorder (utils/filterModes.ts:13-19) cancels
+  // out — the actual sub-mode order is pinned instead by
+  // filterModes.test.ts:47-65. What this table pins is the digit→top
+  // mapping and that the keymap dispatches through cycleFilter at all.
   for (const [key, top] of CASES) {
     it(`${key} selects the ${top} tab, and re-pressing it cycles the sub-modes`, () => {
       const p = props();
@@ -770,7 +791,8 @@ describe("holds", () => {
 
   it("a mangled key on release still stops it, via e.code", () => {
     // The fallback that fixed the forever-scrub: a modifier still held at
-    // release can blank e.key (useCullKeymap.ts:764-770).
+    // release can blank e.key (the onKeyUp handler's `e.code` fallback for
+    // the held-arrow release check).
     const p = props({ heldDirRef: ref<0 | 1 | -1>(1) });
     renderKeymap(p);
     release("", { code: "ArrowRight" });
@@ -866,6 +888,107 @@ describe("zoom", () => {
     expect(p.advance).not.toHaveBeenCalled();
     expect(p.startHold).not.toHaveBeenCalled();
   });
+});
+
+describe("mode keys", () => {
+  // L / G / C are the "sites" clause the production docblock's precedence
+  // order ends on — until now nothing asserted goToSite was ever actually
+  // called, so all three cases (in both switches) could be deleted with the
+  // suite green.
+  const SINGLE_CASES: [string, NavSite][] = [
+    ["l", "loupe"],
+    ["c", "compare"],
+    ["g", "grid"],
+  ];
+  for (const [key, target] of SINGLE_CASES) {
+    it(`${key} switches to ${target} and preventDefaults, from the loupe`, () => {
+      const p = props();
+      renderKeymap(p);
+      expect(press(key).defaultPrevented).toBe(true);
+      expect(p.goToSite).toHaveBeenCalledWith(target);
+    });
+  }
+
+  // Compare has its own switch with only two of the three cases — 'c' is a
+  // deliberate no-op there (see the case comment in useCullKeymap.ts).
+  const COMPARE_CASES: [string, NavSite][] = [
+    ["l", "loupe"],
+    ["g", "grid"],
+  ];
+  for (const [key, target] of COMPARE_CASES) {
+    it(`${key} switches to ${target} from compare too`, () => {
+      const p = props({ compareMode: true });
+      renderKeymap(p);
+      expect(press(key).defaultPrevented).toBe(true);
+      expect(p.goToSite).toHaveBeenCalledWith(target);
+    });
+  }
+
+  it("c is a no-op in compare — leave via L, G, or ESC instead", () => {
+    const p = props({ compareMode: true });
+    renderKeymap(p);
+    expect(press("c").defaultPrevented).toBe(false);
+    expect(p.goToSite).not.toHaveBeenCalled();
+  });
+});
+
+describe("grid Shift+Arrow", () => {
+  // The plain-arrow row-jump and horizontal scrub each have their own
+  // holds/page-key tests; this table pins the Shift-held sibling of each
+  // arrow, which nothing else in the file asserts — all four could be
+  // deleted with the suite green.
+  const CASES: [string, number][] = [
+    ["ArrowRight", 1],
+    ["ArrowLeft", -1],
+    ["ArrowUp", -6], // -gridCols (props().gridCols === 6)
+    ["ArrowDown", 6], // gridCols
+  ];
+  for (const [key, delta] of CASES) {
+    it(`Shift+${key} grows the grid selection by ${delta}, not the cursor`, () => {
+      const p = props({ gridVisible: true });
+      renderKeymap(p);
+      press(key, { shiftKey: true });
+      expect(p.growGridSelection).toHaveBeenCalledWith(delta);
+      expect(p.advance).not.toHaveBeenCalled();
+      expect(p.startHold).not.toHaveBeenCalled();
+      expect(p.startGridVertHold).not.toHaveBeenCalled();
+    });
+  }
+});
+
+describe("overlay toggles", () => {
+  // None of i/h/p/t/o were ever pressed anywhere in this file before this
+  // suite — every one of these ten cases (five keys x two switches) could
+  // be deleted with 93/93 still green. Read back each setter's updater and
+  // apply it, the same proof-through-the-real-function shape as filter
+  // digits' applyUpdater: a hard-coded `setExifVisible(true)` would fail
+  // `updater(true) === false` below, so this also pins that it is a TOGGLE.
+  const CASES: [string, string, (p: KeymapProps) => Dispatch<SetStateAction<boolean>>][] = [
+    ["i", "setExifVisible", (p) => p.setExifVisible],
+    ["h", "setClippingVisible", (p) => p.setClippingVisible],
+    ["p", "setPeakingVisible", (p) => p.setPeakingVisible],
+    ["t", "setThumbsVisible", (p) => p.setThumbsVisible],
+    ["o", "setCompositionVisible", (p) => p.setCompositionVisible],
+  ];
+  for (const [key, name, getSetter] of CASES) {
+    it(`${key} toggles ${name}, in both single and compare mode`, () => {
+      const single = props();
+      const { unmount } = renderKeymap(single);
+      press(key);
+      const calls = vi.mocked(getSetter(single)).mock.calls;
+      expect(calls).toHaveLength(1);
+      const updater = calls[0][0];
+      if (typeof updater !== "function") throw new Error(`${name} was called with a value`);
+      expect(updater(true)).toBe(false);
+      expect(updater(false)).toBe(true);
+      unmount();
+
+      const compare = props({ compareMode: true });
+      renderKeymap(compare);
+      press(key);
+      expect(vi.mocked(getSetter(compare))).toHaveBeenCalledTimes(1);
+    });
+  }
 });
 
 describe("a state flip between renders", () => {
