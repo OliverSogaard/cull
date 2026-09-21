@@ -2,7 +2,7 @@ import { memo, type Dispatch, type SetStateAction } from "react";
 import { ArrowRight, Check, Star, TriangleAlert, X as XIcon } from "lucide-react";
 import type { Filter, Rating } from "../types";
 import type { useChipsTooltipVisibility } from "../hooks/useChipsTooltipVisibility";
-import { cycleFilter, topOf } from "../utils/filterModes";
+import { cycleFilter, filterKeyHint, topOf, type TopFilter } from "../utils/filterModes";
 import { extOf, stripExt } from "../utils/path";
 import { modCombo } from "../utils/platform";
 import {
@@ -71,6 +71,9 @@ export type StatusBarFilter = {
   chipsTooltip: ChipsTooltip;
   positionInFilter: number;
   visibleCount: number;
+  /** `settings.starsAndLabels`. With the layer on the bare digits set stars,
+   *  so every tab's hover tip names Shift+digit instead (see filterKeyHint). */
+  starsAndLabels?: boolean;
 };
 
 /** The act-on-the-cull chip. */
@@ -119,6 +122,9 @@ export const StatusBar = memo(function StatusBar({
     favorite: "cull-statusbar__verdict--fav",
   };
   const totalKeeps = filter.stats.keeps; // includes favorites
+  // How each tab's hover tip spells its key. One binding rather than five
+  // inline calls, so the five tips can never drift apart on the modifier.
+  const tabKey = (top: TopFilter) => filterKeyHint(top, filter.starsAndLabels);
   // Both kinds of failure are one button running one action (retryFailed);
   // only the words change, because a missing photo is usually a drive that
   // went away rather than a write that won't take (see utils/saveStatusCopy).
@@ -298,7 +304,7 @@ export const StatusBar = memo(function StatusBar({
               type="button"
               className={filter.filter === "all" ? "is-active" : ""}
               onClick={() => filter.setFilter((f) => cycleFilter(f, "all"))}
-              data-tip={filter.filter === "all" ? undefined : "1 · show all"}
+              data-tip={filter.filter === "all" ? undefined : `${tabKey("all")} · show all`}
             >
               All
             </button>
@@ -306,7 +312,9 @@ export const StatusBar = memo(function StatusBar({
               type="button"
               className={filter.filter === "unrated" ? "is-active" : ""}
               onClick={() => filter.setFilter((f) => cycleFilter(f, "unrated"))}
-              data-tip={filter.filter === "unrated" ? undefined : "2 · show unrated"}
+              data-tip={
+                filter.filter === "unrated" ? undefined : `${tabKey("unrated")} · show unrated`
+              }
             >
               Unrated
             </button>
@@ -322,7 +330,9 @@ export const StatusBar = memo(function StatusBar({
                 // tooltip in the same spot). data-tip renders instantly via
                 // CSS — the OS title delay made it lose the race against the
                 // neighbouring chip tooltip's fade-out.
-                data-tip={topOf(filter.filter) === "keeps" ? undefined : "3 · show keeps"}
+                data-tip={
+                  topOf(filter.filter) === "keeps" ? undefined : `${tabKey("keeps")} · show keeps`
+                }
                 {...(topOf(filter.filter) === "keeps" ? filter.chipsTooltip.hoverProps : undefined)}
               >
                 Keeps
@@ -377,7 +387,11 @@ export const StatusBar = memo(function StatusBar({
                   }
                 }}
                 // Same inactive-only instant tip as the Keeps tab above.
-                data-tip={topOf(filter.filter) === "suggested" ? undefined : "4 · show suggestions"}
+                data-tip={
+                  topOf(filter.filter) === "suggested"
+                    ? undefined
+                    : `${tabKey("suggested")} · show suggestions`
+                }
                 {...(topOf(filter.filter) === "suggested"
                   ? filter.chipsTooltip.hoverProps
                   : undefined)}
@@ -472,7 +486,9 @@ export const StatusBar = memo(function StatusBar({
               type="button"
               className={filter.filter === "rejects" ? "is-active" : ""}
               onClick={() => filter.setFilter((f) => cycleFilter(f, "rejects"))}
-              data-tip={filter.filter === "rejects" ? undefined : "5 · show rejects"}
+              data-tip={
+                filter.filter === "rejects" ? undefined : `${tabKey("rejects")} · show rejects`
+              }
             >
               Rejects
             </button>

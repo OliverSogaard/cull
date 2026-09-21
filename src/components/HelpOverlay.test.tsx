@@ -84,3 +84,45 @@ describe("the help sheet draws keycaps", () => {
     expect(() => rowFor(container, "First / last")).toThrow();
   });
 });
+
+/**
+ * The help sheet is the reference for the keymap, so it has to show the shape
+ * the setting actually selects. With the layer off every row is byte-identical
+ * to what it has always been (the suite above is that proof).
+ */
+describe("the help sheet follows the stars-and-labels setting", () => {
+  test("the filter row moves onto Shift, both caps carrying the modifier", () => {
+    const { container } = render(<HelpOverlay mode="loupe" starsAndLabels />);
+    const row = rowFor(container, "Filter:");
+    expect(caps(row)).toEqual(["Shift", "1", "Shift", "5"]);
+    expect(row.querySelector(".cull-help__range")?.textContent).toBe("–");
+  });
+
+  test("the grid's filter row moves too", () => {
+    const { container } = render(<HelpOverlay mode="grid" starsAndLabels />);
+    expect(caps(rowFor(container, "Filter:"))).toEqual(["Shift", "1", "Shift", "5"]);
+  });
+
+  test("loupe and grid gain the star and label rows", () => {
+    for (const mode of ["loupe", "grid"] as const) {
+      const { container } = render(<HelpOverlay mode={mode} starsAndLabels />);
+      expect(caps(rowFor(container, "Stars"))).toEqual(["1", "5"]);
+      expect(caps(rowFor(container, "Clear the stars"))).toEqual(["0"]);
+      expect(caps(rowFor(container, "Colour label"))).toEqual(["6", "9"]);
+      expect(caps(rowFor(container, "Purple label"))).toEqual(["Shift", "6"]);
+      cleanup();
+    }
+  });
+
+  test("compare gains nothing — the digits are unbound there", () => {
+    const { container } = render(<HelpOverlay mode="compare" starsAndLabels />);
+    expect(() => rowFor(container, "Stars")).toThrow();
+    expect(() => rowFor(container, "Colour label")).toThrow();
+  });
+
+  test("with the layer off there is no mark group at all", () => {
+    const { container } = render(<HelpOverlay mode="loupe" />);
+    expect(() => rowFor(container, "Stars")).toThrow();
+    expect(() => rowFor(container, "Clear the stars")).toThrow();
+  });
+});

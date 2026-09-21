@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS } from "../types/settings";
 import { LEVEL_THRESHOLD } from "../smart/deriveVerdict";
 import { useArmedConfirm } from "../hooks/useArmedConfirm";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { filterKeyHint } from "../utils/filterModes";
 import { sanitizeFolderName } from "../utils/path";
 import { modCombo } from "../utils/platform";
 import { KeyCombo } from "./KeyCombo";
@@ -165,6 +166,16 @@ export function SettingsDialog({
                     onChange={(v) => set("gridSize", v)}
                   />
                 </SettingRow>
+                <SettingRow
+                  label="Stars and colour labels"
+                  help="Lightroom's keys: 1–5 stars, 0 clears, 6–9 colour labels, Shift+6 purple. Filters move to Shift+1–5."
+                >
+                  <Toggle
+                    on={settings.starsAndLabels}
+                    onChange={(v) => set("starsAndLabels", v)}
+                    label="Stars and colour labels"
+                  />
+                </SettingRow>
               </>
             )}
 
@@ -223,7 +234,9 @@ export function SettingsDialog({
                     help={
                       settings.smartCullingOnOpen
                         ? "Analyzes when a folder opens."
-                        : "Press 4 in the Smart filter to analyze."
+                        : // With the layer on, 4 sets a star — the Smart tab
+                          // moves to Shift+4, so the hint has to move with it.
+                          `Press ${filterKeyHint("suggested", settings.starsAndLabels)} in the Smart filter to analyze.`
                     }
                   >
                     <Toggle

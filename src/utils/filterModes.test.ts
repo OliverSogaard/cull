@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cycleFilter, topOf } from "./filterModes";
+import { cycleFilter, FILTER_DIGIT, filterKeyHint, topOf, type TopFilter } from "./filterModes";
 
 describe("topOf", () => {
   it("maps base filters to themselves", () => {
@@ -63,5 +63,30 @@ describe("cycleFilter", () => {
     expect(cycleFilter("keepsFavs", "rejects")).toBe("rejects");
     expect(cycleFilter("rejects", "keeps")).toBe("keeps");
     expect(cycleFilter("rejects", "suggested")).toBe("suggested");
+  });
+});
+
+describe("filterKeyHint", () => {
+  it("names the bare digit while the stars-and-labels layer is off", () => {
+    expect(filterKeyHint("all")).toBe("1");
+    expect(filterKeyHint("unrated", false)).toBe("2");
+    expect(filterKeyHint("keeps", false)).toBe("3");
+    expect(filterKeyHint("suggested", false)).toBe("4");
+    expect(filterKeyHint("rejects", false)).toBe("5");
+  });
+
+  it("moves every filter onto Shift once the digits are stars", () => {
+    expect(filterKeyHint("all", true)).toBe("Shift+1");
+    expect(filterKeyHint("unrated", true)).toBe("Shift+2");
+    expect(filterKeyHint("keeps", true)).toBe("Shift+3");
+    expect(filterKeyHint("suggested", true)).toBe("Shift+4");
+    expect(filterKeyHint("rejects", true)).toBe("Shift+5");
+  });
+
+  it("agrees with the keymap about which digit selects which tab", () => {
+    // The hint exists to stay honest about useCullKeymap's SHIFT_DIGIT table;
+    // the five digits are 1..5 in tab order, both shapes.
+    const tops: TopFilter[] = ["all", "unrated", "keeps", "suggested", "rejects"];
+    expect(tops.map((t) => FILTER_DIGIT[t])).toEqual(["1", "2", "3", "4", "5"]);
   });
 });

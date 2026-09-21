@@ -9,6 +9,29 @@ import type { Filter } from "../types/rating";
  */
 export type TopFilter = "all" | "unrated" | "keeps" | "suggested" | "rejects";
 
+/**
+ * The digit that selects each tab on the BARE row — the keymap's own order
+ * (`useCullKeymap`'s `SHIFT_DIGIT` table), so a hint can never name a key the
+ * keymap does not bind.
+ */
+export const FILTER_DIGIT: Record<TopFilter, string> = {
+  all: "1",
+  unrated: "2",
+  keeps: "3",
+  suggested: "4",
+  rejects: "5",
+};
+
+/**
+ * How a hint spells the key for `top`. With the stars-and-labels layer on the
+ * bare digits are stars, so the five filters move to Shift+digit — one
+ * function so the footer tips, the empty-filter hints, Settings and the help
+ * sheet can never disagree about which row the filters are on.
+ */
+export function filterKeyHint(top: TopFilter, starsAndLabels?: boolean): string {
+  return starsAndLabels ? `Shift+${FILTER_DIGIT[top]}` : FILTER_DIGIT[top];
+}
+
 /** Ordered sub-mode cycle for each top, base mode first. */
 const CYCLES: Record<TopFilter, Filter[]> = {
   all: ["all"],
