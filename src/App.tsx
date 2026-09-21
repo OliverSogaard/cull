@@ -38,6 +38,7 @@ import { RecentFolders } from "./components/RecentFolders";
 import { SaveStatusPill } from "./components/SaveStatusPill";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { StagedFolders } from "./components/StagedFolders";
 import {
   StatusBar,
   type StatusBarFilter,
@@ -1613,7 +1614,9 @@ export default function App() {
                   ? "restoring ratings…"
                   : progress.phase === "done"
                     ? "sorting…"
-                    : "reading capture times…"}
+                    : progress.phase === "capturing"
+                      ? "reading capture times…"
+                      : "listing folders…"}
               </div>
               <div className="progress cull-progress">
                 {progress.done === 0 ? (
@@ -1659,6 +1662,20 @@ export default function App() {
                 <div className="cull-staged__ignored">
                   {lastIgnored.toLocaleString()} non-CR3 file{lastIgnored === 1 ? "" : "s"} ignored
                 </div>
+              )}
+              {images.length > 0 && (
+                <StagedFolders
+                  images={images}
+                  sortByCaptureTime={settings.sortByCaptureTime}
+                  onToggleSort={(next) => setSettings({ ...settings, sortByCaptureTime: next })}
+                  offsets={settings.captureOffsets}
+                  onOffsetChange={(folderPath, ms) =>
+                    setSettings({
+                      ...settings,
+                      captureOffsets: { ...settings.captureOffsets, [folderPath]: ms },
+                    })
+                  }
+                />
               )}
               {scanFailures && <ScanFailureCard failures={scanFailures} />}
               {analyzeError && (

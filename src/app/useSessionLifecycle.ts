@@ -399,8 +399,8 @@ export function useSessionLifecycle({
     return () => window.clearTimeout(t);
   }, [phase, images, ratings, writeSessionRecent]);
 
-  // Begin culling: sort the staged set by capture time, restore ratings, then
-  // enter the cull view (warming the first screenful of previews first).
+  // Begin culling: sort the staged set (EXIF capture time, or each file's
+  // write time), restore ratings, then enter the cull view.
   const beginCulling = useCallback(async () => {
     if (images.length === 0) return;
     if (analyzingRef.current) return; // ignore a double-click — one analyze pass
@@ -417,6 +417,14 @@ export function useSessionLifecycle({
       const result = await invoke<AnalyzeResult>("analyze_folder", {
         paths: images.map((im) => im.path),
         concurrentRestore: profile.concurrentRestore,
+        byCaptureTime: settings.sortByCaptureTime,
+        // Resolved HERE, per frame, not keyed by folder on the wire: a frame's
+        // folder is the folder the USER picked (`srcFolder`), which the
+        // recursive walk's parent directory is not, and matching Windows path
+        // strings across the IPC boundary would fail silently.
+        offsetsMs: settings.sortByCaptureTime
+          ? images.map((im) => settings.captureOffsets[im.srcFolder] ?? 0)
+          : null,
       });
 
       const sorted = result.order.map((i) => images[i]);

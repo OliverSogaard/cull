@@ -11,6 +11,7 @@
 @import url("./primitives/shimmer.css");
 @import url("./statusbar.css");
 @import url("./chrome.css");
+@import url("./staged-sort.css");
 @import url("./home.css");
 @import url("./stage.css");
 @import url("./dialogs.css");
