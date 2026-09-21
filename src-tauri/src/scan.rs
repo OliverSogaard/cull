@@ -115,6 +115,43 @@ fn capture_epoch(exif_ms: Option<i64>, mtime_ms: Option<i64>, offset_ms: i64) ->
     exif_ms.or(mtime_ms).map(|t| t.saturating_add(offset_ms))
 }
 
+/// Re-express a true UTC epoch at `offset`, then read that wall clock AS IF it
+/// were UTC. Split out from [`mtime_in_capture_frame`] so the conversion can be
+/// pinned at explicit offsets in a test — on a UTC machine (CI) the local-clock
+/// version is the identity and would prove nothing.
+fn wall_clock_ms_at(ms: i64, offset: chrono::FixedOffset) -> Option<i64> {
+    Some(
+        chrono::DateTime::from_timestamp_millis(ms)?
+            .with_timezone(&offset)
+            .naive_local()
+            .and_utc()
+            .timestamp_millis(),
+    )
+}
+
+/// A file's mtime (a true UTC epoch) moved into the frame EXIF capture times
+/// live in — the camera's naive wall clock read as if it were UTC, which is
+/// what `analyze::captured_at_ms` builds out of a timezone-less
+/// `DateTimeOriginal` via `.and_utc()`.
+///
+/// The two frames are only interchangeable at UTC+00. Mixing them raw would
+/// put every mtime fallback the machine's offset away from its true
+/// neighbours — seven hours, in Los Angeles — so one unreadable head in the
+/// middle of a burst would sort at the far end of the shoot. Only the
+/// `by_capture_time` path needs this: with the flag off every key is an mtime,
+/// one frame throughout, and the raw values are already consistent.
+///
+/// The offset is the one in force AT THAT INSTANT, not today's, so frames shot
+/// either side of a DST boundary each convert with the offset the camera's
+/// clock was actually showing. A timestamp outside chrono's range keeps its raw
+/// value: a slightly-misplaced frame still beats a frame with no key at all.
+fn mtime_in_capture_frame(ms: i64) -> i64 {
+    let Some(utc) = chrono::DateTime::from_timestamp_millis(ms) else {
+        return ms;
+    };
+    wall_clock_ms_at(ms, *utc.with_timezone(&chrono::Local).offset()).unwrap_or(ms)
+}
+
 /// The two capture fields of a CACHED thumb-tier header (`bundle::ThumbHeader`),
 /// combined into an epoch. Minimal-struct parse in the house style of
 /// `bundle::OrientationOnly`: only the fields this pass needs, every one
@@ -251,14 +288,18 @@ pub(crate) struct AnalyzeResult {
 ///
 /// ## Fast path (network / removable storage)
 ///
-/// Capture order comes from each file's mtime, gathered from each parent
-/// directory's listing. On Windows `DirEntry::metadata()` is served from the
-/// directory scan (no extra round-trip per file), so we pay for a few listings
-/// instead of `n` opens. On a NAS where every open is a round-trip (~37 ms in
-/// the benchmark), this collapses ~10 min of metadata reads into seconds.
+/// BY DEFAULT capture order comes from each file's mtime, gathered from each
+/// parent directory's listing. On Windows `DirEntry::metadata()` is served from
+/// the directory scan (no extra round-trip per file), so we pay for a few
+/// listings instead of `n` opens. On a NAS where every open is a round-trip
+/// (~37 ms in the benchmark), this collapses ~10 min of metadata reads into
+/// seconds.
 ///
-/// Exact EXIF (precise time, lens, GPS, AF point) is still read lazily per
-/// image during culling via [`crate::bundle::read_preview`].
+/// `by_capture_time` spends that saving deliberately: it reads each frame's
+/// EXIF `DateTimeOriginal` ([`exif_ms_for`] — the thumb-cache header first, so
+/// a re-opened shoot is still free), which is the only key that interleaves two
+/// bodies correctly. The rest of EXIF (lens, GPS, AF point) is read lazily per
+/// image during culling via [`crate::bundle::read_preview`] on either path.
 /// When the frontend passes `concurrent_restore = true` (storage mode = local),
 /// sidecar reads run on this many threads. 4 is enough to saturate a local
 /// SSD's queue depth without thrashing; the NAS path stays sequential.
@@ -443,11 +484,18 @@ fn restore_ratings(
 /// storage hint says local (same rule and same pool shape as `restore_ratings`
 /// — the benchmarked NAS punishes concurrent opens hard). `on_progress(done)`
 /// fires once per frame, from worker threads on the concurrent path.
+///
+/// `cancelled` is polled before EVERY file, in every worker: a superseded
+/// analyze stops within one read instead of opening the other 4,000 frames.
+/// What it never reached keeps `None` and falls back to that frame's mtime in
+/// the sort — the same graceful degradation a panicked chunk gets, so the
+/// analyze still returns a usable order rather than an error.
 fn read_capture_epochs(
     cache: &TierCache,
     paths: &[String],
     stats: &[Option<(i64, u64)>],
     concurrent: bool,
+    cancelled: &(dyn Fn() -> bool + Sync),
     on_progress: &(dyn Fn(usize) + Sync),
 ) -> Vec<Option<i64>> {
     let n = paths.len();
@@ -464,6 +512,9 @@ fn read_capture_epochs(
                 handles.push(s.spawn(move || {
                     let mut part = Vec::with_capacity(chunk.len());
                     for &i in chunk {
+                        if cancelled() {
+                            break;
+                        }
                         part.push((i, exif_ms_for(cache, &paths[i], stats[i])));
                         on_progress(done_ref.fetch_add(1, Ordering::Relaxed) + 1);
                     }
@@ -489,6 +540,9 @@ fn read_capture_epochs(
         }
     } else {
         for i in 0..n {
+            if cancelled() {
+                break;
+            }
             out[i] = exif_ms_for(cache, &paths[i], stats[i]);
             on_progress(i + 1);
         }
@@ -509,6 +563,17 @@ fn read_capture_epochs(
 /// the folder a frame belongs to is the folder the USER picked, not the
 /// subdirectory the recursive walk found it in). Ignored when
 /// `by_capture_time` is off; a short or absent vector reads as 0.
+///
+/// `gen` is the session generation, the same one `read_preview` / `read_mid` /
+/// `analyze_quality` carry: the capture pass polls it per frame and stops when
+/// it moves, so a superseded Begin culling stops opening files instead of
+/// grinding through the rest of the shoot. `None` never cancels — the mtime
+/// path opens nothing anyway, and a caller that doesn't send a generation
+/// keeps today's behaviour.
+// Eight arguments, over clippy's seven: a Tauri command's parameters ARE its
+// wire protocol, so grouping them into a struct would change the invoke shape
+// for no gain at the only call site there will ever be.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn analyze_folder(
     window: tauri::Window,
@@ -516,6 +581,7 @@ pub(crate) async fn analyze_folder(
     concurrent_restore: Option<bool>,
     by_capture_time: Option<bool>,
     offsets_ms: Option<Vec<i64>>,
+    gen: Option<u64>,
     session: tauri::State<'_, std::sync::Arc<crate::io_gate::SessionGate>>,
     cache: tauri::State<'_, std::sync::Arc<crate::tier_cache::TierCache>>,
 ) -> Result<AnalyzeResult, String> {
@@ -531,6 +597,7 @@ pub(crate) async fn analyze_folder(
             concurrent_restore,
             by_capture_time,
             offsets_ms,
+            gen,
             &session,
             &cache,
         )
@@ -539,12 +606,14 @@ pub(crate) async fn analyze_folder(
     .map_err(|e| format!("analyze task failed: {e}"))?
 }
 
+#[allow(clippy::too_many_arguments)] // mirrors the command's parameters
 fn analyze_folder_sync(
     window: tauri::Window,
     paths: Vec<String>,
     concurrent_restore: Option<bool>,
     by_capture_time: Option<bool>,
     offsets_ms: Option<Vec<i64>>,
+    gen: Option<u64>,
     session: &crate::io_gate::SessionGate,
     cache: &TierCache,
 ) -> Result<AnalyzeResult, String> {
@@ -624,18 +693,29 @@ fn analyze_folder_sync(
             })
             .collect();
         let step_cap = (n / 100).max(1); // ≤ ~100 progress events
-        let exif = read_capture_epochs(cache, &paths, &stats, concurrent_restore, &|done| {
-            if done.is_multiple_of(step_cap) || done == n {
-                let _ = window.emit(
-                    "analyze-progress",
-                    AnalyzeProgress {
-                        done,
-                        total: n,
-                        phase: "capturing".into(),
-                    },
-                );
-            }
-        });
+
+        // The generation moves when the frontend resets its store, which is
+        // exactly when this pass's answer stopped mattering.
+        let cancelled = || gen.is_some_and(|g| session.is_cancelled(g));
+        let exif = read_capture_epochs(
+            cache,
+            &paths,
+            &stats,
+            concurrent_restore,
+            &cancelled,
+            &|done| {
+                if done.is_multiple_of(step_cap) || done == n {
+                    let _ = window.emit(
+                        "analyze-progress",
+                        AnalyzeProgress {
+                            done,
+                            total: n,
+                            phase: "capturing".into(),
+                        },
+                    );
+                }
+            },
+        );
         // One terminal tick, for the same reason the listing pass emits one.
         let _ = window.emit(
             "analyze-progress",
@@ -651,7 +731,15 @@ fn analyze_folder_sync(
                     .as_ref()
                     .and_then(|v| v.get(i).copied())
                     .unwrap_or(0);
-                capture_epoch(exif[i], listing.mtime.get(&paths[i]).copied(), offset)
+                // The fallback is rebased onto the EXIF clock frame (see
+                // [`mtime_in_capture_frame`]): on this path the two key kinds
+                // sit side by side in one order, so they must share a frame.
+                let mtime = listing
+                    .mtime
+                    .get(&paths[i])
+                    .copied()
+                    .map(mtime_in_capture_frame);
+                capture_epoch(exif[i], mtime, offset)
             })
             .collect()
     } else {
@@ -958,5 +1046,144 @@ mod tests {
             "SubSec alone is not a time"
         );
         assert_eq!(capture_from_thumb_header(b"not json"), None);
+    }
+
+    /// wall_clock_ms_at: the conversion is pinned at two explicit offsets, so
+    /// it is covered on a UTC machine (CI) where the two frames coincide and a
+    /// local-timezone assertion alone would prove nothing.
+    #[test]
+    fn wall_clock_conversion_rebases_a_utc_epoch_onto_the_camera_clock() {
+        // One instant, 21:02:11 UTC — 14:02:11 in Los Angeles (−07:00),
+        // 23:02:11 in Copenhagen (+02:00).
+        let utc_ms = crate::analyze::captured_at_ms(Some("2026-09-20T21:02:11"), None).unwrap();
+        let la = chrono::FixedOffset::east_opt(-7 * 3600).unwrap();
+        let cph = chrono::FixedOffset::east_opt(2 * 3600).unwrap();
+        assert_eq!(
+            wall_clock_ms_at(utc_ms, la),
+            crate::analyze::captured_at_ms(Some("2026-09-20T14:02:11"), None)
+        );
+        assert_eq!(
+            wall_clock_ms_at(utc_ms, cph),
+            crate::analyze::captured_at_ms(Some("2026-09-20T23:02:11"), None)
+        );
+    }
+
+    /// mtime_in_capture_frame: an mtime lands in exactly the frame
+    /// `captured_at_ms` builds, so an EXIF key and an mtime fallback are
+    /// comparable. The expectation is computed THROUGH `chrono::Local`, so the
+    /// test is correct in any timezone (on a UTC machine it reduces to
+    /// identity, which is the right answer there).
+    #[test]
+    fn mtime_in_capture_frame_matches_that_instants_local_wall_clock() {
+        let utc_ms = crate::analyze::captured_at_ms(Some("2026-09-20T21:02:11"), None).unwrap();
+        let wall = chrono::DateTime::from_timestamp_millis(utc_ms)
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        assert_eq!(
+            mtime_in_capture_frame(utc_ms),
+            crate::analyze::captured_at_ms(Some(&wall), None).unwrap()
+        );
+        // Outside chrono's range there is nothing to rebase onto: the raw value
+        // stands, so the frame keeps a sort key instead of losing its place.
+        assert_eq!(mtime_in_capture_frame(i64::MIN), i64::MIN);
+    }
+
+    /// Seed `n` thumb-tier entries with a distinct capture time each, for paths
+    /// that DO NOT exist on disk — so any time that comes back proves the cache
+    /// answered it with zero source reads. Returns (paths, stats, wanted).
+    #[allow(clippy::type_complexity)]
+    fn seed_thumb_capture_times(
+        cache: &TierCache,
+        dir: &Path,
+        n: usize,
+    ) -> (Vec<String>, Vec<Option<(i64, u64)>>, Vec<Option<i64>>) {
+        let mut paths = Vec::with_capacity(n);
+        let mut stats = Vec::with_capacity(n);
+        let mut want = Vec::with_capacity(n);
+        for i in 0..n {
+            let path = dir
+                .join(format!("IMG_{i:04}.CR3"))
+                .to_string_lossy()
+                .to_string();
+            let captured = format!("2026-09-20T14:02:{:02}", i % 60);
+            let sub_sec = i as u16;
+            let header = format!(
+                r#"{{"width":160,"height":120,"jpegLen":0,"meta":{{"capturedAt":"{captured}","subSecMs":{sub_sec}}}}}"#
+            );
+            let stat = (1_700_000_000_000 + i as i64, 4096 + i as u64);
+            cache.put(
+                CacheTier::Thumb,
+                &path,
+                stat.0,
+                stat.1,
+                header.as_bytes(),
+                b"",
+            );
+            want.push(crate::analyze::captured_at_ms(
+                Some(&captured),
+                Some(sub_sec),
+            ));
+            paths.push(path);
+            stats.push(Some(stat));
+        }
+        (paths, stats, want)
+    }
+
+    /// read_capture_epochs on the concurrent path: EVERY index gets ITS OWN
+    /// cached time back (the chunk → index mapping is the easy thing to get
+    /// wrong), and an entry whose (mtime, size) no longer matches the listing
+    /// is not used — a stale cache must never decide a frame's place.
+    #[test]
+    fn read_capture_epochs_maps_every_index_to_its_own_cached_time() {
+        let work = tmp_dir("capture-cache");
+        let cache = TierCache::new(work.join("tiers"));
+        // > 4 × RESTORE_WORKERS, and not a multiple of it, so the last chunk is
+        // short and every boundary is exercised.
+        let n = 21;
+        let (paths, stats, want) = seed_thumb_capture_times(&cache, &work, n);
+        assert!(
+            !Path::new(&paths[0]).exists(),
+            "the seeded paths must not exist, or a hit proves nothing"
+        );
+
+        let out = read_capture_epochs(&cache, &paths, &stats, true, &|| false, &|_| {});
+        assert_eq!(out, want);
+
+        // Same frame, a listing that no longer agrees with the stored entry:
+        // the cache is refused and the (absent) source cannot answer either.
+        let mut stale = stats.clone();
+        stale[0] = Some((1, 1));
+        let out = read_capture_epochs(&cache, &paths, &stale, true, &|| false, &|_| {});
+        assert_eq!(out[0], None, "a stale entry must not be used");
+        assert_eq!(out[1], want[1], "its neighbours are unaffected");
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// read_capture_epochs: a cancel mid-pass stops the reads there and then.
+    /// The frames already read keep their times; the rest come back None and
+    /// fall back to their mtime in the sort, exactly like a panicked chunk —
+    /// a superseded Begin culling must not keep opening thousands of files.
+    #[test]
+    fn read_capture_epochs_stops_reading_once_cancelled() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let work = tmp_dir("capture-cancel");
+        let cache = TierCache::new(work.join("tiers"));
+        let n = 10;
+        let (paths, stats, want) = seed_thumb_capture_times(&cache, &work, n);
+
+        // Cancelled from the 4th check on: 3 frames are read, 7 are not.
+        let checks = AtomicUsize::new(0);
+        let cancelled = || checks.fetch_add(1, Ordering::Relaxed) >= 3;
+        let out = read_capture_epochs(&cache, &paths, &stats, false, &cancelled, &|_| {});
+        assert_eq!(out[..3], want[..3], "frames read before the cancel");
+        assert!(
+            out[3..].iter().all(Option::is_none),
+            "frames after the cancel stay unread: {:?}",
+            &out[3..]
+        );
+        assert_eq!(checks.load(Ordering::Relaxed), 4, "stopped at the cancel");
+        let _ = fs::remove_dir_all(&work);
     }
 }
