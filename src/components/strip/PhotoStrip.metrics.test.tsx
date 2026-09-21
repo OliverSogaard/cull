@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { PhotoStrip } from "./PhotoStrip";
 import { STRIP_LARGE, STRIP_SMALL } from "./metrics";
+import { stripMetricsNow } from "./useStripMetrics";
 
 /**
  * PhotoStrip's whole reason for taking a `style` prop is to push StripMetrics'
@@ -86,5 +87,15 @@ describe("PhotoStrip wires StripMetrics onto .cull-strip-wrap's inline style", (
     expect(wrap.style.getPropertyValue("--cell-w")).toBe(`${STRIP_LARGE.cellW}px`);
     expect(wrap.style.getPropertyValue("--cell-h")).toBe(`${STRIP_LARGE.cellH}px`);
     expect(wrap.style.getPropertyValue("--strip-h")).toBe(`${STRIP_LARGE.stripH}px`);
+  });
+});
+
+describe("stripMetricsNow reads the step without a render", () => {
+  test("hands back the same two module constants the hook does", () => {
+    mql.matches = false;
+    stubMatchMedia();
+    expect(stripMetricsNow()).toBe(STRIP_SMALL);
+    mql.matches = true;
+    expect(stripMetricsNow()).toBe(STRIP_LARGE);
   });
 });
