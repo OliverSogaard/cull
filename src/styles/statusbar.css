@@ -92,7 +92,9 @@
    it were already gone; moving it up here is what closes the overflow band
    described below. The ORDINARY finish label ("Ctrl+E · N keeps") is
    untouched at this breakpoint — it keeps its own tier at 1120 (the design
-   board said 1100; the sums below are why it moved 20px).
+   board said 1100; the sums below are why it moved 20px). Since 3C the tier
+   also sheds Smart's count suffix and 4px of each tab's horizontal padding,
+   which is what pays for the fifth (Rejects) tab.
 
    1240 — the three remaining cosmetic words go: the zoom/scrub chip's word
    ("zoom 1:1" → "1:1" / "Scrubbing" → gone) and the verdict pill's word
@@ -114,15 +116,31 @@
    ~1220–1245px band that could still overflow. Building blocks (real CSS
    numbers, not an estimate of the whole sum):
 
-     right cluster — pos counter (12ch mono) 79, two 14px gaps, filter tabs
-     at their widest ("SMART · 4194") 347, and the finish button: ordinary
-     long "Ctrl+E · 4194 keeps" 163, short "Finish" 66.
-       R-ordinary = 79 + 14 + 347 + 14 + 163 = 617
-       R-short    = 79 + 14 + 347 + 14 +  66 = 520
+     right cluster — pos counter (12ch mono) 79, two 14px gaps, the FIVE
+     filter tabs (ALL 3 + UNRATED 7 + KEEPS 5 + SMART 5 + REJECTS 7 = 27
+     chars × 7.6px = 205.2, + 5 × 16px padding = 80, + 46 container chrome
+     [18+18 padding, 1+1 border, 4+4 margin]) 331.2 — Smart's count and 4px
+     of each tab's padding have both shed in this tier; see the rules below
+     — and the finish button: ordinary long "Ctrl+E · 4194 keeps" 163, short
+     "Finish" 66.
+       R-ordinary = 79 + 14 + 331.2 + 14 + 163 = 601.2
+       R-short    = 79 + 14 + 331.2 + 14 +  66 = 504.2
 
-     The 347 above is the tabs' measured advance; if it excludes their own
-     4px side margins, take 8 off every slack figure below — each stays
-     positive.
+     Above this tier nothing sheds: the tabs are 424.4 (the five full
+     labels, "SMART · 4194" included, at 12px padding = 258.4 + 120 + 46)
+     and the right cluster ALSO carries the key hint, which only sheds
+     below 1360 — mono 9px at 0.2em tracking = 7.2px × the 10 chars of
+     "TAB · KEYS" = 72, plus its own 14px gap. So
+       R(>=1360) = 72 + 14 + 79 + 14 + 424.4 + 14 + 244 = 861.4
+     and the absolute worst case there — every frame rated AND every photo
+     missing AND scrubbing at ×10 AND the overlay cluster up, with the
+     all-missing chip still wearing its tail (236) and the extension still
+     shown (27), so L = 657 — needs 657 + 861.4 + 72 = 1590.4 and
+     therefore overflows from 1360 up to that width. It already did before
+     the fifth tab (1513.2). Closing the band would mean firing this tier
+     at <1620px, which puts the default 1600px window permanently inside
+     it; the spec ruled the other way: "At 1360px and wider the footer
+     simply has a fifth tab."
 
      left cluster, the binding (NOT-all-rated) case, the two mutually
      exclusive pairs collapsed to their larger member (zoom XOR scrub;
@@ -148,26 +166,26 @@
    slack to spare:
 
      1359px (cosmetic shown, finish ordinary, extension already hidden):
-       537 + 0 + 617 + 72 = 1226 needed, 1359 available → 133px slack.
+       537 + 0 + 601.2 + 72 = 1210.2 needed, 1359 available → 148.8px slack.
      1240px (same state, this tier's own tightest width):
-       1226 needed, 1240 available → 14px slack.
+       1210.2 needed, 1240 available → 29.8px slack.
      1239px (cosmetic just hidden, finish still ordinary, extension hidden):
-       412 + 0 + 617 + 72 = 1101 needed, 1239 available → 138px slack.
+       412 + 0 + 601.2 + 72 = 1085.2 needed, 1239 available → 153.8px slack.
      1120px (same state, this tier's own tightest width):
-       1101 needed, 1120 available → 19px slack (at 1100, the design board's number, this state
-       would be 1px short — which is why the tier sits at 1120).
+       1085.2 needed, 1120 available → 34.8px slack (at 1100, the design
+       board's number, this state would now clear by 14.8px — the 20px
+       move to 1120 was made when the tabs were 15.8px wider, and it stays
+       as margin on estimated glyph advances; the tier itself is still
+       required, since at 1024 the ordinary label would be 61.2px short).
      1119px (cosmetic hidden, finish just shed to short, extension hidden):
-       412 + 0 + 520 + 72 = 1004 needed, 1119 available → 115px slack.
+       412 + 0 + 504.2 + 72 = 988.2 needed, 1119 available → 130.8px slack.
      1024px (the app's minimum window width, same state):
-       1004 needed, 1024 available → 20px slack — the filename stem's
+       988.2 needed, 1024 available → 35.8px slack — the filename stem's
        worst-case headroom (all-missing chip + scrub + overlay cluster at
        once); the stem ellipses there and nothing clips. In every ordinary
        state the stem has its full 240px max-width.
 
-   Every pinned width clears its requirement. The band that used to overflow
-   (~1220–1245px, when the extension was still shown but never priced into
-   the sum) no longer exists, because the extension now sheds at 1360,
-   before the cosmetic tier is ever reached. Ordinary states (no scrub,
+   Every pinned width clears its requirement. Ordinary states (no scrub,
    nothing missing, no smart suggestions) are nowhere near any of this. */
 @media (width < 1360px) {
   .cull-statusbar__keyhint {
@@ -216,6 +234,56 @@
      has to price it in — see the comment above this whole rule block. */
   .cull-statusbar__filename-ext {
     display: none;
+  }
+
+  /* ── the fifth tab, paid for inside this tier ────────────────
+     A REJECTS tab is 7 chars × 7.6px + 24px padding = 77.2px, which turns
+     all three binding slacks below negative. Two rules buy 85.6px back:
+
+     1. Smart's count / percent suffix sheds — the clipped span itself
+        holds "· 4194", 6 characters = 45.6px. (The separating space before
+        it is a text node OUTSIDE the span — `{" "}` in StatusBar.tsx —
+        that becomes trailing white space once the span is taken out of
+        flow and is trimmed by the browser, not by this rule; even if that
+        trim is not counted, the three binding slacks below still land
+        positive at +22.2 / +27.2 / +28.2.) CLIPPED, not `display: none`:
+        the span is inside the tab BUTTON, so removing it would shorten the
+        button's accessible name from "Smart · 4194" to "Smart". Same
+        recipe as the save chip's tail above (a media query cannot add a
+        class, so it is inlined again).
+     2. The five TABS' horizontal padding goes 12 → 8 = 8px × 5 = 40px. The
+        sub-mode tooltip's own chips are deliberately untouched (see the
+        child combinators below).
+
+     Tabs below 1360 are then 331.2px — 15.8px NARROWER than today's
+     four-tab 347.2px — so every pinned width in the arithmetic above gains
+     rather than loses: 1240 +29.8 (was +14), 1120 +34.8 (was +19), 1024
+     +35.8 (was +20). At 1360 and wider the footer simply has a fifth tab. */
+  .cull-statusbar__smart-count {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Both halves of this selector are load-bearing. `.cull-statusbar`:
+     index.css imports statusbar.css BEFORE chrome.css and a media query adds
+     no specificity, so a bare `.cull-filter-tabs button` here would lose to
+     chrome.css's `padding: 4px 12px` on source order and do nothing at all.
+     The CHILD combinators: the Keeps / Smart sub-mode tooltip buttons are
+     descendants of .cull-filter-tabs too, and their own `padding: 3px 7px`
+     (chrome.css) is only one class deep — a descendant selector here would
+     out-specify it and silently resize the sub-mode chips. These two cover
+     exactly the five tabs: All / Unrated / Rejects are direct children of the
+     strip, Keeps / Smart of their tooltip-anchoring group wrapper. */
+  .cull-statusbar .cull-filter-tabs > button,
+  .cull-statusbar .cull-filter-tab-group > button {
+    padding: 4px 8px;
   }
 }
 

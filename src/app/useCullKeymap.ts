@@ -45,6 +45,7 @@ export function useCullKeymap({
   stepGridSizeBy,
   resetGridSize,
   advance,
+  pageStep,
   selectAllInGrid,
   growGridSelection,
   clearMultiSelection,
@@ -67,6 +68,7 @@ export function useCullKeymap({
   championIndex,
   goToSite,
   goBack,
+  cycleChallenger,
   challengerWins,
   challengerLoses,
   challengerKeptBoth,
@@ -107,6 +109,10 @@ export function useCullKeymap({
   stepGridSizeBy: (dir: 1 | -1) => void;
   resetGridSize: () => void;
   advance: (dir: 1 | -1, step?: number) => boolean;
+  /** Frames in one screenful of whatever surface is up, measured at keypress
+   *  time (see utils/pageStep). Grid: whole rows × cols. Loupe / compare: the
+   *  whole filmstrip cells that fit across the window. */
+  pageStep: () => number;
   selectAllInGrid: () => void;
   growGridSelection: (deltaCells: number) => void;
   clearMultiSelection: () => void;
@@ -129,6 +135,11 @@ export function useCullKeymap({
   championIndex: number;
   goToSite: (target: NavSite) => void;
   goBack: (landIndex?: number) => void;
+  /** Compare's cursor move — the compare twin of `advance`. Only the page
+   *  keys use it: Home / End mean "first / last frame of the active
+   *  FILTER", and the filter tablist is hidden in compare, so there's no
+   *  filter-relative target for them to jump to there. */
+  cycleChallenger: (dir: 1 | -1, step?: number) => boolean;
   challengerWins: () => void;
   challengerLoses: () => void;
   challengerKeptBoth: (asFavorite: boolean) => void;
@@ -308,6 +319,41 @@ export function useCullKeymap({
           e.preventDefault();
           if (isZooming) pan(0, PAN_STEP);
           break;
+        // One candidate-strip screenful. The strip is the same component and
+        // the same metrics module as the loupe's, so the step is identical.
+        // e.repeat is dropped (not just ignored — the key still swallows via
+        // preventDefault below): a page-key auto-repeat never sets
+        // `scrubbing` the way a held arrow does (that's useHeldRepeat's own
+        // signal), and `scrubbing` is the gate on `wantFull` and
+        // `prefetchFullsAround` — so an unguarded held PgUp/PgDn would queue
+        // a full-res want plus a handful of prefetch pushes on EVERY OS
+        // repeat tick for frames the user is flying straight past, with
+        // nothing to dequeue them (a 2-second hold floods 200+ reads at the
+        // NAS). One step per press; flying through a shoot stays the arrows'
+        // job, which has the scrub machinery built for exactly that. Also
+        // swallowed while zoomed (Space held): both panes already hold a
+        // decoded zoom full (~130 MB each), and moving the challenger would
+        // request a THIRD full for the incoming frame before the old pair's
+        // are dropped — the same jetsam class `dropZoomFullsExcept` above
+        // exists to avoid. Release Space first, same rule as a strip click.
+        case "PageUp":
+          e.preventDefault();
+          if (e.repeat) break;
+          if (isZooming) break;
+          cycleChallenger(-1, pageStep());
+          break;
+        case "PageDown":
+          e.preventDefault();
+          if (e.repeat) break;
+          if (isZooming) break;
+          cycleChallenger(1, pageStep());
+          break;
+        // Filter-relative keys with no target in compare (the filter tablist
+        // is hidden there) — preventDefault just stops any platform default.
+        case "Home":
+        case "End":
+          e.preventDefault();
+          break;
         case "i":
         case "I":
           setExifVisible((v) => !v);
@@ -437,6 +483,93 @@ export function useCullKeymap({
             }
           }
           break;
+        // First / last frame OF THE ACTIVE FILTER, not index 0: App's
+        // `advance` callback works in filter-position space and clamps, so a
+        // step of images.length always lands on visibleIndices[0] / [len-1].
+        // (Its pos === -1 arm lands on visibleIndices[0] for BOTH directions,
+        // but that state is unreachable from a keypress: App's pre-paint
+        // auto-jump effect snaps an out-of-filter cursor back in whenever the
+        // filter is non-empty, and on an empty filter `advance` returns false
+        // before it ever computes a position.)
+        //
+        // In the grid, Shift extends the selection to the same target instead
+        // of moving the cursor alone — the keyboard twin of shift-clicking the
+        // first / last cell, and of the Shift+arrow cases above.
+        //
+        // No mid-hold stopGridVertHold() call here, unlike the Shift+arrow
+        // cases: none of these four keys is a vertical arrow, so the vertical-
+        // hold interrupt check earlier in handleModalKeys has already stopped
+        // any held row-jump before the switch is reached, and useHeldRepeat's
+        // stop() zeroes the ref synchronously.
+        //
+        // CONTROLLER RULING (fix round 1 — reverses the plan's "allow
+        // repeat"): a HELD PgUp/PgDn floods the read pipeline. A page-key
+        // auto-repeat never sets `scrubbing` the way a held arrow does
+        // (that's useHeldRepeat's own signal), and `scrubbing` gates both
+        // `wantFull` and `prefetchFullsAround` — so an unguarded repeat queues
+        // a full-res want plus several prefetch pushes on EVERY OS repeat
+        // tick for a frame the user is flying past, with nothing to dequeue
+        // them (a 2-second hold floods 200+ reads at the NAS). So PageUp /
+        // PageDown — plain AND Shift — drop `e.repeat` entirely and step once
+        // per press; flying through a shoot stays the arrows' job, which has
+        // the scrub machinery for it. Home / End get the same guard for
+        // uniformity, though it's moot there: a clamped `advance` (or, under
+        // Shift, `growGridSelection` landing on the same whole-list target)
+        // already reaches the same endpoint on every repeat, so a held
+        // Home/End was already harmless — the guard just makes that explicit
+        // instead of relying on the clamp.
+        //
+        // Also swallowed while zoomed (Space held), same rule as a strip
+        // click ("changing the frame mid-zoom is disabled"): the loupe's own
+        // zoom would just drop out from under the held key otherwise, so
+        // release Space first instead of letting the page key silently end
+        // the zoom behind it.
+        case "Home":
+          e.preventDefault();
+          if (e.repeat) break;
+          if (isZooming) break;
+          if (gridVisible && e.shiftKey) {
+            growGridSelection(-images.length);
+            break;
+          }
+          if (gridVisible) clearMultiSelection();
+          advance(-1, images.length);
+          break;
+        case "End":
+          e.preventDefault();
+          if (e.repeat) break;
+          if (isZooming) break;
+          if (gridVisible && e.shiftKey) {
+            growGridSelection(images.length);
+            break;
+          }
+          if (gridVisible) clearMultiSelection();
+          advance(1, images.length);
+          break;
+        // One screenful: rows × cols in the grid, one filmstrip width in the
+        // loupe (utils/pageStep, measured live — see App's `pageStep`).
+        case "PageUp":
+          e.preventDefault();
+          if (e.repeat) break;
+          if (isZooming) break;
+          if (gridVisible && e.shiftKey) {
+            growGridSelection(-pageStep());
+            break;
+          }
+          if (gridVisible) clearMultiSelection();
+          advance(-1, pageStep());
+          break;
+        case "PageDown":
+          e.preventDefault();
+          if (e.repeat) break;
+          if (isZooming) break;
+          if (gridVisible && e.shiftKey) {
+            growGridSelection(pageStep());
+            break;
+          }
+          if (gridVisible) clearMultiSelection();
+          advance(1, pageStep());
+          break;
         case "g":
         case "G":
           e.preventDefault();
@@ -486,6 +619,11 @@ export function useCullKeymap({
           if (settings.smartCulling) {
             startAnalysis(); // no-op unless "analyze on open" is off and unrun
           }
+          break;
+        case "5":
+          // No chipsTooltip.pulse(): Rejects has no sub-modes, so there is no
+          // sub-chip tooltip to show (same as 1 and 2).
+          setFilter((f) => cycleFilter(f, "rejects"));
           break;
         case "i":
         case "I":
@@ -577,6 +715,10 @@ export function useCullKeymap({
       // from accidentally cycling sort, switching to loupe, marking favorite,
       // etc. Shift modifiers still pass through (Shift+Space = 2:1 zoom,
       // capital letters from Shift+letter still match their lowercase cases).
+      // This `return` never reaches a `case`, but it does NOT `preventDefault`
+      // — so e.g. Ctrl+Home / Ctrl+End / Ctrl+PageDown still fall to whatever
+      // the platform does with them. Inert today, since nothing in the grid
+      // (or anywhere else in the culling UI) is focusable.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       // Space (hold) → 1:1 zoom (Shift+Space → 2:1); arrows pan while zoomed.
@@ -646,11 +788,13 @@ export function useCullKeymap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     phase,
+    images.length,
     startHold,
     stopHold,
     startGridVertHold,
     stopGridVertHold,
     advance,
+    pageStep,
     gridVisible,
     gridCols,
     stepGridSizeBy,
@@ -673,6 +817,7 @@ export function useCullKeymap({
     championIndex,
     goToSite,
     goBack,
+    cycleChallenger,
     challengerWins,
     challengerLoses,
     challengerKeptBoth,

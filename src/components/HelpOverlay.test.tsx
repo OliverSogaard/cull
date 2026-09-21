@@ -41,7 +41,7 @@ describe("the help sheet draws keycaps", () => {
   test("a range is two caps with a muted en dash between them", () => {
     const { container } = render(<HelpOverlay mode="loupe" />);
     const row = rowFor(container, "Filter:");
-    expect(caps(row)).toEqual(["1", "4"]);
+    expect(caps(row)).toEqual(["1", "5"]);
     expect(row.querySelector(".cull-help__range")?.textContent).toBe("–");
   });
 
@@ -58,5 +58,29 @@ describe("the help sheet draws keycaps", () => {
     const row = rowFor(container, "Grow selection");
     expect(caps(row)).toEqual(["Shift", "←", "→", "↑", "↓"]);
     expect(row.querySelectorAll(".keycombo")).toHaveLength(2);
+  });
+
+  test("the loupe teaches the new jump keys", () => {
+    const { container } = render(<HelpOverlay mode="loupe" />);
+    expect(caps(rowFor(container, "First / last"))).toEqual(["Home", "End"]);
+    expect(caps(rowFor(container, "Jump one strip"))).toEqual(["PgUp", "PgDn"]);
+  });
+
+  test("the grid teaches the screenful and both extend forms", () => {
+    const { container } = render(<HelpOverlay mode="grid" />);
+    expect(caps(rowFor(container, "First / last"))).toEqual(["Home", "End"]);
+    expect(caps(rowFor(container, "One screen"))).toEqual(["PgUp", "PgDn"]);
+    expect(caps(rowFor(container, "Extend selection to edge"))).toEqual(["Shift", "Home", "End"]);
+    expect(caps(rowFor(container, "Extend selection one screen"))).toEqual([
+      "Shift",
+      "PgUp",
+      "PgDn",
+    ]);
+  });
+
+  test("compare gets the page keys only — Home / End are loupe and grid", () => {
+    const { container } = render(<HelpOverlay mode="compare" />);
+    expect(caps(rowFor(container, "Jump one strip"))).toEqual(["PgUp", "PgDn"]);
+    expect(() => rowFor(container, "First / last")).toThrow();
   });
 });

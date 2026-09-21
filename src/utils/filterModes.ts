@@ -1,13 +1,13 @@
 import type { Filter } from "../types/rating";
 
 /**
- * The four footer tabs. Every {@link Filter} value belongs to exactly one via
+ * The five footer tabs. Every {@link Filter} value belongs to exactly one via
  * {@link topOf} — "keeps"/"keepsFavs" both belong to `"keeps"`,
  * "suggested"/"suggestedRejects"/"suggestedKeeps"/"suggestedFavs" all belong
- * to `"suggested"`. `"all"` and `"unrated"` have no sub-modes, so they ARE
- * their own top.
+ * to `"suggested"`. `"all"`, `"unrated"` and `"rejects"` have no sub-modes, so
+ * they ARE their own top.
  */
-export type TopFilter = "all" | "unrated" | "keeps" | "suggested";
+export type TopFilter = "all" | "unrated" | "keeps" | "suggested" | "rejects";
 
 /** Ordered sub-mode cycle for each top, base mode first. */
 const CYCLES: Record<TopFilter, Filter[]> = {
@@ -15,6 +15,7 @@ const CYCLES: Record<TopFilter, Filter[]> = {
   unrated: ["unrated"],
   keeps: ["keeps", "keepsFavs"],
   suggested: ["suggested", "suggestedRejects", "suggestedKeeps", "suggestedFavs"],
+  rejects: ["rejects"],
 };
 
 /** Which top-level tab a (possibly sub-mode) filter value belongs to. */

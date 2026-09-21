@@ -54,6 +54,27 @@ Expect one-time macOS permission prompts on first access to
 Desktop/Documents/Downloads, SD cards (removable volumes), and NAS (network
 volumes) — normal TCC behavior, no action needed.
 
+## Staging a shoot
+
+Opening a folder (or several — e.g. two camera bodies from the same shoot)
+lands on the **staged screen** first: a summary of what's about to be culled,
+with **Begin culling** as the one action that commits it.
+
+**Sort by capture time** (on by default) orders the shoot by each frame's
+EXIF `DateTimeOriginal` instead of the order the memory card wrote it in —
+the toggle lives here, not in Settings, because this is the one moment it
+matters (it re-sorts once, at Begin culling, and never again mid-cull).
+Ordering only — nothing is ever written to any file.
+
+With the sort on and two or more folders staged, every folder gets a row —
+name, frame count, and its first frame's capture time — and every folder
+after the first also shows the signed difference from the FIRST folder's
+first frame: a live hint for a second body whose clock runs ahead or behind.
+Nudge a folder's clock with its stepper: click **±1 s**, Shift-click
+**±1 min**, Ctrl-click resets it to 0. The difference shown already includes
+every offset applied so far, so the goal is simply to nudge it until it
+reads `+0 s`.
+
 ## Smart culling
 
 CULL can pre-judge a shoot and surface suggestions — **advisory only, always.
@@ -186,6 +207,10 @@ Cheat sheet:
 | `u`        | unrate              | —                    | unrate             |
 | `← →`      | prev / next (hold to scrub) | pick challenger (hold) | prev / next (hold to traverse) |
 | `↑ ↓`      | —                   | —                    | row up / down      |
+| `home` `end` | first / last in filter | —         | first / last in filter |
+| `pgup` `pgdn` | jump one strip-width | jump one strip-width | one screen        |
+| `shift+home` / `shift+end` | — | —                | extend selection to edge |
+| `shift+pgup` / `shift+pgdn` | — | —               | extend selection one screen |
 | `+` `−`    | —                   | —                    | bigger / smaller cells |
 | `Ctrl+0`   | —                   | —                    | medium cells       |
 | `space`    | 1:1 zoom (hold)     | 1:1 zoom (hold)      | —                  |
@@ -197,7 +222,7 @@ Cheat sheet:
 | `p`        | focus peaking       | focus peaking        | —                  |
 | `o`        | rule of thirds      | rule of thirds       | —                  |
 | `t`        | toggle thumb strip  | toggle candidate strip | —                |
-| `1 – 4`    | filter tabs (all / unrated / keeps / smart); re-press cycles sub-modes (keeps→★, smart→rejects/keeps/favs) | — | same |
+| `1 – 5`    | filter tabs (all / unrated / keeps / smart / rejects); re-press cycles sub-modes (keeps→★, smart→rejects/keeps/favs) | — | same |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo | undo / redo | undo / redo |
 | `Ctrl+E`   | finish actions (move rejects / copy keeps) | same | same |
 | `Ctrl+,`   | settings (also from the home screen) | same | same |

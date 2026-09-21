@@ -64,6 +64,30 @@ export type Settings = {
   thumbsPosition: ThumbsPosition;
   /** Contact-sheet cell size. +/− in the grid, Ctrl+0 back to medium. */
   gridSize: GridSize;
+  /**
+   * Sort the staged set by EXIF `DateTimeOriginal` (+ SubSec) at Begin
+   * culling, instead of by each file's write time. ON by default: on a local
+   * SSD the pass is seconds for 4,000 frames, and the thumb tier caches every
+   * read, so re-opening a shoot is free. The one place it is worth turning
+   * off is a slow network share on its FIRST open — which is exactly where
+   * the toggle lives, on the staged screen.
+   */
+  sortByCaptureTime: boolean;
+  /**
+   * Per-folder clock corrections in MILLISECONDS, keyed by `Img.srcFolder`
+   * (the folder the user picked, not the subdirectory a recursive walk found
+   * a frame in). Added to that folder's frames for ORDERING only — nothing is
+   * ever written to a file and the info rail keeps showing the camera's own
+   * time. Lives here rather than in recents because recents expire after 14
+   * days and are capped at 5, so an offset would silently evaporate.
+   *
+   * Keyed by the VERBATIM `srcFolder` string the picker returned — no
+   * normalisation beyond the NFC pass every folder path already gets
+   * (`useSessionLifecycle.ts`), so re-picking the same folder with a
+   * different spelling (a trailing separator, different case) starts it at 0
+   * rather than mis-keying someone else's correction onto it.
+   */
+  captureOffsets: Record<string, number>;
 
   // — File operations —
   /** Subfolder name that "move rejects" creates inside the cull folder. */
@@ -109,6 +133,8 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultCompositionVisible: false,
   thumbsPosition: "bottom",
   gridSize: "medium",
+  sortByCaptureTime: true,
+  captureOffsets: {},
 
   rejectedSubfolder: "_rejected",
   exportFolder: { mode: "remember" },
@@ -135,6 +161,32 @@ export const normalizeRejectedSubfolder = (s: string): string => {
   const clean = sanitizeFolderName(s);
   if (!clean || isReservedFolderName(clean)) return DEFAULT_SETTINGS.rejectedSubfolder;
   return clean;
+};
+
+/** The largest clock correction the staged screen will hold or store. A day
+ *  covers every real case (a body left on the wrong date, a timezone, a dead
+ *  clock battery) and keeps a hand-edited blob from reaching the sort with a
+ *  number that swamps it. */
+export const CAPTURE_OFFSET_LIMIT_MS = 24 * 60 * 60 * 1000;
+
+/** Validate a stored `captureOffsets` blob: an object of finite numbers, each
+ *  clamped to ±{@link CAPTURE_OFFSET_LIMIT_MS} and rounded to a whole
+ *  millisecond. Anything else — a non-object, an array, a string value, a
+ *  NaN — is dropped entry by entry rather than failing the whole settings
+ *  load. A NaN reaching the sort would poison every comparison in that
+ *  folder, and a FRACTION is worse than useless: the wire type is Rust
+ *  `i64`, so serde rejects the whole `analyze_folder` call rather than
+ *  degrading the sort. `stepOffset` only ever produces integers, so storage
+ *  is the one source of either — which is exactly what this distrusts. */
+export const coerceCaptureOffsets = (raw: unknown): Record<string, number> => {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [folder, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    const clamped = Math.max(-CAPTURE_OFFSET_LIMIT_MS, Math.min(CAPTURE_OFFSET_LIMIT_MS, value));
+    out[folder] = Math.round(clamped);
+  }
+  return out;
 };
 
 /**

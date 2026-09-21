@@ -1,0 +1,107 @@
+/* ── staged screen · capture-time sort ────────────────────────
+   The toggle and, for two bodies, one row per staged folder. The rows are a
+   grid rather than a flex row so the times and offsets line up in columns
+   down the list — the whole point of the hint is comparing two numbers. */
+.cull-staged-sort {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-top: var(--sp-5);
+}
+
+/* Pressed = "on": the same champagne trio as the footer's overlay toggle
+   chips (chrome.css's `.cull-statusbar__ov.is-on`) — accent-soft fill, accent
+   border, accent ink — so "the sort is on" reads the same everywhere in the
+   chrome, not just here. The label itself also spells out on/off (see the
+   component), so this is reinforcement, not the only signal. */
+.cull-staged-sort__toggle[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* `.btn:hover:not(:disabled)` is (0,3,0) — one class plus two pseudo-classes
+   (:hover, and :disabled inside :not). The rule above is only (0,2,0) (one
+   class, one attribute selector), so without a hover rule at least as
+   specific, hovering a PRESSED toggle would swap its champagne fill for the
+   plain hover fill for as long as the cursor sat on it. */
+.cull-staged-sort__toggle[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cull-staged-sort__folders {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 520px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border-soft);
+  /* An unbounded folder list would push "Begin culling" past the app root's
+     `overflow: hidden` on a short window (min-height 500) — scroll the list
+     itself instead. Same convention as the settings pane and the EXIF rail
+     (dialogs.css / exif-rail.css): plain `overflow-y: auto` + a thin native
+     scrollbar, no custom track/thumb chrome. */
+  max-height: min(38vh, 300px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.cull-staged-sort__row {
+  display: grid;
+  grid-template-columns: 1fr 52px 78px 96px auto;
+  gap: var(--sp-4);
+  align-items: center;
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.cull-staged-sort__name {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs-5);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cull-staged-sort__count,
+.cull-staged-sort__time,
+.cull-staged-sort__delta,
+.cull-staged-sort__offset {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* The delta is a HINT at what the offset should be, not a value the user set —
+   quieter than the offset it suggests. */
+.cull-staged-sort__delta {
+  color: var(--muted);
+}
+
+.cull-staged-sort__stepper {
+  display: inline-flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+/* Square, so a row of two of them reads as one control rather than two
+   buttons that happen to sit together. */
+.cull-staged-sort__step {
+  width: 26px;
+  padding: 0;
+  font-family: var(--font-mono);
+}
+
+.cull-staged-sort__offset {
+  min-width: 84px;
+  color: var(--text);
+}

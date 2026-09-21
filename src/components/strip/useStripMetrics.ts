@@ -24,6 +24,17 @@ function tallQuery(): MediaQueryList | null {
 }
 
 /**
+ * The step RIGHT NOW, outside React. The keymap's PgUp / PgDn need the live
+ * stride at keypress time, and a `useSyncExternalStore` subscription in App
+ * would buy a re-render on every crossing of the tall query for a number only
+ * a keystroke ever reads. Shares the one cached `MediaQueryList` with the hook
+ * above, so this adds no listener and allocates nothing.
+ */
+export function stripMetricsNow(): StripMetrics {
+  return stripMetricsFor(tallQuery()?.matches ?? false);
+}
+
+/**
  * The strip's step, from ONE matchMedia subscription. useSyncExternalStore
  * rather than a resize listener: the query fires only when the window crosses
  * the threshold, so a drag from 1000 to 1400px of height costs one event, not

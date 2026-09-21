@@ -841,6 +841,56 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
     })
 }
 
+/// First read of [`read_capture_time`]. Sized to hold a whole `moov` — the CMT
+/// boxes plus the small THMB — for the R6-class files this parser was verified
+/// against, with room to spare; a fatter one just costs that file one extra
+/// read through the grow loop. Named (rather than inline) so the test that
+/// straddles the boundary turns the same knob the code does.
+const CAPTURE_HEAD: usize = 128 << 10;
+
+/// Just the capture clock: EXIF `DateTimeOriginal` (0x9003) and
+/// `SubSecTimeOriginal` (0x9291), from the CMT2 Exif IFD. Reads only enough of
+/// the head to hold the whole `moov` box — no THMB extraction, no decode, no
+/// mdat — which is what makes a whole-shoot capture-time pass affordable at
+/// Begin culling (scan.rs). The two values are returned in exactly the shape
+/// `Cr3Meta` carries them, so `analyze::captured_at_ms` combines them unchanged.
+///
+/// `Ok((None, None))` when the moov is there but the tags are not: that frame
+/// has no capture time and the sort falls back to its mtime. `Err` is reserved
+/// for a file that cannot be read, or that holds no `moov` at all.
+///
+/// The first read is [`CAPTURE_HEAD`], an eighth of `read_thumbnail`'s: this is
+/// the one caller that wants the CMT boxes WITHOUT the THMB bytes, and it is
+/// the only one that runs over a whole shoot at once. At 4,000 frames the
+/// difference is ~4 GB of head reads against ~500 MB — seconds of cold NVMe
+/// per Begin culling. On a NAS the open still dominates the byte count, and the
+/// grow loop below costs a second round-trip only for a moov that spills past
+/// 128 KiB, which the layout note at the top of this file makes unusual: moov
+/// holds the CMT boxes and the 160×120 THMB, while the bulk of the ~2 MiB head
+/// `read_preview_bundle` takes is the PRVW preview, which lives outside it.
+pub fn read_capture_time(path: &str) -> std::io::Result<(Option<String>, Option<u16>)> {
+    const GROW: usize = 2 << 20;
+    const MOOV_SCAN_CAP: usize = 64 << 20; // bound the hunt on malformed input
+    let (mut buf, mut f, flen) = read_head(path, CAPTURE_HEAD)?;
+    while moov_range(&buf).is_none()
+        && buf.len() < MOOV_SCAN_CAP
+        && grow(&mut f, &mut buf, GROW, flen)?
+    {}
+    let Some((ms, me)) = moov_range(&buf) else {
+        return Err(io_err("no moov box"));
+    };
+    let Some(t) = cmt_in_uuid_range(&buf, ms, me, b"CMT2").and_then(Tiff::new) else {
+        return Ok((None, None));
+    };
+    let Some(ifd) = t.ifd0() else {
+        return Ok((None, None));
+    };
+    Ok((
+        t.ascii(ifd, 0x9003).map(|s| normalize_datetime(&s)),
+        t.ascii(ifd, 0x9291).as_deref().and_then(sub_sec_to_ms),
+    ))
+}
+
 // ── Native EXIF + AF metadata (replaces the exiftool subprocess) ─────────────
 
 /// Subset of EXIF the app needs, parsed straight from the CR3's CMT TIFF blobs.
@@ -1330,5 +1380,147 @@ mod tests {
                 hint.1,
             );
         }
+    }
+
+    /// Write bytes to a uniquely-named temp file and hand back its path. One
+    /// per test name + pid, mirroring scan.rs's `tmp_dir` idiom.
+    fn tmp_cr3(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("cull-cr3-{}-{}.CR3", name, std::process::id()));
+        std::fs::write(&p, bytes).expect("write synthetic cr3");
+        p
+    }
+
+    /// The smallest head `read_capture_time` can read, in the layout documented
+    /// at the top of this file: ftyp, then a moov holding one uuid box whose
+    /// CMT2 child is a little-endian TIFF with DateTimeOriginal (0x9003) and
+    /// SubSecTimeOriginal (0x9291). `cmt_in_uuid_range` never inspects the
+    /// uuid's value, so 16 zero bytes stand in for Canon's 85c0b687….
+    fn synth_cr3_head(datetime: Option<&str>, sub_sec: Option<&str>) -> Vec<u8> {
+        synth_cr3_head_padded(datetime, sub_sec, 0)
+    }
+
+    /// As [`synth_cr3_head`], plus `pad` bytes of filler INSIDE `moov` (a
+    /// `free` box ahead of the uuid, which the box walk skips) — the knob that
+    /// pushes moov's end past the first read, standing in for a camera whose
+    /// MakerNote or track boxes run long.
+    fn synth_cr3_head_padded(datetime: Option<&str>, sub_sec: Option<&str>, pad: usize) -> Vec<u8> {
+        let boxed = |fourcc: &[u8; 4], payload: &[u8]| -> Vec<u8> {
+            let mut b = Vec::with_capacity(8 + payload.len());
+            b.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
+            b.extend_from_slice(fourcc);
+            b.extend_from_slice(payload);
+            b
+        };
+        // ── the CMT2 TIFF ───────────────────────────────────────────────
+        let dt: Vec<u8> = datetime
+            .map(|s| s.bytes().chain(std::iter::once(0u8)).collect())
+            .unwrap_or_default();
+        let ss: Vec<u8> = sub_sec
+            .map(|s| s.bytes().chain(std::iter::once(0u8)).collect())
+            .unwrap_or_default();
+        assert!(ss.len() <= 4, "the SubSec value must fit inline");
+        let mut entries: Vec<[u8; 12]> = Vec::new();
+        // 2 (entry count) + 12 per entry + 4 (next-IFD pointer), from IFD0 at 8.
+        let value_off = 8u32 + 2 + 12 * (datetime.is_some() as u32 + sub_sec.is_some() as u32) + 4;
+        if !dt.is_empty() {
+            // ASCII, longer than 4 bytes -> stored at an offset (Tiff::find_entry).
+            let mut e = [0u8; 12];
+            e[0..2].copy_from_slice(&0x9003u16.to_le_bytes());
+            e[2..4].copy_from_slice(&2u16.to_le_bytes());
+            e[4..8].copy_from_slice(&(dt.len() as u32).to_le_bytes());
+            e[8..12].copy_from_slice(&value_off.to_le_bytes());
+            entries.push(e);
+        }
+        if !ss.is_empty() {
+            // ASCII, <= 4 bytes -> inline in the value field.
+            let mut e = [0u8; 12];
+            e[0..2].copy_from_slice(&0x9291u16.to_le_bytes());
+            e[2..4].copy_from_slice(&2u16.to_le_bytes());
+            e[4..8].copy_from_slice(&(ss.len() as u32).to_le_bytes());
+            e[8..8 + ss.len()].copy_from_slice(&ss);
+            entries.push(e);
+        }
+        let mut t: Vec<u8> = Vec::new();
+        t.extend_from_slice(b"II");
+        t.extend_from_slice(&42u16.to_le_bytes());
+        t.extend_from_slice(&8u32.to_le_bytes()); // IFD0 offset
+        t.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        for e in &entries {
+            t.extend_from_slice(e);
+        }
+        t.extend_from_slice(&0u32.to_le_bytes()); // no next IFD
+        assert_eq!(t.len() as u32, value_off);
+        t.extend_from_slice(&dt);
+        // ── box it ──────────────────────────────────────────────────────
+        let mut uuid_payload = vec![0u8; 16];
+        uuid_payload.extend_from_slice(&boxed(b"CMT2", &t));
+        let mut moov_payload = boxed(b"free", &vec![0u8; pad]);
+        moov_payload.extend_from_slice(&boxed(b"uuid", &uuid_payload));
+        let mut out = boxed(b"ftyp", b"crx isom");
+        out.extend_from_slice(&boxed(b"moov", &moov_payload));
+        out
+    }
+
+    /// The whole read, on a synthetic file — UNGATED, so CI (which has no CR3
+    /// corpus) actually covers it.
+    #[test]
+    fn read_capture_time_parses_datetime_and_subsec_from_a_moov_head() {
+        let p = tmp_cr3(
+            "capture-both",
+            &synth_cr3_head(Some("2026:09:20 14:02:11"), Some("47")),
+        );
+        let (dt, ss) = read_capture_time(p.to_str().unwrap()).expect("read");
+        assert_eq!(dt.as_deref(), Some("2026-09-20T14:02:11"), "normalized");
+        assert_eq!(ss, Some(470), "two digits = hundredths");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// A moov whose CMT2 carries neither tag is NOT an error — the frame just
+    /// has no capture time and falls back to its mtime in the sort.
+    #[test]
+    fn read_capture_time_is_none_not_an_error_when_the_tags_are_absent() {
+        let p = tmp_cr3("capture-none", &synth_cr3_head(None, None));
+        assert_eq!(
+            read_capture_time(p.to_str().unwrap()).expect("read"),
+            (None, None)
+        );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// No moov at all (a truncated or non-CR3 file) IS an error: the caller
+    /// must be able to tell "this file has no time" from "this file is not
+    /// readable as a CR3".
+    #[test]
+    fn read_capture_time_errors_without_a_moov() {
+        let p = tmp_cr3("capture-nomoov", b"not a cr3 at all, not even close");
+        assert!(read_capture_time(p.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// A moov that STRADDLES the first read: it begins inside `CAPTURE_HEAD`
+    /// and ends past it, so `moov_range` answers None on the first buffer and
+    /// only the grow loop completes the box. The time still comes back — an
+    /// unusually fat MakerNote costs one extra read, never a frame's place in
+    /// the sort. This is the safety net that makes the smaller first read safe.
+    #[test]
+    fn read_capture_time_grows_when_moov_straddles_the_first_read() {
+        let bytes = synth_cr3_head_padded(Some("2026:09:20 14:02:11"), Some("47"), CAPTURE_HEAD);
+        assert!(
+            bytes.len() > CAPTURE_HEAD,
+            "the fixture must outrun the first read: {} vs {CAPTURE_HEAD}",
+            bytes.len()
+        );
+        // The proof that the grow loop is what answers here: the first read on
+        // its own cannot even find the box, because the walk stops at a child
+        // that runs past the buffer.
+        assert!(
+            moov_range(&bytes[..CAPTURE_HEAD]).is_none(),
+            "the fixture resolves from the first read alone — it proves nothing"
+        );
+        let p = tmp_cr3("capture-straddle", &bytes);
+        let (dt, ss) = read_capture_time(p.to_str().unwrap()).expect("read");
+        assert_eq!(dt.as_deref(), Some("2026-09-20T14:02:11"));
+        assert_eq!(ss, Some(470));
+        let _ = std::fs::remove_file(&p);
     }
 }

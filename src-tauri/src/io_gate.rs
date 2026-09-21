@@ -156,6 +156,19 @@ impl SessionGate {
         self.gen.load(Ordering::Relaxed) != gen
     }
 
+    /// The live generation, for a pass that has no generation of its own to be
+    /// compared against. `analyze_folder` runs BEFORE the frontend resets its
+    /// store, so it never receives a `gen`; it snapshots this instead and
+    /// treats any later change as "superseded". Reading the backend's own
+    /// counter also cannot mis-fire the way a frontend-supplied number can —
+    /// after a webview reload the two counters disagree, and a comparison
+    /// against the frontend's would read as cancelled from the very first
+    /// frame. Same `Relaxed` ordering as [`Self::is_cancelled`]: the counter is
+    /// a change flag, and no other memory is published through it.
+    pub fn current(&self) -> u64 {
+        self.gen.load(Ordering::Relaxed)
+    }
+
     /// Record a file's mtime in MILLISECONDS (matches analyze_folder's ms
     /// mtimes; the thumb cache's seconds-resolution validator floors it).
     pub fn note_mtime(&self, path: &str, ms: i64) {
@@ -234,11 +247,16 @@ mod tests {
     #[test]
     fn session_gate_cancels_old_generations_only() {
         let g = SessionGate::new();
+        assert_eq!(g.current(), 0, "a fresh gate starts at generation 0");
         g.begin(3);
         assert!(!g.is_cancelled(3));
         assert!(g.is_cancelled(2));
+        assert_eq!(g.current(), 3);
         g.begin(4);
         assert!(g.is_cancelled(3));
+        // `current` is what a pass with no generation of its own compares
+        // against: snapshot it, and any later `begin` reads as a change.
+        assert_eq!(g.current(), 4);
     }
 
     #[test]

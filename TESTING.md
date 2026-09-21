@@ -73,6 +73,14 @@ computes against it from drifting apart:
   constant the request-rule math uses) equals the padding `grid.css` actually
   draws on `.cull-grid__cell`.
 
+`layout.test.ts`'s footer assertions slice the raw CSS between tier
+boundaries (`statusbar.indexOf("@media (width < 1360px) {")` through the
+`1240px` one, and so on) — the slicing is keyed to exactly THREE footer
+breakpoints (1360 / 1240 / 1120), so inserting a new one between them would
+break the slice silently. That is why the Rejects tab (Phase 3C) paid for
+its footer space by adding rules inside the existing `< 1360` tier instead
+of opening a fourth breakpoint.
+
 The rule this pattern exists to enforce: **a regex over raw CSS text must not
 be satisfiable by a comment.** A rule like `/--strip-h:\s*83px/` matches a
 `/* --strip-h: 83px */` explanation just as happily as the real declaration,
@@ -98,6 +106,25 @@ Example:
 ```bash
 CULL_TEST_CR3_DIR=sample_cr3s cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
 ```
+
+Not every head-only reader needs the corpus, though: `cr3::read_capture_time`
+(Phase 3C) is covered by a SYNTHETIC CR3 head assembled by hand in `cr3.rs`'s
+own test module (a minimal `ftyp` + `moov` > `uuid` > `CMT2` box carrying a
+hand-built little-endian TIFF), so its whole parse path — DateTimeOriginal,
+SubSecTimeOriginal, and the "no moov" / "moov but no tags" edge cases — runs
+in CI with no corpus at all. That is the pattern to copy for any future
+head-only reader: build the smallest byte string the parser actually walks
+rather than gating the test on `CULL_TEST_CR3_DIR`.
+
+The mtime-fallback chain that key feeds (`fallback_deltas` / `capture_keys`,
+`scan.rs`) is tested the same corpus-free way, as pure vector tests over
+hand-built `i64` timestamps — no file, no CR3, no window: a folder's whole
+clock offset recovered exactly (including the owner's own Tokyo-body-shot-
+from-Los-Angeles case), the median ignoring a decade-off outlier and a
+copy-rewritten mtime, a directory with no EXIF of its own borrowing the
+whole shoot's median, a shoot with no EXIF anywhere falling back to the
+machine's local clock, and pathological `i64::MIN` / `i64::MAX` clocks
+proving the arithmetic saturates instead of panicking or wrapping.
 
 ### Lightroom Classic sidecar fixtures (path-gated)
 

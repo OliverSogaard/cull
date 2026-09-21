@@ -9,7 +9,7 @@
 //! | [`bundle`]    | `read_preview` / `read_fullres` / `read_mid` / `generate_mid` / `read_grid_thumb` + `extract_thumbnail` Tauri commands. |
 //! | [`io_gate`]   | Read-permit backstop (IoGate), session gen + mtime table (SessionGate), `begin_session` / `set_io_profile`. |
 //! | [`midtier`]   | Phase 8 mid-tier generation: decode → SIMD resize ≤2560 → q80 encode + the MidGen concurrency gate. |
-//! | [`scan`]      | `scan_folder` + `analyze_folder` Tauri commands.        |
+//! | [`scan`]      | `scan_folder` + `analyze_folder` + `read_capture_times` Tauri commands. |
 //! | [`jpeg_rgb`]  | The shared JPEG → validated-RGB8 decode ritual.          |
 //! | [`tier_cache`]| On-disk LRU cache for image tiers (thumb/prvw/mid/grid), format v3 (`tier_cache::VERSION`). |
 //! | [`xmp`]       | XMP sidecar I/O: `write_xmp_rating` / `clear_xmp_rating` + the parser the analyze step uses to restore ratings. |
@@ -215,6 +215,7 @@ pub fn run() {
             io_gate::set_io_profile,
             scan::scan_folder,
             scan::analyze_folder,
+            scan::read_capture_times,
             xmp::write_xmp_rating,
             xmp::clear_xmp_rating,
             file_ops::move_rejects_to_subfolder,

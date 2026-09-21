@@ -106,3 +106,42 @@ describe("the footer renders both label forms", () => {
     expect(q(container, ".cull-statusbar__finish-short").textContent).toBe("Finish");
   });
 });
+
+describe("the Rejects tab", () => {
+  it("is the fifth tab, last, labelled in sentence case", () => {
+    const { container } = render(<StatusBar {...props()} />);
+    const tabs = container.querySelector(".cull-filter-tabs");
+    if (!tabs) throw new Error("no .cull-filter-tabs");
+    const labels = [...tabs.querySelectorAll(":scope > button, :scope > span > button")].map(
+      (b) => b.textContent,
+    );
+    expect(labels).toEqual(["All", "Unrated", "Keeps", "Smart", "Rejects"]);
+  });
+
+  it("offers its key in the hover tip while inactive, and drops it while active", () => {
+    const { container } = render(<StatusBar {...props()} />);
+    const rejects = container.querySelector<HTMLElement>(".cull-filter-tabs > button:last-child");
+    if (!rejects) throw new Error("no Rejects tab");
+    expect(rejects.getAttribute("data-tip")).toBe("5 · show rejects");
+
+    const base = props();
+    const { container: activeContainer } = render(
+      <StatusBar {...base} filter={{ ...base.filter, filter: "rejects" }} />,
+    );
+    const activeRejects = activeContainer.querySelector<HTMLElement>(
+      ".cull-filter-tabs > button:last-child",
+    );
+    if (!activeRejects) throw new Error("no active Rejects tab");
+    expect(activeRejects.getAttribute("data-tip")).toBeNull();
+    // Same active class the other four tabs use (All / Unrated / Keeps / Smart).
+    expect(activeRejects.className).toBe("is-active");
+  });
+
+  it("splits Smart's count suffix into its own element, leaving the name whole", () => {
+    const base = props();
+    render(<StatusBar {...base} filter={{ ...base.filter, suggestionCount: 4194 }} />);
+    const smart = screen.getByRole("button", { name: "Smart · 4194" });
+    const count = smart.querySelector(".cull-statusbar__smart-count");
+    expect(count?.textContent).toBe("· 4194");
+  });
+});
