@@ -172,8 +172,11 @@
      1239px (cosmetic just hidden, finish still ordinary, extension hidden):
        412 + 0 + 601.2 + 72 = 1085.2 needed, 1239 available → 153.8px slack.
      1120px (same state, this tier's own tightest width):
-       1085.2 needed, 1120 available → 34.8px slack (at 1100, the design board's number, this state
-       would be 1px short — which is why the tier sits at 1120).
+       1085.2 needed, 1120 available → 34.8px slack (at 1100, the design
+       board's number, this state would now clear by 14.8px — the 20px
+       move to 1120 was made when the tabs were 15.8px wider, and it stays
+       as margin on estimated glyph advances; the tier itself is still
+       required, since at 1024 the ordinary label would be 61.2px short).
      1119px (cosmetic hidden, finish just shed to short, extension hidden):
        412 + 0 + 504.2 + 72 = 988.2 needed, 1119 available → 130.8px slack.
      1024px (the app's minimum window width, same state):
@@ -235,13 +238,19 @@
 
   /* ── the fifth tab, paid for inside this tier ────────────────
      A REJECTS tab is 7 chars × 7.6px + 24px padding = 77.2px, which turns
-     all three binding slacks below negative. Two rules buy 93.2px back:
+     all three binding slacks below negative. Two rules buy 85.6px back:
 
-     1. Smart's count / percent suffix sheds — " · 4194" is 7 characters =
-        53.2px. CLIPPED, not `display: none`: the span is inside the tab
-        BUTTON, so removing it would shorten the button's accessible name
-        from "Smart · 4194" to "Smart". Same recipe as the save chip's tail
-        above (a media query cannot add a class, so it is inlined again).
+     1. Smart's count / percent suffix sheds — the clipped span itself
+        holds "· 4194", 6 characters = 45.6px. (The separating space before
+        it is a text node OUTSIDE the span — `{" "}` in StatusBar.tsx —
+        that becomes trailing white space once the span is taken out of
+        flow and is trimmed by the browser, not by this rule; even if that
+        trim is not counted, the three binding slacks below still land
+        positive at +22.2 / +27.2 / +28.2.) CLIPPED, not `display: none`:
+        the span is inside the tab BUTTON, so removing it would shorten the
+        button's accessible name from "Smart · 4194" to "Smart". Same
+        recipe as the save chip's tail above (a media query cannot add a
+        class, so it is inlined again).
      2. The five TABS' horizontal padding goes 12 → 8 = 8px × 5 = 40px. The
         sub-mode tooltip's own chips are deliberately untouched (see the
         child combinators below).
