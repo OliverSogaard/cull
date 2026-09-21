@@ -878,8 +878,12 @@ export function useCullKeymap({
       // capital letters from Shift+letter still match their lowercase cases).
       // This `return` never reaches a `case`, but it does NOT `preventDefault`
       // — so e.g. Ctrl+Home / Ctrl+End / Ctrl+PageDown still fall to whatever
-      // the platform does with them. Inert today, since nothing in the grid
-      // (or anywhere else in the culling UI) is focusable.
+      // the platform does with them. Phase 5A's rail buttons (the star meter,
+      // the label swatches) are the first focusable elements the culling UI
+      // has had, but that changes nothing here: Enter and Space are both
+      // swallowed with their own `preventDefault()` regardless of what has
+      // focus, so a focused rail button never gets a browser-native
+      // activation this listener didn't already decide.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       // Space (hold) → 1:1 zoom (Shift+Space → 2:1); arrows pan while zoomed.

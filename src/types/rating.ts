@@ -63,7 +63,11 @@ export function isStar(v: unknown): v is Star {
 /**
  * Filter visible in the status bar: keyboard 1–5 select the five top-level
  * tabs (All / Unrated / Keeps / Smart / Rejects); repressing an active tab's
- * key cycles through its sub-modes (see `src/utils/filterModes.ts`).
+ * key cycles through its sub-modes (see `src/utils/filterModes.ts`). That is
+ * the digit row's meaning with `settings.starsAndLabels` OFF (the default).
+ * ON, 1–5 mark stars instead and the same five filters move to
+ * Shift+1–Shift+5 (see `useCullKeymap.ts`) — this `Filter` union and its
+ * sub-mode cycling are unchanged either way.
  *
  * - `keeps` includes favorites by design (a ★ frame is also a keep);
  *   `keepsFavs` narrows to favorite-rated only.
