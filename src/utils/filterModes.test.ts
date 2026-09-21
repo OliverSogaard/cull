@@ -18,6 +18,10 @@ describe("topOf", () => {
     expect(topOf("suggestedKeeps")).toBe("suggested");
     expect(topOf("suggestedFavs")).toBe("suggested");
   });
+
+  it("maps rejects to itself — it has no sub-modes", () => {
+    expect(topOf("rejects")).toBe("rejects");
+  });
 });
 
 describe("cycleFilter", () => {
@@ -49,5 +53,15 @@ describe("cycleFilter", () => {
     expect(cycleFilter("suggestedRejects", "suggested")).toBe("suggestedKeeps");
     expect(cycleFilter("suggestedKeeps", "suggested")).toBe("suggestedFavs");
     expect(cycleFilter("suggestedFavs", "suggested")).toBe("suggested");
+  });
+
+  it("re-activating Rejects is a no-op, like All and Unrated", () => {
+    expect(cycleFilter("rejects", "rejects")).toBe("rejects");
+  });
+
+  it("switching into and out of Rejects always lands on a base mode", () => {
+    expect(cycleFilter("keepsFavs", "rejects")).toBe("rejects");
+    expect(cycleFilter("rejects", "keeps")).toBe("keeps");
+    expect(cycleFilter("rejects", "suggested")).toBe("suggested");
   });
 });

@@ -16,6 +16,10 @@ export function passesFilter(rating: Rating | undefined, filter: Filter): boolea
       return rating === "keep" || rating === "favorite";
     case "keepsFavs":
       return rating === "favorite";
+    case "rejects":
+      // The pile "move rejects" will take. NOT `suggestedRejects` (an unrated
+      // frame the smart pass flagged) — this is the user's own verdict.
+      return rating === "reject";
     case "suggested":
     case "suggestedRejects":
     case "suggestedKeeps":

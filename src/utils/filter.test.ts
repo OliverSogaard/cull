@@ -50,3 +50,12 @@ describe("suggested filter family fallback", () => {
     }
   });
 });
+
+describe("the rejects filter", () => {
+  it("admits ONLY rejected frames", () => {
+    expect(passesFilter("reject", "rejects")).toBe(true);
+    expect(passesFilter("keep", "rejects")).toBe(false);
+    expect(passesFilter("favorite", "rejects")).toBe(false);
+    expect(passesFilter(undefined, "rejects")).toBe(false);
+  });
+});
