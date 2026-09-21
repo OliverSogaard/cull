@@ -46,7 +46,13 @@ fn be_u64(d: &[u8], i: usize) -> Option<u64> {
 }
 
 /// Top-level / sibling boxes in [start, end) → (fourcc, content_start, box_end).
+///
+/// `end` is caller-supplied and `full_jpeg_location` is `pub`, so it can
+/// exceed the buffer. Clamping it here makes `i + 8 <= end <= d.len()` an
+/// invariant, which is what proves the four DIRECT indices at the push below
+/// safe — previously they rested on a promise every caller happened to keep.
 fn boxes(d: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
+    let end = end.min(d.len());
     let mut out = Vec::new();
     let mut i = start;
     while i + 8 <= end {
@@ -146,6 +152,41 @@ fn type_size(typ: u16) -> usize {
     }
 }
 
+/// Clamp a file-supplied IFD `count` to the components the buffer can hold.
+///
+/// An IFD entry's count is a raw `u32` — up to 4,294,967,295 — and nothing in
+/// the file guarantees the bytes behind it exist. Before this clamp,
+/// `Tiff::rationals` iterated the DECLARED count with `filter_map`, which
+/// SKIPS an out-of-bounds read instead of stopping: a CR3 whose CMT4 GPS IFD
+/// declared `type 5 (RATIONAL), count 0xFFFF_FFFF` spun about a second per
+/// tag, twice per file (lat + lon), on every read path — for GPS the UI never
+/// displays (`metadata_from_prefix` -> `gps_coord` -> `rationals`).
+///
+/// Clamping HERE, in `find_entry`, bounds every caller at once instead of
+/// four times at the call sites, and makes the returned count a promise:
+/// *this many components are readable from `voff`.*
+///
+/// - An unknown type (`type_size` == 0) reads back 0. Every caller checks the
+///   type before using the count, so this is observably identical today — but
+///   it keeps the promise true for a future caller, which passing the raw
+///   count through would not.
+/// - A `voff` past the end of the buffer also reads back 0.
+/// - An INLINE value (`type_size * count <= 4`, stored at `entry + 8`) carries
+///   at most 4 components by construction, so the clamp is a no-op for every
+///   well-formed file. The one case it does bite is an entry truncated at the
+///   buffer's tail, where it yields the components that actually exist instead
+///   of None — bounded, and in the same direction as the rest of this change.
+fn clamp_count(buf_len: usize, voff: usize, typ: u16, cnt: u32) -> u32 {
+    let size = type_size(typ);
+    if size == 0 {
+        return 0;
+    }
+    let Some(room) = buf_len.checked_sub(voff) else {
+        return 0;
+    };
+    u32::try_from(room / size).unwrap_or(u32::MAX).min(cnt)
+}
+
 // ── Minimal TIFF reader (little- or big-endian) ─────────────────────────────
 struct Tiff<'a> {
     d: &'a [u8],
@@ -194,8 +235,10 @@ impl<'a> Tiff<'a> {
         None
     }
 
-    /// Find an IFD entry by tag → (type, count, absolute value offset). Values
-    /// ≤ 4 bytes are inline at entry+8; larger ones live at the u32 offset there.
+    /// Find an IFD entry by tag → (type, CLAMPED count, absolute value
+    /// offset). Values ≤ 4 bytes are inline at entry+8; larger ones live at
+    /// the u32 offset there. The count is file-supplied and unvalidated, so it
+    /// passes through `clamp_count` before any caller can loop on it.
     fn find_entry(&self, ifd_off: usize, tag: u16) -> Option<(u16, u32, usize)> {
         let count = self.u16(ifd_off)? as usize;
         for e in 0..count {
@@ -209,7 +252,7 @@ impl<'a> Tiff<'a> {
                 } else {
                     self.u32(entry + 8)? as usize
                 };
-                return Some((typ, cnt, voff));
+                return Some((typ, clamp_count(self.d.len(), voff, typ, cnt), voff));
             }
         }
         None
@@ -252,6 +295,16 @@ impl<'a> Tiff<'a> {
     }
 
     /// All RATIONAL/SRATIONAL components (e.g. GPS deg/min/sec).
+    ///
+    /// `map_while`, not `filter_map`: the components are CONTIGUOUS, so the
+    /// first unreadable one ends the array — `filter_map` skipped it and kept
+    /// going, which is what turned a hostile count into a multi-second spin.
+    /// Provably the same output: `urational_at` / `srational_at` return None
+    /// ONLY on a failed bounds-checked read, and that is monotone in `k`, so
+    /// no reachable input has a readable component after an unreadable one.
+    /// Belt to `find_entry`'s clamp (the braces): the clamp bounds every
+    /// caller, this bounds the loop even if a future change hands back an
+    /// unclamped count.
     fn rationals(&self, ifd_off: usize, tag: u16) -> Vec<f64> {
         let Some((typ, cnt, voff)) = self.find_entry(ifd_off, tag) else {
             return Vec::new();
@@ -260,7 +313,7 @@ impl<'a> Tiff<'a> {
             return Vec::new();
         }
         (0..cnt as usize)
-            .filter_map(|k| {
+            .map_while(|k| {
                 let o = voff + 8 * k;
                 if typ == 10 {
                     self.srational_at(o)
@@ -397,11 +450,17 @@ fn top_box_content_start(d: &[u8], want: &[u8; 4]) -> Option<usize> {
         } else {
             (s32 as usize, 8usize)
         };
-        if &fourcc == want {
-            return Some(i + hdr);
-        }
+        // A box declaring a size smaller than its own header is malformed and
+        // ends the walk — the same rule `boxes` applies at its `size < hdr`
+        // check. Checked BEFORE the fourcc match so the two walkers agree:
+        // this one used to report such a box as found. (The returned offset
+        // was never out of range: hdr is 8 only under `i + 8 <= d.len()`, and
+        // 16 only after `be_u64(d, i + 8)?` proved `i + 16 <= d.len()`.)
         if size < hdr {
             break;
+        }
+        if &fourcc == want {
+            return Some(i + hdr);
         }
         i = i.checked_add(size)?;
     }
@@ -437,6 +496,10 @@ fn child_box(d: &[u8], start: usize, end: usize, want: &[u8; 4]) -> Option<(usiz
 /// validation (SOI at offset, EOI inside the range; `read_fullres_at`), with
 /// the legacy scan as the fallback, and from the corpus gate test that asserts
 /// hint == mdat-scan for every sample CR3.
+///
+/// `moov_start` / `moov_end` are NOT a precondition: `boxes` clamps its `end`
+/// to the buffer, so any range is safe (an out-of-range one simply yields no
+/// boxes and therefore `None`).
 pub fn full_jpeg_location(d: &[u8], moov_start: usize, moov_end: usize) -> Option<(u64, u64)> {
     let mut best: Option<(u64, u64)> = None;
     for (fourcc, ts, te) in boxes(d, moov_start, moov_end) {
@@ -1390,6 +1453,79 @@ mod tests {
         p
     }
 
+    /// `size + fourcc + payload` — the ISO-BMFF box header. Lifted out of
+    /// `synth_cr3_head_padded`'s inner closure so the GPS fixture and the
+    /// fuzzer's seeds can build boxes too.
+    fn boxed(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut b = Vec::with_capacity(8 + payload.len());
+        b.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
+        b.extend_from_slice(fourcc);
+        b.extend_from_slice(payload);
+        b
+    }
+
+    /// One little-endian IFD entry: tag, type, count, value-or-offset.
+    fn tiff_entry(tag: u16, typ: u16, cnt: u32, voff: u32) -> [u8; 12] {
+        let mut e = [0u8; 12];
+        e[0..2].copy_from_slice(&tag.to_le_bytes());
+        e[2..4].copy_from_slice(&typ.to_le_bytes());
+        e[4..8].copy_from_slice(&cnt.to_le_bytes());
+        e[8..12].copy_from_slice(&voff.to_le_bytes());
+        e
+    }
+
+    /// Assemble a little-endian TIFF blob: "II" + magic 42 + IFD0 at offset 8,
+    /// then `entries`, a zero next-IFD pointer, and `tail` — the out-of-line
+    /// value area the entries' offsets point into. The knob
+    /// `synth_cr3_head_padded` does not give: an ARBITRARY entry, so a test
+    /// can build the GPS IFD the unbounded-count hang lived in.
+    fn synth_tiff(entries: &[[u8; 12]], tail: &[u8]) -> Vec<u8> {
+        let mut t = Vec::new();
+        t.extend_from_slice(b"II");
+        t.extend_from_slice(&42u16.to_le_bytes());
+        t.extend_from_slice(&8u32.to_le_bytes());
+        t.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        for e in entries {
+            t.extend_from_slice(e);
+        }
+        t.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(t.len(), value_area_of(entries.len()), "value area offset");
+        t.extend_from_slice(tail);
+        t
+    }
+
+    /// Where `synth_tiff`'s value area begins: IFD0 at 8, its 2-byte entry
+    /// count, 12 bytes per entry, then the 4-byte next-IFD pointer.
+    fn value_area_of(entries: usize) -> usize {
+        8 + 2 + 12 * entries + 4
+    }
+
+    /// A CMT4-shaped GPS IFD: `GPSLatitudeRef` (ASCII "N", inline) and
+    /// `GPSLatitude` (three RATIONALs at the value area) — with the latitude's
+    /// COUNT under the caller's control. 51° 30' 0" N, give or take.
+    fn synth_gps_tiff(lat_count: u32) -> Vec<u8> {
+        let lat_off = value_area_of(2) as u32;
+        let mut lat_ref = tiff_entry(0x0001, 2, 2, 0); // ASCII, 2 bytes -> inline
+        lat_ref[8] = b'N';
+        let mut tail = Vec::new();
+        for (n, d) in [(51u32, 1u32), (30, 1), (0, 1)] {
+            tail.extend_from_slice(&n.to_le_bytes());
+            tail.extend_from_slice(&d.to_le_bytes());
+        }
+        synth_tiff(&[lat_ref, tiff_entry(0x0002, 5, lat_count, lat_off)], &tail)
+    }
+
+    /// A CR3 head whose Canon uuid carries ONE CMT box holding `tiff`.
+    /// `cmt_in_uuid_range` never inspects the uuid's value, so 16 zero bytes
+    /// stand in for Canon's 85c0b687….
+    fn synth_cr3_head_with_cmt(cmt: &[u8; 4], tiff: &[u8]) -> Vec<u8> {
+        let mut uuid_payload = vec![0u8; 16];
+        uuid_payload.extend_from_slice(&boxed(cmt, tiff));
+        let mut out = boxed(b"ftyp", b"crx isom");
+        out.extend_from_slice(&boxed(b"moov", &boxed(b"uuid", &uuid_payload)));
+        out
+    }
+
     /// The smallest head `read_capture_time` can read, in the layout documented
     /// at the top of this file: ftyp, then a moov holding one uuid box whose
     /// CMT2 child is a little-endian TIFF with DateTimeOriginal (0x9003) and
@@ -1404,13 +1540,6 @@ mod tests {
     /// pushes moov's end past the first read, standing in for a camera whose
     /// MakerNote or track boxes run long.
     fn synth_cr3_head_padded(datetime: Option<&str>, sub_sec: Option<&str>, pad: usize) -> Vec<u8> {
-        let boxed = |fourcc: &[u8; 4], payload: &[u8]| -> Vec<u8> {
-            let mut b = Vec::with_capacity(8 + payload.len());
-            b.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
-            b.extend_from_slice(fourcc);
-            b.extend_from_slice(payload);
-            b
-        };
         // ── the CMT2 TIFF ───────────────────────────────────────────────
         let dt: Vec<u8> = datetime
             .map(|s| s.bytes().chain(std::iter::once(0u8)).collect())
@@ -1522,5 +1651,458 @@ mod tests {
         assert_eq!(dt.as_deref(), Some("2026-09-20T14:02:11"));
         assert_eq!(ss, Some(470));
         let _ = std::fs::remove_file(&p);
+    }
+
+    /// THE bug this phase exists for, in its exact hostile shape: a CMT4 GPS
+    /// IFD declaring `GPSLatitude (0x0002), type 5 RATIONAL, count
+    /// 0xFFFF_FFFF` over a buffer that holds three rationals.
+    #[test]
+    fn a_hostile_ifd_count_is_clamped_to_the_bytes_that_exist() {
+        const HOSTILE: u32 = 0xFFFF_FFFF;
+        let blob = synth_gps_tiff(HOSTILE);
+        let lat_off = value_area_of(2);
+        assert_eq!(
+            blob.len(),
+            lat_off + 24,
+            "three RATIONALs in the value area"
+        );
+
+        let t = Tiff::new(&blob).expect("II header");
+        let ifd = t.ifd0().expect("IFD0 offset");
+
+        // 1. The clamp itself — deterministic, no clock involved.
+        let (typ, cnt, voff) = t.find_entry(ifd, 0x0002).expect("the GPS latitude entry");
+        assert_eq!(typ, 5);
+        assert_eq!(voff, lat_off);
+        assert_eq!(
+            cnt, 3,
+            "clamped to (len - voff) / 8, not the declared {HOSTILE}"
+        );
+
+        // 2. The consequence: the three real components, returned AT ONCE.
+        //    The budget is ~1000x a healthy parse and ~4x under the measured
+        //    pre-clamp spin, so this cannot pass merely by being fast.
+        let t0 = std::time::Instant::now();
+        let parts = t.rationals(ifd, 0x0002);
+        let elapsed = t0.elapsed();
+        assert_eq!(parts, vec![51.0, 30.0, 0.0]);
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "rationals took {elapsed:?} — an unbounded IFD count is back"
+        );
+
+        // 3. The PRODUCTION route the bug actually lived on, end to end:
+        //    metadata_from_prefix -> gps_coord -> rationals, on a whole CR3
+        //    head. Asserting only on `rationals` would leave the path every
+        //    real image takes untested.
+        let head = synth_cr3_head_with_cmt(b"CMT4", &blob);
+        let t1 = std::time::Instant::now();
+        let m = metadata_from_prefix(&head);
+        assert!(
+            t1.elapsed() < std::time::Duration::from_millis(200),
+            "metadata_from_prefix took {:?}",
+            t1.elapsed()
+        );
+        assert_eq!(m.gps_lat, Some(51.5), "51 deg 30 min 0 sec, N");
+    }
+
+    /// The clamp's other arms. No production caller can reach them today
+    /// (every one checks the type first), which is exactly why they need a
+    /// test: they are what keeps `find_entry`'s contract true for the next one.
+    #[test]
+    fn an_unknown_type_and_an_out_of_range_offset_clamp_to_zero() {
+        assert_eq!(type_size(0), 0, "0 is not a TIFF field type");
+        assert_eq!(type_size(13), 0, "13 is past the TIFF 6.0 table");
+        assert_eq!(clamp_count(100, 10, 13, 9), 0, "unknown type");
+        assert_eq!(clamp_count(100, 200, 5, 9), 0, "value offset past the end");
+        assert_eq!(clamp_count(100, 92, 5, 9), 1, "(100 - 92) / 8 = 1");
+        assert_eq!(
+            clamp_count(100, 10, 5, 2),
+            2,
+            "a well-formed count is untouched"
+        );
+    }
+
+    /// `boxes` indexes `d[i + 4 ..= i + 7]` directly while the loop condition
+    /// only bounds `i + 8` against `end`. `full_jpeg_location` is pub and took
+    /// `moov_end` unvalidated, so a five-byte buffer with a larger `end`
+    /// walked off the slice.
+    #[test]
+    fn boxes_clamps_a_caller_end_past_the_buffer() {
+        let d = [0u8, 0, 0, 8, b'f']; // a size-8 header, truncated mid-fourcc
+        assert!(boxes(&d, 0, 8).is_empty(), "no complete box in five bytes");
+        assert!(boxes(&d, 0, usize::MAX).is_empty());
+        assert_eq!(full_jpeg_location(&d, 0, usize::MAX), None);
+    }
+
+    /// A box whose declared size is smaller than its own header is malformed.
+    /// `boxes` has always ended the walk there; `top_box_content_start`
+    /// checked after the fourcc match and reported it as found.
+    #[test]
+    fn top_box_content_start_rejects_a_box_shorter_than_its_header() {
+        let mut d = Vec::new();
+        d.extend_from_slice(&4u32.to_be_bytes()); // size 4 < the 8-byte header
+        d.extend_from_slice(b"mdat");
+        d.extend_from_slice(&[0u8; 8]);
+        assert_eq!(top_box_content_start(&d, b"mdat"), None);
+        assert!(
+            boxes(&d, 0, d.len()).is_empty(),
+            "boxes already rejected it"
+        );
+    }
+
+    // ── Mutation fuzzer ──────────────────────────────────────────────────
+    //
+    // A deterministic, dependency-free fuzzer over every `&[u8]` parse entry
+    // point in this file, as an ordinary `#[test]`, so it rides the existing
+    // `cargo test` step on BOTH CI runners and needs no CR3 corpus.
+    //
+    // Why hand-rolled: `cargo fuzz` needs nightly + libFuzzer and a separate
+    // crate that would link tauri and ort; `proptest` is ten crates plus a
+    // generator re-implementing the synthetic heads above. This is ~180 lines,
+    // runs on stable, and — because [profile.dev] sets only opt-level and
+    // never overrides overflow-checks (Cargo.toml:68-69) — gets
+    // arithmetic-overflow panic detection for free.
+    //
+    // Honest limitations, so nobody over-reads a green run:
+    //  (i) A hang cannot be detected from the thread that is hanging. Each
+    //      BATCH runs on a worker that acks every input it finishes; the main
+    //      thread's recv_timeout names the culprit (last ack + 1) for a hang
+    //      (Timeout) and for a panic (Disconnected — the sender drops with the
+    //      thread). A genuinely hung input LEAKS its worker until the test
+    //      binary exits. Accepted: the process is about to fail anyway, and
+    //      the alternative is 20,000 thread spawns.
+    //  (ii) Allocation cannot be observed without a custom allocator, so the
+    //      inputs are capped instead and the assertions are on RETURNED sizes.
+    //  (iii) This is a robustness net, not a correctness oracle: it proves no
+    //      input panics, hangs, or returns a nonsense size — never that a
+    //      well-formed CR3 parses correctly. The tests above do that.
+
+    const FUZZ_MAX_INPUT: usize = 256 << 10;
+    const FUZZ_ITERS: u64 = 20_000;
+    const FUZZ_BATCH: u64 = 250;
+    /// Per-INPUT budget. A healthy input over a small buffer is microseconds;
+    /// the unbounded-count spin this fuzzer was written to find is 1.6–1.9 s
+    /// per file (spec, "The one real bug"). 1 s sits four orders of magnitude
+    /// above a healthy input and still below a single-tag spin, so neither CI
+    /// scheduling noise on a shared runner nor a slow machine can move it
+    /// across either line.
+    const FUZZ_INPUT_BUDGET: std::time::Duration = std::time::Duration::from_millis(1000);
+    const FUZZ_SEED: u64 = 0xC0FF_EE15_0FEE_D000;
+
+    /// xorshift64* — eight lines, no dependency, good enough to shuffle bytes.
+    struct Rng(u64);
+    impl Rng {
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        /// An index in `0..n`; `n == 0` yields 0 (never a modulo by zero).
+        fn below(&mut self, n: usize) -> usize {
+            if n == 0 {
+                0
+            } else {
+                (self.next_u64() % n as u64) as usize
+            }
+        }
+    }
+
+    fn fuzz_env(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// The inputs the mutators start from. Every one is a shape the parser is
+    /// MEANT to walk, so a mutation lands inside real structure instead of on
+    /// random noise.
+    fn fuzz_seeds() -> Vec<Vec<u8>> {
+        vec![
+            synth_cr3_head(Some("2026:09:21 11:00:00"), Some("47")),
+            synth_cr3_head_padded(Some("2026:09:21 11:00:00"), Some("47"), 64),
+            // The GPS head: the tag family the hang lived in.
+            synth_cr3_head_with_cmt(b"CMT4", &synth_gps_tiff(3)),
+            // A bare TIFF blob, so Tiff::new is reached without a box walk.
+            synth_gps_tiff(3),
+            sample_jpeg(),
+            Vec::new(),
+        ]
+    }
+
+    /// First little-endian TIFF header ("II", magic 42) in the buffer.
+    /// `saturating_sub(3)`, not 4: a 4-byte window at `i` needs `i + 4 <= len`,
+    /// so the last legal start is `len - 4` and the range must run to `len - 3`.
+    fn find_le_tiff(d: &[u8]) -> Option<usize> {
+        (0..d.len().saturating_sub(3)).find(|&i| &d[i..i + 4] == b"II\x2A\x00")
+    }
+
+    fn read_le_u16(d: &[u8], i: usize) -> Option<u16> {
+        d.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]))
+    }
+    fn read_le_u32(d: &[u8], i: usize) -> Option<u32> {
+        d.get(i..i + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    /// STRUCTURE-AWARE mutation: find a little-endian TIFF, pick one of its
+    /// IFD0 entries, and overwrite that entry's 4-byte COUNT field with a
+    /// hostile value. This is the shape that hung the parser, and random byte
+    /// edits reach it only by accident — the count field is never 4-byte
+    /// aligned in the file, so an aligned splat can NEVER land on one.
+    fn inflate_an_ifd_count(rng: &mut Rng, buf: &mut [u8]) {
+        let Some(t0) = find_le_tiff(buf) else { return };
+        let Some(ifd) = read_le_u32(buf, t0 + 4).map(|v| v as usize) else {
+            return;
+        };
+        let Some(n) = read_le_u16(buf, t0 + ifd).map(|v| v as usize) else {
+            return;
+        };
+        if n == 0 {
+            return;
+        }
+        let at = t0 + ifd + 2 + rng.below(n) * 12 + 4;
+        if at + 4 > buf.len() {
+            return;
+        }
+        let v = [0xFFFF_FFFFu32, 0x7FFF_FFFF, 0x00FF_FFFF, 8][rng.below(4)];
+        buf[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    fn mutate(rng: &mut Rng, buf: &mut Vec<u8>) {
+        match rng.below(8) {
+            0 => {
+                if buf.is_empty() {
+                    return;
+                }
+                let i = rng.below(buf.len());
+                buf[i] ^= 1u8 << rng.below(8);
+            }
+            1 => {
+                if buf.is_empty() {
+                    return;
+                }
+                let i = rng.below(buf.len());
+                buf[i] = [0u8, 0xFF, 1, 8][rng.below(4)];
+            }
+            2 => {
+                let keep = rng.below(buf.len() + 1);
+                buf.truncate(keep);
+            }
+            // An ARBITRARY offset, both endiannesses: TIFF counts are little-
+            // endian and unaligned, box sizes are big-endian and aligned.
+            3 | 4 => {
+                if buf.len() < 4 {
+                    return;
+                }
+                let v = [0xFFFF_FFFFu32, 0x7FFF_FFFF, 0x8000_0000, 1, 0, 8][rng.below(6)];
+                let bytes = if rng.below(2) == 0 {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                let i = rng.below(buf.len() - 3);
+                buf[i..i + 4].copy_from_slice(&bytes);
+            }
+            5 => {
+                const FOURCCS: [&[u8; 4]; 7] = [
+                    b"moov", b"uuid", b"mdat", b"ftyp", b"CMT2", b"CMT4", b"PRVW",
+                ];
+                if buf.len() < 4 {
+                    return;
+                }
+                let i = rng.below(buf.len() - 3);
+                buf[i..i + 4].copy_from_slice(FOURCCS[rng.below(FOURCCS.len())]);
+            }
+            6 => {
+                if buf.len() >= FUZZ_MAX_INPUT {
+                    return;
+                }
+                let at = rng.below(buf.len() + 1);
+                let n = 1 + rng.below(64);
+                let b = (rng.next_u64() & 0xFF) as u8;
+                buf.splice(at..at, std::iter::repeat_n(b, n));
+            }
+            _ => inflate_an_ifd_count(rng, buf),
+        }
+        buf.truncate(FUZZ_MAX_INPUT);
+    }
+
+    /// The input for `(seed, iteration)` — DERIVED, never replayed. A red run
+    /// prints both, and the pair reproduces that one input on its own.
+    fn fuzz_input(seeds: &[Vec<u8>], seed: u64, iter: u64) -> Vec<u8> {
+        let mut rng = Rng((seed ^ iter.wrapping_mul(0x9E37_79B9_7F4A_7C15)) | 1);
+        let mut buf = seeds[rng.below(seeds.len())].clone();
+        for _ in 0..(1 + rng.below(6)) {
+            mutate(&mut rng, &mut buf);
+        }
+        buf
+    }
+
+    /// The buffer itself plus every CMT blob the box walk can reach, so a
+    /// mutation that only damages a CMT's TIFF still gets that TIFF read.
+    fn tiff_candidates(d: &[u8]) -> Vec<&[u8]> {
+        let mut out = vec![d];
+        if let Some((ms, me)) = moov_range(d) {
+            for cmt in [b"CMT1", b"CMT2", b"CMT3", b"CMT4"] {
+                if let Some(blob) = cmt_in_uuid_range(d, ms, me, cmt) {
+                    out.push(blob);
+                }
+            }
+        }
+        out
+    }
+
+    /// Tags across every reader arm: GPS rationals, orientation, the ASCII
+    /// times, the exposure rationals, the SHORT/LONG uints, and the two Canon
+    /// MakerNote arrays.
+    const FUZZ_TAGS: [u16; 10] = [
+        0x0002, 0x0004, 0x0112, 0x9003, 0x9291, 0x829D, 0x8827, 0xA002, 0x0001, 0x0026,
+    ];
+
+    /// Every `&[u8]` parse entry point, on one input, with the size
+    /// invariants asserted inline. The harness needs only two verdicts from a
+    /// worker: "finished" and "panicked".
+    fn fuzz_one(d: &[u8]) {
+        let n = d.len();
+
+        let all = boxes(d, 0, n);
+        assert!(
+            all.len() <= n / 8,
+            "boxes returned {} boxes for {n} bytes — each consumes >= 8",
+            all.len()
+        );
+        for &(_, cs, ce) in &all {
+            assert!(cs <= ce && ce <= n, "box range {cs}..{ce} outside 0..{n}");
+        }
+        // Deliberately UNVALIDATED ranges: boxes clamps `end` itself, and
+        // full_jpeg_location is pub with no precondition left.
+        let _ = boxes(d, 0, usize::MAX);
+        let _ = boxes(d, n.saturating_add(1024), usize::MAX);
+        let _ = top_box_content_start(d, b"mdat");
+        let _ = child_box(d, 0, n, b"trak");
+        let _ = full_jpeg_location(d, 0, usize::MAX);
+        if let Some((ms, me)) = moov_range(d) {
+            assert!(ms <= me && me <= n, "moov range {ms}..{me} outside 0..{n}");
+            let _ = full_jpeg_location(d, ms, me);
+        }
+
+        let _ = find_soi(d, 0, n);
+        if let Some(j) = jpeg_in_box(d, 0, n, b"PRVW") {
+            assert!(j.len() <= n, "jpeg_in_box returned {} of {n}", j.len());
+        }
+        if let Some(p) = preview_jpeg(d) {
+            assert!(p.len() <= n, "preview_jpeg returned {} of {n}", p.len());
+        }
+        if let Some(t) = thumbnail_from_prefix(d) {
+            assert!(
+                t.len() <= n,
+                "thumbnail_from_prefix returned {} of {n}",
+                t.len()
+            );
+        }
+        for soi in [0usize, 1, n / 2] {
+            if soi < n {
+                if let Some(end) = jpeg_extent(d, soi) {
+                    assert!(end <= n, "jpeg_extent returned {end} past {n}");
+                }
+            }
+        }
+        let oriented = with_exif_orientation(d.to_vec(), 6);
+        assert!(
+            oriented.len() <= n + 36,
+            "orientation splice grew {n} to {} — one APP1 is 36 bytes",
+            oriented.len()
+        );
+
+        for blob in tiff_candidates(d) {
+            let Some(t) = Tiff::new(blob) else { continue };
+            let Some(ifd) = t.ifd0() else { continue };
+            for tag in FUZZ_TAGS {
+                if let Some((typ, cnt, voff)) = t.find_entry(ifd, tag) {
+                    // THE invariant this phase bought: a file-supplied count
+                    // can never make a reader iterate past its own buffer.
+                    let sz = type_size(typ);
+                    let bytes = (cnt as usize).saturating_mul(sz);
+                    if sz > 0 && voff <= blob.len() {
+                        assert!(
+                            bytes <= 4 || bytes <= blob.len() - voff,
+                            "find_entry({tag:#06x}) kept an unreadable count {cnt} \
+                             (type {typ}, offset {voff}, buffer {})",
+                            blob.len()
+                        );
+                    } else {
+                        assert_eq!(cnt, 0, "unknown type / offset past the end must clamp to 0");
+                    }
+                }
+                let r = t.rationals(ifd, tag);
+                assert!(
+                    r.len() * 8 <= blob.len(),
+                    "rationals returned {} components — {} bytes do not fit",
+                    r.len(),
+                    blob.len()
+                );
+                let _ = t.ascii(ifd, tag);
+                let _ = t.rational(ifd, tag);
+                let _ = t.uint(ifd, tag);
+                let _ = t.short_tag(ifd, tag);
+            }
+            let _ = af_display(&t, 6);
+            let _ = canon_drive_mode(&t);
+        }
+        let _ = orientation_from_cmt1(Some(d));
+        let _ = metadata_from_prefix(d);
+    }
+
+    /// The whole parser, on mutated input, bounded in time and in output size.
+    /// UNGATED on purpose: no corpus, no env var, no feature — it runs in CI.
+    #[test]
+    fn mutation_fuzz_never_panics_hangs_or_returns_an_oversized_result() {
+        use std::sync::mpsc;
+
+        let seed = fuzz_env("CULL_FUZZ_SEED", FUZZ_SEED);
+        let iters = fuzz_env("CULL_FUZZ_ITERS", FUZZ_ITERS);
+        let from = fuzz_env("CULL_FUZZ_FROM", 0);
+        let seeds = fuzz_seeds();
+        let started = std::time::Instant::now();
+
+        let mut i = from;
+        while i < from + iters {
+            let hi = (i + FUZZ_BATCH).min(from + iters);
+            let batch: Vec<Vec<u8>> = (i..hi).map(|k| fuzz_input(&seeds, seed, k)).collect();
+            let sizes: Vec<usize> = batch.iter().map(Vec::len).collect();
+            let (tx, rx) = mpsc::channel::<()>();
+            // Detached on purpose — see limitation (i) above.
+            let _worker = std::thread::spawn(move || {
+                for input in &batch {
+                    fuzz_one(input);
+                    if tx.send(()).is_err() {
+                        return; // the main thread has already given up
+                    }
+                }
+            });
+            for k in i..hi {
+                let how = match rx.recv_timeout(FUZZ_INPUT_BUDGET) {
+                    Ok(()) => continue,
+                    Err(mpsc::RecvTimeoutError::Timeout) => "HANG",
+                    Err(mpsc::RecvTimeoutError::Disconnected) => "PANIC (message above)",
+                };
+                panic!(
+                    "{how} on iteration {k} of seed {seed:#x} ({} byte input). Reproduce \
+                     exactly this one input with:\n  CULL_FUZZ_SEED={seed} CULL_FUZZ_FROM={k} \
+                     CULL_FUZZ_ITERS=1 cargo test mutation_fuzz -- --nocapture",
+                    sizes[(k - i) as usize]
+                );
+            }
+            i = hi;
+        }
+        eprintln!(
+            "fuzz: {iters} inputs from seed {seed:#x} in {:?}",
+            started.elapsed()
+        );
     }
 }
