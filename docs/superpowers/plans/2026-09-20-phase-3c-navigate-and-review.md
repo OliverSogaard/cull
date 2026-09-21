@@ -2910,3 +2910,48 @@ The controller runs implementers in parallel **only** on disjoint file sets. Wav
 - **11 and anything** — it edits the help sheet, the README keys table and the docs against the finished branch, and runs the final gate.
 
 Task 5 is the only owner of `src/styles/layout.test.ts`, `statusbar.css` and `chrome.css`; Task 9 is the only owner of `src/styles/index.css` and of the new `staged-sort.css`. No stylesheet has two owners in this phase. Task 10b is the only owner of `src/components/GridView.tsx` — Tasks 2 and 9 own `App.tsx`, which is a different file — and Task 10a the only owner of the three `smart/` + `strip/` files it lists.
+
+---
+
+## Implementation note (2026-09-20)
+
+Executed with subagent-driven development, under Oliver's standing instruction of the same day to make the calls and keep moving (no design board; every choice is a ruling). Before any code, two fresh checkers fact-checked this plan against the repository (3 blockers, 6 should-fixes, 10 nits — see "Pre-flight corrections"). Then a fresh implementer and a fresh reviewer per task, up to six tasks in parallel on disjoint files; fix rounds on Tasks 2, 7 and 9; a whole-branch review on the strongest model split in two (keys / filters / footer / docs; the capture-time pipeline end to end); ONE fix wave by five implementers; ONE scoped re-review; one live-evidence correction. Gates at the tip: 801 tests in 80 files (736 before), lint, lint:css, typecheck, typecheck:tests, build; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, 154 Rust tests (136 before).
+
+### What shipped
+
+- **Home / End** — first / last frame of the active filter. **PgUp / PgDn** — one screenful (grid: rows × cols; loupe and compare: one filmstrip screenful). **Shift+Home / End / PgUp / PgDn** extend the grid selection. One step per press; the keys rest while zoomed.
+- **Rejects** — a fifth filter tab, key `5`, no count, with its own empty state. The footer pays for it inside the existing `< 1360px` tier (Smart's count is clipped, the button keeps its full accessible name; tab padding 12 → 8 px); slack is positive at every pinned width (+30 to +154 px).
+- **Capture-time order** — `analyze_folder` keys on EXIF `DateTimeOriginal` + `SubSecTimeOriginal`, read by a new head-only reader (128 KiB first, then grow) or taken from a cached thumbnail header with no source read. Setting `sortByCaptureTime` (default on) with a toggle on the staged screen; with two or more folders staged, one row per folder — name, count, first capture time, the difference from the first folder INCLUDING the offsets (so the goal reads `+0 s`), and a ± stepper (click 1 s, Shift-click 1 min, Ctrl-click reset) persisted as `captureOffsets`.
+- **Two bodies interleaved** — bursts and similar sets are walked per parent DIRECTORY over the global order, so runs survive interleaving; the grid draws one bracket per contiguous stretch instead of one min-to-max box.
+
+### Where the spec or the plan was wrong, and what was ruled instead
+
+- **The fallback clock.** EXIF times are the camera's wall clock treated as UTC; a file's mtime is a true UTC epoch. The first implementation mixed the two, so any frame that fell back to mtime would have sorted hours away (7 h in Los Angeles). Oliver then asked the right question — what if the camera is on Tokyo time? — which the PC-timezone conversion also gets wrong. Shipped: a frame without EXIF takes its mtime shifted by the MEDIAN (EXIF − mtime) of its parent directory, else of the whole shoot, else the PC-timezone conversion as a last resort. A median needs no timezone, absorbs DST and the card's write lag, and tolerates up to half the mtimes being rewritten by a copy tool.
+- **Cancellation.** The plan sent the frontend's session generation with the invoke. The two sides keep separate counters, synchronised only by `begin_session`; after a webview reload the frontend would send 0, the backend would treat the pass as already cancelled, and the whole shoot would silently sort on mtime. The wire value was removed; the backend snapshots its own generation and stops when it changes.
+- **Page keys do not auto-repeat** (the plan allowed it): a held page key never sets the scrub state that gates full-resolution reads and prefetch, so a two-second hold would have queued 200+ reads for frames flown past. Holding an arrow is still how to fly.
+- **Page keys rest while zoomed**: in compare, a frame change under a held-Space zoom bypassed the memory-budgeted swap — three ~130 MB rasters at once, the class of the 2026-07-07 gray-window crash.
+- **Offsets travel per frame, not per folder**: the folder walk is recursive, so a file's parent is not the staged folder.
+- **`stats.rejects` was not added** — the count already reaches the footer as `session.rejectedCount`, and no tab has a zero treatment to mirror.
+- **Enter on the staged sort block** took three rounds: the window keymap's Enter swallowed a keyboard-focused stepper (round 1: stop propagation); then Enter after a MOUSE click re-activated the clicked button and never began culling (round 2: `:focus-visible` — abandoned: it is a UA heuristic and unverifiable in jsdom); shipped: the block tracks pointer-versus-keyboard focus itself. Verified live.
+- The first footer tier stays `< 1360px`. At 1360 px and wider the worst-of-worst combination (all rated + every photo missing + scrubbing + the overlay cluster) needs about 1590 px (1513 px before this phase); raising the tier would have put the default 1600-px window in the shed state every day.
+
+### Verification
+
+Tests, static gates, and live runs with the PC idle on scratch folders only (navigation and filter keys, no rating key; 0 sidecars before and after): two folders staged, the toggle's two states, first capture times and the offset-aware delta, Begin culling, End / Home / PgDn in the loupe, End in the grid, key `5` and the Rejects empty state with five tabs at 1600 px, a Similar set drawn as two one-cell stretches across interleaved bodies, and Enter-after-mouse-click beginning the cull. Earlier the same day, also live: the Phase 0 Move-rejects check (no orphaned sidecar after undo) and the Phase 3B check (grid sizes, sharp thumbnails, strip steps, footer at 1024 px). Screenshots: `~/.claude/plans/cull-audit-2026-09-13/phase-3c-shots/`.
+Not seen live: PgUp/PgDn in compare; the zoom guard; a shoot large enough to show the capture pass's progress line; a real two-body shoot.
+
+### Oliver's walk
+
+1. Stage two bodies' folders: nudge the second until its delta reads `+0 s`, Begin culling, and check a moment both bodies caught — the frames should alternate correctly.
+2. In each folder row the `−` button sits far from the value and `+`; say if the stepper should be tight.
+3. `End`, `Home`, `PgDn` in the loupe and the grid; `5` for the reject pile before Move rejects.
+4. With both bodies bursting at the same moment the filmstrip draws a row of one-frame burst boxes — uglier, not wrong; say if it bothers you.
+
+### Left for later
+
+- The filmstrip's one-cell burst "fence" for simultaneous bursts on two bodies.
+- A user-facing Cancel during "analyzing" (the backend can already stop).
+- A directory whose ONLY EXIF-bearing frame has a reset clock gives its fallback frames that one wrong delta (doubly rare).
+- `C` from the Rejects filter is a silent no-op (a reject cannot champion — pre-existing rule); the help sheet does not say so.
+- The filter tabs still lack `role="tab"` / `aria-selected` (pre-existing).
+- Phase 4: `App.tsx` and `useCullKeymap.ts` have no test harness — every key-wiring change in this phase was verified by reading and by the live run.
