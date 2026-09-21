@@ -20,6 +20,19 @@ describe("gridPageStep", () => {
     expect(gridPageStep(900, Number.NaN, 6)).toBe(1);
     expect(gridPageStep(900, 168, 0)).toBe(1);
   });
+
+  it("degrades to a single step on a non-finite viewport instead of NaN or Infinity", () => {
+    // A bad measurement can hand back NaN (0/0-shaped math upstream) or
+    // Infinity — both must degrade exactly like the other unusable inputs
+    // above, never survive into the step.
+    expect(gridPageStep(Number.NaN, 168, 6)).toBe(1);
+    expect(gridPageStep(Number.POSITIVE_INFINITY, 168, 6)).toBe(1);
+    expect(gridPageStep(Number.NEGATIVE_INFINITY, 168, 6)).toBe(1);
+  });
+
+  it("a negative but finite viewport still advances a whole row (Math.max floor already handles it)", () => {
+    expect(gridPageStep(-100, 168, 6)).toBe(6);
+  });
 });
 
 describe("stripPageStep", () => {
@@ -34,5 +47,15 @@ describe("stripPageStep", () => {
     expect(stripPageStep(40, 80)).toBe(1);
     expect(stripPageStep(0, 80)).toBe(1);
     expect(stripPageStep(1440, 0)).toBe(1);
+  });
+
+  it("degrades to a single step on a non-finite strip width instead of NaN or Infinity", () => {
+    expect(stripPageStep(Number.NaN, 80)).toBe(1);
+    expect(stripPageStep(Number.POSITIVE_INFINITY, 80)).toBe(1);
+    expect(stripPageStep(Number.NEGATIVE_INFINITY, 80)).toBe(1);
+  });
+
+  it("a negative but finite strip width still advances at least one cell", () => {
+    expect(stripPageStep(-100, 80)).toBe(1);
   });
 });

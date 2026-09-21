@@ -19,7 +19,7 @@
  * end of the shoot).
  */
 export function gridPageStep(viewportH: number, rowH: number, cols: number): number {
-  if (!(rowH > 0) || !(cols > 0)) return 1;
+  if (!Number.isFinite(viewportH) || !(rowH > 0) || !(cols > 0)) return 1;
   return Math.max(1, Math.floor(viewportH / rowH)) * cols;
 }
 
@@ -30,6 +30,6 @@ export function gridPageStep(viewportH: number, rowH: number, cols: number): num
  * number baked in at one of them.
  */
 export function stripPageStep(stripW: number, stride: number): number {
-  if (!(stride > 0)) return 1;
+  if (!Number.isFinite(stripW) || !(stride > 0)) return 1;
   return Math.max(1, Math.floor(stripW / stride));
 }
