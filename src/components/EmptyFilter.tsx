@@ -158,7 +158,9 @@ export function EmptyFilter({
         ? "Keeps"
         : filter === "unrated"
           ? "Unrated"
-          : "this"; // "suggested*" fully handled (and narrowed away) above
+          : filter === "rejects"
+            ? "Rejects"
+            : "this"; // "suggested*" fully handled (and narrowed away) above
   return (
     <NoMatchEmptyState
       eyebrow="No matches"
@@ -168,9 +170,16 @@ export function EmptyFilter({
         </>
       }
       hint={
-        <>
-          <kbd className="kbd">1</kbd> for all
-        </>
+        filter === "rejects" ? (
+          <>
+            Rejected frames show up here until you finish the cull · <kbd className="kbd">1</kbd>{" "}
+            for all
+          </>
+        ) : (
+          <>
+            <kbd className="kbd">1</kbd> for all
+          </>
+        )
       }
     />
   );

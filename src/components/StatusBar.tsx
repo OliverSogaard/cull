@@ -382,11 +382,31 @@ export const StatusBar = memo(function StatusBar({
                   ? filter.chipsTooltip.hoverProps
                   : undefined)}
               >
-                {filter.qualityAnalyzing && filter.qualityProgress
-                  ? `Smart ${Math.round((filter.qualityProgress.done / Math.max(filter.qualityProgress.total, 1)) * 100)}%`
-                  : filter.suggestionCount > 0
-                    ? `Smart · ${filter.suggestionCount}`
-                    : "Smart"}
+                {/* The count / percent rides its own span so the narrow footer
+                    can shed it (statusbar.css's < 1360 tier) — clipped, not
+                    `display: none`, which would shorten the button's
+                    accessible name. The separating space is OUTSIDE the span
+                    for the same reason the save chip's is (see the comment on
+                    .cull-statusbar__unsaved-tail above): the accessible-name
+                    algorithm trims each subtree's own leading whitespace
+                    before joining, so a leading space living only inside the
+                    span would silently drop out of the name. */}
+                Smart
+                {filter.qualityAnalyzing && filter.qualityProgress ? (
+                  <>
+                    {" "}
+                    <span className="cull-statusbar__smart-count">
+                      {`${Math.round((filter.qualityProgress.done / Math.max(filter.qualityProgress.total, 1)) * 100)}%`}
+                    </span>
+                  </>
+                ) : filter.suggestionCount > 0 ? (
+                  <>
+                    {" "}
+                    <span className="cull-statusbar__smart-count">
+                      {`· ${filter.suggestionCount}`}
+                    </span>
+                  </>
+                ) : null}
               </button>
               {topOf(filter.filter) === "suggested" && (
                 <span
@@ -443,6 +463,19 @@ export const StatusBar = memo(function StatusBar({
                 </span>
               )}
             </span>
+            {/* The pile "move rejects" will take, so it can be checked before
+                it is moved. Last, key 5 — position equals key for all five, so
+                no muscle memory moves. No count: All / Unrated / Keeps carry
+                none either, and a five-digit one would cost the footer 130px
+                (see statusbar.css's arithmetic). */}
+            <button
+              type="button"
+              className={filter.filter === "rejects" ? "is-active" : ""}
+              onClick={() => filter.setFilter((f) => cycleFilter(f, "rejects"))}
+              data-tip={filter.filter === "rejects" ? undefined : "5 · show rejects"}
+            >
+              Rejects
+            </button>
           </div>
         )}
         {(filter.stats.keeps > 0 || session.rejectedCount > 0) && !session.actionsOpen && (
