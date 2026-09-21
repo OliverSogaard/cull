@@ -584,6 +584,11 @@ export function useCullKeymap({
             startAnalysis(); // no-op unless "analyze on open" is off and unrun
           }
           break;
+        case "5":
+          // No chipsTooltip.pulse(): Rejects has no sub-modes, so there is no
+          // sub-chip tooltip to show (same as 1 and 2).
+          setFilter((f) => cycleFilter(f, "rejects"));
+          break;
         case "i":
         case "I":
           setExifVisible((v) => !v);
