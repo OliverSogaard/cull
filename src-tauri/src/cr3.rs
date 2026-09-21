@@ -841,6 +841,13 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
     })
 }
 
+/// First read of [`read_capture_time`]. Sized to hold a whole `moov` — the CMT
+/// boxes plus the small THMB — for the R6-class files this parser was verified
+/// against, with room to spare; a fatter one just costs that file one extra
+/// read through the grow loop. Named (rather than inline) so the test that
+/// straddles the boundary turns the same knob the code does.
+const CAPTURE_HEAD: usize = 128 << 10;
+
 /// Just the capture clock: EXIF `DateTimeOriginal` (0x9003) and
 /// `SubSecTimeOriginal` (0x9291), from the CMT2 Exif IFD. Reads only enough of
 /// the head to hold the whole `moov` box — no THMB extraction, no decode, no
@@ -852,15 +859,19 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
 /// has no capture time and the sort falls back to its mtime. `Err` is reserved
 /// for a file that cannot be read, or that holds no `moov` at all.
 ///
-/// HEAD / GROW / the scan cap are `read_thumbnail`'s, deliberately: `moov`
-/// carries the 160×120 THMB as well as the CMT boxes, so a smaller first read
-/// would usually cost a second round-trip — and on the benchmarked NAS the
-/// open, not the byte count, is what costs 37 ms.
+/// The first read is [`CAPTURE_HEAD`], an eighth of `read_thumbnail`'s: this is
+/// the one caller that wants the CMT boxes WITHOUT the THMB bytes, and it is
+/// the only one that runs over a whole shoot at once. At 4,000 frames the
+/// difference is ~4 GB of head reads against ~500 MB — seconds of cold NVMe
+/// per Begin culling. On a NAS the open still dominates the byte count, and the
+/// grow loop below costs a second round-trip only for a moov that spills past
+/// 128 KiB, which the layout note at the top of this file makes unusual: moov
+/// holds the CMT boxes and the 160×120 THMB, while the bulk of the ~2 MiB head
+/// `read_preview_bundle` takes is the PRVW preview, which lives outside it.
 pub fn read_capture_time(path: &str) -> std::io::Result<(Option<String>, Option<u16>)> {
-    const HEAD: usize = 1 << 20;
     const GROW: usize = 2 << 20;
     const MOOV_SCAN_CAP: usize = 64 << 20; // bound the hunt on malformed input
-    let (mut buf, mut f, flen) = read_head(path, HEAD)?;
+    let (mut buf, mut f, flen) = read_head(path, CAPTURE_HEAD)?;
     while moov_range(&buf).is_none()
         && buf.len() < MOOV_SCAN_CAP
         && grow(&mut f, &mut buf, GROW, flen)?
@@ -1385,6 +1396,14 @@ mod tests {
     /// SubSecTimeOriginal (0x9291). `cmt_in_uuid_range` never inspects the
     /// uuid's value, so 16 zero bytes stand in for Canon's 85c0b687….
     fn synth_cr3_head(datetime: Option<&str>, sub_sec: Option<&str>) -> Vec<u8> {
+        synth_cr3_head_padded(datetime, sub_sec, 0)
+    }
+
+    /// As [`synth_cr3_head`], plus `pad` bytes of filler INSIDE `moov` (a
+    /// `free` box ahead of the uuid, which the box walk skips) — the knob that
+    /// pushes moov's end past the first read, standing in for a camera whose
+    /// MakerNote or track boxes run long.
+    fn synth_cr3_head_padded(datetime: Option<&str>, sub_sec: Option<&str>, pad: usize) -> Vec<u8> {
         let boxed = |fourcc: &[u8; 4], payload: &[u8]| -> Vec<u8> {
             let mut b = Vec::with_capacity(8 + payload.len());
             b.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
@@ -1435,8 +1454,10 @@ mod tests {
         // ── box it ──────────────────────────────────────────────────────
         let mut uuid_payload = vec![0u8; 16];
         uuid_payload.extend_from_slice(&boxed(b"CMT2", &t));
+        let mut moov_payload = boxed(b"free", &vec![0u8; pad]);
+        moov_payload.extend_from_slice(&boxed(b"uuid", &uuid_payload));
         let mut out = boxed(b"ftyp", b"crx isom");
-        out.extend_from_slice(&boxed(b"moov", &boxed(b"uuid", &uuid_payload)));
+        out.extend_from_slice(&boxed(b"moov", &moov_payload));
         out
     }
 
@@ -1473,6 +1494,33 @@ mod tests {
     fn read_capture_time_errors_without_a_moov() {
         let p = tmp_cr3("capture-nomoov", b"not a cr3 at all, not even close");
         assert!(read_capture_time(p.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// A moov that STRADDLES the first read: it begins inside `CAPTURE_HEAD`
+    /// and ends past it, so `moov_range` answers None on the first buffer and
+    /// only the grow loop completes the box. The time still comes back — an
+    /// unusually fat MakerNote costs one extra read, never a frame's place in
+    /// the sort. This is the safety net that makes the smaller first read safe.
+    #[test]
+    fn read_capture_time_grows_when_moov_straddles_the_first_read() {
+        let bytes = synth_cr3_head_padded(Some("2026:09:20 14:02:11"), Some("47"), CAPTURE_HEAD);
+        assert!(
+            bytes.len() > CAPTURE_HEAD,
+            "the fixture must outrun the first read: {} vs {CAPTURE_HEAD}",
+            bytes.len()
+        );
+        // The proof that the grow loop is what answers here: the first read on
+        // its own cannot even find the box, because the walk stops at a child
+        // that runs past the buffer.
+        assert!(
+            moov_range(&bytes[..CAPTURE_HEAD]).is_none(),
+            "the fixture resolves from the first read alone — it proves nothing"
+        );
+        let p = tmp_cr3("capture-straddle", &bytes);
+        let (dt, ss) = read_capture_time(p.to_str().unwrap()).expect("read");
+        assert_eq!(dt.as_deref(), Some("2026-09-20T14:02:11"));
+        assert_eq!(ss, Some(470));
         let _ = std::fs::remove_file(&p);
     }
 }
