@@ -32,11 +32,15 @@ const PAN_STEP = 2; // % per arrow press while zoomed
  *   opened the act-on-cull dialog UNDERNEATH the sheet. (Ctrl+, and Ctrl+O
  *   are deliberately outside all of this: they live in the chrome effect's
  *   own listener below, and neither listener stops propagation.)
- *   Every clause is pinned in useCullKeymap.test.tsx — see the suites "a
- *   held scrub is interrupted behind every overlay (fix C)" and "nothing
- *   acts behind the help sheet (fix B)", whose regression guards ("a bare
- *   modifier still never interrupts a hold", "a held Tab does not dismiss
- *   the sheet it is holding open") are what keep the order honest.
+ *   Every clause of THIS PRECEDENCE ORDER is pinned in useCullKeymap.test.tsx
+ *   — see the suites "a held scrub is interrupted behind every overlay (fix
+ *   C)" and "nothing acts behind the help sheet (fix B)", whose regression
+ *   guards ("a bare modifier still never interrupts a hold", "a held Tab
+ *   does not dismiss the sheet it is holding open") are what keep the order
+ *   honest, plus "mode keys" for the final "sites" clause (L/G/C ->
+ *   goToSite). The per-key BINDINGS reached once precedence clears — the
+ *   Shift+Arrow grid-selection growth, and the i/h/p/t/o overlay toggles —
+ *   are pinned separately, in "grid Shift+Arrow" and "overlay toggles".
  */
 export function useCullKeymap({
   phase,
@@ -719,8 +723,9 @@ export function useCullKeymap({
         // ABOVE the Ctrl combos below, not beneath them: with the sheet up,
         // Ctrl+Z used to undo and Ctrl+E used to open the act-on-cull dialog
         // UNDERNEATH it, which this comment already claimed could not happen.
-        // (Ctrl+, and Ctrl+O are a different listener — :160-208 — and still
-        // work; Settings is a modal that then owns the keyboard anyway.)
+        // (Ctrl+, and Ctrl+O are a different listener — the phase-agnostic
+        // chrome effect above — and still work; Settings is a modal that
+        // then owns the keyboard anyway.)
         e.preventDefault();
         setHelpVisible(false);
         setHelpIntro(false);
