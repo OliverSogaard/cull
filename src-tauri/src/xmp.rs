@@ -406,10 +406,17 @@ fn apply_rating_to_xmp(xmp: &str, rating: &str) -> Result<String, String> {
     out = set_desc_attr(&out, "xmpDM:pick", pick);
     out = set_desc_attr(&out, "xmpDM:good", good);
 
+    // EVERY decision below is read from `xmp`, the sidecar as it was on disk —
+    // never from `out`, which already carries the pick/good this call just
+    // wrote. Reading the half-edited value is what deleted a user's 1★: the
+    // no-marker arm of cull_owned_fav_star asks whether `pick > 0`, and with
+    // `&out` that was the pick of the keep being applied, so a frame the user
+    // had just starred looked exactly like CULL's pre-marker courtesy stamp
+    // (final review, finding 1).
     if rating == "favorite" {
         out = ensure_cull_ns(&out);
-        let star = parse_xmp_rating(&out);
-        let cull_owns_star = cull_fav_value(&out).as_deref() == Some("star");
+        let star = parse_xmp_rating(xmp);
+        let cull_owns_star = cull_fav_value(xmp).as_deref() == Some("star");
         if star.is_none() || star == Some(0) || cull_owns_star {
             // No pre-existing user star (or CULL already owns it): (re)write the
             // courtesy 1★ and record that CULL authored it.
@@ -426,7 +433,7 @@ fn apply_rating_to_xmp(xmp: &str, rating: &str) -> Result<String, String> {
         // "pick + lone 1★ = favorite" fallback may still claim. Read the old
         // marker BEFORE overwriting it: cull_owned_fav_star is what decides
         // whether the visible 1★ is CULL's to remove.
-        if cull_owned_fav_star(&out) {
+        if cull_owned_fav_star(xmp) {
             out = remove_fav_star(&out); // CULL's own 1★ only; never a user star
         }
         out = ensure_cull_ns(&out);
@@ -535,10 +542,31 @@ fn cull_fav_value(xmp: &str) -> Option<String> {
 /// the file, or of a star inside it.
 fn created_by_cull(xmp: &str) -> bool {
     // Two marker generations: pre-rebrand sidecars say "Cull 1.0", current
-    // ones say "CULL" (the contains check is case-sensitive).
-    stamped_by_pre_rebrand_cull(xmp)
-        || xmp.contains("CreatorTool=\"CULL")
-        || xmp.contains("x:xmptk=\"CULL")
+    // ones say "CULL" (the comparison is case-sensitive, which is what tells
+    // the two apart).
+    tool_stamp_is(xmp, |v| {
+        is_pre_rebrand_stamp(v) || v == "CULL" || v.starts_with("CULL ")
+    })
+}
+
+/// True when either tool-stamp attribute CULL writes carries a value `is_ours`
+/// accepts.
+///
+/// Matched as a VALUE, through the quote-agnostic reader, not as a raw
+/// substring: `CreatorTool="Cullmann Studio 3"` used to satisfy a
+/// `contains("CreatorTool=\"Cull")` test and open the legacy Rating-only arm,
+/// so that stranger's `xmp:Rating="-1"` classified as a REJECT — which feeds
+/// move_rejects_to_trash. The other way round, a single-quoted
+/// `CreatorTool='Cull 1.0'` was missed entirely (final review, minor 8).
+fn tool_stamp_is(xmp: &str, is_ours: impl Fn(&str) -> bool) -> bool {
+    ["xmp:CreatorTool", "x:xmptk"]
+        .iter()
+        .any(|attr| find_attr(xmp, attr).is_some_and(|a| is_ours(&xmp[a.value..a.end])))
+}
+
+/// The pre-rebrand stamp values: `Cull`, or `Cull ` plus any version.
+fn is_pre_rebrand_stamp(v: &str) -> bool {
+    v == "Cull" || v.starts_with("Cull ")
 }
 
 /// True when this sidecar carries a PRE-REBRAND CULL tool stamp (`Cull …`).
@@ -558,7 +586,7 @@ fn created_by_cull(xmp: &str) -> bool {
 /// — THEIR `xmp:Rating` read back as CULL's pre-flag scheme, so a `-1` became a
 /// fabricated REJECT feeding move_rejects_to_trash (review finding 2).
 fn stamped_by_pre_rebrand_cull(xmp: &str) -> bool {
-    xmp.contains("CreatorTool=\"Cull") || xmp.contains("x:xmptk=\"Cull")
+    tool_stamp_is(xmp, is_pre_rebrand_stamp)
 }
 
 /// Where an attribute lives in a sidecar string.
@@ -582,27 +610,71 @@ struct AttrSpan {
 /// finding 3). Every attribute reader and writer goes through here so the two
 /// forms can never drift apart again.
 fn find_attr(xmp: &str, attr: &str) -> Option<AttrSpan> {
-    let double = xmp.find(&format!("{attr}=\"")).map(|p| (p, '"'));
-    let single = xmp.find(&format!("{attr}='")).map(|p| (p, '\''));
-    let (name, quote) = match (double, single) {
-        (Some(d), Some(s)) => {
-            if d.0 <= s.0 {
-                d
-            } else {
-                s
-            }
+    let double = first_attr(xmp, attr, '"');
+    let single = first_attr(xmp, attr, '\'');
+    match (double, single) {
+        (Some(d), Some(s)) => Some(if d.name <= s.name { d } else { s }),
+        (Some(d), None) => Some(d),
+        (None, Some(s)) => Some(s),
+        (None, None) => None,
+    }
+}
+
+/// The first `attr=<q>…<q>` that is genuinely in attribute position.
+fn first_attr(xmp: &str, attr: &str, quote: char) -> Option<AttrSpan> {
+    let needle = format!("{attr}={quote}");
+    for (name, _) in xmp.match_indices(needle.as_str()) {
+        if !is_attr_position(xmp, name) {
+            continue;
         }
-        (Some(d), None) => d,
-        (None, Some(s)) => s,
-        (None, None) => return None,
-    };
-    let value = name + attr.len() + 2; // past `attr=` and the opening quote
-    let rel = xmp[value..].find(quote)?;
-    Some(AttrSpan {
-        name,
-        value,
-        end: value + rel,
-    })
+        let value = name + needle.len();
+        if let Some(rel) = xmp[value..].find(quote) {
+            return Some(AttrSpan {
+                name,
+                value,
+                end: value + rel,
+            });
+        }
+    }
+    None
+}
+
+/// True when byte offset `at` is a place an ATTRIBUTE NAME can legally start:
+/// preceded by whitespace, inside a start tag, and outside any quoted value.
+///
+/// Substring surgery without this read `xmp:Label="Red"` out of the TEXT of a
+/// `<dc:description>` element — and [`set_desc_attr`] then rewrote the user's
+/// prose in place — and read `xmp:Rating="5"` out of another attribute's
+/// single-quoted value (final review, minor 9). It also stops a needle from
+/// matching the tail of a longer name (`MyTool:xmp:Rating="…"`), since the
+/// character before an attribute name is always whitespace.
+///
+/// A string containing no `<` at all is treated as attribute soup, which is
+/// what this module's fragment fixtures are. Comments containing `>` are not
+/// modelled; sidecars do not carry them.
+fn is_attr_position(xmp: &str, at: usize) -> bool {
+    let b = xmp.as_bytes();
+    if at > 0 && !matches!(b[at - 1], b' ' | b'\t' | b'\r' | b'\n') {
+        return false;
+    }
+    let mut in_tag = true; // fragment mode until the first `<`
+    let mut quote = 0u8;
+    for &c in &b[..at] {
+        if quote != 0 {
+            if c == quote {
+                quote = 0;
+            }
+        } else if in_tag {
+            match c {
+                b'"' | b'\'' => quote = c,
+                b'>' => in_tag = false,
+                _ => {}
+            }
+        } else if c == b'<' {
+            in_tag = true;
+        }
+    }
+    in_tag && quote == 0
 }
 
 /// Set (replace or insert) an `rdf:Description` attribute, preserving LrC's
@@ -672,12 +744,30 @@ fn insert_after_about(xmp: &str, ins: &str) -> String {
 /// was unbound: namespace-invalid XML that a strict reader rejects wholesale,
 /// taking the sidecar's keywords and develop settings with it (review
 /// finding 4).
+/// The `>` that closes the start tag is found with quotes honoured: a `>`
+/// inside an attribute value is legal, unescaped XML, and stopping at it made
+/// the tag look as though it lacked a declaration it already had — so a SECOND
+/// one was written onto the same element, a duplicate attribute and therefore
+/// not well-formed XML (final review, minor 7).
 fn target_start_tag(xmp: &str) -> &str {
     let Some(a) = find_attr(xmp, "rdf:about") else {
         return "";
     };
     let open = xmp[..a.name].rfind('<').unwrap_or(0);
-    let close = xmp[a.name..].find('>').map_or(xmp.len(), |r| a.name + r);
+    let mut quote = 0u8;
+    let mut close = xmp.len();
+    for (i, &c) in xmp.as_bytes().iter().enumerate().skip(open) {
+        if quote != 0 {
+            if c == quote {
+                quote = 0;
+            }
+        } else if c == b'"' || c == b'\'' {
+            quote = c;
+        } else if c == b'>' {
+            close = i;
+            break;
+        }
+    }
     &xmp[open..close]
 }
 
@@ -732,21 +822,39 @@ fn set_label(xmp: &str, value: &str) -> String {
 ///   - 1–5 on a favorite → write the star, flip the marker to "flag" (the
 ///     favorite now rides the user's star);
 ///   - clear on a favorite → the courtesy 1★ comes back, marker "star";
+///   - 1–5 on a verdict with no marker → write the star AND stamp
+///     `cull:fav="no"`, or a lone 1★ would turn that verdict into a favorite;
 ///   - 1–5 otherwise → write the star, touch no marker;
 ///   - clear otherwise → remove `xmp:Rating` entirely. Lightroom's own `0`
 ///     means "remove rating", and the user asked.
+///
+/// A star must never change the verdict, so "is this a favorite" is asked of
+/// [`classify_xmp`], not of the marker alone: a pre-marker CULL favorite and an
+/// LrC packet round-tripping a flagged lone 1★ are both favorites without one,
+/// and asking the narrower question silently demoted them to keeps.
 fn apply_star_to_xmp(xmp: &str, star: Option<u8>) -> Result<String, String> {
     if let Some(n) = star {
         if !(1..=5).contains(&n) {
             return Err(format!("star out of range: {n}"));
         }
     }
-    let is_fav = matches!(cull_fav_value(xmp).as_deref(), Some("star") | Some("flag"));
+    let is_fav = classify_xmp(xmp).as_deref() == Some("favorite");
     Ok(match star {
         Some(n) => {
             let out = set_rating(&ensure_xmp_ns(xmp), i32::from(n));
             if is_fav {
                 set_desc_attr(&out, "cull:fav", "flag")
+            } else if cull_fav_value(xmp).is_none() && parse_attr_i32(xmp, "xmpDM:pick").is_some() {
+                // A verdict with no marker — the shape EVERY keep and reject
+                // the shipped build wrote already has on disk, since its
+                // keep/reject branch removed `cull:fav`. Writing a lone 1★ into
+                // one lands on classify_xmp's no-marker "pick + lone 1★ =
+                // favorite" arm: on a CULL-created keep the landed check then
+                // refused the write forever, and on a third-party sidecar the
+                // keep silently became a favorite. Say what the star is not
+                // (final review, finding 2). An UNRATED frame has no pick and
+                // gains no marker: there is no verdict for a star to change.
+                set_desc_attr(&ensure_cull_ns(&out), "cull:fav", "no")
             } else {
                 out
             }
@@ -2326,6 +2434,319 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
                 None,
                 "{spelling}"
             );
+        }
+    }
+
+    // ── A verdict never eats the star (final review, findings 1 + 2) ─────
+
+    /// Press `1`, then Enter. `apply_rating_to_xmp` wrote `xmpDM:pick="1"` into
+    /// `out` and THEN asked whether the visible 1★ was CULL's courtesy stamp —
+    /// and the `pick > 0` clause read the pick this very call had just written,
+    /// so the user's own 1★ looked exactly like the pre-marker stamp and was
+    /// removed. `landed` still saw "keep", so CULL reported the save and the
+    /// loss only showed on the next open. Ownership of the visible star is a
+    /// fact about the file on disk, never about the bytes mid-edit.
+    #[test]
+    fn a_verdict_never_eats_the_star_the_user_just_set() {
+        let element_base = fresh_xmp().replace(
+            "</rdf:Description>",
+            "<xmp:Rating>0</xmp:Rating>\n</rdf:Description>",
+        );
+        for base in [fresh_xmp(), element_base] {
+            let starred = apply_star_to_xmp(&base, Some(1)).unwrap();
+            assert_eq!(parse_lrc_rating(&starred), Some(1), "the user set a 1★");
+
+            for verdict in ["keep", "reject"] {
+                let rated = apply_rating_to_xmp(&starred, verdict).unwrap();
+                assert_eq!(
+                    parse_lrc_rating(&rated),
+                    Some(1),
+                    "a 1★ the user set through CULL survives a {verdict}"
+                );
+                assert_eq!(classify_xmp(&rated).as_deref(), Some(verdict));
+            }
+
+            // …and one step later: the unrate strips the marker, so the next
+            // keep used to walk straight back into the same hole.
+            let unrated = strip_cull_fields(&apply_rating_to_xmp(&starred, "keep").unwrap());
+            assert_eq!(parse_lrc_rating(&unrated), Some(1), "the unrate keeps it");
+            assert_eq!(
+                parse_lrc_rating(&apply_rating_to_xmp(&unrated, "keep").unwrap()),
+                Some(1),
+                "1★ survives keep → unrate → keep"
+            );
+
+            // The courtesy-star flip must still work in both directions.
+            let fav = apply_rating_to_xmp(&starred, "favorite").unwrap();
+            assert_eq!(cull_fav_value(&fav).as_deref(), Some("flag"));
+            assert_eq!(parse_lrc_rating(&fav), Some(1), "the favorite rides it");
+            assert_eq!(
+                parse_lrc_rating(&apply_rating_to_xmp(&fav, "keep").unwrap()),
+                Some(1),
+                "and the demote leaves it alone"
+            );
+            // CULL's OWN courtesy star is still removed on a demote.
+            let courtesy = apply_rating_to_xmp(&base, "favorite").unwrap();
+            assert_eq!(cull_fav_value(&courtesy).as_deref(), Some("star"));
+            assert_eq!(
+                parse_xmp_rating(&apply_rating_to_xmp(&courtesy, "keep").unwrap()),
+                None,
+                "CULL's own courtesy star still goes on a demote"
+            );
+        }
+    }
+
+    /// The same line, the other way round, with the layer OFF: a legacy
+    /// pre-marker favourite demoted to REJECT kept CULL's courtesy 1★, because
+    /// the `pick="-1"` this call had just written failed the `p > 0` clause.
+    /// The frame then read back as a reject wearing a phantom "LrC 1★", and the
+    /// leftover star made `xmp_has_user_content` refuse to clean the sidecar up.
+    #[test]
+    fn a_legacy_favorites_courtesy_star_goes_on_a_demote_to_reject_too() {
+        let legacy = "<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+                      xmp:CreatorTool=\"Cull 1.0\"\n   xmpDM:pick=\"1\"\n   xmpDM:good=\"true\"\n   \
+                      xmp:Rating=\"1\">\n  </rdf:Description>";
+        assert_eq!(classify_xmp(legacy).as_deref(), Some("favorite"));
+        assert!(cull_owned_fav_star(legacy), "CULL owns that courtesy star");
+        for verdict in ["keep", "reject"] {
+            let demoted = apply_rating_to_xmp(legacy, verdict).unwrap();
+            assert_eq!(
+                parse_xmp_rating(&demoted),
+                None,
+                "the courtesy star goes on a demote to {verdict}"
+            );
+            assert_eq!(classify_xmp(&demoted).as_deref(), Some(verdict));
+            assert!(
+                !xmp_has_user_content(&strip_cull_fields(&demoted)),
+                "and the sidecar is cleanable again after a {verdict}"
+            );
+        }
+    }
+
+    /// Every verdict already on the owner's disk was written by the SHIPPED
+    /// build, whose keep/reject branch REMOVED `cull:fav` — so each is
+    /// `pick` + `good` with no marker at all, and a lone 1★ written into one
+    /// lands on `classify_xmp`'s no-marker "lone 1★ = favourite" arm. On a
+    /// CULL-created keep the landed check then refused the write forever (a
+    /// permanent unsaved, blocking the quit guard); on a third-party sidecar it
+    /// landed and his keep silently became a FAVOURITE.
+    #[test]
+    fn a_star_on_a_sidecar_the_shipped_build_wrote_keeps_its_verdict() {
+        // Byte-exact output of 85e2dba's own apply_rating_to_xmp on a fresh
+        // sidecar (that commit's transform run with its fresh_xmp timestamp
+        // pinned), not hand-written — the point is the shape, so guessing it
+        // would defeat the test.
+        let main_keep = "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+             \n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"CULL\">\
+             \n<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+             \n<rdf:Description rdf:about=\"\"\
+             \n   xmpDM:good=\"true\"\
+             \n   xmpDM:pick=\"1\"\
+             \nxmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\
+             \nxmlns:xmpDM=\"http://ns.adobe.com/xmp/1.0/DynamicMedia/\"\
+             \nxmp:CreatorTool=\"CULL\"\
+             \nxmp:ModifyDate=\"2026-09-21T12:00:00+02:00\">\
+             \n</rdf:Description>\
+             \n</rdf:RDF>\
+             \n</x:xmpmeta>\
+             \n<?xpacket end=\"w\"?>";
+        let main_reject = "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+             \n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"CULL\">\
+             \n<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+             \n<rdf:Description rdf:about=\"\"\
+             \n   xmpDM:good=\"false\"\
+             \n   xmpDM:pick=\"-1\"\
+             \nxmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\
+             \nxmlns:xmpDM=\"http://ns.adobe.com/xmp/1.0/DynamicMedia/\"\
+             \nxmp:CreatorTool=\"CULL\"\
+             \nxmp:ModifyDate=\"2026-09-21T12:00:00+02:00\">\
+             \n</rdf:Description>\
+             \n</rdf:RDF>\
+             \n</x:xmpmeta>\
+             \n<?xpacket end=\"w\"?>";
+        let main_favorite = "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+             \n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"CULL\">\
+             \n<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+             \n<rdf:Description rdf:about=\"\"\
+             \n   cull:fav=\"star\"\
+             \n   xmp:Rating=\"1\"\
+             \n    xmlns:cull=\"http://ns.cull.photo/1.0/\"\
+             \n   xmpDM:good=\"true\"\
+             \n   xmpDM:pick=\"1\"\
+             \nxmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\
+             \nxmlns:xmpDM=\"http://ns.adobe.com/xmp/1.0/DynamicMedia/\"\
+             \nxmp:CreatorTool=\"CULL\"\
+             \nxmp:ModifyDate=\"2026-09-21T12:00:00+02:00\">\
+             \n</rdf:Description>\
+             \n</rdf:RDF>\
+             \n</x:xmpmeta>\
+             \n<?xpacket end=\"w\"?>";
+        // The shape this test exists for: no marker on a keep or a reject.
+        assert!(
+            !main_keep.contains("cull:fav"),
+            "the shipped keep has no marker"
+        );
+        assert!(!main_keep.contains("xmlns:cull"), "nor the namespace");
+        assert!(!main_reject.contains("cull:fav"));
+        assert_eq!(cull_fav_value(main_favorite).as_deref(), Some("star"));
+
+        // A favourite with NO marker is a real shape too — a pre-marker CULL
+        // one, or an LrC packet round-tripping a flagged lone 1★. Asking only
+        // `cull:fav` whether the frame is a favourite silently demoted these to
+        // keeps as soon as a star was set.
+        let unmarked_favorite = "<rdf:Description rdf:about=\"\" \
+                                 xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" \
+                                 xmp:CreatorTool=\"Adobe Lightroom Classic\" \
+                                 xmpDM:pick=\"1\" xmpDM:good=\"true\" \
+                                 xmp:Rating=\"1\"></rdf:Description>";
+        assert!(cull_fav_value(unmarked_favorite).is_none(), "no marker");
+
+        for (base, verdict) in [
+            (main_keep, "keep"),
+            (main_reject, "reject"),
+            (main_favorite, "favorite"),
+            (unmarked_favorite, "favorite"),
+        ] {
+            assert_eq!(classify_xmp(base).as_deref(), Some(verdict), "the fixture");
+            for n in 1..=5u8 {
+                let out = apply_star_to_xmp(base, Some(n)).unwrap();
+                assert_eq!(
+                    classify_xmp(&out).as_deref(),
+                    Some(verdict),
+                    "a {n}★ must not change a {verdict} into anything else"
+                );
+                // This IS write_xmp_star_sync's landed predicate: when it
+                // disagrees the write is refused deterministically, which is a
+                // permanent unsaved the user cannot retry out of.
+                assert_eq!(
+                    parse_lrc_rating(&out),
+                    Some(n),
+                    "landed() must accept a {n}★ on a {verdict}"
+                );
+            }
+        }
+
+        // And through the real writer, on disk.
+        let work = std::env::temp_dir().join(format!("cull-xmp-mainkeep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("k.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let p = cr3.to_string_lossy().to_string();
+        std::fs::write(cr3.with_extension("xmp"), main_keep).unwrap();
+        assert_eq!(write_xmp_star_sync(&p, Some(1)), Ok(()), "never refused");
+        let read = read_ratings(&p).unwrap();
+        assert_eq!(read.rating.as_deref(), Some("keep"), "still a keep");
+        assert_eq!(read.star, Some(1));
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    // ── Substring surgery stays inside attribute position (minors 7-9) ───
+
+    /// `target_start_tag` stopped at the first `>` after `rdf:about`, including
+    /// one inside an attribute VALUE — legal, unescaped XML. The tag then
+    /// looked as if it had no `xmlns:xmp`, so a SECOND declaration was written
+    /// onto the same element: a duplicate attribute, which is not well-formed
+    /// XML, and the landed check cannot see it.
+    #[test]
+    fn a_gt_inside_an_attribute_value_does_not_end_the_start_tag() {
+        let tricky = "<rdf:Description rdf:about=\"\"\n   dc:title=\"a > b\"\n    \
+                      xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\n  </rdf:Description>";
+        let starred = apply_star_to_xmp(tricky, Some(2)).unwrap();
+        assert_eq!(
+            starred.matches("xmlns:xmp=").count(),
+            1,
+            "no duplicate namespace declaration: {starred}"
+        );
+        assert!(
+            starred.contains("dc:title=\"a > b\""),
+            "their value is intact"
+        );
+        let labelled = apply_label_to_xmp(tricky, Some("red")).unwrap();
+        assert_eq!(labelled.matches("xmlns:xmp=").count(), 1, "{labelled}");
+    }
+
+    /// The CULL tool stamp is matched as a VALUE, not as a substring.
+    /// `CreatorTool="Cullmann Studio 3"` used to open the legacy Rating-only
+    /// arm, so that stranger's `xmp:Rating="-1"` classified as a REJECT — and a
+    /// fabricated reject feeds move_rejects_to_subfolder / _to_trash. The other
+    /// way round, a single-quoted `CreatorTool='Cull 1.0'` was missed entirely.
+    #[test]
+    fn the_cull_tool_stamp_is_matched_as_a_value_not_a_substring() {
+        let stranger = "<rdf:Description rdf:about=\"\" \
+                        xmp:CreatorTool=\"Cullmann Studio 3\" xmp:Rating=\"-1\"></rdf:Description>";
+        assert!(!stamped_by_pre_rebrand_cull(stranger));
+        assert!(!created_by_cull(stranger), "never a licence to delete it");
+        assert_eq!(
+            classify_xmp(stranger),
+            None,
+            "their -1 is not a CULL reject"
+        );
+        assert!(!created_by_cull(
+            "<rdf:Description rdf:about=\"\" xmp:CreatorTool=\"CULLIGAN Water\"></rdf:Description>"
+        ));
+
+        let single = "<rdf:Description rdf:about='' \
+                      xmp:CreatorTool='Cull 1.0' xmp:Rating='5'></rdf:Description>";
+        assert!(
+            stamped_by_pre_rebrand_cull(single),
+            "single quotes are still CULL's own stamp"
+        );
+        assert_eq!(classify_xmp(single).as_deref(), Some("favorite"));
+
+        // Both generations, both attributes, still recognised.
+        for s in [
+            "xmp:CreatorTool=\"Cull 1.0\"",
+            "x:xmptk=\"Cull 1.0\"",
+            "xmp:CreatorTool=\"CULL\"",
+            "x:xmptk=\"CULL\"",
+        ] {
+            assert!(created_by_cull(s), "{s}");
+        }
+    }
+
+    /// An attribute is only matched in ATTRIBUTE POSITION: inside a start tag,
+    /// outside any quoted value, preceded by whitespace. Without that,
+    /// `xmp:Label="Red"` sitting in the TEXT of a `<dc:description>` read as a
+    /// label — and `set_desc_attr` then rewrote the user's prose in place.
+    #[test]
+    fn an_attribute_is_only_matched_in_attribute_position() {
+        let prose = "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\
+                     <dc:description>set xmp:Label=\"Red\" here</dc:description>\
+                     </rdf:Description>";
+        assert_eq!(parse_label(prose), None, "their prose is not a label");
+        let labelled = apply_label_to_xmp(prose, Some("blue")).unwrap();
+        assert!(
+            labelled.contains("set xmp:Label=\"Red\" here"),
+            "their prose must be untouched: {labelled}"
+        );
+        assert_eq!(parse_label(&labelled).as_deref(), Some("blue"));
+
+        let embedded = "<rdf:Description rdf:about=\"\" \
+                        dc:title='set xmp:Rating=\"5\" please' xmp:Rating=\"2\"></rdf:Description>";
+        assert_eq!(
+            parse_xmp_rating(embedded),
+            Some(2),
+            "the real attribute wins"
+        );
+
+        // Prefix collisions stay clean in both directions, through a write.
+        let neighbours =
+            "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" \
+                          xmp:LabelColor=\"red\" xmp:RatingPercent=\"50\" \
+                          MicrosoftPhoto:Rating=\"75\"></rdf:Description>";
+        assert_eq!(parse_label(neighbours), None, "LabelColor is not Label");
+        assert_eq!(
+            parse_xmp_rating(neighbours),
+            None,
+            "RatingPercent is not Rating"
+        );
+        let starred = apply_star_to_xmp(neighbours, Some(3)).unwrap();
+        assert_eq!(parse_xmp_rating(&starred), Some(3));
+        let cleared = apply_star_to_xmp(&starred, None).unwrap();
+        for s in [&starred, &cleared] {
+            assert!(s.contains("xmp:RatingPercent=\"50\""), "{s}");
+            assert!(s.contains("MicrosoftPhoto:Rating=\"75\""), "{s}");
         }
     }
 
