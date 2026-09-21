@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  coerceCaptureOffsets,
   DEFAULT_SETTINGS,
   normalizeRejectedSubfolder,
   SETTINGS_STORAGE_KEY,
@@ -58,6 +59,8 @@ export function coerceSettings(raw: unknown): Settings {
         ? p.thumbsPosition
         : d.thumbsPosition,
     gridSize: isGridSize(p.gridSize) ? p.gridSize : d.gridSize,
+    sortByCaptureTime: bool(p.sortByCaptureTime, d.sortByCaptureTime),
+    captureOffsets: coerceCaptureOffsets(p.captureOffsets),
     rejectedSubfolder:
       typeof p.rejectedSubfolder === "string"
         ? normalizeRejectedSubfolder(sanitizeFolderName(p.rejectedSubfolder))
