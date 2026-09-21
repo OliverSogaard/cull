@@ -47,6 +47,16 @@ async function settleWrites(): Promise<void> {
   });
 }
 
+/** Let the per-path write queue advance one link without running a timer — the
+ *  queue chains through `.then`, so the first write is issued in a microtask,
+ *  not synchronously inside `act`. */
+async function drainMicrotasks(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 /** The `path` argument of each invoke call, narrowed without a cast. */
 function writtenPaths(): string[] {
   return mockInvoke.mock.calls.map(([, args]) =>
@@ -310,6 +320,155 @@ describe("useRatingPersistence — a missing photo is a permanent failure", () =
     // failedCount never drops below the permanent failure, so the quit guard
     // still refuses to lose it silently.
     expect(result.current.failedCount).toBe(1);
+    expect(result.current.missingCount).toBe(1);
+  });
+});
+
+describe("useRatingPersistence — stars and labels share the photo, not the verdict", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockInvoke.mockReset();
+    // Same reason as the suite above: the hook logs every exhausted write, and
+    // these tests assert the counts rather than the log.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("sends each kind to its own command, with null meaning clear", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistStar(FLAKY, 3);
+      result.current.persistLabel(FLAKY, "red");
+      result.current.persistStar(FLAKY, null);
+      result.current.persistLabel(FLAKY, null);
+    });
+    await settleWrites();
+    expect(mockInvoke.mock.calls.map(([cmd]) => cmd)).toEqual([
+      "write_xmp_star",
+      "write_xmp_label",
+      "write_xmp_star",
+      "write_xmp_label",
+    ]);
+    expect(mockInvoke.mock.calls.map(([, args]) => args)).toEqual([
+      { path: FLAKY, star: 3 },
+      { path: FLAKY, label: "red" },
+      { path: FLAKY, star: null },
+      { path: FLAKY, label: null },
+    ]);
+  });
+
+  it("serialises all three kinds for ONE photo — they edit one file", async () => {
+    // The sidecar write is read-modify-write. Two of these overlapping would
+    // lose whichever read first, which is why the queue is keyed by PATH and
+    // not by kind.
+    const releases: (() => void)[] = [];
+    mockInvoke.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistRating(FLAKY, "keep");
+      result.current.persistStar(FLAKY, 3);
+      result.current.persistLabel(FLAKY, "blue");
+    });
+    await drainMicrotasks();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockInvoke.mock.calls[0][0]).toBe("write_xmp_rating");
+    await act(async () => {
+      releases[releases.length - 1]?.();
+    });
+    expect(mockInvoke).toHaveBeenCalledTimes(2);
+    expect(mockInvoke.mock.calls[1][0]).toBe("write_xmp_star");
+  });
+
+  it("a star write never clears a rating's unsaved flag for the same photo", async () => {
+    // Keyed by path alone, the star's issue-time "this path has a fresh
+    // write" sweep would have deleted the rating's failure — and the rating
+    // still would not be on disk.
+    mockInvoke.mockRejectedValue(new Error(TRANSIENT));
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistRating(STUCK, "reject");
+    });
+    await settleWrites();
+    expect(result.current.failedCount).toBe(1);
+
+    mockInvoke.mockResolvedValue(undefined);
+    act(() => {
+      result.current.persistStar(STUCK, 2);
+    });
+    await settleWrites();
+    expect(result.current.failedCount, "the rating is still unsaved").toBe(1);
+
+    // …and a fresh RATING write to the same path still clears it.
+    act(() => {
+      result.current.persistRating(STUCK, "reject");
+    });
+    await settleWrites();
+    expect(result.current.failedCount).toBe(0);
+  });
+
+  it("retryFailed re-issues each stuck write with its own command and value", async () => {
+    mockInvoke.mockRejectedValue(new Error(TRANSIENT));
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistStar(FLAKY, 5);
+      result.current.persistLabel(GONE, "yellow");
+    });
+    await settleWrites();
+    expect(result.current.failedCount).toBe(2);
+
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue(undefined);
+    act(() => {
+      result.current.retryFailed();
+    });
+    await settleWrites();
+    // Sorted by command so the two retries' order in the queue does not decide
+    // whether the test passes. Objects rather than tuples: `invoke`'s args
+    // parameter is optional, so a tuple's members type as possibly-undefined
+    // and the comparator would not typecheck.
+    const reissued = mockInvoke.mock.calls
+      .map(([cmd, args]) => ({ cmd, args }))
+      .sort((a, b) => (a.cmd < b.cmd ? -1 : 1));
+    expect(reissued).toEqual([
+      { cmd: "write_xmp_label", args: { path: GONE, label: "yellow" } },
+      { cmd: "write_xmp_star", args: { path: FLAKY, star: 5 } },
+    ]);
+    expect(result.current.failedCount).toBe(0);
+  });
+
+  it("a missing-source refusal is permanent for a star too — one attempt, no schedule", async () => {
+    // The `source missing:` no-retry rule is not a property of the RATING
+    // command: it is a property of the sidecar write, so it has to cover the
+    // two new kinds as well, or a star aimed at a moved photo would hammer a
+    // refusal on a timer.
+    mockInvoke.mockRejectedValue(new Error(MISSING));
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistLabel(GONE, "green");
+    });
+    await settleWrites();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(result.current.failedCount).toBe(1);
+    expect(result.current.missingCount).toBe(1);
+
+    // A transient star failure keeps the 400/1500/4000 ms schedule.
+    mockInvoke.mockReset();
+    mockInvoke.mockRejectedValue(new Error(TRANSIENT));
+    act(() => {
+      result.current.persistStar(FLAKY, 4);
+    });
+    await settleWrites();
+    expect(mockInvoke).toHaveBeenCalledTimes(4);
     expect(result.current.missingCount).toBe(1);
   });
 });
