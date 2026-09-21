@@ -525,6 +525,27 @@ describe("useRatingPersistence — a custom label the backend kept", () => {
     expect(result.current.failedCount).toBe(1);
     expect(onCustomLabelKept).not.toHaveBeenCalled();
   });
+
+  it("a rating write rejected with this exact prefix is still counted as a failure", async () => {
+    // `isCustomLabelKept` is a bare string-prefix test on the error message.
+    // No backend path produces this prefix for anything but a label today,
+    // but the check must be keyed on `write.kind === "label"` as well — not
+    // the message alone — or a rating/star failure that ever happened to
+    // collide with this exact prefix would vanish silently: no retry
+    // schedule, no failedWrites entry, nothing for the quit guard to see.
+    const onCustomLabelKept = vi.fn((_path: string): void => {});
+    mockInvoke.mockRejectedValue(new Error(CUSTOM_KEPT));
+    const { result } = renderHook(() => useRatingPersistence({ onCustomLabelKept }));
+
+    act(() => {
+      result.current.persistRating(FLAKY, "keep");
+    });
+    await settleWrites();
+
+    expect(mockInvoke).toHaveBeenCalledTimes(4); // the full 400/1500/4000 schedule
+    expect(result.current.failedCount).toBe(1);
+    expect(onCustomLabelKept).not.toHaveBeenCalled();
+  });
 });
 
 /**

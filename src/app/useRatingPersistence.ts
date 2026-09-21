@@ -158,8 +158,12 @@ export function useRatingPersistence(opts?: {
         // A missing-source refusal is permanent: retrying only delays the
         // honest "didn't save" by six seconds. A kept custom label is not a
         // failure at all — the file is already what it should be, so there is
-        // nothing for a retry to achieve either.
-        if (n < WRITE_RETRY_DELAYS.length && !isPermanentWriteError(e) && !isCustomLabelKept(e)) {
+        // nothing for a retry to achieve either. `isCustomLabelKept` is a bare
+        // string-prefix test, so it is scoped to `kind === "label"` here too —
+        // otherwise a rating or star write that ever collided with the same
+        // prefix would be swallowed rather than retried.
+        const isKeptCustomLabel = write.kind === "label" && isCustomLabelKept(e);
+        if (n < WRITE_RETRY_DELAYS.length && !isPermanentWriteError(e) && !isKeptCustomLabel) {
           return new Promise((resolve, reject) =>
             window.setTimeout(() => tryWrite(n + 1).then(resolve, reject), WRITE_RETRY_DELAYS[n]),
           );
@@ -189,8 +193,11 @@ export function useRatingPersistence(opts?: {
         // The backend kept the user's own Lightroom label and left the file
         // exactly as it was. Nothing was lost and nothing is pending, so this
         // never becomes a failed write — the only thing that was wrong is our
-        // copy of the label, which the owner corrects from here.
-        if (isCustomLabelKept(e)) {
+        // copy of the label, which the owner corrects from here. Scoped to
+        // `kind === "label"`, same reason as the retry guard above: the
+        // message-prefix test alone must never be able to swallow a rating or
+        // star failure.
+        if (write.kind === "label" && isCustomLabelKept(e)) {
           onCustomLabelKeptRef.current?.(path);
           return;
         }
