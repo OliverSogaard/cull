@@ -87,6 +87,8 @@ type PropsInit = {
   currentIndex?: number;
   navStack?: NavEntry[];
   isZooming?: boolean;
+  gridVisible?: boolean;
+  selectedIndices?: Set<number>;
 };
 
 /**
@@ -121,8 +123,8 @@ function makeProps(init: PropsInit) {
       note("setChallengerIndex");
     }),
     visibleIndices: images.map((_, i) => i),
-    gridVisible: false,
-    selectedIndices: new Set<number>(),
+    gridVisible: init.gridVisible ?? false,
+    selectedIndices: init.selectedIndices ?? new Set<number>(),
     navStackRef: { current: init.navStack ?? [] },
     isZoomingRef: { current: init.isZooming ?? false },
     keepZoomOnAdvanceRef: { current: false },
@@ -559,5 +561,128 @@ describe("compare decides — side-effect order (characterisation)", () => {
       noChamp.result.current.challengerWins();
     });
     expect(calls).toEqual([]);
+  });
+});
+
+/**
+ * REGRESSION: `applyRating`'s grid branch and both of `unrateCurrent`'s
+ * branches call `setRatings((prev) => withChanges(prev, changes))` — three of
+ * the five `withChanges` call sites the "compare decides" suite above never
+ * exercises (that suite only drives the three compare decides). A branch
+ * review found that mutating any of those three sites to
+ * `withChanges(prev, [])` still left the full test suite green: nothing
+ * captured the updater `setRatings` was actually called with and looked at
+ * what it does to a ratings map.
+ *
+ * Each test below pulls that updater out of the mock, applies it to a
+ * HAND-BUILT base map, and compares the result to a HAND-BUILT expected map —
+ * this file never imports `withChanges` itself, so a bug in the helper cannot
+ * pass on both sides (same ruling as the helper's own unit test).
+ */
+describe("applyRating / unrateCurrent — the ratings map setRatings actually produces", () => {
+  const calls: string[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+  });
+  afterEach(cleanup);
+
+  function setup(init: Omit<PropsInit, "calls">) {
+    const props = makeProps({ ...init, calls });
+    const { result } = renderHook(() => useDecideCallbacks(props));
+    return { result, props };
+  }
+
+  /** `setRatings` is always called with an updater at these three sites — pull
+   *  the LAST call's updater out of the mock and run it against `base`.
+   *  (`Array.prototype.at` is ES2022; this repo's `lib` is ES2020 —
+   *  see tsconfig.json:5 — so this indexes from the end by hand.) */
+  function appliedRatings(props: ReturnType<typeof makeProps>, base: Ratings): Ratings {
+    const { calls: setRatingsCalls } = props.setRatings.mock;
+    const arg = setRatingsCalls[setRatingsCalls.length - 1]?.[0];
+    if (typeof arg !== "function") {
+      throw new Error("setRatings must have been called with an updater");
+    }
+    return arg(base);
+  }
+
+  it("applyRating over a grid selection rates the differing/unrated frames and skips the one already at that rating", () => {
+    const base: Ratings = { 0: "keep", 2: "reject", 3: "favorite" };
+    const { result, props } = setup({
+      ratings: base,
+      gridVisible: true,
+      selectedIndices: new Set([0, 1, 2]),
+    });
+
+    act(() => {
+      result.current.applyRating("reject");
+    });
+
+    // frame 0: "keep" → "reject" (differs); frame 1: unrated → "reject";
+    // frame 2: already "reject" — the `before !== after` guard drops it.
+    expect(appliedRatings(props, base)).toEqual({
+      0: "reject",
+      1: "reject",
+      2: "reject",
+      3: "favorite",
+    });
+    expect(props.persistRating).toHaveBeenCalledTimes(2);
+    expect(props.persistRating).toHaveBeenCalledWith("/s/0.cr3", "reject");
+    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "reject");
+    // The grid branch's one undo entry: frame 2 never appears (skipped above).
+    expect(props.recordAction).toHaveBeenCalledWith({
+      changes: [
+        { imgId: 0, path: "/s/0.cr3", before: "keep", after: "reject" },
+        { imgId: 1, path: "/s/1.cr3", before: undefined, after: "reject" },
+      ],
+    });
+  });
+
+  it("unrateCurrent over a grid selection DELETES the rated frames' keys and skips the already-unrated one", () => {
+    const base: Ratings = { 0: "keep", 1: "reject", 3: "favorite" };
+    const { result, props } = setup({
+      ratings: base,
+      gridVisible: true,
+      selectedIndices: new Set([0, 1, 2]),
+    });
+
+    act(() => {
+      result.current.unrateCurrent();
+    });
+
+    const after = appliedRatings(props, base);
+    // Not `{ 0: undefined, 1: undefined, ... }`: the keys must be GONE, or
+    // every `id in ratings` / Object.keys consumer still counts the frame rated.
+    expect("0" in after).toBe(false);
+    expect("1" in after).toBe(false);
+    expect(Object.keys(after)).toEqual(["3"]);
+    expect(after).toEqual({ 3: "favorite" });
+    expect(props.persistRating).toHaveBeenCalledTimes(2);
+    expect(props.persistRating).toHaveBeenCalledWith("/s/0.cr3", null);
+    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", null);
+    // frame 2 was already unrated — the `ratings[im.id] !== undefined` guard drops it.
+    expect(props.recordAction).toHaveBeenCalledWith({
+      changes: [
+        { imgId: 0, path: "/s/0.cr3", before: "keep", after: undefined },
+        { imgId: 1, path: "/s/1.cr3", before: "reject", after: undefined },
+      ],
+    });
+  });
+
+  it("unrateCurrent on a single frame DELETES its key", () => {
+    const base: Ratings = { 0: "keep", 1: "reject" };
+    const { result, props } = setup({ ratings: base, currentIndex: 0 });
+
+    act(() => {
+      result.current.unrateCurrent();
+    });
+
+    const after = appliedRatings(props, base);
+    expect("0" in after).toBe(false);
+    expect(after).toEqual({ 1: "reject" });
+    expect(props.persistRating).toHaveBeenCalledWith("/s/0.cr3", null);
+    expect(props.recordAction).toHaveBeenCalledWith({
+      changes: [{ imgId: 0, path: "/s/0.cr3", before: "keep", after: undefined }],
+    });
   });
 });
