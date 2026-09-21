@@ -3389,3 +3389,46 @@ describe("the filmstrip cell", () => {
 - [ ] **Step 6:** gate green. Report `pnpm test`'s before/after pair (**+7**). Commit:
   `git commit -m "feat(cells): a star count in the grid's free corner and a label bar on both cells" -- src/components/GridView.tsx src/styles/grid.css src/components/ThumbCell.tsx src/styles/strip.css src/components/cellMarks.test.tsx`
   (Drop `src/styles/strip.css` from the pathspec if it needed no change.)
+
+---
+
+## Implementation note (2026-09-21)
+
+**A lean run.** Two days of the full pipeline had used most of Oliver's weekly limit, so this phase ran on a fraction of it: the planner was stopped before its self-review (this plan's Tasks 1–9 are its first draft; nobody fact-checked them), implementers were told so and verified every step against the code, there were no per-task reviewers, and the careful review went where data can be lost — ONE data-safety review of the Rust sidecar writer, ONE whole-branch review, one fix wave, one scoped re-review of the last Rust commit, and a live run on scratch copies. Six multi-task implementers instead of ten; the integration task (App wiring, restore at open, hints, Settings, docs) was briefed by the controller in prose. Gates at the tip: 1,051 tests in 91 files (931 in 84 before), lint, lint:css, typecheck, typecheck:tests, build, prod audit; `cargo fmt --check`, clippy, 202 Rust tests (166 before).
+
+### What shipped
+
+- **Stars and colour labels as an optional layer, off by default.** `starsAndLabels` switches the keymap's shape: off is today, byte for byte; on is Lightroom's row — `1`–`5` stars, `0` clears, `6`–`9` red / yellow / green / blue (re-press clears), `Shift+6` purple, and the filters move to `Shift+1`–`Shift+5`, matched on `e.code`. Not bound in compare. One action per press; one undo step per press, including a multi-select.
+- **Orthogonal to the verdict.** `Rating` is not widened: `stars` and `labels` are two maps beside `ratings`. A starred frame with no verdict is still unrated; a reject keeps its marks and Move rejects carries them.
+- **On disk**: `xmp:Rating` and `xmp:Label` (English strings), through the same guarded writer — `require_source` first, one per-path queue for all three write kinds, latest-wins per path and per kind. No bulk migration of existing sidecars. Marks read back at open, validated at the boundary.
+- **Looks**: a star row and five swatches in the info rail (clickable), a compact count in the grid cell's free corner, a 4 px label bar on grid and filmstrip cells. Five `--label-*` tokens (lowest contrast 6.5:1); a label is told from a verdict by shape and place.
+- **Every key hint follows the setting** — footer tips, empty-filter hints, the help sheet, Settings, the README.
+
+### Where the spec was wrong, and what was ruled instead
+
+- **CULL never overwrites a custom Lightroom label.** The spec let a label key replace one. The frontend only knows such a label as `"custom"`, so undo could not put the user's text back: data lost through press + undo. Now refused in the frontend AND the backend (`custom label kept` — not a failed save), the file's bytes untouched.
+- **The legacy "lone 1★ = favourite" reader is gated on the pre-rebrand tool stamp**, not on a namespace declaration. See below — this one mattered with the setting OFF.
+- A star written into a sidecar that has a verdict and no marker stamps `cull:fav="no"`; ownership of the favourite's courtesy star is decided from the file as it was, never from the half-edited output.
+- A star or label cleared on a frame that then holds nothing sends the existing clear, so CULL leaves no empty sidecar on the NAS.
+- Setting or clearing a label removes a stale `xmp:LabelColor`.
+
+### What review caught — all of it before any real photo was touched
+
+- **A false reject.** The `cull:fav="no"` marker declared CULL's namespace in a Lightroom-written sidecar; an unrate stripped the marker but not the declaration; the legacy reader then turned THEIR `xmp:Rating` of `5` / `0` / `-1` into favourite / keep / **reject** — and a false reject feeds Move rejects and the trash. With the setting off. Found by the data-safety review; the suite was green with the fix applied by hand, i.e. entirely unpinned.
+- **Star 1, then keep, deleted the star** while reporting it saved (ownership read from the half-written output). Found by the whole-branch review; also unpinned.
+- **A save that did not happen** (pre-existing): on a single-quoted sidecar every insert was a no-op and the unchanged-bytes path returned Ok. The writer now verifies the intent landed and errors otherwise.
+- Star 5 on an unrated frame read back as a favourite; a star on a keep written by the shipped build was refused forever or turned it into a favourite; with two `rdf:Description` blocks a prefix could land unbound; the grid's label bar rendered in the gap between images (dead CSS by import order); an undone star could have cleared a kept frame's verdict with 1,044 tests green; `created_by_cull` — which gates the file DELETE — matched `CreatorTool="CULLIGAN Water"`.
+- The draft plan itself opened one of these (the marker's namespace residue); the implementer caught the first half of it before any review.
+
+### Verification
+
+Tests and gates; the Rust transforms driven as a state machine by two reviewers against byte-exact copies of what main writes; and a live run, PC idle, **scratch copies only**: star 1 then keep → `pick=1 Rating=1 cull:fav=no` on disk; star 5 + red + reject → Move rejects carried the sidecar with both marks, no orphan left behind; star then clear and label then re-press on one frame → no sidecar; undo ×3 removed the marks and deleted the two now-empty CULL sidecars, leaving the keep's untouched; `Shift+1`, `Shift+6`, `8` behaved; the label bar sits on the thumbnail. Screenshots: `~/.claude/plans/cull-audit-2026-09-13/phase-5a-shots/`. Driver lesson: `SendKeys` injects keys with no scan code, so `KeyboardEvent.code` arrives empty and every `e.code` binding looks dead — send with real scan codes.
+Not verified: a real Lightroom import of these sidecars (no Lightroom run here; `sample_cr3s/` is absent, so the two real-Lightroom fixture tests skip); whether Lightroom 15 writes `xmp:LabelColor`.
+
+### Left for later
+
+- Clearing the star on a favourite that rides a user's 5★ writes CULL's courtesy 1★ (the spec's rule; Lightroom then shows 1★).
+- A pre-rebrand Rating-only sidecar still treats the star as the verdict until its first rating write.
+- No `keyCode` fallback when `e.code` is empty (remote-desktop and macro tools); `Shift+Numpad` misses the filters, as on main.
+- Filtering by stars; stars in compare; localised label strings.
+- A few keymap tests are timing-sensitive under heavy machine load (seen only while `cargo test` ran beside Vitest).
