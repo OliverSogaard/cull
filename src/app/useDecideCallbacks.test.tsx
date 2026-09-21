@@ -831,17 +831,58 @@ describe("applyStar / applyLabel — the orthogonal layer", () => {
     expect(clear.props.persistLabel).toHaveBeenCalledWith("/s/0.cr3", null);
   });
 
-  it("a label CULL does not recognise is REPLACED, never toggled", () => {
-    // "custom" is the user's own Lightroom label. Pressing a colour key
-    // replaces it (that is a deliberate act); nothing else may touch it.
+  it("a label CULL does not recognise is never overwritten — the press is a no-op", () => {
+    // "custom" is the user's own Lightroom label, and the frontend only ever
+    // learns the WORD "custom" — never the string. Replacing it would be a
+    // one-way door: undo could not put the user's own label back.
     const { result, props } = setup({ labels: { 0: "custom" } });
 
     act(() => {
       result.current.applyLabel("blue");
     });
 
-    expect(props.recordAction.mock.calls[0][0].meta).toEqual([
-      { imgId: 0, path: "/s/0.cr3", field: "label", before: "custom", after: "blue" },
+    expect(props.recordAction).not.toHaveBeenCalled();
+    expect(props.persistLabel).not.toHaveBeenCalled();
+    expect(props.setLabels).not.toHaveBeenCalled();
+  });
+
+  it("a multi-select skips the custom frame and still changes the rest, in one step", () => {
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1, 2]),
+      currentIndex: 0,
+      labels: { 1: "custom" },
+    });
+
+    act(() => {
+      result.current.applyLabel("green");
+    });
+
+    expect(props.recordAction).toHaveBeenCalledTimes(1);
+    const meta = props.recordAction.mock.calls[0][0].meta as MetaChange[];
+    expect(meta.map((m) => m.imgId)).toEqual([0, 2]);
+    expect(props.persistLabel).toHaveBeenCalledTimes(2);
+    expect(props.persistLabel).not.toHaveBeenCalledWith("/s/1.cr3", "green");
+  });
+
+  it("a custom frame cannot be the anchor that decides the toggle", () => {
+    // The cursor sits on the untouchable frame, so the toggle question is
+    // answered by the first frame the press can actually reach: frame 1 is
+    // not green, so the press SETS green rather than clearing it.
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1]),
+      currentIndex: 0,
+      labels: { 0: "custom" },
+    });
+
+    act(() => {
+      result.current.applyLabel("green");
+    });
+
+    const meta = props.recordAction.mock.calls[0][0].meta as MetaChange[];
+    expect(meta).toEqual([
+      { imgId: 1, path: "/s/1.cr3", field: "label", before: undefined, after: "green" },
     ]);
   });
 
@@ -902,6 +943,78 @@ describe("applyStar / applyLabel — the orthogonal layer", () => {
     expect(props.recordAction).not.toHaveBeenCalled();
     expect(props.persistStar).not.toHaveBeenCalled();
     expect(props.persistLabel).not.toHaveBeenCalled();
+  });
+
+  it("clearing the last mark asks for the unrate that can delete an empty sidecar", () => {
+    // `3` then `0` on an unrated frame wrote a CULL sidecar and then emptied
+    // it. Nothing sent `clear_xmp_rating` (the unrate key returns early for a
+    // frame that is already unrated), so the empty file stayed in the folder.
+    const { result, props } = setup({ stars: { 0: 3 } });
+
+    act(() => {
+      result.current.applyStar(null);
+    });
+
+    expect(props.persistStar).toHaveBeenCalledWith("/s/0.cr3", null);
+    expect(props.persistRating).toHaveBeenCalledWith("/s/0.cr3", null);
+    // ORDER matters: the two share one per-path queue, and the delete gate
+    // reads the file the star clear left behind.
+    expect(props.persistStar.mock.invocationCallOrder[0]).toBeLessThan(
+      props.persistRating.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("leaves the sidecar alone while anything at all is still in it", () => {
+    const rated = setup({ stars: { 0: 3 }, ratings: { 0: "keep" } });
+    act(() => {
+      rated.result.current.applyStar(null);
+    });
+    expect(rated.props.persistRating).not.toHaveBeenCalled();
+
+    cleanup();
+    const labelled = setup({ stars: { 0: 3 }, labels: { 0: "blue" } });
+    act(() => {
+      labelled.result.current.applyStar(null);
+    });
+    expect(labelled.props.persistRating).not.toHaveBeenCalled();
+
+    cleanup();
+    // The user's own Lightroom label is content too — the one thing here most
+    // worth not deleting.
+    const custom = setup({ stars: { 0: 3 }, labels: { 0: "custom" } });
+    act(() => {
+      custom.result.current.applyStar(null);
+    });
+    expect(custom.props.persistRating).not.toHaveBeenCalled();
+  });
+
+  it("never asks for an unrate when the press SETS a mark", () => {
+    const { result, props } = setup({});
+    act(() => {
+      result.current.applyStar(4);
+    });
+    act(() => {
+      result.current.applyLabel("green");
+    });
+    expect(props.persistRating).not.toHaveBeenCalled();
+  });
+
+  it("asks once per frame when a multi-select's label toggles off", () => {
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1]),
+      currentIndex: 0,
+      labels: { 0: "red", 1: "red" },
+    });
+
+    act(() => {
+      result.current.applyLabel("red");
+    });
+
+    expect(props.persistRating.mock.calls).toEqual([
+      ["/s/0.cr3", null],
+      ["/s/1.cr3", null],
+    ]);
   });
 
   it("a grid selection never reaches a selected frame the filter hides", () => {

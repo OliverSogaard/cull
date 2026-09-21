@@ -84,6 +84,21 @@ describe("the rail with the layer ON", () => {
     expect(onSetLabel).toHaveBeenCalledWith("yellow");
   });
 
+  it("goes inert for a label CULL did not write, and says why", () => {
+    // The frontend only ever learns the WORD "custom", so a click could not
+    // be undone back to the user's own string. The row says so rather than
+    // looking clickable and silently doing nothing.
+    const onSetLabel = vi.fn((_l: string) => {});
+    const { container } = renderRail({ starsAndLabels: true, label: "custom", onSetLabel });
+    const buttons = container.querySelectorAll<HTMLButtonElement>(".cull-exif-rail__labels button");
+    expect([...buttons].every((b) => b.disabled)).toBe(true);
+    fireEvent.click(buttons[0]);
+    expect(onSetLabel).not.toHaveBeenCalled();
+    expect(container.querySelector(".cull-label--custom")?.getAttribute("aria-label")).toBe(
+      "Custom Lightroom label — not changed by CULL",
+    );
+  });
+
   it("flashes when the value CHANGES on one frame, not when the frame changes", () => {
     vi.useFakeTimers();
     try {

@@ -10,6 +10,7 @@ import type {
   UndoAction,
 } from "../types";
 import { imageStore } from "../image/imageStore";
+import { emptiedPaths } from "../utils/emptySidecar";
 import { withChanges, withMeta } from "../utils/withChanges";
 
 /** The two halves of {@link MetaChange}, narrowed. `withMeta` is generic over
@@ -291,6 +292,24 @@ export function useDecideCallbacks({
   }, [gridVisible, selectedIndices, visibleIndices, images, currentIndex]);
 
   /**
+   * A mark clear can leave a CULL-created sidecar holding nothing at all, and
+   * the backend only deletes such a file inside `clear_xmp_rating` — which
+   * `unrateCurrent` never sends for a frame that is already unrated. So every
+   * star / label change is followed by the unrate for whichever frames it
+   * emptied: same per-path queue, issued AFTER the clear, once per frame. The
+   * backend still refuses to delete a sidecar it did not create or one that
+   * holds user content; this only gives it the chance to decide.
+   */
+  const sweepEmptied = useCallback(
+    (meta: readonly MetaChange[]) => {
+      for (const path of emptiedPaths(meta, { ratings, stars, labels })) {
+        persistRating(path, null);
+      }
+    },
+    [ratings, stars, labels, persistRating],
+  );
+
+  /**
    * Set (or clear, with `null`) the star on the current frame or the whole
    * grid selection. ONE undo step per keypress, whatever the selection size.
    *
@@ -317,8 +336,9 @@ export function useDecideCallbacks({
       recordAction({ changes: [], meta });
       setStars((prev) => withMeta(prev, meta));
       for (const m of meta) persistStar(m.path, star);
+      sweepEmptied(meta);
     },
-    [markTargets, stars, recordAction, setStars, persistStar],
+    [markTargets, stars, recordAction, setStars, persistStar, sweepEmptied],
   );
 
   /**
@@ -328,13 +348,19 @@ export function useDecideCallbacks({
    * With a multi-select the toggle needs one answer, not N: the ANCHOR
    * decides — the cursor frame when it is inside the selection, else the
    * first selected frame — so one press does one thing to the whole set
-   * instead of half-toggling it. A frame carrying a label CULL does not
-   * recognise (`"custom"`, the user's own Lightroom label) is replaced, never
-   * toggled: `"custom"` can never equal the pressed key.
+   * instead of half-toggling it.
+   *
+   * A frame carrying `"custom"` — the user's own Lightroom label — is SKIPPED
+   * outright: no state change, no write, no undo entry. CULL only ever learns
+   * the WORD "custom", never the string behind it, so overwriting one would be
+   * a one-way door that undo could not reverse. In a multi-select the other
+   * frames still change; when every target is custom the press does nothing at
+   * all. It is therefore not eligible to be the anchor either — the toggle
+   * question is answered by a frame the press can actually reach.
    */
   const applyLabel = useCallback(
     (label: Label) => {
-      const targets = markTargets();
+      const targets = markTargets().filter((im) => labels[im.id] !== "custom");
       if (targets.length === 0) return;
       const cursor = images[currentIndex];
       const anchor = targets.find((im) => im.id === cursor?.id) ?? targets[0];
@@ -352,8 +378,18 @@ export function useDecideCallbacks({
       recordAction({ changes: [], meta });
       setLabels((prev) => withMeta(prev, meta));
       for (const m of meta) persistLabel(m.path, after ?? null);
+      sweepEmptied(meta);
     },
-    [markTargets, labels, images, currentIndex, recordAction, setLabels, persistLabel],
+    [
+      markTargets,
+      labels,
+      images,
+      currentIndex,
+      recordAction,
+      setLabels,
+      persistLabel,
+      sweepEmptied,
+    ],
   );
 
   /**

@@ -1,4 +1,4 @@
-import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type {
   Img,
   Label,
@@ -9,6 +9,7 @@ import type {
   Star,
   UndoAction,
 } from "../types";
+import { emptiedPaths, type MarkMaps } from "../utils/emptySidecar";
 import { withMeta } from "../utils/withChanges";
 
 /** The two halves of {@link MetaChange}, narrowed. `withMeta` is generic over
@@ -69,6 +70,7 @@ export function useUndoRedo({
   setChallengerIndex,
   setCurrentIndex,
   setNavStack,
+  marksRef,
 }: {
   images: Img[];
   compareMode: boolean;
@@ -84,6 +86,15 @@ export function useUndoRedo({
   setChallengerIndex: Dispatch<SetStateAction<number>>;
   setCurrentIndex: Dispatch<SetStateAction<number>>;
   setNavStack: Dispatch<SetStateAction<NavEntry[]>>;
+  /**
+   * Live mirror of the three mark maps, for ONE read: after a replay clears a
+   * mark, is the frame left with nothing at all? A ref, not props — the maps
+   * change on every mark, and a changing prop here would re-create `undo` and
+   * `redo`, which the keymap effect depends on. It is never a source of
+   * replay VALUES: those come from the `before` / `after` the action recorded,
+   * so a second undo can still never read its own first result.
+   */
+  marksRef: RefObject<MarkMaps>;
 }) {
   const undoStack = useRef<UndoAction[]>([]);
   const redoStack = useRef<UndoAction[]>([]);
@@ -130,7 +141,7 @@ export function useUndoRedo({
    * disagree about the frame.
    */
   const applyMeta = useCallback(
-    (meta: readonly MetaChange[]) => {
+    (meta: readonly MetaChange[], ratedIds?: ReadonlySet<number>) => {
       const labelValue = (m: LabelChange): LabelValue | undefined =>
         m.after === "custom" ? undefined : m.after;
       const starChanges = meta.filter((m): m is StarChange => m.field === "star");
@@ -145,15 +156,33 @@ export function useUndoRedo({
         // the wire needs is sound.
         persistLabel(m.path, m.after === undefined ? null : (m.after as Label));
       }
+      // Undoing a star or label SET can leave a CULL-created sidecar holding
+      // nothing at all, and only `clear_xmp_rating` may delete such a file.
+      // Send it on the same per-path queue, AFTER the clears — the same sweep
+      // `useDecideCallbacks` does for a keypress, so an undo litters no more
+      // than the press it reverses.
+      //
+      // `ratedIds` is whichever frames the SAME action also changed a verdict
+      // on: `applyChanges` has just written their rating from the action's own
+      // record, and `marksRef` still holds the pre-replay state — so sweeping
+      // them would both duplicate a clear and, for an action that restores a
+      // verdict, wipe it a line after it was written.
+      const swept = emptiedPaths([...starChanges, ...labelChanges], marksRef.current);
+      for (const path of swept) {
+        const id = meta.find((m) => m.path === path)?.imgId;
+        if (id !== undefined && ratedIds?.has(id)) continue;
+        persistRating(path, null);
+      }
     },
-    [persistStar, persistLabel, setStars, setLabels],
+    [persistStar, persistLabel, persistRating, setStars, setLabels, marksRef],
   );
 
   const undo = useCallback(() => {
     const action = undoStack.current.pop();
     if (!action) return;
     applyChanges(action.changes.map((c) => ({ imgId: c.imgId, path: c.path, rating: c.before })));
-    if (action.meta) applyMeta(invertMeta(action.meta));
+    if (action.meta)
+      applyMeta(invertMeta(action.meta), new Set(action.changes.map((c) => c.imgId)));
     // Restore the compare cursor for compound actions so Ctrl+Z lands you in the
     // SAME pair you were judging (champion/challenger), not stranded somewhere else.
     if (action.cursorBefore) {
@@ -197,7 +226,7 @@ export function useUndoRedo({
     const action = redoStack.current.pop();
     if (!action) return;
     applyChanges(action.changes.map((c) => ({ imgId: c.imgId, path: c.path, rating: c.after })));
-    if (action.meta) applyMeta(action.meta);
+    if (action.meta) applyMeta(action.meta, new Set(action.changes.map((c) => c.imgId)));
     // Compound compare actions snapshot where the crown LANDS (cursorAfter) so a
     // redo re-crowns the NEW champion instead of leaving the old (now-rejected)
     // one in the compare pane. Single-frame rates have no cursorAfter: land on the

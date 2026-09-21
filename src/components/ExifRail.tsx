@@ -27,6 +27,11 @@ const LRC_STAR_SLOTS = [1, 2, 3, 4, 5];
  *  owns the animation, this only owns how long the class stays on. */
 const MARK_FLASH_MS = 120;
 
+/** What the swatch row says while the frame carries a label CULL cannot
+ *  reproduce. One string for the disabled swatches' title and the custom
+ *  swatch's accessible name, so the two can never say different things. */
+const CUSTOM_LABEL_NOTE = "Custom Lightroom label — not changed by CULL";
+
 /**
  * True for one flash window after `value` changes while the FRAME stays the
  * same — "the user just set this", as opposed to "the cursor moved to a
@@ -208,6 +213,11 @@ export const ExifRail = memo(function ExifRail({
                       label === key ? ` is-active${labelFlash ? " cull-mark-flash" : ""}` : ""
                     }`}
                     onClick={() => onSetLabel?.(key)}
+                    // Inert over a custom label: CULL never overwrites one,
+                    // and the keyboard skips such a frame too, so a swatch
+                    // that still looked clickable would be lying.
+                    disabled={label === "custom"}
+                    title={label === "custom" ? CUSTOM_LABEL_NOTE : undefined}
                     aria-label={LABEL_NAME[key]}
                     aria-pressed={label === key}
                   />
@@ -218,7 +228,8 @@ export const ExifRail = memo(function ExifRail({
                   // the five, and not a button: CULL does not write it.
                   <span
                     className="cull-label-swatch cull-label--custom is-active"
-                    aria-label="Custom label"
+                    aria-label={CUSTOM_LABEL_NOTE}
+                    title={CUSTOM_LABEL_NOTE}
                   />
                 )}
               </span>

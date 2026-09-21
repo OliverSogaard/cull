@@ -45,6 +45,9 @@ function makeProps() {
     setChallengerIndex: vi.fn((_v: SetStateAction<number>) => {}),
     setCurrentIndex: vi.fn((_v: SetStateAction<number>) => {}),
     setNavStack: vi.fn((_v: SetStateAction<NavEntry[]>) => {}),
+    // Nothing on any frame unless a test says otherwise, so a replay that
+    // clears a mark leaves an empty sidecar and the sweep fires.
+    marksRef: { current: { ratings: {}, stars: {}, labels: {} } },
   };
   return props satisfies Parameters<typeof useUndoRedo>[0];
 }
@@ -182,5 +185,79 @@ describe("undo / redo of stars and colour labels", () => {
     act(() => result.current.undo());
     expect(p.persistRating).not.toHaveBeenCalled();
     expect(p.persistStar).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Undoing a star or label SET can return a frame to nothing at all — and the
+ * sidecar CULL created for that mark is then an empty file the backend will
+ * only delete when it is sent `clear_xmp_rating`. The replay has to ask for
+ * that unrate exactly as the keypress does.
+ */
+describe("an undo that empties a frame asks for the unrate too", () => {
+  it("sends the unrate after the mark clear, on the same per-path queue", () => {
+    const p = makeProps();
+    const { result } = renderUndo(p);
+    act(() =>
+      result.current.recordAction({
+        changes: [],
+        meta: [{ imgId: 1, path: "/s/1.cr3", field: "star", before: undefined, after: 3 }],
+      }),
+    );
+    act(() => result.current.undo());
+
+    expect(p.persistStar).toHaveBeenCalledWith("/s/1.cr3", null);
+    expect(p.persistRating).toHaveBeenCalledWith("/s/1.cr3", null);
+    expect(p.persistStar.mock.invocationCallOrder[0]).toBeLessThan(
+      p.persistRating.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("stays quiet when the frame still carries a verdict or another mark", () => {
+    const p = makeProps();
+    p.marksRef.current = { ratings: { 1: "keep" }, stars: {}, labels: { 1: "blue" } };
+    const { result } = renderUndo(p);
+    act(() =>
+      result.current.recordAction({
+        changes: [],
+        meta: [{ imgId: 1, path: "/s/1.cr3", field: "star", before: undefined, after: 3 }],
+      }),
+    );
+    act(() => result.current.undo());
+
+    expect(p.persistStar).toHaveBeenCalledWith("/s/1.cr3", null);
+    expect(p.persistRating).not.toHaveBeenCalled();
+  });
+
+  it("never follows a verdict the same action just restored with an unrate", () => {
+    // The sweep reads the PRE-replay maps, which still say this frame was
+    // unrated — but `applyChanges` has just put the keep back from the
+    // action's own record. An unsuppressed sweep would wipe it one line later.
+    const p = makeProps();
+    const { result } = renderUndo(p);
+    act(() =>
+      result.current.recordAction({
+        changes: [{ imgId: 1, path: "/s/1.cr3", before: "keep", after: undefined }],
+        meta: [{ imgId: 1, path: "/s/1.cr3", field: "star", before: undefined, after: 3 }],
+      }),
+    );
+    act(() => result.current.undo());
+
+    expect(p.persistRating.mock.calls).toEqual([["/s/1.cr3", "keep"]]);
+  });
+
+  it("stays quiet when the undo RESTORES a mark rather than clearing one", () => {
+    const p = makeProps();
+    const { result } = renderUndo(p);
+    act(() =>
+      result.current.recordAction({
+        changes: [],
+        meta: [{ imgId: 1, path: "/s/1.cr3", field: "label", before: "red", after: "blue" }],
+      }),
+    );
+    act(() => result.current.undo());
+
+    expect(p.persistLabel).toHaveBeenCalledWith("/s/1.cr3", "red");
+    expect(p.persistRating).not.toHaveBeenCalled();
   });
 });
