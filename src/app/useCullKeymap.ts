@@ -45,6 +45,7 @@ export function useCullKeymap({
   stepGridSizeBy,
   resetGridSize,
   advance,
+  pageStep,
   selectAllInGrid,
   growGridSelection,
   clearMultiSelection,
@@ -67,6 +68,7 @@ export function useCullKeymap({
   championIndex,
   goToSite,
   goBack,
+  cycleChallenger,
   challengerWins,
   challengerLoses,
   challengerKeptBoth,
@@ -107,6 +109,10 @@ export function useCullKeymap({
   stepGridSizeBy: (dir: 1 | -1) => void;
   resetGridSize: () => void;
   advance: (dir: 1 | -1, step?: number) => boolean;
+  /** Frames in one screenful of whatever surface is up, measured at keypress
+   *  time (see utils/pageStep). Grid: whole rows × cols. Loupe / compare: the
+   *  whole filmstrip cells that fit across the window. */
+  pageStep: () => number;
   selectAllInGrid: () => void;
   growGridSelection: (deltaCells: number) => void;
   clearMultiSelection: () => void;
@@ -129,6 +135,10 @@ export function useCullKeymap({
   championIndex: number;
   goToSite: (target: NavSite) => void;
   goBack: (landIndex?: number) => void;
+  /** Compare's cursor move — the compare twin of `advance`. Its per-step
+   *  findUnrated scan makes a WHOLE-LIST step O(n²), so only the page keys
+   *  use it, never Home / End. */
+  cycleChallenger: (dir: 1 | -1, step?: number) => boolean;
   challengerWins: () => void;
   challengerLoses: () => void;
   challengerKeptBoth: (asFavorite: boolean) => void;
@@ -308,6 +318,26 @@ export function useCullKeymap({
           e.preventDefault();
           if (isZooming) pan(0, PAN_STEP);
           break;
+        // One candidate-strip screenful. The strip is the same component and
+        // the same metrics module as the loupe's, so the step is identical.
+        case "PageUp":
+          e.preventDefault();
+          cycleChallenger(-1, pageStep());
+          break;
+        case "PageDown":
+          e.preventDefault();
+          cycleChallenger(1, pageStep());
+          break;
+        // Home / End are LOUPE + GRID only — they mean "first / last frame of
+        // the active FILTER", and the filter tablist is hidden in compare
+        // (StatusBar.tsx:295). cycleChallenger walks findUnrated once per
+        // step, so a whole-list step here would be O(n²) — 17.6M scans on a
+        // 4,194-frame shoot. Swallowed anyway, so neither key can reach a
+        // platform default while compare is up.
+        case "Home":
+        case "End":
+          e.preventDefault();
+          break;
         case "i":
         case "I":
           setExifVisible((v) => !v);
@@ -436,6 +466,73 @@ export function useCullKeymap({
               startGridVertHold(1);
             }
           }
+          break;
+        // First / last frame OF THE ACTIVE FILTER, not index 0: `advance`
+        // works in filter-position space and clamps (App.tsx:1002-1019), so a
+        // step of images.length always lands on visibleIndices[0] / [len-1].
+        // (Its pos === -1 arm lands on visibleIndices[0] for BOTH directions,
+        // but that state is unreachable from a keypress: the pre-paint
+        // auto-jump at App.tsx:948-953 snaps an out-of-filter cursor back in
+        // whenever the filter is non-empty, and on an empty filter advance
+        // returns false at :1004.)
+        //
+        // In the grid, Shift extends the selection to the same target instead
+        // of moving the cursor alone — the keyboard twin of shift-clicking the
+        // first / last cell, and of the Shift+arrow cases above.
+        //
+        // No mid-hold stopGridVertHold() call here, unlike the Shift+arrow
+        // cases: none of these four keys is a vertical arrow, so :238-239 has
+        // already stopped any held row-jump before the switch is reached, and
+        // useHeldRepeat's stop() zeroes the ref synchronously.
+        //
+        // e.repeat is deliberately NOT guarded on the plain Home / End — a
+        // clamped advance returns false without touching state, so a held key
+        // is free, and there is no rAF loop for a repeat to race. The SHIFT
+        // forms of Home / End DO guard it: growGridSelection writes a fresh
+        // Set every call and their step is always the whole list, so each
+        // repeat would rebuild an identical selection and re-render for
+        // nothing. Shift+PgUp / PgDn are NOT guarded, because each repeat
+        // genuinely grows the selection by another screenful — exactly like a
+        // held Shift+ArrowDown.
+        case "Home":
+          e.preventDefault();
+          if (gridVisible && e.shiftKey) {
+            if (e.repeat) break;
+            growGridSelection(-images.length);
+            break;
+          }
+          if (gridVisible) clearMultiSelection();
+          advance(-1, images.length);
+          break;
+        case "End":
+          e.preventDefault();
+          if (gridVisible && e.shiftKey) {
+            if (e.repeat) break;
+            growGridSelection(images.length);
+            break;
+          }
+          if (gridVisible) clearMultiSelection();
+          advance(1, images.length);
+          break;
+        // One screenful: rows × cols in the grid, one filmstrip width in the
+        // loupe (utils/pageStep, measured live — see App's `pageStep`).
+        case "PageUp":
+          e.preventDefault();
+          if (gridVisible && e.shiftKey) {
+            growGridSelection(-pageStep());
+            break;
+          }
+          if (gridVisible) clearMultiSelection();
+          advance(-1, pageStep());
+          break;
+        case "PageDown":
+          e.preventDefault();
+          if (gridVisible && e.shiftKey) {
+            growGridSelection(pageStep());
+            break;
+          }
+          if (gridVisible) clearMultiSelection();
+          advance(1, pageStep());
           break;
         case "g":
         case "G":
@@ -651,6 +748,7 @@ export function useCullKeymap({
     startGridVertHold,
     stopGridVertHold,
     advance,
+    pageStep,
     gridVisible,
     gridCols,
     stepGridSizeBy,
@@ -673,6 +771,7 @@ export function useCullKeymap({
     championIndex,
     goToSite,
     goBack,
+    cycleChallenger,
     challengerWins,
     challengerLoses,
     challengerKeptBoth,

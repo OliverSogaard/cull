@@ -89,6 +89,8 @@ import {
 import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
+import { gridPageStep, stripPageStep } from "./utils/pageStep";
+import { stripMetricsNow } from "./components/strip/useStripMetrics";
 import { basename } from "./utils/path";
 import { writeLocalStorage } from "./utils/storage";
 import { afZoomOrigin, zoomOriginMeta } from "./utils/zoom";
@@ -1283,6 +1285,26 @@ export default function App() {
     [visibleIndices, currentIndex, selectionAnchor],
   );
 
+  // One screenful, measured at keypress time — PgUp / PgDn's step. Nothing
+  // here is state: the grid's height is read off the container App already
+  // holds a ref to, and the strip's width is the window's (the strip is a
+  // full-bleed row of .cull-app with no horizontal padding — see
+  // utils/pageStep and strip/metrics.test.ts, which pins that padding).
+  // gridCellWidth is the SAME formula GridView uses for its square rows
+  // (GridView.tsx:180-181), so the key and the layout can never disagree.
+  // clientHeight INCLUDES .cull-grid's own 20px top + 20px bottom padding
+  // (grid.css:18), so a page is a hair more than the fully visible rows —
+  // deliberately, because it is the identical number GridView feeds
+  // computeGridAutoScrollTop (GridView.tsx:232), and the key and the
+  // auto-scroll that follows it must mean the same thing by "in view".
+  const pageStep = useCallback((): number => {
+    if (gridVisible && !compareMode) {
+      const el = gridContainerRef.current;
+      return gridPageStep(el?.clientHeight ?? 0, gridCellWidth(gridContentW, gridCols), gridCols);
+    }
+    return stripPageStep(window.innerWidth, stripMetricsNow().stride);
+  }, [gridVisible, compareMode, gridContentW, gridCols]);
+
   // Ctrl/Cmd+A — select everything the current filter shows. Rating keys then
   // act on the whole set (one undo entry): the sanctioned bulk-apply path, e.g.
   // Smart ✕ filter → grid → Ctrl/Cmd+A → Backspace clears every suggested reject.
@@ -1324,6 +1346,7 @@ export default function App() {
     stepGridSizeBy,
     resetGridSize,
     advance,
+    pageStep,
     selectAllInGrid,
     growGridSelection,
     clearMultiSelection,
@@ -1346,6 +1369,7 @@ export default function App() {
     championIndex,
     goToSite,
     goBack,
+    cycleChallenger,
     challengerWins,
     challengerLoses,
     challengerKeptBoth,
