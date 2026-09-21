@@ -27,8 +27,12 @@ function helpGroupsFor(mode: HelpMode, starsAndLabels?: boolean): HelpGroup[] {
     rows: [
       { keys: ["1", "5"], range: true, desc: "Stars 1–5" },
       { keys: ["0"], desc: "Clear the stars" },
-      { keys: ["6", "9"], range: true, desc: "Colour label: red / yellow / green / blue" },
-      { keys: ["Shift", "6"], desc: "Purple label" },
+      {
+        keys: ["6", "9"],
+        range: true,
+        desc: "Colour label: red / yellow / green / blue (re-press clears)",
+      },
+      { keys: ["Shift", "6"], desc: "Purple label (re-press clears)" },
     ],
   };
   const marks: HelpGroup[] = starsAndLabels ? [markGroup] : [];

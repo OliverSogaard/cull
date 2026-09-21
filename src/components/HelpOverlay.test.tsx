@@ -114,6 +114,16 @@ describe("the help sheet follows the stars-and-labels setting", () => {
     }
   });
 
+  test("both label rows say a re-press clears them, like the README does", () => {
+    const { container } = render(<HelpOverlay mode="loupe" starsAndLabels />);
+    expect(rowFor(container, "Colour label").querySelector(".cull-help__desc")?.textContent).toBe(
+      "Colour label: red / yellow / green / blue (re-press clears)",
+    );
+    expect(rowFor(container, "Purple label").querySelector(".cull-help__desc")?.textContent).toBe(
+      "Purple label (re-press clears)",
+    );
+  });
+
   test("compare gains nothing — the digits are unbound there", () => {
     const { container } = render(<HelpOverlay mode="compare" starsAndLabels />);
     expect(() => rowFor(container, "Stars")).toThrow();
