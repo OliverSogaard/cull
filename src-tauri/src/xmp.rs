@@ -543,11 +543,16 @@ fn cull_fav_value(xmp: &str) -> Option<String> {
 fn created_by_cull(xmp: &str) -> bool {
     // Two marker generations: pre-rebrand sidecars say "Cull 1.0", current
     // ones say "CULL" (the comparison is case-sensitive, which is what tells
-    // the two apart).
-    tool_stamp_is(xmp, |v| {
-        is_pre_rebrand_stamp(v) || v == "CULL" || v.starts_with("CULL ")
-    })
+    // the two apart). EXACT values, not prefixes: this authorises deleting the
+    // file, and "Cull Mann Studio" is somebody else's.
+    tool_stamp_is(xmp, |v| is_pre_rebrand_stamp(v) || v == CURRENT_TOOL_STAMP)
 }
+
+/// The only two tool-stamp values any CULL build has written, read out of
+/// every commit that touched [`fresh_xmp`]. A future version that stamps
+/// something else must add it here, or its own sidecars stop being its own.
+const CURRENT_TOOL_STAMP: &str = "CULL";
+const PRE_REBRAND_TOOL_STAMP: &str = "Cull 1.0";
 
 /// True when either tool-stamp attribute CULL writes carries a value `is_ours`
 /// accepts.
@@ -564,9 +569,9 @@ fn tool_stamp_is(xmp: &str, is_ours: impl Fn(&str) -> bool) -> bool {
         .any(|attr| find_attr(xmp, attr).is_some_and(|a| is_ours(&xmp[a.value..a.end])))
 }
 
-/// The pre-rebrand stamp values: `Cull`, or `Cull ` plus any version.
+/// The pre-rebrand stamp: exactly `Cull 1.0`, the one value that generation wrote.
 fn is_pre_rebrand_stamp(v: &str) -> bool {
-    v == "Cull" || v.starts_with("Cull ")
+    v == PRE_REBRAND_TOOL_STAMP
 }
 
 /// True when this sidecar carries a PRE-REBRAND CULL tool stamp (`Cull …`).
@@ -2685,6 +2690,20 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         assert!(!created_by_cull(
             "<rdf:Description rdf:about=\"\" xmp:CreatorTool=\"CULLIGAN Water\"></rdf:Description>"
         ));
+        // A prefix is not enough either: `created_by_cull` authorises deleting
+        // the FILE, so only the two values CULL has ever written may pass.
+        for stranger_tool in ["Cull Mann Studio", "CULL Photo Manager", "Cull", "CULL 2.0"] {
+            let theirs = format!(
+                "<rdf:Description rdf:about=\"\" xmp:CreatorTool=\"{stranger_tool}\" \
+                 xmp:Rating=\"-1\"></rdf:Description>"
+            );
+            assert!(!created_by_cull(&theirs), "{stranger_tool} is not CULL");
+            assert!(
+                !stamped_by_pre_rebrand_cull(&theirs),
+                "{stranger_tool} is not CULL"
+            );
+            assert_eq!(classify_xmp(&theirs), None, "{stranger_tool}: no verdict");
+        }
 
         let single = "<rdf:Description rdf:about='' \
                       xmp:CreatorTool='Cull 1.0' xmp:Rating='5'></rdf:Description>";
