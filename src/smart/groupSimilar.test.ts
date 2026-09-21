@@ -147,12 +147,7 @@ describe("groupSimilar", () => {
   });
 
   test("two bodies interleaved by capture time keep BOTH their similar sets", () => {
-    const images = [
-      img(1, "/shoot/a"),
-      img(2, "/shoot/b"),
-      img(3, "/shoot/a"),
-      img(4, "/shoot/b"),
-    ];
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/a"), img(4, "/shoot/b")];
     const inputs = {
       1: input(0, { phash: "0000000000000000" }),
       2: input(0, { phash: "ffffffffffffffff" }),
@@ -179,12 +174,7 @@ describe("groupSimilar", () => {
   });
 
   test("a burst member still walls off ITS OWN folder's run, not the other body's", () => {
-    const images = [
-      img(1, "/shoot/a"),
-      img(2, "/shoot/b"),
-      img(3, "/shoot/b"),
-      img(4, "/shoot/a"),
-    ];
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/b"), img(4, "/shoot/a")];
     const inputs = {
       1: input(0, { phash: "0000000000000000" }),
       2: input(0, { phash: "ffffffffffffffff" }),

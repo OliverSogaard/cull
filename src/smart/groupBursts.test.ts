@@ -182,12 +182,7 @@ describe("groupBursts", () => {
   test("two bodies interleaved by capture time keep BOTH their bursts", () => {
     // A,B,A,B — what a true capture-time sort produces when two cameras shoot
     // the same moment. Before the per-folder walk this collapsed to nothing.
-    const images = [
-      img(1, "/shoot/a"),
-      img(2, "/shoot/b"),
-      img(3, "/shoot/a"),
-      img(4, "/shoot/b"),
-    ];
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/a"), img(4, "/shoot/b")];
     const inputs = {
       1: input(0),
       2: input(0, { srcFolder: "/shoot/b" }),
@@ -234,12 +229,7 @@ describe("groupBursts", () => {
   });
 
   test("a frame with no input walls off ITS OWN folder's run, not the other body's", () => {
-    const images = [
-      img(1, "/shoot/a"),
-      img(2, "/shoot/b"),
-      img(3, "/shoot/b"),
-      img(4, "/shoot/a"),
-    ];
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/b"), img(4, "/shoot/a")];
     // Frame 2 (folder b) has no input; a and b are both cadence-tight.
     const inputs = {
       1: input(0),
