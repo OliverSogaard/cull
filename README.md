@@ -54,6 +54,27 @@ Expect one-time macOS permission prompts on first access to
 Desktop/Documents/Downloads, SD cards (removable volumes), and NAS (network
 volumes) — normal TCC behavior, no action needed.
 
+## Staging a shoot
+
+Opening a folder (or several — e.g. two camera bodies from the same shoot)
+lands on the **staged screen** first: a summary of what's about to be culled,
+with **Begin culling** as the one action that commits it.
+
+**Sort by capture time** (on by default) orders the shoot by each frame's
+EXIF `DateTimeOriginal` instead of the order the memory card wrote it in —
+the toggle lives here, not in Settings, because this is the one moment it
+matters (it re-sorts once, at Begin culling, and never again mid-cull).
+Ordering only — nothing is ever written to any file.
+
+With the sort on and two or more folders staged, every folder gets a row —
+name, frame count, and its first frame's capture time — and every folder
+after the first also shows the signed difference from the FIRST folder's
+first frame: a live hint for a second body whose clock runs ahead or behind.
+Nudge a folder's clock with its stepper: click **±1 s**, Shift-click
+**±1 min**, Ctrl-click resets it to 0. The difference shown already includes
+every offset applied so far, so the goal is simply to nudge it until it
+reads `+0 s`.
+
 ## Smart culling
 
 CULL can pre-judge a shoot and surface suggestions — **advisory only, always.
@@ -242,11 +263,6 @@ Open with **Ctrl+,** or the gear icon on the home screen.
   clipping, peaking, thirds), default thumbnail strip.
 - **Grid size** — Small / Medium / Large contact-sheet cells (also `+` / `−`
   / `Ctrl+wheel` / `Ctrl+0` in the grid; see "Keyboard reference" above).
-- **Capture-time order** — the staged screen's "Sort by capture time" toggle
-  (on by default) puts the shoot in EXIF `DateTimeOriginal` order instead of
-  file-write order, and, when two or more folders are staged, gives each
-  folder a ± clock offset for a second body whose clock is off. Ordering only
-  — nothing is written to any file.
 - **File operations** — name of the rejected-subfolder created by
   "move rejects", default destination for "copy keeps" (ask each time or
   use a pinned folder).

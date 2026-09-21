@@ -25,20 +25,46 @@ rest of the session no matter how the visible order changes afterward
 (`types/image.ts:1-5`).
 
 That set is re-sorted **globally once**, at Begin culling, by
-`analyze_folder`. The key is each frame's EXIF `DateTimeOriginal` +
-`SubSecTimeOriginal` when the `sortByCaptureTime` setting is on; a frame
-without a usable EXIF tag falls back to that file's mtime (rebased into the
-same clock frame the EXIF times live in — `mtime_in_capture_frame`,
-`scan.rs`), and a frame with neither falls back to path order last. The
-comparator itself (`order_by_capture`) is unchanged by any of this — only
-the epoch each frame is sorted by changed. A thumb-tier cache hit answers a
-frame's capture time with zero source-file round-trips (its header already
-carries it), so re-opening an already-analyzed shoot costs nothing extra.
+`analyze_folder`, when the `sortByCaptureTime` setting is on. Per frame, the
+key is: its EXIF `DateTimeOriginal` + `SubSecTimeOriginal` when it has one;
+else that file's mtime, shifted by the MEDIAN (EXIF − mtime) measured over
+the other frames in the same parent directory that have both; else the same
+median over the WHOLE shoot; else, only when nothing in the shoot yielded a
+single EXIF time to measure against, the mtime converted with the PC's own
+current timezone — a last-resort guess, since a camera's clock and its DST
+toggle are both set by hand and may not match the machine's
+(`mtime_in_capture_frame`, `scan.rs`); else none, which `order_by_capture`
+(unchanged throughout) sinks to the end, in path order. The median, not the
+mean, is what makes the fallback trustworthy: it absorbs a body's timezone,
+its DST setting, and the card's write lag into one figure, and — being a
+median — tolerates up to half of a folder's mtimes being rewritten by a copy
+tool without moving at all, where a single decade-off frame would drag a
+mean for years (`fallback_deltas`, `scan.rs`).
+
+Reading the EXIF for a whole shoot is not free, so `analyze_folder` spends
+it deliberately: it reads only enough of each file's head to hold its
+`moov` box — starting at 128 KiB and growing only if a moov spills past it
+(`CAPTURE_HEAD`, `cr3.rs`), no THMB, no decode, no mdat. The pass itself
+caches nothing; it only ever READS a tier cache another pass already
+filled (a thumb header already carries the capture time), so a shoot the
+background thumbnail sweep had time to finish re-opens with zero source
+reads, while frames the sweep never reached are read again from the CR3.
+The pass also snapshots the backend's own session generation and stops
+reading the moment it changes — deliberately with no generation sent from
+the frontend, since the two sides' counters are reconciled only by
+`begin_session`, which runs AFTER `analyze_folder`, so a frontend-supplied
+number would already be stale by construction (and further wrong after a
+webview reload); a frame the pass never reaches because of this just falls
+through the chain above onto its mtime. Separately, the staged screen's own
+per-folder probe (`read_capture_times`) is deliberately cache-free and reads
+exactly one file per staged folder — the first BY NAME, not necessarily the
+folder's earliest frame — to seed its capture-time hint.
+
 Per-folder clock offsets (`captureOffsets`, the staged screen's steppers) are
 resolved on the TS side into one per-frame millisecond vector before the
-call, and apply to whichever epoch a frame actually got — EXIF or the
-mtime fallback — since the offset describes a body's clock, not a tag.
-They are ordering-only: nothing is ever written to a file.
+call, and apply to whichever epoch a frame actually got — EXIF or a mtime
+fallback — since the offset describes a body's clock, not a tag. They are
+ordering-only: nothing is ever written to a file.
 
 The sort never runs mid-cull, only at that one moment. `currentIndex`,
 `championIndex`, `challengerIndex`, `selectedIndices`, `selectionAnchor`,
@@ -421,13 +447,17 @@ is the user's OWN verdict — the pile "move rejects" acts on — while
 `suggestedRejects` is an unrated frame the smart pass merely flagged, still
 awaiting a keystroke.
 
-`groupBursts` and `groupSimilar` walk the session order PER SOURCE FOLDER
-(Phase 3C), so when two bodies interleave by capture time a group's members
-are no longer necessarily contiguous in session order; every consumer that
-draws a bracket around a group — the two filmstrips' `strip/burstSegments.ts`
-and the grid's `gridBurstSegments.ts` — accounts for this by drawing one
-segment per contiguous stretch instead of assuming the whole group is one
-solid run.
+`groupBursts` and `groupSimilar` walk the session order PER PARENT DIRECTORY
+of the file (`dirOf(img.path)`, Phase 3C) — not per staged folder
+(`Img.srcFolder`), which is the folder the OWNER picked and, since the scan
+is recursive, can be one date folder holding both camera cards' subfolders;
+keying on the parent directory instead means two cards staged as subfolders
+of one pick still keep their own separate runs. Either way, when two bodies
+interleave by capture time a group's members are no longer necessarily
+contiguous in session order; every consumer that draws a bracket around a
+group — the two filmstrips' `strip/burstSegments.ts` and the grid's
+`gridBurstSegments.ts` — accounts for this by drawing one segment per
+contiguous stretch instead of assuming the whole group is one solid run.
 
 The in-app switches live in Settings: suggestions master switch, reject
 confidence level, analyze-on-open, and **Deep analysis** (the ML tier's

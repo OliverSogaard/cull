@@ -116,6 +116,16 @@ in CI with no corpus at all. That is the pattern to copy for any future
 head-only reader: build the smallest byte string the parser actually walks
 rather than gating the test on `CULL_TEST_CR3_DIR`.
 
+The mtime-fallback chain that key feeds (`fallback_deltas` / `capture_keys`,
+`scan.rs`) is tested the same corpus-free way, as pure vector tests over
+hand-built `i64` timestamps — no file, no CR3, no window: a folder's whole
+clock offset recovered exactly (including the owner's own Tokyo-body-shot-
+from-Los-Angeles case), the median ignoring a decade-off outlier and a
+copy-rewritten mtime, a directory with no EXIF of its own borrowing the
+whole shoot's median, a shoot with no EXIF anywhere falling back to the
+machine's local clock, and pathological `i64::MIN` / `i64::MAX` clocks
+proving the arithmetic saturates instead of panicking or wrapping.
+
 ### Lightroom Classic sidecar fixtures (path-gated)
 
 The XMP compatibility tests validate against real Lightroom Classic 15.3
