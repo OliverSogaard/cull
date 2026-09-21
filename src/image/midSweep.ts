@@ -63,8 +63,10 @@ export class MidSweep {
    *  cursor quiet so warm-region arrowing / scrubbing (which issue no reads)
    *  don't share the CPU with generation. */
   private lastCursorMoveAt = 0;
-  /** One-shot re-pump timer for the quiet window (armed at most once). */
-  private timerArmed = false;
+  /** The armed quiet-window timer — the handle IS the dedupe flag, and it is
+   *  what lets `reset()` cancel the timer instead of leaving it to fire into
+   *  a dead generation. */
+  private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly budget: number;
 
   constructor(
@@ -85,6 +87,10 @@ export class MidSweep {
   reset(): void {
     this.done.clear();
     this.inFlight = 0;
+    if (this.timer !== undefined) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
   }
 
   /** Attempted-this-session count (budget input + the dev-HUD sweepLeft). */
@@ -115,11 +121,10 @@ export class MidSweep {
 
   /** One-shot quiet-window re-pump (gen-scoped; at most one armed timer). */
   private armTimer(): void {
-    if (this.timerArmed) return;
-    this.timerArmed = true;
+    if (this.timer !== undefined) return;
     const gen = this.deps.generation();
-    setTimeout(() => {
-      this.timerArmed = false;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
       if (this.deps.generation() === gen) this.pump();
     }, MID_SWEEP_QUIET_MS);
   }
