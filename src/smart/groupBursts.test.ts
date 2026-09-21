@@ -91,12 +91,7 @@ describe("groupBursts", () => {
     // Each folder gets its OWN 2-frame burst; a single lone frame per folder
     // (the old shape of this test) passes vacuously once folders walk
     // independently — there's never a same-folder pair to even compare.
-    const images = [
-      img(1, "/shoot/a"),
-      img(2, "/shoot/b"),
-      img(3, "/shoot/a"),
-      img(4, "/shoot/b"),
-    ];
+    const images = [img(1, "/shoot/a"), img(2, "/shoot/b"), img(3, "/shoot/a"), img(4, "/shoot/b")];
     const inputs = {
       1: input(0),
       2: input(0, { srcFolder: "/shoot/b" }),
