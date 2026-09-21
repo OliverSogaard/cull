@@ -4,7 +4,7 @@
 
 **Goal:** Fix the one real bug the audit's fourth phase found — a file-supplied TIFF count that makes the CR3 parser spin for seconds on every image — and then build the mechanical checks that would have caught it, and that will catch the next one: a mutation fuzzer over the whole parser, a `renderHook` harness for the 860-line keymap nobody has ever tested (which pins five defects found by reading), one smoke test that proves `<App/>`'s 63 keymap props are wired to the right callbacks, a CI leg that compiles the macOS-only code and runs the release build's own command, and a timer-hygiene suite for a store whose teardown is architecturally incapable of seeing a leak.
 
-**Architecture:** Five independent slices. **A** is Rust: a hand-rolled deterministic fuzzer as a plain `#[test]` inside `cr3.rs`'s existing test module (zero new crates, no corpus), written FIRST so it goes red, then one clamp in `Tiff::find_entry` that bounds every caller at once, plus two walker hardenings the fuzzer reaches. **B** is the keymap: a typed props factory derived from the hook's real props type, `renderHook` under jsdom, ~36 assertions, and five production edits to the dispatch order that the tests demand first. **C** is `src/test/tauriMocks.ts` — the first shared test kit in the repo — plus one `<App/>` smoke test that walks start → staged → culling and presses one key. **D** is CI: `pnpm build` + `pnpm audit --prod` in the existing `frontend` job, a new `backend-macos` job, dependabot, and a weekly `cargo audit`. **E** is hygiene: the store learns to CANCEL its timers instead of silencing them, three assert-nothing tests get real assertions, a 50 ms sleep becomes a fake-timer advance, the decide tests' symbol citations become type-checked, and coverage is plumbed in (measured, not gated).
+**Architecture:** Five independent slices. **A** is Rust: a hand-rolled deterministic fuzzer as a plain `#[test]` inside `cr3.rs`'s existing test module (zero new crates, no corpus), written FIRST so it goes red, then one clamp in `Tiff::find_entry` that bounds every caller at once, plus two walker hardenings the fuzzer reaches. **B** is the keymap: a typed props factory derived from the hook's real props type, `renderHook` under jsdom, ~36 assertions, and five production edits to the dispatch order that the tests demand first. **C** is `src/test/tauriMocks.ts` — the first shared test kit in the repo — plus one `<App/>` smoke test that walks start → staged → culling and presses one key. **D** is CI: `pnpm build` + `pnpm audit --prod --audit-level=high` in the existing `frontend` job, a new `backend-macos` job, dependabot, and a weekly `cargo audit`. **E** is hygiene: the store learns to CANCEL its timers instead of silencing them, three assert-nothing tests get real assertions, a 50 ms sleep becomes a fake-timer advance, the decide tests' symbol citations become type-checked, and coverage is plumbed in (measured, not gated).
 
 **Tech Stack:** Tauri 2, Rust 1.98 stable (pure-Rust CR3 pipeline; `[dev-dependencies]` is exactly `image` + `zenjpeg`), React 19, TypeScript 5.8 strict, plain CSS, Vitest 4.1.7 (node env by default, jsdom per file via a first-line docblock, **no `@types/node`**), @testing-library/react 16.3.3, jsdom 30, pnpm 10, GitHub Actions.
 
@@ -21,7 +21,7 @@
 - **Test files are linted type-aware.** Type every `vi.fn` callback (`vi.fn((_x: T) => {})`), and hoist anything a `vi.mock` factory closes over with `vi.hoisted`. Unused bindings need a `_` prefix.
 - **A `vi.mock` factory may not reference a module-scope import.** Vitest hoists the factory above every import, so a factory that names an imported binding throws at collection. Use `vi.hoisted(() => …)` for a value, or an **async factory that imports the shared kit itself**: `vi.mock("@tauri-apps/api/window", async () => (await import("./test/tauriMocks")).windowMock());`
 - **jsdom only via a first-line docblock**: `// @vitest-environment jsdom` as line 1 of the file. Default env is node.
-- **jsdom 30 implements neither `window.matchMedia` nor `URL.createObjectURL` nor `ResizeObserver`.** Verified by probe on this machine, and it **contradicts the scout** (`phase-4-scout.txt:100`, "matchMedia is NOT a blocker (jsdom implements it)" — it is a blocker). Any test that mounts a tree reaching `useImageStoreWiring.ts:97` must stub `matchMedia` with working `addEventListener` / `removeEventListener`; `src/components/strip/PhotoStrip.metrics.test.tsx:19-58` is the repo's complete `MediaQueryList` fake and `src/components/GridCell.layers.test.tsx:22-29` is its `ResizeObserver` stub.
+- **jsdom 30 implements neither `window.matchMedia` nor `ResizeObserver`.** Verified by probe, and the `matchMedia` half **contradicts the scout** (`phase-4-scout.txt:100`, "matchMedia is NOT a blocker (jsdom implements it)" — it is a blocker: `useImageStoreWiring.ts:97` calls it in an unconditional mount effect). It **does** implement `URL.createObjectURL` / `revokeObjectURL` under Vitest's jsdom environment, which installs a Node-backed compat `URL` (`vitest/dist/chunks/index.DC7d2Pf8.js:556-570`) — a bare `new JSDOM()` in plain Node does not, so probe inside Vitest or you will measure the wrong thing. A test replaces that pair with spies only to COUNT blob churn, never because it is missing. `src/components/strip/PhotoStrip.metrics.test.tsx:19-58` is the repo's complete `MediaQueryList` fake and `src/components/GridCell.layers.test.tsx:22-29` its `ResizeObserver` stub.
 - **KeyboardEvents in tests are created `cancelable: true`** — without it `preventDefault()` is a silent no-op and **every `defaultPrevented` assertion passes vacuously** — and `bubbles: true`.
 - **Escape's `defaultPrevented` proves nothing.** `useCullKeymap.ts:839-845` registers a capture-phase listener that preventDefaults every Escape in every phase, so `defaultPrevented === true` for Escape is true no matter what the rest of the keymap does. Only the test that deliberately pins that listener may assert it.
 - **Tests never sleep.** No `await new Promise(r => setTimeout(r, n))` and no "give it a moment" — use `waitFor` / `findBy*` / `vi.waitUntil` for a positive outcome, and fake timers (`vi.advanceTimersByTimeAsync`) when the thing being proven is that a *window elapsed*. A negative assertion needs a provably-elapsed clock, not a guess.
@@ -37,7 +37,7 @@
 - **Never run the app**, never open a real photo folder, never touch `C:\Canon Media`. A vite dev server may be listening on port 1420 — leave it alone.
 - **Gate for every task** (run from the repo root): `pnpm typecheck && pnpm typecheck:tests && pnpm lint && pnpm lint:css && pnpm test`.
   **Rust tasks additionally** run, from `src-tauri/`: `cargo fmt` FIRST — the Rust in this plan is hand-written, not rustfmt output, so transcribing it verbatim can fail the check gate on nothing but a chain wrap — then, exactly as `.github/workflows/ci.yml` does, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
-  The docs task adds `pnpm build`.
+  The docs task adds `pnpm build` and `pnpm audit --prod --audit-level=high`, so its gate matches CI's `frontend` job exactly.
 - **`tsconfig.json` excludes only `src/**/*.test.ts(x)`.** A non-`.test` helper under `src/` (Task 9's `src/test/tauriMocks.ts`) is therefore type-checked by `pnpm typecheck` AND by `pnpm build`'s `tsc`, and linted by the **strict** block of `eslint.config.js` — the `src/**/*.test.{ts,tsx}` relaxations (`unbound-method`, `require-await`, …) do **not** apply to it. Write it clean rather than widening either config. It is never bundled: `vite build` follows the import graph from `index.html`, and no app module imports it.
 - **The `[profile.dev]` in `src-tauri/Cargo.toml` sets only `opt-level`** (lines 68-69) and never overrides `overflow-checks`, so `cargo test` panics on integer overflow. The fuzzer gets release-wrap detection for free — do not add a profile override.
 - `design-board/` is git-excluded. Nothing in Phase 4 uses it.
@@ -61,7 +61,7 @@ fn clamp_count(buf_len: usize, voff: usize, typ: u16, cnt: u32) -> u32;
 
 **Ruling (unknown type → 0, not pass-through).** `clamp_count` returns 0 when `type_size` is 0. Every existing caller type-checks *before* reading the count — `ascii` requires type 2 (`:221`), `rational` and `rationals` require 5/10 (`:247`, `:259`), `uint` requires 3/4 (`:280`), `canon_drive_mode` requires 3 (`:977`), `af_display` requires 3 (`:1051`) — so this is observably identical today. It is chosen over pass-through because it makes `find_entry`'s contract unconditional: *the returned count is a number of components you can actually read.* A future caller that forgets to type-check then gets 0 instead of 4 billion.
 
-**Ruling (inline values need no special case).** `find_entry` picks `voff = entry + 8` exactly when `type_size(typ) * cnt <= 4`, so an inline entry's count is already at most 4 by construction. `clamp_count`'s `min` is a no-op there, and on a well-formed file it is a no-op everywhere.
+**Ruling (inline values need no special case — but the clamp is not quite a no-op there).** `find_entry` picks `voff = entry + 8` exactly when `type_size(typ) * cnt <= 4`, so an inline entry's count is already at most 4 by construction and no well-formed file is ever touched. The one case the clamp *does* bite inline is an entry truncated at the buffer's tail (`entry + 8 <= len < entry + 8 + cnt * size`), where `ascii` now returns the characters that exist instead of `None`. Bounded, and in the same direction as the rest of this change — but the plan says so rather than claiming a blanket no-op, because the fuzzer's `else` branch leans on the distinction.
 
 **Ruling (do BOTH the clamp and `map_while` — the second is free and provably behaviour-identical).** `rationals`' `filter_map` (`:263`) SKIPS an unreadable component and keeps going; `map_while` stops. For a RATIONAL array the components are contiguous and `urational_at` / `srational_at` return `None` **only** when a bounds-checked read fails, so out-of-range is monotone in `k`: once `voff + 8*k + 8 > d.len()`, every larger `k` fails too. The two combinators therefore produce the **same `Vec`** for every input, and `map_while` additionally bounds the loop. One-word change, zero behaviour delta, and it survives a future regression in `find_entry`.
 
@@ -75,7 +75,7 @@ fn clamp_count(buf_len: usize, voff: usize, typ: u16, cnt: u32) -> u32;
 
 **Ruling (batch-per-worker with a per-input ack, not one thread per input).** 20,000 threads is ~1 s of pure spawning. Instead one worker runs a batch of 250 and **acks every input it finishes** over an `mpsc` channel. The main thread's `recv_timeout` then names the culprit exactly — `last ack + 1` — for a **hang** (`Timeout`) *and* for a **panic** (`Disconnected`, because the sender drops with the thread). No re-run pass is needed. A genuinely hung input leaks its worker until the test binary exits; that is stated in the code comment and accepted (the process is about to fail anyway).
 
-- [ ] **Step 1: the fuzzer's fixtures.** In `cr3.rs`'s `mod tests`, immediately after `tmp_cr3` (`:1387-1391`), add the box/TIFF builders. First **lift the existing closure**: in `synth_cr3_head_padded`, delete lines `:1407-1413` (the `let boxed = |fourcc, payload| { … };` closure) and leave its three call sites (`boxed(b"CMT2", &t)`, `boxed(b"free", …)`, `boxed(b"uuid", …)`, `boxed(b"ftyp", …)`, `boxed(b"moov", …)`) untouched — they now resolve to the free function below. Then add:
+- [ ] **Step 1: the fuzzer's fixtures.** In `cr3.rs`'s `mod tests`, immediately after `tmp_cr3` (`:1387-1391`), add the box/TIFF builders. First **lift the existing closure**: in `synth_cr3_head_padded`, delete lines `:1407-1413` (the `let boxed = |fourcc, payload| { … };` closure) and leave its **five** call sites (`boxed(b"CMT2", &t)`, `boxed(b"free", …)`, `boxed(b"uuid", …)`, `boxed(b"ftyp", …)`, `boxed(b"moov", …)` — `cr3.rs:1456-1460`) untouched: they now resolve to the free function below, and both argument kinds still coerce (`b"crx isom"` unsizes, `&vec![0u8; pad]` derefs). Then add:
 
 ```rust
     /// `size + fourcc + payload` — the ISO-BMFF box header. Lifted out of
@@ -188,11 +188,12 @@ Gate: `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`. Th
     const FUZZ_ITERS: u64 = 20_000;
     const FUZZ_BATCH: u64 = 250;
     /// Per-INPUT budget. A healthy input over a small buffer is microseconds;
-    /// the unbounded-count spin this fuzzer was written to find was ~1 s per
-    /// tag. 250 ms sits three orders of magnitude above the former and four
-    /// times below the latter, so neither CI scheduling noise nor a slow
-    /// runner can move it across either line.
-    const FUZZ_INPUT_BUDGET: std::time::Duration = std::time::Duration::from_millis(250);
+    /// the unbounded-count spin this fuzzer was written to find is 1.6–1.9 s
+    /// per file (spec, "The one real bug"). 1 s sits four orders of magnitude
+    /// above a healthy input and still below a single-tag spin, so neither CI
+    /// scheduling noise on a shared runner nor a slow machine can move it
+    /// across either line.
+    const FUZZ_INPUT_BUDGET: std::time::Duration = std::time::Duration::from_millis(1000);
     const FUZZ_SEED: u64 = 0xC0FF_EE15_0FEE_D000;
 
     /// xorshift64* — eight lines, no dependency, good enough to shuffle bytes.
@@ -240,8 +241,10 @@ Gate: `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`. Th
     }
 
     /// First little-endian TIFF header ("II", magic 42) in the buffer.
+    /// `saturating_sub(3)`, not 4: a 4-byte window at `i` needs `i + 4 <= len`,
+    /// so the last legal start is `len - 4` and the range must run to `len - 3`.
     fn find_le_tiff(d: &[u8]) -> Option<usize> {
-        (0..d.len().saturating_sub(4)).find(|&i| &d[i..i + 4] == b"II\x2A\x00")
+        (0..d.len().saturating_sub(3)).find(|&i| &d[i..i + 4] == b"II\x2A\x00")
     }
 
     fn read_le_u16(d: &[u8], i: usize) -> Option<u16> {
@@ -506,9 +509,12 @@ Gate: `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`. Th
 ```
 
   Then **run it and record the red**: `cargo test mutation_fuzz -- --nocapture` from `src-tauri/`.
-  - It **must** fail. The first red is expected within a few hundred iterations and will be either a **PANIC** (the `find_entry` count invariant, which is exactly what the clamp is about to make true) or a **HANG** (the 250 ms budget, `rationals` iterating a declared 4-billion count). Both are the same bug seen from two sides.
+  - It **must** fail. The first red will be one of **three** expected faces of this phase's work, and which one comes first depends on the seed:
+    1. a **PANIC** on the `find_entry` count invariant (what Step 3's clamp makes true);
+    2. a **HANG** against the 1 s budget — `rationals` iterating a declared 4-billion count (what Step 3 and Step 4 together make impossible);
+    3. an **index-out-of-bounds or arithmetic-overflow PANIC inside `boxes`**, from the deliberately-unvalidated `boxes(d, 0, usize::MAX)` call in `fuzz_one` — `boxes` pushes `d[i+4]…d[i+7]` (`cr3.rs:75`) while its loop only guarantees `i + 8 <= end`, so a buffer ending mid-header walks off the slice. That is fixed by Step 5's `let end = end.min(d.len());`, not by Step 3.
   - **Paste the exact line the run printed — the `how`, the iteration and the `seed:#x` — into the task report.** A report that does not quote it has not watched the test fail.
-  - If the run reports a defect this plan does **not** name (an overflow panic in a grow loop, a `jpeg_extent` size violation, anything else), **STOP and report it**. Do not invent a fix: the controller decides whether it belongs in this phase.
+  - If the run reports a defect that is none of those three (an overflow panic in a grow loop, a `jpeg_extent` size violation, anything else), **STOP and report it**. Do not invent a fix: the controller decides whether it belongs in this phase.
 
 - [ ] **Step 3: the clamp.** In `src-tauri/src/cr3.rs`, directly after `type_size` (`:139-147`), add:
 
@@ -533,8 +539,10 @@ Gate: `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`. Th
 ///   count through would not.
 /// - A `voff` past the end of the buffer also reads back 0.
 /// - An INLINE value (`type_size * count <= 4`, stored at `entry + 8`) carries
-///   at most 4 components by construction, so the clamp is a no-op there — and
-///   a well-formed file's counts are never touched at all.
+///   at most 4 components by construction, so the clamp is a no-op for every
+///   well-formed file. The one case it does bite is an entry truncated at the
+///   buffer's tail, where it yields the components that actually exist instead
+///   of None — bounded, and in the same direction as the rest of this change.
 fn clamp_count(buf_len: usize, voff: usize, typ: u16, cnt: u32) -> u32 {
     let size = type_size(typ);
     if size == 0 {
@@ -690,6 +698,20 @@ fn boxes(d: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
             elapsed < std::time::Duration::from_millis(200),
             "rationals took {elapsed:?} — an unbounded IFD count is back"
         );
+
+        // 3. The PRODUCTION route the bug actually lived on, end to end:
+        //    metadata_from_prefix -> gps_coord -> rationals, on a whole CR3
+        //    head. Asserting only on `rationals` would leave the path every
+        //    real image takes untested.
+        let head = synth_cr3_head_with_cmt(b"CMT4", &blob);
+        let t1 = std::time::Instant::now();
+        let m = metadata_from_prefix(&head);
+        assert!(
+            t1.elapsed() < std::time::Duration::from_millis(200),
+            "metadata_from_prefix took {:?}",
+            t1.elapsed()
+        );
+        assert_eq!(m.gps_lat, Some(51.5), "51 deg 30 min 0 sec, N");
     }
 
     /// The clamp's other arms. No production caller can reach them today
@@ -758,11 +780,20 @@ fn boxes(d: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
       # tag. Type errors already fail `typecheck`; this catches the rest of the
       # bundle (a bad import path, a missing asset, a Rollup resolution error).
       - run: pnpm build
-      # RUNTIME advisories only. Plain `pnpm audit` reports 21 findings today,
-      # every one of them dev-only (eslint/vite/stylelint transitives) — gating
-      # on those would make a red CI the normal state and teach everyone to
-      # ignore it. `--prod` is clean today, so a red here is a real one.
-      - run: pnpm audit --prod
+      # RUNTIME advisories only, and only the ones worth stopping a merge for.
+      # Plain `pnpm audit` reports 21 findings today, every one of them
+      # dev-only (eslint/vite/stylelint transitives) — gating on those would
+      # make a red CI the normal state and teach everyone to ignore it.
+      # `--audit-level=high` is the second half of the same argument: a
+      # MODERATE advisory in a runtime dependency of a single-owner desktop app
+      # is a thing to read on Monday, not a thing that blocks every PR;
+      # high and critical are not. Both dials can be reopened by editing this
+      # one line. `--prod` alone is clean today.
+      #
+      # This step talks to the registry, so a registry outage reds it with a
+      # network error rather than a finding. The remedy is to re-run the job,
+      # never to delete the step.
+      - run: pnpm audit --prod --audit-level=high
 ```
 
 - [ ] **Step 2: the macOS job.** Append to the end of `.github/workflows/ci.yml`, after the `backend` job's last step (line 33):
@@ -773,6 +804,8 @@ fn boxes(d: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
     defaults: { run: { working-directory: src-tauri } }
     steps:
       - uses: actions/checkout@v7
+      # No `components:` here, unlike `backend` — this job runs neither fmt
+      # nor clippy, so installing them would be a cold download for nothing.
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with: { workspaces: src-tauri }
@@ -787,6 +820,7 @@ fn boxes(d: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
       - run: cargo check --all-targets
 ```
 
+- [ ] **Step 2b: this job cannot be run locally, and a first-run failure is not yours to fix.** The implementer is on Windows; `backend-macos` compiles a `#[cfg(target_os = "macos")]` module, a macOS menu API surface and a CoreML execution provider that CI has **never** compiled, so a red on its first real run is plausible and is exactly the finding the job exists to produce. Its first real run is on the pull request. If it fails to compile, **report the exact `rustc` error and STOP** — do not patch `memory_pressure.rs`, `lib.rs` or `ml_models.rs` from inside this task. The controller decides whether the fix belongs in Phase 4 or in its own change, and branch protection must not be applied until the job has reported green once.
 - [ ] **Step 3: verify the file parses and the check names are what branch protection will require.** There is no yaml linter in this repo, so read the whole file back and confirm: three top-level keys under `jobs:` (`frontend`, `backend`, `backend-macos`), two-space indentation throughout, and that `backend-macos`'s `defaults:` / `steps:` sit at the same column as `backend`'s. Record the three job names verbatim in the task report — the controller's final step needs them.
 - [ ] **Step 4:** repo gate green (this task changes no source, so `pnpm test` should be unchanged; run it anyway). Commit: `ci: run the release build and a prod audit, and compile the macOS backend` — `git commit -m "ci: run the release build and a prod audit, and compile the macOS backend" -- .github/workflows/ci.yml`
 
@@ -837,12 +871,21 @@ updates:
 # requests: a new advisory published on a Tuesday is not a reason to block a
 # Tuesday afternoon's merge, and `cargo install` costs two to three minutes
 # that a PR should not pay. The npm side of this runs per-PR instead, as
-# `pnpm audit --prod` in ci.yml, because it is a download rather than a build.
+# `pnpm audit --prod --audit-level=high` in ci.yml, because that one is a
+# download rather than a build. This job has no severity floor: a weekly
+# report should say everything it knows.
+#
+# GitHub disables a scheduled workflow after 60 days without repository
+# activity and emails the owner; `workflow_dispatch` is the manual escape
+# hatch, and pushing anything re-arms the schedule.
 name: cargo audit
 on:
   schedule:
     - cron: "0 6 * * 1" # Mondays, 06:00 UTC
   workflow_dispatch:
+# Explicit beats inherited: this job reads the lockfile and nothing else.
+permissions:
+  contents: read
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -883,9 +926,12 @@ jobs:
       reporter: ["text", "html"],
       // Only the code a test could meaningfully cover: the entry point, the
       // type barrels and the test scaffolding itself are noise in the number.
+      // A user `exclude` REPLACES Vitest's defaults, which is why the test
+      // files and the fixtures have to be named here explicitly.
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
         "src/**/*.test.{ts,tsx}",
+        "src/**/__fixtures__/**", // e.g. src/image/__fixtures__/metaBatching
         "src/test/**",
         "src/types/**",
         "src/main.tsx",
@@ -1516,7 +1562,7 @@ describe("nothing acts behind the help sheet (fix B)", () => {
 });
 ```
 
-  Run: the first three and the last fail; the two regression guards pass. Then edit `onKey` (`useCullKeymap.ts:647-756`). **Move the Tab block and the help-swallow block** (`:691-710`) so they sit immediately after `if (handleModalKeys(e)) return;` (`:648`), before the Ctrl+Z check, and guard Tab against the modifiers:
+  Run: the first three and the last fail; the two regression guards pass. Note which assertion inside each failure is the discriminating one — in the Ctrl+Z test, `expect(p.undo).not.toHaveBeenCalled()` is what goes red, while `expect(e.defaultPrevented).toBe(true)` passes **before** the fix too (the Ctrl+Z branch at `:652-653` already preventDefaults). Do not read that as a half-red test: the `undo` and `setHelpVisible` assertions beside it are the proof. Then edit `onKey` (`useCullKeymap.ts:647-756`). **Move the Tab block and the help-swallow block** (`:691-710`) so they sit immediately after `if (handleModalKeys(e)) return;` (`:648`), before the Ctrl+Z check, and guard Tab against the modifiers:
 
 ```ts
     const onKey = (e: KeyboardEvent) => {
@@ -2004,7 +2050,7 @@ describe("a state flip between renders", () => {
 
 - [ ] **Step 7:** gate green. Report the total `it()` count added across Tasks 5 and 6, and the new Vitest file/test totals. Commit: `git commit -m "test(keys): navigation, filters, holds and zoom" -- src/app/useCullKeymap.test.tsx`
 
-### Task 7: The store cancels its timers, and four tests start asserting something
+### Task 7: The store cancels its timers, and three tests start asserting something
 
 **Files:** Modify `src/image/imageStore.ts`, `src/image/midSweep.ts`, `src/image/imageStore.test.ts`.
 
@@ -2174,6 +2220,10 @@ const BG_FILL_FALLBACK_MS = 2000;
    *  apart from the grid retry above — imageStore.test.ts's "timer hygiene"
    *  describe reads this file and asserts it. */
   private later(fn: () => void, ms: number): void {
+    // `h` is read inside its own initialiser's callback — legal and correct
+    // (the callback runs long after the binding is initialised), TS-strict
+    // clean, and no `no-use-before-define` rule is in this repo's eslint
+    // chain. Do not "fix" it into a `let h: … | undefined`.
     const h = setTimeout(() => {
       this.timers.delete(h);
       fn();
@@ -2308,12 +2358,17 @@ const BG_FILL_FALLBACK_MS = 2000;
     const calls = routeMidInvoke();
     const Store = await getStoreClass();
     const store = new Store();
-    store.setProfile(PERFORMANCE_PROFILES.network);
-    store.reset(["/p/a.cr3", "/p/b.cr3"]);
-    store.setNeedPxProvider(() => 1860);
 
+    // Fake timers BEFORE reset(): reset arms a 2 s background-fill fallback
+    // (imageStore.ts:726), and arming it on the real clock is precisely the
+    // cross-test bleed imageStore.test.ts:54-64 documents — it would also
+    // leave the `mid` assertion below depending on a promise chain the fake
+    // clock never drives.
     vi.useFakeTimers();
     try {
+      store.setProfile(PERFORMANCE_PROFILES.network);
+      store.reset(["/p/a.cr3", "/p/b.cr3"]);
+      store.setNeedPxProvider(() => 1860);
       store.registerWantFull("/p/a.cr3");
       store.reevaluateMid();
       // Was `await new Promise(r => setTimeout(r, 50))` — "give a wrong sweep
@@ -2330,7 +2385,7 @@ const BG_FILL_FALLBACK_MS = 2000;
   });
 ```
 
-- [ ] **Step 6:** gate green, and run `pnpm test` twice in a row to confirm the converted test is not order-dependent. Report the new test count. Three pathspec commits, one per file: `git commit -m "fix(store): cancel timers on reset instead of silencing them" -- src/image/imageStore.ts`; `git commit -m "fix(store): the idle sweep cancels its quiet-window timer" -- src/image/midSweep.ts`; `git commit -m "test(store): timer hygiene, and four tests that now assert something" -- src/image/imageStore.test.ts`
+- [ ] **Step 6:** gate green, and run `pnpm test` twice in a row to confirm the converted test is not order-dependent. Report the new test count. Three pathspec commits, one per file: `git commit -m "fix(store): cancel timers on reset instead of silencing them" -- src/image/imageStore.ts`; `git commit -m "fix(store): the idle sweep cancels its quiet-window timer" -- src/image/midSweep.ts`; `git commit -m "test(store): timer hygiene, and three tests that now assert something" -- src/image/imageStore.test.ts`
 
 ### Task 8: `withChanges` in production, and citations a compiler follows
 
@@ -2442,7 +2497,7 @@ export function withChanges(
   1. `applyRating`'s grid branch (`:106-110`): `setRatings((prev) => withChanges(prev, changes));`
   2. `unrateCurrent`'s grid branch (`:221-225`): `setRatings((prev) => withChanges(prev, changes));`
   3. `unrateCurrent`'s single branch (`:236-243`): hoist the one-element array the `recordAction` call already builds into a `const changes = [{ imgId: cur.id, path: cur.path, before: ratings[cur.id], after: undefined }];`, pass it to `recordAction({ changes })`, and use `setRatings((prev) => withChanges(prev, changes));`
-  4. `resolveCompareDecide` (`:279-281`): keep the comment, replace the three lines with `const next = withChanges(ratings, changes);`
+  4. `resolveCompareDecide` (`:278-281`): keep the two comment lines, replace the two derivation lines (`:280-281`) with `const next = withChanges(ratings, changes);`
   5. the three builders (`challengerLoses` `:372-383`, `challengerKeptBoth` `:391-403`, `challengerWins` `:410-426`): hoist each one's `changes` array into a `const changes = [...]` **above** the `next` derivation, then `const next = withChanges(ratings, changes);`, then pass `changes` into `resolveCompareDecide({ changes, … })`. `challengerWins`' array is two entries, dethroned champion first — that order is load-bearing (it is the persist order, `:311-313`) and must not change.
 
   The decide suite (12 tests) is the regression net: it asserts the exact `setRatings` argument and the exact `recordAction` shape for all three decides, so any drift in the derivation fails it. Run it after each of the five edits.
@@ -2527,31 +2582,49 @@ import { cleanup, render } from "@testing-library/react";
 import { WindowControls } from "./WindowControls";
 
 /**
- * WindowControls is the reason nothing has ever mounted <App/>: it called
+ * WindowControls is the reason nothing has ever mounted <App/>. It called
  * `getCurrentWindow()` in its RENDER BODY into a local the render never used
- * (the effect below it calls it again), so the component threw without
- * `__TAURI_INTERNALS__`. With that local gone it renders anywhere — the
- * effect's own call is inside `try`/`catch` and a no-op on macOS.
+ * (the effect below calls it again), so the component threw without
+ * `__TAURI_INTERNALS__`. Deleting that local is NOT enough: the effect's own
+ * `const w = getCurrentWindow()` sits OUTSIDE its try/catch, and under jsdom
+ * `isMac` is false, so the effect runs and its throw propagates out of
+ * render() all the same. Both calls have to go.
  *
  * Deliberately NO Tauri mock in this file: mocking it would prove nothing.
  */
 afterEach(cleanup);
 
 describe("WindowControls", () => {
-  it("renders without the Tauri global", () => {
-    const { container } = render(<WindowControls />);
+  it("renders every caption button without the Tauri global, and without throwing", () => {
+    // jsdom's UA is win32, so `isMac` is false and all four render: the
+    // settings gear plus minimize / maximize / close.
+    const { container } = render(<WindowControls onSettings={() => {}} />);
     expect(container.querySelector(".cull-wincontrols")).not.toBeNull();
+    expect(container.querySelectorAll("button")).toHaveLength(4);
   });
 
-  it("renders the settings gear when a handler is supplied", () => {
-    const { getByLabelText } = render(<WindowControls onSettings={() => {}} />);
-    expect(getByLabelText("Settings")).not.toBeNull();
+  it("omits the settings gear when no handler is supplied", () => {
+    const { container } = render(<WindowControls />);
+    expect(container.querySelectorAll("button")).toHaveLength(3);
   });
 });
 ```
 
-  Run it: both tests throw (`getCurrentWindow` needs `__TAURI_INTERNALS__`). Then delete `src/components/WindowControls.tsx:21` — `const win = getCurrentWindow();` — and replace the three uses of `win` in the button handlers (`:75` `void win.minimize();`, `:86` `void win.toggleMaximize();`, `:102` `void win.close();`) with `void getCurrentWindow().minimize();` and so on, so each call happens on click rather than on render. Re-run: green.
-  **On Windows the second test still renders the three caption buttons but never clicks them**, so no Tauri call fires; `isMac` is a UA sniff (`src/utils/platform.ts`), and neither test depends on which branch it takes.
+  Run it: both tests throw (`getCurrentWindow` reads `window.__TAURI_INTERNALS__.metadata`, which is `undefined` — `node_modules/@tauri-apps/api/window.js:85`). Then make **two** edits to `src/components/WindowControls.tsx`:
+  1. Delete `:21` — `const win = getCurrentWindow();` — and replace the three uses of `win` in the button handlers (`:75` `void win.minimize();`, `:86` `void win.toggleMaximize();`, `:102` `void win.close();`) with `void getCurrentWindow().minimize();` and so on, so each call happens on click rather than on render.
+  2. Guard the effect's own call. Replace `:28` — `const w = getCurrentWindow();` — with:
+
+```tsx
+      let w: ReturnType<typeof getCurrentWindow>;
+      try {
+        w = getCurrentWindow();
+      } catch {
+        return undefined; // window API unavailable (plain-browser dev / jsdom) — keep the default
+      }
+```
+
+  (The existing `try` at `:32-37` wraps only `await w.isMaximized()`, which is why the construction above it needed its own guard. The `catch` at `:35-37` and its comment stay as they are.) Re-run: green.
+  Neither test clicks a caption button, so no Tauri call ever fires; `isMac` is a UA sniff (`src/utils/platform.ts`) and the two counts above pin both branches of it explicitly rather than depending on which one the runner takes.
 
 - [ ] **Step 2: the shared kit.** Create `src/test/tauriMocks.ts`:
 
@@ -2641,15 +2714,18 @@ export function frame(header: object, payloadLen: number): ArrayBuffer {
 }
 
 /**
- * The three browser APIs jsdom 30 does NOT implement that a mounted CULL tree
- * reaches. Verified by probe, and it contradicts the Phase 4 scout, which
- * said jsdom provides matchMedia.
- *  - `matchMedia`: useImageStoreWiring.ts:88-102 arms one on mount and calls
- *    addEventListener/removeEventListener on the result.
- *  - `ResizeObserver`: the grid and the loupe stage observe (App.tsx:454,
- *    useImageStoreWiring.ts:78) — both phase-gated, stubbed anyway.
- *  - `URL.createObjectURL` / `revokeObjectURL`: every decoded read
- *    (src/utils/bundle.ts) wraps its bytes in a Blob URL.
+ * The browser APIs a mounted CULL tree reaches that need help under jsdom.
+ *  - `matchMedia`: NOT implemented by jsdom 30 (contradicting the Phase 4
+ *    scout, which said it was). useImageStoreWiring.ts:88-102 arms one on
+ *    mount and calls addEventListener/removeEventListener on the result, so
+ *    without this stub App throws on render.
+ *  - `ResizeObserver`: also not implemented. The grid and the loupe stage
+ *    observe (App.tsx:454, useImageStoreWiring.ts:78) — both phase-gated, so
+ *    the start screen never reaches them; stubbed anyway.
+ *  - `URL.createObjectURL` / `revokeObjectURL`: these DO exist under Vitest's
+ *    jsdom environment (it installs a Node-backed compat URL). They are
+ *    replaced with spies so a test can count blob churn — not because they
+ *    are missing.
  * Call from `beforeEach`; `vi.unstubAllGlobals()` in `afterEach` undoes the
  * first two, and the URL pair is restored by the caller.
  */
@@ -2678,7 +2754,7 @@ export function installDomStubs(): void {
 }
 ```
 
-  Note `vi.stubGlobal("matchMedia", …)` puts it on `globalThis`, which in the jsdom environment IS `window` — confirm with a one-line assertion in the smoke test's first run and report if it needs `window.matchMedia = …` instead (the direct-assignment prior art is `PhotoStrip.metrics.test.tsx:50-58`).
+  `vi.stubGlobal("matchMedia", …)` puts it on `globalThis`, and in Vitest 4's jsdom environment `globalThis === window` is `true` — verified, so `window.matchMedia` is a function after the call and the direct-assignment form (`PhotoStrip.metrics.test.tsx:50-58`) is not needed here.
 
 - [ ] **Step 3: the smoke test.** Create `src/App.smoke.test.tsx`:
 
@@ -2753,8 +2829,18 @@ beforeEach(() => {
         return frame({ midLen: 2, width: 60, height: 40 }, 2);
       case "read_fullres":
         return frame({ fullLen: 2 }, 2);
+      case "analyze_quality":
+        // NOT `undefined`. DEFAULT_SETTINGS has smartCulling AND
+        // smartCullingOnOpen true, so reaching "culling" auto-starts the
+        // analysis driver, whose chunk call is typed Promise<ImageScore[]>;
+        // an undefined chunk fails and the driver re-arms a REAL 120 ms idle
+        // retry (analysisDriver.ts) that would fire after the test ends.
+        return [];
       default:
-        // begin_session, set_io_profile, write_xmp_rating, analyze_quality…
+        // begin_session and set_io_profile (imageStore.ts:589 — pushBackend
+        // sends them through a variable, and its `typeof window === "undefined"`
+        // guard does NOT skip under jsdom), write_xmp_rating,
+        // clear_xmp_rating, read_capture_times, generate_mid, path_exists…
         return undefined;
     }
   });
@@ -2801,7 +2887,7 @@ describe("App, end to end on one path", () => {
   - A failure inside the render is a missing stub — fix it in the KIT, not in the test, and note what was missing.
   - A failure at `findByRole("button", { name: "Rejects" })` means the phase never reached culling: read the console for the `analyze_folder failed` path (`useSessionLifecycle.ts:503`) and fix the router's shape.
   - A timing failure in `waitFor` is the flakiness the spec pre-authorised cutting for. If three of the five runs are red for reasons that are not a missing stub, **delete `src/App.smoke.test.tsx`**, keep the kit and the `WindowControls` fix, and report the decision with the failure output.
-- [ ] **Step 5:** gate green. Report: five-run result, the new Vitest totals, and whether `vi.stubGlobal("matchMedia", …)` reached `window`. Pathspec commits: `git commit -m "fix(chrome): drop the render-body getCurrentWindow that made App unmountable" -- src/components/WindowControls.tsx src/components/WindowControls.test.tsx`; then `git commit -m "test(app): a shared Tauri mock kit and one start-to-rating smoke test" -- src/test/tauriMocks.ts src/App.smoke.test.tsx`
+- [ ] **Step 5:** gate green. Report the five-run result and the new Vitest totals. Pathspec commits: `git commit -m "fix(chrome): drop the render-body getCurrentWindow that made App unmountable" -- src/components/WindowControls.tsx src/components/WindowControls.test.tsx`; then `git commit -m "test(app): a shared Tauri mock kit and one start-to-rating smoke test" -- src/test/tauriMocks.ts src/App.smoke.test.tsx`
 
 ### Task 10: The docs, and the final gate
 
@@ -2823,7 +2909,7 @@ CULL_FUZZ_SEED=<seed> CULL_FUZZ_FROM=<iteration> CULL_FUZZ_ITERS=1 \
 
   with the note that the input is DERIVED from `(seed, iteration)` rather than replayed, so one iteration reproduces on its own. Add the three env vars to the **Env-var-gated corpus tests** table (`:98-102`) — they are the opposite of corpus gates (they narrow a test that always runs) so say so in the row.
 - [ ] **Step 3: `TESTING.md` — the kit, the timer rule, coverage.** Three more short additions:
-  - `src/test/tauriMocks.ts` is the shared Tauri + DOM kit: what it provides, the async-factory hoisting form a consumer must use, the fact that jsdom 30 implements neither `matchMedia` nor `ResizeObserver` nor `URL.createObjectURL`, and that the seven pre-existing inline `vi.mock("@tauri-apps/api/core")` declarations were deliberately left alone (see "Not in this plan").
+  - `src/test/tauriMocks.ts` is the shared Tauri + DOM kit: what it provides, the async-factory hoisting form a consumer must use, the fact that jsdom 30 implements neither `matchMedia` nor `ResizeObserver` (it **does** implement `URL.createObjectURL` under Vitest's jsdom environment — the kit replaces that pair with spies to count blob churn, not because it is missing), and that the seven pre-existing inline `vi.mock("@tauri-apps/api/core")` declarations were deliberately left alone (see "Not in this plan").
   - **The timer rule**: every wall-clock timer inside `ImageStore` goes through `this.later(...)` so `reset()` / `hardReset()` can cancel it, `MidSweep` keeps its one handle, and `imageStore.test.ts`'s `timer hygiene` describe reads both files raw and fails on an untracked `setTimeout(`. Say explicitly WHY: `hardReset` silences by generation, which cannot detect a leak.
   - `pnpm test:coverage` (v8 provider, text + html), `coverage/` is git-ignored, and there is **no threshold** — the numbers from Task 4 are recorded in this plan's implementation note, and per-directory floors are Phase 5's call.
 - [ ] **Step 4: `ARCHITECTURE.md`.** Three edits, no new sections:
@@ -2838,14 +2924,36 @@ the arrows repeat while held (that is the scrub).
 ```
 
 - [ ] **Step 6: the implementation note.** Append an `## Implementation note (2026-09-21)` section to THIS plan file, in the shape Phase 3C's has: what shipped · where the spec or the plan was wrong and what was ruled instead · verification · Oliver's walk · left for later. It must include: the fuzzer's printed red line from Task 1 (seed + iteration + hang-or-panic) and its green wall clock; Task 4's coverage numbers; whether the App smoke test survived its five runs; and the final gate figures (Vitest files/tests, Rust test count). **Oliver's walk** must be: hold `Enter` on a frame and confirm it rates once; hold `Tab` and press `Ctrl+Z` and confirm nothing undoes behind the sheet; start a scrub, let the quit guard or Settings open, press a key and confirm the scrub stops; and open the newest PR to see three green checks rather than two.
-- [ ] **Step 7: the final gate** — from the repo root: `pnpm typecheck && pnpm typecheck:tests && pnpm lint && pnpm lint:css && pnpm test && pnpm build`, plus, from `src-tauri/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. Report every number.
+- [ ] **Step 7: the final gate** — from the repo root: `pnpm typecheck && pnpm typecheck:tests && pnpm lint && pnpm lint:css && pnpm test && pnpm build && pnpm audit --prod --audit-level=high`, plus, from `src-tauri/`: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. That JS list is exactly what Task 2 put in CI's `frontend` job, in the same order — the audit is last because it is the one step that talks to the registry, so a network failure there cannot mask a real one above it (re-run rather than delete). Report every number.
 - [ ] **Step 8:** commit: `git commit -m "docs: Phase 4 — the keymap harness, the CR3 fuzzer, timer hygiene and CI" -- TESTING.md ARCHITECTURE.md README.md docs/superpowers/plans/2026-09-21-phase-4-tests-and-ci.md`
+
+---
+
+## Pre-flight corrections (2026-09-21)
+
+Two fresh checkers fact-checked this plan against the code before any of it was executed — one of them compiled Task 5's props factory verbatim and ran all five RED claims through the real hook. Every finding below was applied here, so an implementer reads only corrected text. Recorded so the record survives even if the session is interrupted; Task 10 moves this section into the implementation note.
+
+- **BLOCKER — Task 7 Step 5 armed a real 2 s timer before faking the clock.** `vi.useFakeTimers()` sat *after* `store.reset([...])`, so `reset()`'s background-fill fallback (`imageStore.ts:726`) was armed on the real clock and survived the test — exactly the cross-test bleed `imageStore.test.ts:54-64` documents — and the `mid` assertion depended on a promise chain the fake clock never drove. The call moved to immediately after `new Store()`, with `setProfile` / `reset` / `setNeedPxProvider` inside the `try`.
+- **BLOCKER — deleting `WindowControls.tsx:21` does not make the component mountable.** The effect's own `const w = getCurrentWindow()` (`:28`) sits OUTSIDE its `try`, and under jsdom `isMac` is false so the effect runs; a checker's probe confirmed the throw propagates out of `render()`. Task 9 Step 1 now makes **two** edits, the second wrapping that construction in its own `try`/`catch` returning `undefined`. The test asserts four buttons render (three without `onSettings`) with no Tauri global and no throw.
+- **The fuzzer has a THIRD expected red, and the plan's own STOP rule would have stalled on it.** `boxes(d, 0, usize::MAX)` in `fuzz_one` panics before Step 5's clamp lands — the same defect the `boxes` hardening fixes, seen from the fuzzer instead of from the unit test. Named explicitly in the Step 2 red list.
+- **`find_le_tiff` was off by one** (`saturating_sub(4)` can never see a TIFF header ending at the last byte). Now `saturating_sub(3)`, with the arithmetic in the doc comment.
+- **The "inline values are a no-op" ruling was too strong.** For an entry truncated at the buffer's tail the clamp does reduce an inline count, turning `ascii`'s `None` into a truncated string. Stated in both the ruling and the `clamp_count` doc, since the fuzzer's `else` branch leans on the distinction.
+- **The hostile-count test never exercised the production route.** It called `Tiff::rationals` directly; it now also runs `metadata_from_prefix` over a whole synthetic CR3 head and asserts `gps_lat == Some(51.5)` — the path every real image takes.
+- **`jsdom` does implement `URL.createObjectURL`.** The plan said it did not, from a probe run against bare `new JSDOM()` in plain Node; under **Vitest's** jsdom environment a Node-backed compat `URL` is installed (`vitest/dist/chunks/index.DC7d2Pf8.js:556-570`). `matchMedia` and `ResizeObserver` really are missing. Corrected in the Global Constraints, the kit's doc comment and Task 10's TESTING.md brief, with the "probe inside Vitest" warning attached.
+- **The smoke test's router returned `undefined` for `analyze_quality`.** `DEFAULT_SETTINGS` has both `smartCulling` and `smartCullingOnOpen` true, so reaching "culling" auto-starts the analysis driver, whose chunk call is typed `Promise<ImageScore[]>`; an undefined chunk fails and re-arms a real 120 ms idle retry that would fire after the test ends — in the one test whose entire budget is de-flaking. Now returns `[]`.
+- **Task 2's macOS job cannot be run by its implementer.** A Step 2b says so: the first real run is on the PR, and a compile failure there is a finding for the controller, not a fix inside Task 2. The job's deliberate omission of `components:` is now stated so nobody copies it from `backend`.
+- **The branch-protection precondition had the wrong reason.** GitHub accepts an unknown context and shows it as *Expected — waiting for status* forever, silently blocking every merge — it does not reject the call. The precondition stands; the sentence was rewritten.
+- **Task 4 cannot run beside any task that runs `pnpm test`** (controller's ruling). `pnpm add` rewrites `node_modules` under a running vitest. The map now has a wave 0 in which Task 4 runs alone apart from the Rust and CI tasks, and wave 1 follows it.
+- **`pnpm audit --prod` gates on every severity including `low`** (controller's ruling). Now `pnpm audit --prod --audit-level=high`, in CI and in Task 10's final gate, with the reasoning and the registry-outage remedy (re-run the job, never delete the step) written next to it.
+- **The fuzzer's per-input deadline was too tight for a shared runner** (controller's ruling). 250 ms → **1000 ms**, still four orders of magnitude above a healthy input and below the 1.6–1.9 s spin it hunts.
+- **Smaller:** the closure lift names **five** call sites, not three; `coverage.exclude` gains `src/**/__fixtures__/**` (a user `exclude` replaces Vitest's defaults); the weekly audit workflow gains `permissions: { contents: read }` and a note that GitHub disables a schedule after 60 idle days; `later`'s `const h` self-capture is annotated so nobody "fixes" it; Task 7's heading and commit say **three** rewritten tests plus one deletion, not four; `required_conversation_resolution` gained its sentence in the controller step; `resolveCompareDecide`'s derivation is **two** lines (`:280-281`), not three; Task 5 Step 5 now says which assertion inside the Ctrl+Z test is the discriminating one (its `defaultPrevented` passes before the fix too); and the settled `vi.stubGlobal` question (`globalThis === window` under Vitest's jsdom) was dropped from Task 9's steps rather than left for the implementer to re-discover.
+- **Two checker findings REJECTED, verified against the code:** (1) that `begin_session` and `set_io_profile` "do not exist anywhere in the repo" — they do, at `imageStore.ts:589`, `:523`, `:644`, `:863`, invoked through a variable in `pushBackend`, whose `typeof window === "undefined"` guard does **not** skip under jsdom; the smoke test's default case comment was extended with the other real commands instead of replaced. (2) that `new ResizeObserver` is at `App.tsx:455` — it is at `:454`, as the plan already said.
 
 ---
 
 ## Controller step (NOT an implementer task): branch protection
 
-Run by the controller **after Task 2 has merged and `backend-macos` has reported at least once on a pull request** — the `contexts` array is rejected for a check GitHub has never seen, so applying it earlier would either fail or lock the branch behind a check that never arrives.
+Run by the controller **after Task 2 has merged and `backend-macos` has reported at least once on a pull request**. GitHub does **not** reject a context it has never seen — it accepts it and then shows it as *Expected — waiting for status* forever, silently blocking every merge. So the precondition is not about the API refusing the call; it is about knowing the check actually arrives.
 
 The endpoint is a `PUT` and rejects a partial body with 422: all four of `required_status_checks`, `enforce_admins`, `required_pull_request_reviews` and `restrictions` must be present even when null.
 
@@ -2864,7 +2972,7 @@ gh api -X PUT repos/OliverSogaard/cull/branches/main/protection \
 JSON
 ```
 
-Why each field is what it is: **`strict: false`** — `true` forces a rebase and a five-minute Rust re-run before every merge, and with one human on serial phase branches the stale-merge risk it buys is about zero. **`required_pull_request_reviews: null`** — GitHub will not let an author approve their own PR, so requiring a review deadlocks a one-human repo entirely. **`enforce_admins: false`** — the deliberate escape hatch for a broken runner. **`allow_force_pushes` / `allow_deletions` false** — the actual protection being bought. **`required_linear_history: false`** — the history uses merge commits. Verify afterwards with `gh api repos/OliverSogaard/cull/branches/main/protection` and confirm all three contexts are listed.
+Why each field is what it is: **`strict: false`** — `true` forces a rebase and a five-minute Rust re-run before every merge, and with one human on serial phase branches the stale-merge risk it buys is about zero. **`required_pull_request_reviews: null`** — GitHub will not let an author approve their own PR, so requiring a review deadlocks a one-human repo entirely. **`enforce_admins: false`** — the deliberate escape hatch for a broken runner. **`allow_force_pushes` / `allow_deletions` false** — the actual protection being bought. **`required_linear_history: false`** — the history uses merge commits. **`required_conversation_resolution: true`** — the one thing a single-owner repo genuinely loses without it: a review comment left open on a PR you merge yourself is a comment nobody ever sees again. Verify afterwards with `gh api repos/OliverSogaard/cull/branches/main/protection` and confirm all three contexts are listed.
 
 ---
 
@@ -2885,27 +2993,29 @@ Why each field is what it is: **`strict: false`** — `true` forces a rebase and
 
 The controller runs implementers in parallel **only** on disjoint file sets, up to six at once. Wave = everything in the row may run concurrently.
 
+**Disjoint edited files are not sufficient here.** Every JS task's gate ends in `pnpm test`, and Task 4's Step 1 runs `pnpm add -D @vitest/coverage-v8`, which rewrites `node_modules` and `pnpm-lock.yaml` **underneath a concurrently running vitest**. So Task 4 goes first and alone among JS tasks. The two tasks that touch no JS dependency graph — Task 1 (Rust only) and Task 2 (a YAML file) — may run beside it; nothing they do reads `node_modules`.
+
 | Wave | Task | Files it owns | May run with | Must follow |
 | --- | --- | --- | --- | --- |
-| 1 | **1** CR3 fuzzer + clamp | `src-tauri/src/cr3.rs` | 2, 4, 5, 7, 8 | — |
-| 1 | **2** CI build/audit/macOS | `.github/workflows/ci.yml` | 1, 4, 5, 7, 8 | — |
-| 1 | **4** Coverage plumbing | `package.json`, `pnpm-lock.yaml`, `vite.config.ts`, `.gitignore` | 1, 2, 5, 7, 8 | — |
-| 1 | **5** Keymap harness pt 1 + the five fixes | `src/app/useCullKeymap.ts`, `src/app/useCullKeymap.test.tsx` | 1, 2, 4, 7, 8 | — |
-| 1 | **7** Store timer hygiene | `src/image/imageStore.ts`, `src/image/midSweep.ts`, `src/image/imageStore.test.ts` | 1, 2, 4, 5, 8 | — |
-| 1 | **8** `withChanges` + citations | `src/app/useDecideCallbacks.ts`, `src/app/useDecideCallbacks.test.tsx`, `src/utils/withChanges.ts`(new)+test | 1, 2, 4, 5, 7 | — |
-| 2 | **3** Dependabot + weekly audit | `.github/dependabot.yml`(new), `.github/workflows/cargo-audit.yml`(new) | 6, 9 | — (wave 2 only to keep `.github/` single-writer while 2 is in flight) |
-| 2 | **6** Keymap harness pt 2 | `src/app/useCullKeymap.test.tsx` | 3, 9 | **5** (same file) |
-| 2 | **9** Mock kit + App smoke | `src/test/tauriMocks.ts`(new), `src/App.smoke.test.tsx`(new), `src/components/WindowControls.tsx`, `src/components/WindowControls.test.tsx`(new) | 3, 6 | — (disjoint from everything; wave 2 only because wave 1 is full at six) |
+| 0 | **4** Coverage plumbing (runs `pnpm add`) | `package.json`, `pnpm-lock.yaml`, `vite.config.ts`, `.gitignore` | 1, 2 only | — |
+| 0 | **1** CR3 fuzzer + clamp | `src-tauri/src/cr3.rs` | 4, 2 | — |
+| 0 | **2** CI build/audit/macOS | `.github/workflows/ci.yml` | 4, 1 | — |
+| 1 | **5** Keymap harness pt 1 + the five fixes | `src/app/useCullKeymap.ts`, `src/app/useCullKeymap.test.tsx` | 7, 8, 9, 3 | **4** |
+| 1 | **7** Store timer hygiene | `src/image/imageStore.ts`, `src/image/midSweep.ts`, `src/image/imageStore.test.ts` | 5, 8, 9, 3 | **4** |
+| 1 | **8** `withChanges` + citations | `src/app/useDecideCallbacks.ts`, `src/app/useDecideCallbacks.test.tsx`, `src/utils/withChanges.ts`(new)+test | 5, 7, 9, 3 | **4** |
+| 1 | **9** Mock kit + App smoke | `src/test/tauriMocks.ts`(new), `src/App.smoke.test.tsx`(new), `src/components/WindowControls.tsx`, `src/components/WindowControls.test.tsx`(new) | 5, 7, 8, 3 | **4** |
+| 1 | **3** Dependabot + weekly audit | `.github/dependabot.yml`(new), `.github/workflows/cargo-audit.yml`(new) | 5, 7, 8, 9 | **2** (single writer under `.github/`) |
+| 2 | **6** Keymap harness pt 2 | `src/app/useCullKeymap.test.tsx` | — | **5** (same file) |
 | 3 | **10** Docs + final gate | `TESTING.md`, `ARCHITECTURE.md`, `README.md`, this plan | — | everything |
-| — | *controller* | branch protection | — | **2** merged AND `backend-macos` reported once |
+| — | *controller* | branch protection | — | **2** merged AND `backend-macos` reported green once |
 
-**Serial chains to respect:** 5 → 6 (shared `src/app/useCullKeymap.test.tsx`); everything → 10; Task 2 merged → the controller's branch-protection call.
+**Serial chains to respect:** 4 → {5, 7, 8, 9}; 2 → 3; 5 → 6 (shared `src/app/useCullKeymap.test.tsx`); everything → 10; Task 2 merged and green → the controller's branch-protection call.
 
 **Never parallel:**
+- **4 and any task that runs `pnpm test`** — i.e. 5, 6, 7, 8, 9, 10. `pnpm add` rewrites `node_modules` under a running vitest, and the failure mode is a torn module resolution that looks like a test bug. Task 4 runs alone (beside 1 and 2 only) and finishes before wave 1 starts. It is also the only owner of `pnpm-lock.yaml` and the only task permitted to install anything.
 - **5, 6** — both own `src/app/useCullKeymap.test.tsx`, and 6's tests are written against the order 5 establishes.
 - **2, 3** — different files, but both write under `.github/`; keeping one writer there at a time makes a bad merge impossible and costs nothing, since 3 has no dependants.
-- **10 and anything** — it documents the finished branch and runs the final gate, including `pnpm build`.
-- **4 and any other task that would run `pnpm add`** — there is no other such task, by construction. Task 4 is the only owner of `pnpm-lock.yaml` and the only task permitted to install.
+- **10 and anything** — it documents the finished branch and runs the final gate, including `pnpm build` and the registry audit.
 
 Task 7 is the only owner of `src/image/**`; Task 8 the only owner of `src/app/useDecideCallbacks*`; Task 9 the only owner of `src/components/WindowControls*`, `src/test/**` and `src/App.smoke.test.tsx`; Task 1 the only owner of anything under `src-tauri/`. No source file has two owners in this phase.
 
