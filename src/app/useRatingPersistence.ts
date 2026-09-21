@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Feedback, Label, Rating, Star } from "../types";
-import { isPermanentWriteError } from "../utils/writeFailure";
+import { isCustomLabelKept, isPermanentWriteError } from "../utils/writeFailure";
 
 const FEEDBACK_MS = 320;
 // Sidecar-write retry schedule (ms before each retry). A write that still fails
@@ -37,6 +37,12 @@ function invocation(path: string, write: PendingWrite): [string, Record<string, 
     : ["write_xmp_rating", { path, rating: write.rating }];
 }
 
+/** How many PHOTOS a set of failed writes covers. Two stuck properties of one
+ *  sidecar are one photo that did not save, which is what the chrome says. */
+function distinctPaths(writes: readonly FailedWrite[]): number {
+  return new Set(writes.map((w) => w.path)).size;
+}
+
 /**
  * Sidecar-write durability + the rating feedback flash, verbatim from App
  * (grand cleanup Phase 6). Every rating, star and colour label writes an .xmp
@@ -46,31 +52,48 @@ function invocation(path: string, write: PendingWrite): [string, Record<string, 
  * reads this hook's counts).
  *
  * Failures come in two kinds and the chrome must tell them apart: `failedCount`
- * is every failure (so the quit guard and the leave-to-home warning still
- * refuse to lose one silently), `missingCount` is the subset whose photo was
- * not at its path. What is left — `failedCount - missingCount` — is what a
+ * is every PHOTO with a failure (so the quit guard and the leave-to-home
+ * warning still refuse to lose one silently), `missingCount` is the subset
+ * whose photo was not at its path. What is left — `failedCount - missingCount` — is what a
  * retry can be expected to save, and the only thing that blocks finishing the
  * cull; a missing photo warns instead, because blocking on one would leave a
  * session with no way out.
  */
-export function useRatingPersistence() {
+export function useRatingPersistence(opts?: {
+  /**
+   * The backend refused to overwrite a label CULL did not write, so the
+   * frame's label in memory is out of date (Lightroom edited the sidecar
+   * while the session was open). Called with the photo's path so the owner
+   * can put `"custom"` back in its map — the file itself is untouched and
+   * correct, and this is NOT counted as a failed save.
+   */
+  onCustomLabelKept?: (path: string) => void;
+}) {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
+  // Through a ref so `persist` below keeps its empty dependency list, and
+  // therefore its identity, for the whole session.
+  const onCustomLabelKeptRef = useRef(opts?.onCustomLabelKept);
+  onCustomLabelKeptRef.current = opts?.onCustomLabelKept;
 
   const [savingCount, setSavingCount] = useState(0);
   // `kind:path` → the failure. One record rather than a second parallel set of
   // missing paths: the two could drift apart (a missingCount above failedCount
   // would make the retryable remainder go negative), and they never have to.
-  // Keyed per PROPERTY, so one photo with a stuck rating and a stuck label
-  // honestly counts two: two things did not save, and retryFailed has two
-  // things to re-issue.
+  // Keyed per PROPERTY, so a stuck rating and a stuck label on one photo are
+  // two separate records: retryFailed has two things to re-issue, each with
+  // its own command and value. What the CHROME counts is photos — see below.
   const [failedWrites, setFailedWrites] = useState<Record<string, FailedWrite>>({});
   // Mirrors of the above for the (once-registered) close-request handler, which
   // would otherwise capture stale values.
   const savingRef = useRef(0);
   const failedCountRef = useRef(0);
-  const failedCount = Object.keys(failedWrites).length;
-  const missingCount = Object.values(failedWrites).filter((write) => write.missing).length;
+  // …but the COUNTS are per PHOTO, because every surface that reports them
+  // says so ("3 photos missing", "3 ratings didn't save"). One photo whose
+  // rating and label are both stuck is one photo the user has to rescue, not
+  // two; `retryFailed` still replays both of its records.
+  const failedCount = distinctPaths(Object.values(failedWrites));
+  const missingCount = distinctPaths(Object.values(failedWrites).filter((w) => w.missing));
 
   const flashFeedback = useCallback((rating: Rating, imageId: number) => {
     setFeedback({ rating, imageId, ts: Date.now() });
@@ -119,7 +142,7 @@ export function useRatingPersistence() {
       if (!(key in f)) return f;
       const next = { ...f };
       delete next[key];
-      failedCountRef.current = Object.keys(next).length;
+      failedCountRef.current = distinctPaths(Object.values(next));
       return next;
     });
     setSavingCount((c) => c + 1);
@@ -133,8 +156,10 @@ export function useRatingPersistence() {
     const tryWrite = (n: number): Promise<unknown> =>
       invoke(cmd, args).catch((e) => {
         // A missing-source refusal is permanent: retrying only delays the
-        // honest "didn't save" by six seconds.
-        if (n < WRITE_RETRY_DELAYS.length && !isPermanentWriteError(e)) {
+        // honest "didn't save" by six seconds. A kept custom label is not a
+        // failure at all — the file is already what it should be, so there is
+        // nothing for a retry to achieve either.
+        if (n < WRITE_RETRY_DELAYS.length && !isPermanentWriteError(e) && !isCustomLabelKept(e)) {
           return new Promise((resolve, reject) =>
             window.setTimeout(() => tryWrite(n + 1).then(resolve, reject), WRITE_RETRY_DELAYS[n]),
           );
@@ -161,6 +186,14 @@ export function useRatingPersistence() {
       (e) => {
         setSavingCount((c) => c - 1);
         savingRef.current -= 1;
+        // The backend kept the user's own Lightroom label and left the file
+        // exactly as it was. Nothing was lost and nothing is pending, so this
+        // never becomes a failed write — the only thing that was wrong is our
+        // copy of the label, which the owner corrects from here.
+        if (isCustomLabelKept(e)) {
+          onCustomLabelKeptRef.current?.(path);
+          return;
+        }
         // Only the latest write of this property may stamp a failure; a
         // superseded older write failing must not resurrect an "unsaved" flag
         // the newer (successful) write already cleared.
@@ -169,7 +202,7 @@ export function useRatingPersistence() {
           const missing = isPermanentWriteError(e);
           setFailedWrites((f) => {
             const nextFailed = { ...f, [key]: { path, write, missing } };
-            failedCountRef.current = Object.keys(nextFailed).length;
+            failedCountRef.current = distinctPaths(Object.values(nextFailed));
             return nextFailed;
           });
         }

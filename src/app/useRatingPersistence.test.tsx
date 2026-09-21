@@ -34,6 +34,8 @@ const RETRY_SCHEDULE_MS = 5900;
 const MISSING = "source missing: C:\\shoot\\gone.cr3 is not a file";
 /** A transient failure — the kind the retry schedule exists for. */
 const TRANSIENT = "rename xmp: EACCES";
+/** The backend keeping the user's own Lightroom label (`xmp.rs`). */
+const CUSTOM_KEPT = "custom label kept: C:\\shoot\\flaky.cr3 carries a label CULL did not write";
 
 const GONE = "C:\\shoot\\gone.cr3";
 const FLAKY = "C:\\shoot\\flaky.cr3";
@@ -470,5 +472,108 @@ describe("useRatingPersistence — stars and labels share the photo, not the ver
     await settleWrites();
     expect(mockInvoke).toHaveBeenCalledTimes(4);
     expect(result.current.missingCount).toBe(1);
+  });
+});
+
+/**
+ * The backend refuses to overwrite an `xmp:Label` CULL did not write. The
+ * frontend already skips such frames, so this can only be reached with a
+ * STALE map — Lightroom edited the sidecar while the session was open. The
+ * file is untouched, so nothing was lost: it must not count as a failed save,
+ * must not be retried, and the map must be told the truth.
+ */
+describe("useRatingPersistence — a custom label the backend kept", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockInvoke.mockReset();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("is not a failure, is not retried, and hands the path back for the map", async () => {
+    const onCustomLabelKept = vi.fn((_path: string): void => {});
+    mockInvoke.mockRejectedValue(new Error(CUSTOM_KEPT));
+    const { result } = renderHook(() => useRatingPersistence({ onCustomLabelKept }));
+
+    act(() => {
+      result.current.persistLabel(FLAKY, "blue");
+    });
+    await settleWrites();
+
+    expect(mockInvoke).toHaveBeenCalledTimes(1); // no 400/1500/4000 schedule
+    expect(result.current.failedCount).toBe(0);
+    expect(result.current.missingCount).toBe(0);
+    expect(result.current.savingCount).toBe(0);
+    expect(onCustomLabelKept).toHaveBeenCalledWith(FLAKY);
+  });
+
+  it("still counts every other label failure", async () => {
+    const onCustomLabelKept = vi.fn((_path: string): void => {});
+    mockInvoke.mockRejectedValue(new Error(TRANSIENT));
+    const { result } = renderHook(() => useRatingPersistence({ onCustomLabelKept }));
+
+    act(() => {
+      result.current.persistLabel(FLAKY, "blue");
+    });
+    await settleWrites();
+
+    expect(result.current.failedCount).toBe(1);
+    expect(onCustomLabelKept).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the counts MEAN. Every surface that reports them says "photos" or
+ * "ratings" — "3 photos missing", "3 ratings didn't save" — so they have to
+ * count photos. `failedWrites` stays keyed per property, because `retryFailed`
+ * has to re-issue each stuck write with its own command and value.
+ */
+describe("useRatingPersistence — the counts are per photo", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockInvoke.mockReset();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("two stuck properties on ONE photo is one unsaved photo, and two retries", async () => {
+    mockInvoke.mockRejectedValue(new Error(MISSING));
+    const { result } = renderHook(() => useRatingPersistence());
+
+    act(() => {
+      result.current.persistRating(GONE, "keep");
+      result.current.persistLabel(GONE, "red");
+    });
+    await settleWrites();
+    await settleWrites();
+
+    expect(result.current.failedCount, "one photo, not two writes").toBe(1);
+    expect(result.current.missingCount).toBe(1);
+
+    // …and the retry still re-issues BOTH properties: the count is what the
+    // chrome says, the record is what gets replayed.
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue(undefined);
+    act(() => {
+      result.current.retryFailed();
+    });
+    await settleWrites();
+    await settleWrites();
+
+    expect(mockInvoke.mock.calls.map(([cmd]) => cmd).sort()).toEqual([
+      "write_xmp_label",
+      "write_xmp_rating",
+    ]);
+    expect(result.current.failedCount).toBe(0);
   });
 });
