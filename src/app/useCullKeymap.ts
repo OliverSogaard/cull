@@ -14,9 +14,29 @@ const PAN_STEP = 2; // % per arrow press while zoomed
  *   rebuild on every nav step + rating. Dispatch goes through `cullKeyRef`
  *   and the window listeners register ONCE, so the scrub hot path doesn't
  *   churn add/removeEventListener.
- * - Modal precedence order (settings → quitGuard → confirmHome → actionsOpen
- *   → scrub-interrupt → Ctrl combos → Tab/help → Space → ESC → sites) is a
- *   verbatim move.
+ * - Precedence order, which is load-bearing. It started as a verbatim move
+ *   from App, but Phase 4 reordered it to fix three defects, so it is NOT
+ *   the original any more and must not be "restored":
+ *     bare-modifier → scrub-interrupt → settings → quitGuard → phase →
+ *     confirmHome → actionsOpen → Tab/help → Ctrl combos → Ctrl drop →
+ *     Space → ESC → sites.
+ *   The bare-modifier no-op heads the list so that tapping Shift mid-scrub
+ *   falls out before the interrupt below can read it as "some other key"
+ *   and abort the hold. The scrub interrupt then precedes EVERY modal
+ *   return because a held arrow otherwise keeps advancing the cursor behind
+ *   whichever overlay returned first — settings and quitGuard used to let
+ *   it run on while confirmHome and actionsOpen did not, and that asymmetry
+ *   is what made it a bug rather than a choice. The help swallow precedes
+ *   the Ctrl combos because "any other key dismisses AND is swallowed" has
+ *   to cover Ctrl+Z and Ctrl+E as well, which until then undid a rating and
+ *   opened the act-on-cull dialog UNDERNEATH the sheet. (Ctrl+, and Ctrl+O
+ *   are deliberately outside all of this: they live in the chrome effect's
+ *   own listener below, and neither listener stops propagation.)
+ *   Every clause is pinned in useCullKeymap.test.tsx — see the suites "a
+ *   held scrub is interrupted behind every overlay (fix C)" and "nothing
+ *   acts behind the help sheet (fix B)", whose regression guards ("a bare
+ *   modifier still never interrupts a hold", "a held Tab does not dismiss
+ *   the sheet it is holding open") are what keep the order honest.
  */
 export function useCullKeymap({
   phase,
