@@ -81,6 +81,24 @@ fn atomic_write_xmp(xmp_path: &Path, contents: &str) -> Result<(), String> {
 /// schedule: nothing short of putting the photo back can make the write land.
 pub(crate) const MISSING_SOURCE: &str = "source missing";
 
+/// Refusal prefix for a write whose intent did not land in the bytes — a
+/// sidecar shape this module's substring surgery cannot edit (no `rdf:about`
+/// to anchor an insert at, say). Before the check existed, such a write
+/// returned bytes identical to the input, took the unchanged-bytes skip, and
+/// reported SAVED with nothing on disk (review finding 3). Retrying is the
+/// right response, so this does NOT suppress the frontend's retry schedule.
+pub(crate) const WRITE_NOT_APPLIED: &str = "write not applied";
+
+/// Refusal prefix for a label write that would have replaced or cleared a
+/// colour label CULL did not write. Not a failure: the user's label is still
+/// exactly where they left it, which is the point, so the frontend can report
+/// it as "kept" rather than as an unsaved change.
+pub(crate) const CUSTOM_LABEL_KEPT: &str = "custom label kept";
+
+/// The wire value for an `xmp:Label` CULL does not recognise. Read-only: it is
+/// never accepted as a label to WRITE.
+const CUSTOM_LABEL: &str = "custom";
+
 /// A sidecar is only ever written next to a CR3 that is actually there.
 ///
 /// After "Move rejects" the frontend prunes the moved frames, but a stale
@@ -119,6 +137,15 @@ pub(crate) async fn write_xmp_rating(path: String, rating: String) -> Result<(),
 /// behind the 2026-09-13 CRITICAL, an orphaned `.xmp` written into the folder
 /// a moved photo came from — cannot be forgotten by the next one.
 ///
+/// `landed` re-reads the edited bytes with the SAME reader the app uses when it
+/// opens the folder, and a write that did not land is an error rather than a
+/// reported save. Substring surgery can silently no-op on a shape it does not
+/// understand — a single-quoted ExifTool sidecar used to swallow every write —
+/// and without this check the unchanged-bytes skip below turned that into
+/// "saved" with nothing on disk (review finding 3). It is checked BEFORE the
+/// skip, so the skip stays valid only when the file ALREADY reads back as the
+/// state being asked for.
+///
 /// The unchanged-bytes skip is what keeps a re-pressed key off the NAS. A
 /// brand-new sidecar always differs from `fresh_xmp()` when something was
 /// actually set, so that path still writes; setting nothing on a frame with
@@ -128,6 +155,7 @@ fn write_sidecar_sync(
     path: &str,
     what: &str,
     edit: &dyn Fn(&str) -> Result<String, String>,
+    landed: &dyn Fn(&str) -> bool,
 ) -> Result<(), String> {
     let cr3 = Path::new(path);
     require_source(cr3)?;
@@ -140,6 +168,12 @@ fn write_sidecar_sync(
     };
 
     let contents = edit(&base)?;
+    if !landed(&contents) {
+        return Err(format!(
+            "{WRITE_NOT_APPLIED}: {what} did not land in {}",
+            xmp_path.display()
+        ));
+    }
     if contents == base {
         dlog!(
             "[cull] write_sidecar({}): {what} (unchanged, skipped)",
@@ -153,17 +187,29 @@ fn write_sidecar_sync(
 }
 
 fn write_xmp_rating_sync(path: &str, rating: &str) -> Result<(), String> {
-    write_sidecar_sync(path, rating, &|base| apply_rating_to_xmp(base, rating))
+    write_sidecar_sync(
+        path,
+        rating,
+        &|base| apply_rating_to_xmp(base, rating),
+        &|out| classify_xmp(out).as_deref() == Some(rating),
+    )
 }
 
 fn write_xmp_star_sync(path: &str, star: Option<u8>) -> Result<(), String> {
     let what = star.map_or_else(|| "star cleared".to_string(), |n| format!("{n} star"));
-    write_sidecar_sync(path, &what, &|base| apply_star_to_xmp(base, star))
+    write_sidecar_sync(path, &what, &|base| apply_star_to_xmp(base, star), &|out| {
+        parse_lrc_rating(out) == star
+    })
 }
 
 fn write_xmp_label_sync(path: &str, label: Option<&str>) -> Result<(), String> {
     let what = label.unwrap_or("label cleared");
-    write_sidecar_sync(path, what, &|base| apply_label_to_xmp(base, label))
+    write_sidecar_sync(
+        path,
+        what,
+        &|base| apply_label_to_xmp(base, label),
+        &|out| parse_label(out).as_deref() == label,
+    )
 }
 
 /// Unrate: clear CULL's rating fields from the sidecar.
@@ -228,9 +274,9 @@ fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
     // ownership of an orphaned sidecar can't be verified without the photo.
     require_source(cr3)?;
 
-    // created_by_cull, NOT authored_by_cull: a bare `xmlns:cull` declaration
-    // means CULL wrote an attribute into someone else's file, which is never
-    // a licence to delete it.
+    // The TOOL STAMP, not a `xmlns:cull` declaration: the declaration only
+    // means CULL wrote an attribute into someone else's file, which is never a
+    // licence to delete it.
     let authored = created_by_cull(&existing);
     let stripped = strip_cull_fields(&existing);
 
@@ -398,10 +444,10 @@ fn cull_owned_fav_star(xmp: &str) -> bool {
     match cull_fav_value(xmp).as_deref() {
         Some("star") => true,
         Some(_) => false, // "flag": the star is the user's
-        // The pre-marker arm gates on [`created_by_cull`], not
-        // `authored_by_cull`: a pre-marker CULL sidecar always carried the tool
-        // stamp, whereas a bare `xmlns:cull` declaration is what a rating write
-        // leaves in SOMEONE ELSE's file — and an unrate strips the marker but
+        // The pre-marker arm gates on [`created_by_cull`], i.e. on the tool
+        // stamp: a pre-marker CULL sidecar always carried one, whereas a bare
+        // `xmlns:cull` declaration is what a rating write leaves in SOMEONE
+        // ELSE's file — and an unrate strips the marker but
         // not the declaration, so trusting it would let the next write delete a
         // genuine Lightroom 1★ as if it were CULL's own courtesy stamp.
         //
@@ -440,7 +486,7 @@ fn strip_cull_fields(existing: &str) -> String {
 /// and a fresh CULL one already have it; this covers a third-party sidecar
 /// that doesn't.
 fn ensure_xmpdm_ns(xmp: &str) -> String {
-    if xmp.contains("xmlns:xmpDM=") {
+    if target_start_tag(xmp).contains("xmlns:xmpDM=") {
         return xmp.to_string();
     }
     insert_after_about(xmp, &format!("\n    xmlns:xmpDM=\"{XMPDM_NS}\""))
@@ -449,7 +495,7 @@ fn ensure_xmpdm_ns(xmp: &str) -> String {
 /// Ensure CULL's private namespace is declared on `rdf:Description` before we
 /// write a `cull:fav` attribute into it.
 fn ensure_cull_ns(xmp: &str) -> String {
-    if xmp.contains("xmlns:cull=") {
+    if target_start_tag(xmp).contains("xmlns:cull=") {
         return xmp.to_string();
     }
     insert_after_about(xmp, &format!("\n    xmlns:cull=\"{CULL_NS}\""))
@@ -461,7 +507,7 @@ fn ensure_cull_ns(xmp: &str) -> String {
 /// third-party one may not, and prefixed XML with no declaration is XML a
 /// strict reader rejects.
 fn ensure_xmp_ns(xmp: &str) -> String {
-    if xmp.contains("xmlns:xmp=") {
+    if target_start_tag(xmp).contains("xmlns:xmp=") {
         return xmp.to_string();
     }
     insert_after_about(xmp, &format!("\n    xmlns:xmp=\"{XMP_NS}\""))
@@ -471,50 +517,101 @@ fn ensure_xmp_ns(xmp: &str) -> String {
 /// visible 1★, safe to strip on demote), `Some("flag")` (favorite rides on a
 /// user star we must never touch), or `None` (not a marker-tagged favorite).
 fn cull_fav_value(xmp: &str) -> Option<String> {
-    let needle = "cull:fav=\"";
-    let s = xmp.find(needle)? + needle.len();
-    let rel = xmp[s..].find('"')?;
-    Some(xmp[s..s + rel].to_string())
+    let a = find_attr(xmp, "cull:fav")?;
+    Some(xmp[a.value..a.end].to_string())
 }
 
 /// True when CULL CREATED this sidecar, as opposed to merely annotating one
 /// that was already on disk. Only the tool stamps [`fresh_xmp`] writes count.
 ///
-/// Split out of [`authored_by_cull`] when every rating started carrying a
-/// `cull:fav` marker: writing that marker calls [`ensure_cull_ns`], so even a
-/// plain keep now adds `xmlns:cull` to a third-party sidecar — and the unrate
-/// delete gate, which used `authored_by_cull`, would then have REMOVED a file
-/// CULL did not write. (Favoriting has always declared the namespace, so the
-/// hole predates this change; it just got wider.) "CULL touched this" is the
-/// right question for classification; "CULL made this" is the only one that may
-/// authorise a delete — of the file, or of a star inside it.
+/// This replaced a looser "did CULL touch this" test that also accepted a bare
+/// `xmlns:cull` declaration. Once every rating started carrying a `cull:fav`
+/// marker, writing that marker calls [`ensure_cull_ns`], so even a plain keep
+/// adds `xmlns:cull` to a third-party sidecar — and the unrate delete gate
+/// would then have REMOVED a file CULL did not write. (Favoriting has always
+/// declared the namespace, so the hole predates Phase 5A; it just got wider.)
+/// A tool stamp is the one marker CULL never writes into a file it did not
+/// create, so it is the only thing that may authorise a destructive act — of
+/// the file, or of a star inside it.
 fn created_by_cull(xmp: &str) -> bool {
     // Two marker generations: pre-rebrand sidecars say "Cull 1.0", current
     // ones say "CULL" (the contains check is case-sensitive).
-    xmp.contains("CreatorTool=\"Cull")
-        || xmp.contains("x:xmptk=\"Cull")
+    stamped_by_pre_rebrand_cull(xmp)
         || xmp.contains("CreatorTool=\"CULL")
         || xmp.contains("x:xmptk=\"CULL")
 }
 
-/// True when CULL authored this sidecar (vs an LrC/third-party sidecar CULL only
-/// annotated). Tighter than a bare "Cull" substring so a stray
-/// keyword/path/person-name can't trip it. Destructive paths use the stricter
-/// [`created_by_cull`] instead.
-fn authored_by_cull(xmp: &str) -> bool {
-    created_by_cull(xmp) || xmp.contains("xmlns:cull=")
+/// True when this sidecar carries a PRE-REBRAND CULL tool stamp (`Cull …`).
+///
+/// The pre-flag, Rating-only scheme (keep→0, reject→-1, favorite→5) was only
+/// ever written by that generation: the flag scheme is in the repo from its
+/// initial commit (`7f0516a`, which already stamps `Cull 1.0`), and the
+/// upper-case `CULL` stamp arrived later (`33536cd`). So no `CULL`-stamped
+/// build ever wrote a Rating-only sidecar, and [`classify_xmp`]'s legacy arm
+/// can key on this alone.
+///
+/// Why it must not key on anything looser: a tool stamp is the one marker CULL
+/// never writes into a file it did not create, so it cannot be left behind.
+/// Keyed on `created_by_cull`, a 5★ the USER set through CULL read back as a
+/// favorite (review finding 1); keyed on a bare `xmlns:cull` declaration — which
+/// a rating write leaves in a third-party sidecar and an unrate does not remove
+/// — THEIR `xmp:Rating` read back as CULL's pre-flag scheme, so a `-1` became a
+/// fabricated REJECT feeding move_rejects_to_trash (review finding 2).
+fn stamped_by_pre_rebrand_cull(xmp: &str) -> bool {
+    xmp.contains("CreatorTool=\"Cull") || xmp.contains("x:xmptk=\"Cull")
+}
+
+/// Where an attribute lives in a sidecar string.
+struct AttrSpan {
+    /// Index of the first byte of the attribute NAME.
+    name: usize,
+    /// Index of the first byte of the VALUE (just past the opening quote).
+    value: usize,
+    /// Index of the closing quote.
+    end: usize,
+}
+
+/// Locate `attr="value"` OR `attr='value'`, whichever comes first.
+///
+/// XMP is XML, so both quote characters are legal, and ExifTool — the most
+/// likely producer of a non-Lightroom sidecar beside a CR3 — writes the
+/// single-quoted form. Matching only the double-quoted one made every read miss
+/// and, worse, every INSERT silently no-op: `edit` then returned bytes
+/// identical to the input, the unchanged-bytes skip took that for "already
+/// saved", and CULL reported a save that never touched the disk (review
+/// finding 3). Every attribute reader and writer goes through here so the two
+/// forms can never drift apart again.
+fn find_attr(xmp: &str, attr: &str) -> Option<AttrSpan> {
+    let double = xmp.find(&format!("{attr}=\"")).map(|p| (p, '"'));
+    let single = xmp.find(&format!("{attr}='")).map(|p| (p, '\''));
+    let (name, quote) = match (double, single) {
+        (Some(d), Some(s)) => {
+            if d.0 <= s.0 {
+                d
+            } else {
+                s
+            }
+        }
+        (Some(d), None) => d,
+        (None, Some(s)) => s,
+        (None, None) => return None,
+    };
+    let value = name + attr.len() + 2; // past `attr=` and the opening quote
+    let rel = xmp[value..].find(quote)?;
+    Some(AttrSpan {
+        name,
+        value,
+        end: value + rel,
+    })
 }
 
 /// Set (replace or insert) an `rdf:Description` attribute, preserving LrC's
-/// one-attribute-per-line layout. Insertion goes right after `rdf:about=""`.
+/// one-attribute-per-line layout. A replacement keeps whatever quote character
+/// the file already used; an insertion goes right after `rdf:about` and uses
+/// double quotes, which is legal XML whatever the rest of the file does.
 fn set_desc_attr(xmp: &str, attr: &str, value: &str) -> String {
-    let needle = format!("{attr}=\"");
-    if let Some(start) = xmp.find(&needle) {
-        let inner = start + needle.len();
-        if let Some(rel) = xmp[inner..].find('"') {
-            let end = inner + rel;
-            return format!("{}{}{}", &xmp[..inner], value, &xmp[end..]);
-        }
+    if let Some(a) = find_attr(xmp, attr) {
+        return format!("{}{}{}", &xmp[..a.value], value, &xmp[a.end..]);
     }
     insert_after_about(xmp, &format!("\n   {attr}=\"{value}\""))
 }
@@ -522,17 +619,12 @@ fn set_desc_attr(xmp: &str, attr: &str, value: &str) -> String {
 /// Remove an `rdf:Description` attribute, eating the leading whitespace +
 /// newline before it so no dangling blank line is left. No-op if absent.
 fn remove_desc_attr(xmp: &str, attr: &str) -> String {
-    let needle = format!("{attr}=\"");
-    let Some(open) = xmp.find(&needle) else {
+    let Some(a) = find_attr(xmp, attr) else {
         return xmp.to_string();
     };
-    let inner = open + needle.len();
-    let Some(rel) = xmp[inner..].find('"') else {
-        return xmp.to_string();
-    };
-    let end = inner + rel + 1;
+    let end = a.end + 1; // past the closing quote
     let b = xmp.as_bytes();
-    let mut start = open;
+    let mut start = a.name;
     while start > 0 && (b[start - 1] == b' ' || b[start - 1] == b'\t') {
         start -= 1;
     }
@@ -552,17 +644,41 @@ fn remove_desc_attr(xmp: &str, attr: &str) -> String {
 /// (`rdf:about=""`) and a non-empty form (`rdf:about="uuid:…"`) that some tools
 /// emit; matching only the empty literal used to make every attribute write
 /// silently no-op on those sidecars. XML attribute order is irrelevant, so
-/// inserting here is safe.
+/// inserting here is safe. A sidecar with no `rdf:about` at all cannot be
+/// edited by substring surgery: this returns the input unchanged, and
+/// [`write_sidecar_sync`]'s landed-check turns that into an honest error.
 fn insert_after_about(xmp: &str, ins: &str) -> String {
-    let needle = "rdf:about=\"";
-    if let Some(pos) = xmp.find(needle) {
-        let inner = pos + needle.len();
-        if let Some(rel) = xmp[inner..].find('"') {
-            let at = inner + rel + 1; // just past the closing quote
-            return format!("{}{}{}", &xmp[..at], ins, &xmp[at..]);
-        }
-    }
-    xmp.to_string()
+    let Some(a) = find_attr(xmp, "rdf:about") else {
+        return xmp.to_string();
+    };
+    // Match the file's own line ending. Every caller hands us one LF-prefixed
+    // line, and pushing that into a Windows sidecar left it mixed-ending
+    // (review finding 7). `ins` never contains CRLF already.
+    let ins = if xmp.contains("\r\n") {
+        ins.replace('\n', "\r\n")
+    } else {
+        ins.to_string()
+    };
+    format!("{}{}{}", &xmp[..a.end + 1], ins, &xmp[a.end + 1..])
+}
+
+/// The start tag every insert actually lands in: the element carrying the first
+/// `rdf:about`, from its `<` to the `>` that closes the tag.
+///
+/// A namespace declaration binds a prefix for the element it is on and that
+/// element's descendants — NOT for the whole file. Asking whether `xmlns:xmp=`
+/// appeared anywhere, while [`insert_after_about`] always writes into the first
+/// `rdf:Description`, produced a prefixed attribute in a block where the prefix
+/// was unbound: namespace-invalid XML that a strict reader rejects wholesale,
+/// taking the sidecar's keywords and develop settings with it (review
+/// finding 4).
+fn target_start_tag(xmp: &str) -> &str {
+    let Some(a) = find_attr(xmp, "rdf:about") else {
+        return "";
+    };
+    let open = xmp[..a.name].rfind('<').unwrap_or(0);
+    let close = xmp[a.name..].find('>').map_or(xmp.len(), |r| a.name + r);
+    &xmp[open..close]
 }
 
 /// Set `xmp:Rating` to `n` (replacing an existing element form if present,
@@ -648,15 +764,31 @@ fn apply_star_to_xmp(xmp: &str, star: Option<u8>) -> Result<String, String> {
 /// unknown rating string. A label CULL does not recognise (`"custom"`) is
 /// never passed here: it is the user's, and only a real label key replaces it.
 fn apply_label_to_xmp(xmp: &str, label: Option<&str>) -> Result<String, String> {
-    match label {
+    // CULL never overwrites a colour label it did not write. An `xmp:Label`
+    // outside the five defaults belongs to the user — a localised Lightroom, or
+    // their own label set — so NEITHER a set nor a clear may touch it, and the
+    // refusal carries its own prefix so the frontend can say "kept" instead of
+    // reporting a save that failed.
+    if parse_label(xmp).as_deref() == Some(CUSTOM_LABEL) {
+        return Err(format!(
+            "{CUSTOM_LABEL_KEPT}: this sidecar carries a colour label CULL did not write"
+        ));
+    }
+    let out = match label {
         Some(key) => {
             let Some((_, text)) = LABEL_STRINGS.iter().find(|(k, _)| *k == key) else {
                 return Err(format!("unknown label: {key}"));
             };
-            Ok(set_label(&ensure_xmp_ns(xmp), text))
+            set_label(&ensure_xmp_ns(xmp), text)
         }
-        None => Ok(remove_property(xmp, "xmp:Label")),
-    }
+        None => remove_property(xmp, "xmp:Label"),
+    };
+    // LrC 15 added `xmp:LabelColor` beside the name. The spec rules that CULL
+    // does not WRITE it (unverifiable from here), but leaving a stale one is a
+    // different thing: Lightroom would show red while CULL shows blue, or
+    // nothing. Removing it can only make Lightroom fall back to the name CULL
+    // did write, so it can never show a colour the user did not choose.
+    Ok(remove_property(&out, "xmp:LabelColor"))
 }
 
 /// The colour label a sidecar carries, as CULL's lowercase wire key — or
@@ -674,7 +806,7 @@ fn parse_label(content: &str) -> Option<String> {
         .iter()
         .find(|(_, text)| text.eq_ignore_ascii_case(trimmed))
         .map(|(key, _)| *key)
-        .unwrap_or("custom");
+        .unwrap_or(CUSTOM_LABEL);
     Some(key.to_string())
 }
 
@@ -697,7 +829,6 @@ fn remove_fav_star(xmp: &str) -> String {
 fn remove_property(xmp: &str, name: &str) -> String {
     let open = format!("<{name}>");
     let close = format!("</{name}>");
-    let attr = format!("{name}=\"");
     let mut out = xmp.to_string();
 
     if let Some(start_tag) = out.find(&open) {
@@ -720,21 +851,11 @@ fn remove_property(xmp: &str, name: &str) -> String {
         }
     }
 
-    if let Some(open_at) = out.find(&attr) {
-        let inner = open_at + attr.len();
-        if let Some(rel) = out[inner..].find('"') {
-            let mut start = open_at;
-            let end = inner + rel + 1;
-            // eat one leading space so we don't leave a double space between attrs
-            let b = out.as_bytes();
-            if start > 0 && b[start - 1] == b' ' {
-                start -= 1;
-            }
-            out.replace_range(start..end, "");
-        }
-    }
-
-    out
+    // The attribute form is exactly what remove_desc_attr already does, quote
+    // handling and all — including eating the whole line it sat on, so a CRLF
+    // sidecar is not left with a line of orphaned spaces or a lone `>`
+    // (review finding 7).
+    remove_desc_attr(&out, name)
 }
 
 /// Read a property's raw string value — element form OR attribute form.
@@ -747,10 +868,8 @@ fn read_property(xmp: &str, name: &str) -> Option<String> {
             return Some(xmp[inner..inner + e].to_string());
         }
     }
-    let needle = format!("{name}=\"");
-    let s = xmp.find(&needle)? + needle.len();
-    let rel = xmp[s..].find('"')?;
-    Some(xmp[s..s + rel].to_string())
+    let a = find_attr(xmp, name)?;
+    Some(xmp[a.value..a.end].to_string())
 }
 
 /// True if the sidecar carries user/edit data we must never delete. CULL's own
@@ -822,11 +941,12 @@ fn classify_xmp(content: &str) -> Option<String> {
         Some(_) => return None, // pick == 0 → explicitly unflagged
         None => {}
     }
-    // Backward-compat with the pre-flag CULL scheme. Gate on the SAME tight marker
-    // the destructive paths use (not a bare "Cull" substring) so a third-party
-    // sidecar that merely mentions "Cull" (a surname, place, keyword) plus a real
-    // user 5★ isn't misread as a CULL favorite.
-    if authored_by_cull(content) {
+    // Backward-compat with the pre-flag CULL scheme, where the star WAS the
+    // verdict. Gated on the pre-rebrand tool stamp — the only generation that
+    // ever wrote it, and a marker that cannot be left behind in someone else's
+    // file. Anything looser invents verdicts out of stars nobody meant as one:
+    // see [`stamped_by_pre_rebrand_cull`].
+    if stamped_by_pre_rebrand_cull(content) {
         return match star {
             Some(-1) => Some("reject".to_string()),
             Some(5) => Some("favorite".to_string()),
@@ -850,10 +970,8 @@ fn parse_xmp_rating(xmp: &str) -> Option<i32> {
 
 /// Read an integer-valued `rdf:Description` attribute (`attr="N"`).
 fn parse_attr_i32(xmp: &str, attr: &str) -> Option<i32> {
-    let needle = format!("{attr}=\"");
-    let s = xmp.find(&needle)? + needle.len();
-    let rel = xmp[s..].find('"')?;
-    xmp[s..s + rel].trim().parse().ok()
+    let a = find_attr(xmp, attr)?;
+    xmp[a.value..a.end].trim().parse().ok()
 }
 
 #[cfg(test)]
@@ -925,8 +1043,9 @@ mod tests {
     }
 
     /// Older CULL sidecars (Rating-only + Cull marker) still resume. The marker
-    /// must be CULL's own (x:xmptk / CreatorTool / xmlns:cull) — a bare "Cull"
-    /// substring no longer qualifies (see classify_xmp's authored_by_cull gate).
+    /// must be a PRE-REBRAND tool stamp (x:xmptk / CreatorTool) — a bare "Cull"
+    /// substring no longer qualifies, and neither does anything CULL could have
+    /// left in a file it did not create (see `stamped_by_pre_rebrand_cull`).
     #[test]
     fn backward_compat_old_scheme() {
         assert_eq!(
@@ -951,18 +1070,24 @@ mod tests {
 
     /// The rebrand writes `CreatorTool="CULL"`; sidecars from earlier versions
     /// say `"Cull 1.0"`. Both generations must stay recognisable or unrate
-    /// stops cleaning up the older ones.
+    /// stops cleaning up the older ones. The pre-rebrand stamp is additionally
+    /// the key `classify_xmp`'s legacy arm turns on, so the split matters.
     #[test]
-    fn authored_by_cull_matches_old_and_new_creator_tool() {
-        assert!(authored_by_cull("xmp:CreatorTool=\"Cull 1.0\""));
-        assert!(authored_by_cull("x:xmptk=\"Cull 1.0\""));
-        assert!(authored_by_cull("xmp:CreatorTool=\"CULL\""));
-        assert!(authored_by_cull("x:xmptk=\"CULL\""));
-        assert!(!authored_by_cull(
-            "xmp:CreatorTool=\"Adobe Lightroom 15.3\""
-        ));
+    fn created_by_cull_matches_old_and_new_creator_tool() {
+        assert!(created_by_cull("xmp:CreatorTool=\"Cull 1.0\""));
+        assert!(created_by_cull("x:xmptk=\"Cull 1.0\""));
+        assert!(created_by_cull("xmp:CreatorTool=\"CULL\""));
+        assert!(created_by_cull("x:xmptk=\"CULL\""));
+        assert!(!created_by_cull("xmp:CreatorTool=\"Adobe Lightroom 15.3\""));
         // Fresh sidecars must carry a marker the gate recognises.
-        assert!(authored_by_cull(&fresh_xmp()));
+        assert!(created_by_cull(&fresh_xmp()));
+
+        // Only the OLDER generation opens the Rating-only legacy arm, and a
+        // declaration CULL can leave in someone else's file never does.
+        assert!(stamped_by_pre_rebrand_cull("x:xmptk=\"Cull 1.0\""));
+        assert!(!stamped_by_pre_rebrand_cull("x:xmptk=\"CULL\""));
+        assert!(!stamped_by_pre_rebrand_cull(&fresh_xmp()));
+        assert!(!stamped_by_pre_rebrand_cull("xmlns:cull=\"…\""));
     }
 
     /// Unrate strips CULL's fields; a fresh CULL sidecar becomes deletable.
@@ -1027,7 +1152,7 @@ mod tests {
 <rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
 xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Description>\n \
 </rdf:RDF>\n</x:xmpmeta>";
-        assert!(!authored_by_cull(lrc), "LrC sidecar is not CULL-authored");
+        assert!(!created_by_cull(lrc), "LrC sidecar is not CULL-authored");
         let keep = apply_rating_to_xmp(lrc, "keep").unwrap();
         assert_eq!(parse_xmp_rating(&keep), Some(1), "user 1★ survives keep");
         assert_eq!(
@@ -1351,9 +1476,9 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
     }
 
     /// A sidecar CULL only ANNOTATED is never deleted on unrate. Writing the
-    /// new marker declares `xmlns:cull`, which `authored_by_cull` accepts —
-    /// so the delete gate had to stop asking that question and start asking
-    /// whether CULL CREATED the file.
+    /// new marker declares `xmlns:cull` in their file, so the delete gate had
+    /// to stop asking "did CULL touch this" and start asking "did CULL MAKE
+    /// this" — the question only a tool stamp can answer.
     #[test]
     fn unrate_never_deletes_a_sidecar_cull_did_not_create() {
         let work = std::env::temp_dir().join(format!("cull-xmp-3p-{}", std::process::id()));
@@ -1382,7 +1507,10 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
             !created_by_cull(&after_keep),
             "CULL did not create this file"
         );
-        assert!(authored_by_cull(&after_keep), "…but it did annotate it");
+        assert!(
+            !stamped_by_pre_rebrand_cull(&after_keep),
+            "…and annotating it must not open the legacy Rating-only arm either"
+        );
 
         assert_eq!(clear_xmp_rating_sync(&p), Ok(()));
         assert!(xmp.exists(), "a third-party sidecar must survive an unrate");
@@ -1399,7 +1527,7 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
     /// A genuine Lightroom 1★ must survive keep → unrate → keep on a sidecar
     /// CULL did not create. Writing `cull:fav="no"` declares `xmlns:cull`, and
     /// an unrate strips the marker but not the declaration — leaving a
-    /// third-party sidecar that `authored_by_cull` accepts and a lone 1★ that
+    /// third-party sidecar carrying a CULL namespace and a lone 1★ that
     /// `cull_owned_fav_star` would then claim as CULL's own courtesy stamp:
     /// hidden from the UI on the read, and DELETED by the next rating write.
     /// Ownership of a star, like ownership of the file, is `created_by_cull`.
@@ -1767,5 +1895,474 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         assert_eq!(apply_star_to_xmp(&once, Some(3)).unwrap(), once);
         let lbl = apply_label_to_xmp(&fresh_xmp(), Some("blue")).unwrap();
         assert_eq!(apply_label_to_xmp(&lbl, Some("blue")).unwrap(), lbl);
+    }
+
+    // ── A verdict is never invented (review findings 1 + 2) ──────────────
+
+    /// A star is not a verdict. `classify_xmp`'s pre-flag Rating-only arm used
+    /// to fire on ANY CULL tool stamp, so a 5★ CULL wrote with no pick flag
+    /// read back as a FAVORITE — counted as a keep, copied by "Copy keeps to
+    /// export", and uncorrectable inside the app (review finding 1).
+    #[test]
+    fn a_star_cull_wrote_is_never_a_verdict() {
+        for n in 1..=5u8 {
+            let starred = apply_star_to_xmp(&fresh_xmp(), Some(n)).unwrap();
+            assert_eq!(classify_xmp(&starred), None, "{n}★ alone is not a verdict");
+            assert_eq!(
+                parse_lrc_rating(&starred),
+                Some(n),
+                "{n}★ is still the user's"
+            );
+        }
+        // keep → 5★ → unrate returns to unrated, not to a favorite.
+        let keep = apply_rating_to_xmp(&fresh_xmp(), "keep").unwrap();
+        let starred = apply_star_to_xmp(&keep, Some(5)).unwrap();
+        assert_eq!(classify_xmp(&strip_cull_fields(&starred)), None);
+    }
+
+    /// A leftover namespace declaration is not a verdict. A rating write
+    /// declares `xmlns:cull` in a sidecar CULL did not create, and an unrate
+    /// strips the marker but not the declaration — after which the legacy arm
+    /// read THEIR `xmp:Rating` as CULL's pre-flag scheme: "5" → favorite,
+    /// "0" → keep, "-1" → REJECT. A fabricated reject is not cosmetic: it
+    /// feeds move_rejects_to_subfolder and move_rejects_to_trash (finding 2).
+    #[test]
+    fn a_leftover_namespace_declaration_is_not_a_verdict() {
+        for value in ["5", "0", "-1", "3"] {
+            for third in [
+                format!(
+                    "<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+                     xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"{value}\">\n  </rdf:Description>"
+                ),
+                format!(
+                    "<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+                     xmp:CreatorTool=\"Adobe Lightroom Classic\">\n   <xmp:Rating>{value}</xmp:Rating>\n  </rdf:Description>"
+                ),
+            ] {
+                assert_eq!(classify_xmp(&third), None, "untouched {value}");
+                let kept = apply_rating_to_xmp(&third, "keep").unwrap();
+                assert_eq!(classify_xmp(&kept).as_deref(), Some("keep"), "{value}");
+                let unrated = strip_cull_fields(&kept);
+                assert!(
+                    unrated.contains("xmlns:cull="),
+                    "the declaration is still there — that is the trap"
+                );
+                assert_eq!(
+                    classify_xmp(&unrated),
+                    None,
+                    "keep→unrate on a third-party {value}★ must invent no verdict"
+                );
+            }
+        }
+    }
+
+    /// Every sidecar shape any past CULL version wrote still means exactly what
+    /// it meant. The pre-flag Rating-only scheme was only ever written by the
+    /// PRE-REBRAND generation: the flag scheme is in the repo from its initial
+    /// commit (`7f0516a`, `x:xmptk="Cull 1.0"`) and the upper-case `CULL` stamp
+    /// arrived later (`33536cd`), so no `CULL`-stamped build ever wrote it.
+    /// That is why the legacy arm may key on the lower-case stamp alone — a key
+    /// CULL never writes into a file it did not create, and which therefore
+    /// cannot be left behind the way `xmlns:cull` can.
+    #[test]
+    fn every_historical_cull_sidecar_keeps_its_meaning() {
+        for (shape, want) in [
+            // Pre-flag, Rating-only, pre-rebrand stamp — both spellings of the
+            // stamp, both XMP forms of the star.
+            (
+                "x:xmptk=\"Cull 1.0\" <xmp:Rating>0</xmp:Rating>",
+                Some("keep"),
+            ),
+            (
+                "x:xmptk=\"Cull 1.0\" <xmp:Rating>-1</xmp:Rating>",
+                Some("reject"),
+            ),
+            (
+                "x:xmptk=\"Cull 1.0\" <xmp:Rating>5</xmp:Rating>",
+                Some("favorite"),
+            ),
+            (
+                "xmp:CreatorTool=\"Cull 1.0\" xmp:Rating=\"0\"",
+                Some("keep"),
+            ),
+            (
+                "xmp:CreatorTool=\"Cull 1.0\" xmp:Rating=\"-1\"",
+                Some("reject"),
+            ),
+            (
+                "xmp:CreatorTool=\"Cull 1.0\" xmp:Rating=\"5\"",
+                Some("favorite"),
+            ),
+            // Flag scheme, pre-marker (no cull:fav).
+            (
+                "x:xmptk=\"Cull 1.0\" xmpDM:pick=\"1\" xmpDM:good=\"true\"",
+                Some("keep"),
+            ),
+            (
+                "x:xmptk=\"Cull 1.0\" xmpDM:pick=\"-1\" xmpDM:good=\"false\"",
+                Some("reject"),
+            ),
+            (
+                "x:xmptk=\"Cull 1.0\" xmpDM:pick=\"1\" xmp:Rating=\"1\"",
+                Some("favorite"),
+            ),
+            (
+                "x:xmptk=\"CULL\" xmpDM:pick=\"1\" xmp:Rating=\"1\"",
+                Some("favorite"),
+            ),
+            // An LrC sidecar round-tripping a flagged lone 1★, no CULL anywhere.
+            (
+                "x:xmptk=\"Adobe XMP Core\" xmpDM:pick=\"1\" xmp:Rating=\"1\"",
+                Some("favorite"),
+            ),
+            // Marked, current generation.
+            (
+                "x:xmptk=\"CULL\" xmpDM:pick=\"1\" cull:fav=\"no\"",
+                Some("keep"),
+            ),
+            (
+                "x:xmptk=\"CULL\" xmpDM:pick=\"-1\" cull:fav=\"no\"",
+                Some("reject"),
+            ),
+            (
+                "x:xmptk=\"CULL\" xmpDM:pick=\"1\" cull:fav=\"star\" xmp:Rating=\"1\"",
+                Some("favorite"),
+            ),
+            (
+                "x:xmptk=\"CULL\" xmpDM:pick=\"1\" cull:fav=\"flag\" xmp:Rating=\"4\"",
+                Some("favorite"),
+            ),
+            ("x:xmptk=\"CULL\" xmpDM:pick=\"0\"", None),
+        ] {
+            assert_eq!(classify_xmp(shape).as_deref(), want, "{shape}");
+        }
+    }
+
+    // ── Single-quoted attributes (review finding 3) ──────────────────────
+
+    /// ExifTool — the most likely producer of a non-Lightroom sidecar beside a
+    /// CR3 — writes single-quoted attributes. `insert_after_about` matched only
+    /// the double-quoted form, so every insert no-opped, `edit` returned
+    /// identical bytes, and the unchanged-bytes skip reported SAVED with
+    /// nothing on disk (review finding 3).
+    #[test]
+    fn a_single_quoted_sidecar_really_receives_the_write() {
+        let exiftool =
+            "<rdf:Description rdf:about=''\n    xmlns:xmp='http://ns.adobe.com/xap/1.0/'\n   \
+                        xmp:CreatorTool='ExifTool'>\n  </rdf:Description>";
+        assert_eq!(
+            read_property(exiftool, "xmp:CreatorTool").as_deref(),
+            Some("ExifTool"),
+            "their single-quoted values are readable"
+        );
+        let keep = apply_rating_to_xmp(exiftool, "keep").unwrap();
+        assert_eq!(classify_xmp(&keep).as_deref(), Some("keep"));
+        let starred = apply_star_to_xmp(exiftool, Some(4)).unwrap();
+        assert_eq!(parse_lrc_rating(&starred), Some(4));
+        let labelled = apply_label_to_xmp(exiftool, Some("blue")).unwrap();
+        assert_eq!(parse_label(&labelled).as_deref(), Some("blue"));
+        // A single-quoted value CULL wrote must read back, and clear cleanly.
+        let single = "<rdf:Description rdf:about='' xmp:Rating='3' xmp:Label='Red'>";
+        assert_eq!(parse_lrc_rating(single), Some(3));
+        assert_eq!(parse_label(single).as_deref(), Some("red"));
+        let cleared = apply_star_to_xmp(single, None).unwrap();
+        assert_eq!(parse_xmp_rating(&cleared), None, "{cleared}");
+    }
+
+    // ── Two rdf:Description blocks (review finding 4) ────────────────────
+
+    /// A namespace declaration binds a prefix for the element it is on, not for
+    /// the whole file. `ensure_*_ns` asked whether the declaration appeared
+    /// ANYWHERE while every insert lands in the FIRST `rdf:Description` — so a
+    /// packet whose second block declared `xmlns:xmp` got `xmp:Label` written
+    /// into the first block, where the prefix is unbound. That is
+    /// namespace-invalid XML, and a strict reader rejects the whole packet,
+    /// taking the keywords and develop settings with it (review finding 4).
+    #[test]
+    fn a_two_block_packet_declares_the_prefix_in_the_block_that_gets_the_property() {
+        let two = "<rdf:RDF>\n <rdf:Description rdf:about=\"\"\n    \
+                   xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n   dc:title=\"x\">\n \
+                   </rdf:Description>\n <rdf:Description rdf:about=\"\"\n    \
+                   xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\n </rdf:Description>\n</rdf:RDF>";
+        let first_block = |s: &str| {
+            let start = s.find("rdf:Description").unwrap();
+            let end = start + s[start..].find('>').unwrap();
+            s[start..end].to_string();
+            s[start..end].to_string()
+        };
+
+        let labelled = apply_label_to_xmp(two, Some("red")).unwrap();
+        let block = first_block(&labelled);
+        assert!(block.contains("xmp:Label=\"Red\""), "{block}");
+        assert!(
+            block.contains("xmlns:xmp="),
+            "the prefix must be bound where it is used: {block}"
+        );
+
+        let starred = apply_star_to_xmp(two, Some(3)).unwrap();
+        let block = first_block(&starred);
+        assert!(block.contains("xmp:Rating=\"3\""), "{block}");
+        assert!(
+            block.contains("xmlns:xmp="),
+            "the prefix must be bound where it is used: {block}"
+        );
+
+        // The same rule for CULL's own namespace and for xmpDM.
+        let two_cull = "<rdf:RDF>\n <rdf:Description rdf:about=\"\">\n </rdf:Description>\n \
+                        <rdf:Description rdf:about=\"\"\n    xmlns:cull=\"http://ns.cull.photo/1.0/\"\n    \
+                        xmlns:xmpDM=\"http://ns.adobe.com/xmp/1.0/DynamicMedia/\">\n </rdf:Description>\n</rdf:RDF>";
+        let kept = apply_rating_to_xmp(two_cull, "keep").unwrap();
+        let block = first_block(&kept);
+        assert!(block.contains("cull:fav=\"no\""), "{block}");
+        assert!(block.contains("xmlns:cull="), "{block}");
+        assert!(block.contains("xmlns:xmpDM="), "{block}");
+    }
+
+    // ── A stale xmp:LabelColor (review finding 5) ────────────────────────
+
+    /// LrC 15 added `xmp:LabelColor` beside `xmp:Label`. Writing or clearing
+    /// only the name leaves the colour behind, so Lightroom can show red while
+    /// CULL shows blue — or nothing. Removing the stale copy can never make
+    /// Lightroom show a WRONG colour (it falls back to the name CULL did
+    /// write); leaving it can. Only a LABEL write may touch it.
+    #[test]
+    fn a_label_write_clears_a_stale_label_colour() {
+        let both =
+            "<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+                    xmp:Label=\"Red\"\n   xmp:LabelColor=\"red\">\n  </rdf:Description>";
+        let blue = apply_label_to_xmp(both, Some("blue")).unwrap();
+        assert_eq!(parse_label(&blue).as_deref(), Some("blue"));
+        assert!(!blue.contains("xmp:LabelColor"), "{blue}");
+
+        let cleared = apply_label_to_xmp(both, None).unwrap();
+        assert_eq!(parse_label(&cleared), None);
+        assert!(!cleared.contains("xmp:LabelColor"), "{cleared}");
+
+        let element = "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\
+                       <xmp:Label>Red</xmp:Label><xmp:LabelColor>red</xmp:LabelColor></rdf:Description>";
+        let green = apply_label_to_xmp(element, Some("green")).unwrap();
+        assert!(!green.contains("xmp:LabelColor"), "{green}");
+        assert!(green.contains("<xmp:Label>Green</xmp:Label>"), "{green}");
+
+        // A star or a rating write is not a label write and must leave it alone.
+        assert!(apply_star_to_xmp(both, Some(3))
+            .unwrap()
+            .contains("xmp:LabelColor"));
+        assert!(apply_rating_to_xmp(both, "keep")
+            .unwrap()
+            .contains("xmp:LabelColor"));
+    }
+
+    // ── The litter gate's backend half (review finding 6) ────────────────
+
+    /// The frontend now sends `clear_xmp_rating` when a change leaves a frame
+    /// with no rating, no star and no label. This is what it calls: a
+    /// CULL-created sidecar that ends up holding nothing must be removed, so
+    /// experimenting with a star leaves no file behind on the NAS.
+    #[test]
+    fn unrate_deletes_a_cull_sidecar_left_holding_only_a_cleared_star_and_label() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-litter-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("l.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let p = cr3.to_string_lossy().to_string();
+        let xmp = cr3.with_extension("xmp");
+
+        assert_eq!(write_xmp_star_sync(&p, Some(3)), Ok(()));
+        assert_eq!(write_xmp_label_sync(&p, Some("red")), Ok(()));
+        assert!(xmp.exists(), "the sidecar was created");
+        assert_eq!(write_xmp_star_sync(&p, None), Ok(()));
+        assert_eq!(write_xmp_label_sync(&p, None), Ok(()));
+        assert!(xmp.exists(), "a star/label write never deletes");
+
+        let left = std::fs::read_to_string(&xmp).unwrap();
+        assert_eq!(classify_xmp(&left), None, "no verdict was invented");
+        assert!(!xmp_has_user_content(&strip_cull_fields(&left)));
+
+        assert_eq!(clear_xmp_rating_sync(&p), Ok(()));
+        assert!(
+            !xmp.exists(),
+            "the empty CULL sidecar is litter and is removed"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// A CRLF sidecar stays CRLF. Every insert goes in as one new line, and an
+    /// LF-only line left a Windows sidecar mixed-ending; the matching removal
+    /// used to eat a single space and leave a line of orphaned whitespace, or a
+    /// lone `>`, behind (review finding 7). Set-then-clear is the sharpest way
+    /// to say it: the file must come back byte-for-byte.
+    #[test]
+    fn a_crlf_sidecar_keeps_its_line_endings_and_leaves_no_orphaned_line() {
+        let crlf = "<rdf:Description rdf:about=\"\"\r\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\r\n   \
+                    xmp:CreatorTool=\"Adobe Lightroom Classic\">\r\n  </rdf:Description>";
+        let starred = apply_star_to_xmp(crlf, Some(3)).unwrap();
+        assert!(
+            !starred.replace("\r\n", "").contains('\n'),
+            "no lone LF was introduced: {starred:?}"
+        );
+        assert_eq!(
+            apply_star_to_xmp(&starred, None).unwrap(),
+            crlf,
+            "clearing restores the file byte-for-byte"
+        );
+
+        let labelled = apply_label_to_xmp(crlf, Some("green")).unwrap();
+        assert!(
+            !labelled.replace("\r\n", "").contains('\n'),
+            "no lone LF was introduced: {labelled:?}"
+        );
+        assert_eq!(apply_label_to_xmp(&labelled, None).unwrap(), crlf);
+    }
+
+    // ── A save is never reported unless it landed (review finding 3) ─────
+
+    /// The durable half of finding 3: "no byte changed" must stop meaning two
+    /// different things. A write whose intent did not land in the bytes is an
+    /// Err the existing retry / unsaved machinery can report, never a silent
+    /// Ok — and their file is left exactly as it was.
+    #[test]
+    fn a_sidecar_the_writer_cannot_edit_is_refused_not_reported_as_saved() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-noedit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("odd.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let p = cr3.to_string_lossy().to_string();
+        let xmp = cr3.with_extension("xmp");
+        // No `rdf:about` anywhere: substring surgery has no anchor to insert at.
+        let theirs = b"<rdf:Description>\n  </rdf:Description>";
+        std::fs::write(&xmp, theirs).unwrap();
+
+        for err in [
+            write_xmp_rating_sync(&p, "keep").unwrap_err(),
+            write_xmp_star_sync(&p, Some(3)).unwrap_err(),
+            write_xmp_label_sync(&p, Some("red")).unwrap_err(),
+        ] {
+            assert!(err.starts_with(WRITE_NOT_APPLIED), "{err}");
+        }
+        assert_eq!(
+            std::fs::read(&xmp).unwrap(),
+            theirs,
+            "their file is untouched"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// And the sidecar that started this: an ExifTool-shaped, single-quoted
+    /// file must take the write for real, through the command path.
+    #[test]
+    fn a_single_quoted_sidecar_round_trips_on_disk() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-sq-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("e.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let p = cr3.to_string_lossy().to_string();
+        let xmp = cr3.with_extension("xmp");
+        std::fs::write(
+            &xmp,
+            "<rdf:Description rdf:about=''\n    xmlns:xmp='http://ns.adobe.com/xap/1.0/'\n   \
+             xmp:CreatorTool='ExifTool'>\n  </rdf:Description>",
+        )
+        .unwrap();
+
+        assert_eq!(write_xmp_rating_sync(&p, "keep"), Ok(()));
+        assert_eq!(write_xmp_star_sync(&p, Some(2)), Ok(()));
+        assert_eq!(write_xmp_label_sync(&p, Some("purple")), Ok(()));
+        let read = read_ratings(&p).unwrap();
+        assert_eq!(read.rating.as_deref(), Some("keep"));
+        assert_eq!(read.star, Some(2));
+        assert_eq!(read.label.as_deref(), Some("purple"));
+        assert!(
+            std::fs::read_to_string(&xmp).unwrap().contains("ExifTool"),
+            "their data survived"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    // ── A custom label is the user's (controller ruling) ─────────────────
+
+    /// CULL never overwrites a colour label it did not write. An `xmp:Label`
+    /// outside the five defaults is the user's own, so BOTH a set and a clear
+    /// refuse — with a distinct prefix the frontend can tell apart from a
+    /// failed save — and the string survives byte-for-byte, entities,
+    /// non-ASCII and all. One of the five defaults IS replaceable.
+    #[test]
+    fn a_custom_label_is_never_replaced_or_cleared() {
+        for text in ["Urgent", "Rot", "Kunde &amp; Co", "&lt;b&gt;", "Rød", "赤"] {
+            let theirs = format!(
+                "<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+                 xmp:Label=\"{text}\">\n  </rdf:Description>"
+            );
+            assert_eq!(parse_label(&theirs).as_deref(), Some("custom"), "{text}");
+            let set = apply_label_to_xmp(&theirs, Some("red")).unwrap_err();
+            assert!(set.starts_with(CUSTOM_LABEL_KEPT), "{set}");
+            let clear = apply_label_to_xmp(&theirs, None).unwrap_err();
+            assert!(clear.starts_with(CUSTOM_LABEL_KEPT), "{clear}");
+        }
+        // The element form is theirs too, quotes and all.
+        let element =
+            "<rdf:Description rdf:about=\"\"><xmp:Label>a\"b</xmp:Label></rdf:Description>";
+        assert!(apply_label_to_xmp(element, Some("blue"))
+            .unwrap_err()
+            .starts_with(CUSTOM_LABEL_KEPT));
+
+        // One of the five defaults, in every casing LrC has shipped, IS ours
+        // to replace and to clear.
+        for spelling in ["Red", "red", "RED"] {
+            let mine = format!(
+                "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" \
+                 xmp:Label=\"{spelling}\"></rdf:Description>"
+            );
+            let blue = apply_label_to_xmp(&mine, Some("blue")).unwrap();
+            assert_eq!(parse_label(&blue).as_deref(), Some("blue"), "{spelling}");
+            assert_eq!(
+                parse_label(&apply_label_to_xmp(&mine, None).unwrap()),
+                None,
+                "{spelling}"
+            );
+        }
+    }
+
+    /// The on-disk half of the ruling: refusing must leave the bytes alone.
+    #[test]
+    fn a_custom_label_write_leaves_the_file_byte_identical() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-custom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("c.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let p = cr3.to_string_lossy().to_string();
+        let xmp = cr3.with_extension("xmp");
+        let theirs =
+            "<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+                      xmp:Label=\"Kunde &amp; Co — Rød\">\n  </rdf:Description>";
+        std::fs::write(&xmp, theirs).unwrap();
+
+        for label in [Some("red"), None] {
+            let err = write_xmp_label_sync(&p, label).unwrap_err();
+            assert!(err.starts_with(CUSTOM_LABEL_KEPT), "{err}");
+            assert_eq!(
+                std::fs::read_to_string(&xmp).unwrap(),
+                theirs,
+                "byte-identical after a refused {label:?}"
+            );
+        }
+        // A rating and a star still go through, and still leave it alone.
+        assert_eq!(write_xmp_rating_sync(&p, "keep"), Ok(()));
+        assert_eq!(write_xmp_star_sync(&p, Some(5)), Ok(()));
+        let after = std::fs::read_to_string(&xmp).unwrap();
+        assert!(
+            after.contains("xmp:Label=\"Kunde &amp; Co — Rød\""),
+            "{after}"
+        );
+        assert_eq!(read_ratings(&p).unwrap().label.as_deref(), Some("custom"));
+
+        let _ = std::fs::remove_dir_all(&work);
     }
 }
