@@ -76,7 +76,8 @@ export function computeGridBurstSegments(
     // Contiguous means: same row, same group, and the very next column. Cells
     // arrive row-major with no gaps inside a row, so the column test is what
     // catches a foreign frame sitting between two members.
-    const extends_ = open !== null && openKey === key && open.row === cell.row && cell.col === open.c1 + 1;
+    const extends_ =
+      open !== null && openKey === key && open.row === cell.row && cell.col === open.c1 + 1;
     if (!extends_) close();
     if (open === null) {
       open = {
