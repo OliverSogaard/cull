@@ -17,6 +17,9 @@ dist-ssr
 .vite
 *.local
 
+# Coverage output (pnpm test:coverage) — generated, never committed.
+coverage
+
 # Rust / Tauri build output
 src-tauri/target
 

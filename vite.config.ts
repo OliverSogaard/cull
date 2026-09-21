@@ -42,5 +42,27 @@ export default defineConfig(async () => ({
     // styles/index.css) still gets Vitest's default stub instead of paying
     // for real CSS processing it doesn't need.
     css: { include: [/\.css\?.*\braw\b/] },
+
+    // Coverage is MEASURED, not gated (Phase 4): there is no threshold here
+    // and none in CI. A global floor would be sunk by App.tsx and the
+    // presentational components, and would then be ignored. Per-directory
+    // floors are the shape to add once the numbers exist.
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html"],
+      // Only the code a test could meaningfully cover: the entry point, the
+      // type barrels and the test scaffolding itself are noise in the number.
+      // A user `exclude` REPLACES Vitest's defaults, which is why the test
+      // files and the fixtures have to be named here explicitly.
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/**/*.test.{ts,tsx}",
+        "src/**/__fixtures__/**", // e.g. src/image/__fixtures__/metaBatching
+        "src/test/**",
+        "src/types/**",
+        "src/main.tsx",
+        "src/vite-env.d.ts",
+      ],
+    },
   },
 }));
