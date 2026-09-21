@@ -4,18 +4,21 @@
 //! real LrC 15.3 sidecars (`sample_cr3s/sample_LrCFlaggedCR3s`):
 //!
 //! ```text
-//!   reject   → xmpDM:pick="-1"  xmpDM:good="false"
-//!   keep     → xmpDM:pick="1"   xmpDM:good="true"
-//!   favorite → xmpDM:pick="1"   xmpDM:good="true"  + cull:fav
+//!   reject   → xmpDM:pick="-1"  xmpDM:good="false"  + cull:fav="no"
+//!   keep     → xmpDM:pick="1"   xmpDM:good="true"   + cull:fav="no"
+//!   favorite → xmpDM:pick="1"   xmpDM:good="true"   + cull:fav="star"|"flag"
 //! ```
 //!
-//! The pick flag means "survived the cull". Favorites carry a CULL-private
-//! `cull:fav` marker (see `CULL_NS` below): "star" = CULL added a courtesy 1★ to a
-//! frame with no user rating; "flag" = the favorite rides the user's existing
-//! 1–5★ and `xmp:Rating` is left untouched. The marker disambiguates CULL's
-//! favorite stamp from a user's Lightroom star (they used to collide at
-//! `xmp:Rating="1"`). Stars 2–5 are the user's LrC edit-pass ratings and are
-//! NEVER touched by CULL. The pick/good flags ride in the xmpDM (Dynamic Media)
+//! The pick flag means "survived the cull". EVERY rating CULL writes carries a
+//! CULL-private `cull:fav` marker (see `CULL_NS` below): "star" = CULL added a
+//! courtesy 1★ to a frame with no user rating; "flag" = the favorite rides the
+//! user's existing 1–5★ and `xmp:Rating` is left untouched; "no" = explicitly
+//! not a favorite. The marker disambiguates CULL's favorite stamp from a user's
+//! Lightroom star (they used to collide at `xmp:Rating="1"`), and "no" is what
+//! stops a keep on a genuine user 1★ reading back as a favorite. A sidecar with
+//! NO marker at all is the only one the legacy "pick + lone 1★ = favorite"
+//! fallback may still claim. Stars 2–5 are the user's LrC edit-pass ratings and
+//! are NEVER touched by CULL. The pick/good flags ride in the xmpDM (Dynamic Media)
 //! namespace exactly as LrC writes them, so picks / rejects / favorites
 //! round-trip into Lightroom and back.
 //!
@@ -173,7 +176,10 @@ fn clear_xmp_rating_sync(path: &str) -> Result<(), String> {
     // ownership of an orphaned sidecar can't be verified without the photo.
     require_source(cr3)?;
 
-    let authored = authored_by_cull(&existing);
+    // created_by_cull, NOT authored_by_cull: a bare `xmlns:cull` declaration
+    // means CULL wrote an attribute into someone else's file, which is never
+    // a licence to delete it.
+    let authored = created_by_cull(&existing);
     let stripped = strip_cull_fields(&existing);
 
     if authored && !xmp_has_user_content(&stripped) {
@@ -264,7 +270,8 @@ fn parse_lrc_rating(content: &str) -> Option<u8> {
 ///     `cull:fav="star"` (CULL owns the star; safe to remove on demote).
 ///   - favorite on a frame that already has a user 1–5★ → leave the star
 ///     untouched and mark `cull:fav="flag"` (favorite rides the user's star).
-///   - keep/reject → drop `cull:fav`, and remove the 1★ only when CULL owned it.
+///   - keep/reject → record `cull:fav="no"` (an EXPLICIT not-a-favorite), and
+///     remove the 1★ only when CULL owned it.
 fn apply_rating_to_xmp(xmp: &str, rating: &str) -> Result<String, String> {
     let (pick, good) = match rating {
         "keep" => ("1", "true"),
@@ -290,11 +297,17 @@ fn apply_rating_to_xmp(xmp: &str, rating: &str) -> Result<String, String> {
             // is flag-only; the user's star stays as their rating.
             out = set_desc_attr(&out, "cull:fav", "flag");
         }
-    } else if cull_owned_fav_star(&out) {
-        out = remove_desc_attr(&out, "cull:fav");
-        out = remove_fav_star(&out); // CULL's own 1★ only; never a user star
     } else {
-        out = remove_desc_attr(&out, "cull:fav");
+        // Every rating CULL writes carries an EXPLICIT marker, so a sidecar
+        // with no `cull:fav` at all is the only thing classify_xmp's legacy
+        // "pick + lone 1★ = favorite" fallback may still claim. Read the old
+        // marker BEFORE overwriting it: cull_owned_fav_star is what decides
+        // whether the visible 1★ is CULL's to remove.
+        if cull_owned_fav_star(&out) {
+            out = remove_fav_star(&out); // CULL's own 1★ only; never a user star
+        }
+        out = ensure_cull_ns(&out);
+        out = set_desc_attr(&out, "cull:fav", "no");
     }
     Ok(out)
 }
@@ -308,7 +321,13 @@ fn cull_owned_fav_star(xmp: &str) -> bool {
     match cull_fav_value(xmp).as_deref() {
         Some("star") => true,
         Some(_) => false, // "flag": the star is the user's
-        None => authored_by_cull(xmp) && parse_xmp_rating(xmp) == Some(1),
+        // The pre-marker arm gates on [`created_by_cull`], not
+        // `authored_by_cull`: a pre-marker CULL sidecar always carried the tool
+        // stamp, whereas a bare `xmlns:cull` declaration is what a rating write
+        // leaves in SOMEONE ELSE's file — and an unrate strips the marker but
+        // not the declaration, so trusting it would let the next write delete a
+        // genuine Lightroom 1★ as if it were CULL's own courtesy stamp.
+        None => created_by_cull(xmp) && parse_xmp_rating(xmp) == Some(1),
     }
 }
 
@@ -356,18 +375,32 @@ fn cull_fav_value(xmp: &str) -> Option<String> {
     Some(xmp[s..s + rel].to_string())
 }
 
-/// True when CULL authored this sidecar (vs an LrC/third-party sidecar CULL only
-/// annotated). Gates destructive cleanup. Tighter than a bare "Cull" substring
-/// so a stray keyword/path/person-name can't trip it into deleting user data.
-fn authored_by_cull(xmp: &str) -> bool {
-    // Two marker generations: pre-rebrand sidecars say "Cull 1.0", current ones
-    // say "CULL" (the contains check is case-sensitive, so both spellings are
-    // needed to keep old sidecars cleanable).
+/// True when CULL CREATED this sidecar, as opposed to merely annotating one
+/// that was already on disk. Only the tool stamps [`fresh_xmp`] writes count.
+///
+/// Split out of [`authored_by_cull`] when every rating started carrying a
+/// `cull:fav` marker: writing that marker calls [`ensure_cull_ns`], so even a
+/// plain keep now adds `xmlns:cull` to a third-party sidecar — and the unrate
+/// delete gate, which used `authored_by_cull`, would then have REMOVED a file
+/// CULL did not write. (Favoriting has always declared the namespace, so the
+/// hole predates this change; it just got wider.) "CULL touched this" is the
+/// right question for classification; "CULL made this" is the only one that may
+/// authorise a delete — of the file, or of a star inside it.
+fn created_by_cull(xmp: &str) -> bool {
+    // Two marker generations: pre-rebrand sidecars say "Cull 1.0", current
+    // ones say "CULL" (the contains check is case-sensitive).
     xmp.contains("CreatorTool=\"Cull")
         || xmp.contains("x:xmptk=\"Cull")
         || xmp.contains("CreatorTool=\"CULL")
         || xmp.contains("x:xmptk=\"CULL")
-        || xmp.contains("xmlns:cull=")
+}
+
+/// True when CULL authored this sidecar (vs an LrC/third-party sidecar CULL only
+/// annotated). Tighter than a bare "Cull" substring so a stray
+/// keyword/path/person-name can't trip it. Destructive paths use the stricter
+/// [`created_by_cull`] instead.
+fn authored_by_cull(xmp: &str) -> bool {
+    created_by_cull(xmp) || xmp.contains("xmlns:cull=")
 }
 
 /// Set (replace or insert) an `rdf:Description` attribute, preserving LrC's
@@ -549,13 +582,18 @@ fn classify_xmp(content: &str) -> Option<String> {
     match parse_attr_i32(content, "xmpDM:pick") {
         Some(p) if p < 0 => return Some("reject".to_string()),
         Some(p) if p > 0 => {
-            // Favorite is CULL's private marker when present (so a favorite on an
-            // already-starred frame still reads as favorite). Fallback for
-            // sidecars without the marker — including LrC-authored ones that
-            // round-trip a flagged 1★ — keep the historical "pick + lone 1★ =
-            // favorite" rule. Detection is read-only, so this ambiguity is safe;
-            // the destructive paths gate on cull_owned_fav_star instead.
-            let fav = cull_fav_value(content).is_some() || star == Some(1);
+            // "star"/"flag" are the two favorite spellings; "no" is CULL
+            // saying explicitly "this is a keep or a reject". The legacy
+            // "pick + lone 1★ = favorite" fallback applies ONLY to a sidecar
+            // with no marker at all — an LrC-authored one round-tripping a
+            // flagged 1★, or a CULL one written before the marker existed.
+            // Before this, a KEEP on a frame carrying a genuine user 1★ read
+            // back as a FAVORITE after a reload (audit scout R3).
+            let fav = match cull_fav_value(content).as_deref() {
+                Some("star") | Some("flag") => true,
+                Some(_) => false,
+                None => star == Some(1),
+            };
             return Some(if fav { "favorite" } else { "keep" }.to_string());
         }
         Some(_) => return None, // pick == 0 → explicitly unflagged
@@ -717,11 +755,11 @@ mod tests {
     }
 
     /// CRITICAL regression (favorite over a user star): favoriting a frame that
-    /// already carries a user 2–5★ must NOT overwrite that star. The favorite is
+    /// already carries a user 1–5★ must NOT overwrite that star. The favorite is
     /// recorded flag-only via cull:fav, and the frame still reads as favorite.
     #[test]
-    fn favorite_never_clobbers_user_2to5_star() {
-        for n in [2, 3, 4, 5] {
+    fn favorite_never_clobbers_a_user_star() {
+        for n in [1, 2, 3, 4, 5] {
             let starred = set_rating(&fresh_xmp(), n);
             let fav = apply_rating_to_xmp(&starred, "favorite").unwrap();
             assert_eq!(
@@ -745,6 +783,14 @@ mod tests {
                 Some(n),
                 "user {n}★ survives favorite→keep"
             );
+            // THE Phase 5A fix (scout R3): at n == 1 this read back as
+            // "favorite", because classify_xmp's legacy fallback could not
+            // tell a user's 1★ from CULL's own favorite stamp.
+            assert_eq!(
+                classify_xmp(&keep).as_deref(),
+                Some("keep"),
+                "a demoted favorite on a user {n}★ is a keep, not a favorite"
+            );
         }
     }
 
@@ -761,6 +807,12 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         assert!(!authored_by_cull(lrc), "LrC sidecar is not CULL-authored");
         let keep = apply_rating_to_xmp(lrc, "keep").unwrap();
         assert_eq!(parse_xmp_rating(&keep), Some(1), "user 1★ survives keep");
+        assert_eq!(
+            classify_xmp(&keep).as_deref(),
+            Some("keep"),
+            "a KEEP on a frame carrying a genuine Lightroom 1★ must read back \
+             as a keep — it used to read back as a FAVORITE (scout R3)"
+        );
         let reject = apply_rating_to_xmp(lrc, "reject").unwrap();
         assert_eq!(
             parse_xmp_rating(&reject),
@@ -794,7 +846,11 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
             None,
             "CULL's own 1★ removed on demote"
         );
-        assert!(!keep.contains("cull:fav"), "favorite marker cleared");
+        assert!(
+            keep.contains("cull:fav=\"no\""),
+            "a demote records an EXPLICIT not-a-favorite, so the legacy \
+             `pick + lone 1star` fallback can never claim this sidecar"
+        );
         assert_eq!(classify_xmp(&keep).as_deref(), Some("keep"));
     }
 
@@ -1026,5 +1082,118 @@ xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Descr
         assert_eq!(clear_xmp_rating_sync(&cr3.to_string_lossy()), Ok(()));
         assert!(!cr3.with_extension("xmp").exists());
         let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Every rating CULL writes says what it is. Without this, "no marker"
+    /// meant two different things — "not a favorite" and "written before the
+    /// marker existed" — and classify_xmp had to guess between them.
+    #[test]
+    fn every_rating_cull_writes_carries_an_explicit_marker() {
+        for (rating, want) in [("keep", "no"), ("reject", "no"), ("favorite", "star")] {
+            let out = apply_rating_to_xmp(&fresh_xmp(), rating).unwrap();
+            assert_eq!(
+                cull_fav_value(&out).as_deref(),
+                Some(want),
+                "{rating} must record cull:fav=\"{want}\""
+            );
+            assert!(
+                out.contains("xmlns:cull="),
+                "{rating} declares the namespace"
+            );
+        }
+    }
+
+    /// The legacy fallback keeps working for the sidecars it exists for: no
+    /// `cull:fav` AT ALL, a positive pick, and a lone 1★ — an LrC sidecar
+    /// round-tripping a flagged favorite, or a pre-marker CULL one.
+    #[test]
+    fn the_legacy_one_star_favorite_fallback_still_applies_without_a_marker() {
+        let legacy = "rdf:about=\"\" xmpDM:pick=\"1\" xmpDM:good=\"true\" xmp:Rating=\"1\"";
+        assert_eq!(cull_fav_value(legacy), None, "the fixture has no marker");
+        assert_eq!(classify_xmp(legacy).as_deref(), Some("favorite"));
+        // …and a marker of "no" overrides it, which is the whole fix.
+        let marked = format!("{legacy} cull:fav=\"no\"");
+        assert_eq!(classify_xmp(&marked).as_deref(), Some("keep"));
+    }
+
+    /// A sidecar CULL only ANNOTATED is never deleted on unrate. Writing the
+    /// new marker declares `xmlns:cull`, which `authored_by_cull` accepts —
+    /// so the delete gate had to stop asking that question and start asking
+    /// whether CULL CREATED the file.
+    #[test]
+    fn unrate_never_deletes_a_sidecar_cull_did_not_create() {
+        let work = std::env::temp_dir().join(format!("cull-xmp-3p-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let cr3 = work.join("third.cr3");
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let xmp = cr3.with_extension("xmp");
+        // A minimal third-party sidecar: no CULL tool stamp, and nothing in
+        // xmp_has_user_content's marker list to save it.
+        std::fs::write(
+            &xmp,
+            "<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+             xmp:CreatorTool=\"SomeOtherTool\">\n  </rdf:Description>",
+        )
+        .unwrap();
+        let p = cr3.to_string_lossy().to_string();
+
+        assert_eq!(write_xmp_rating_sync(&p, "keep"), Ok(()));
+        let after_keep = std::fs::read_to_string(&xmp).unwrap();
+        assert!(
+            after_keep.contains("xmlns:cull="),
+            "the marker declared the ns"
+        );
+        assert!(
+            !created_by_cull(&after_keep),
+            "CULL did not create this file"
+        );
+        assert!(authored_by_cull(&after_keep), "…but it did annotate it");
+
+        assert_eq!(clear_xmp_rating_sync(&p), Ok(()));
+        assert!(xmp.exists(), "a third-party sidecar must survive an unrate");
+        let after_clear = std::fs::read_to_string(&xmp).unwrap();
+        assert!(
+            after_clear.contains("SomeOtherTool"),
+            "their data is intact"
+        );
+        assert_eq!(classify_xmp(&after_clear), None, "CULL's fields are gone");
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// A genuine Lightroom 1★ must survive keep → unrate → keep on a sidecar
+    /// CULL did not create. Writing `cull:fav="no"` declares `xmlns:cull`, and
+    /// an unrate strips the marker but not the declaration — leaving a
+    /// third-party sidecar that `authored_by_cull` accepts and a lone 1★ that
+    /// `cull_owned_fav_star` would then claim as CULL's own courtesy stamp:
+    /// hidden from the UI on the read, and DELETED by the next rating write.
+    /// Ownership of a star, like ownership of the file, is `created_by_cull`.
+    #[test]
+    fn a_user_star_survives_keep_unrate_keep_on_a_sidecar_cull_did_not_create() {
+        let lrc = "<rdf:Description rdf:about=\"\"\n    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n   \
+             xmp:CreatorTool=\"Adobe Lightroom Classic\"\n   xmp:Rating=\"1\">\n  </rdf:Description>";
+        let keep = apply_rating_to_xmp(lrc, "keep").unwrap();
+        let unrated = strip_cull_fields(&keep);
+        assert!(
+            unrated.contains("xmlns:cull="),
+            "the ns declaration outlives the marker — that is the trap"
+        );
+        assert_eq!(
+            parse_xmp_rating(&unrated),
+            Some(1),
+            "the star is still on disk"
+        );
+        assert_eq!(
+            parse_lrc_rating(&unrated),
+            Some(1),
+            "and still the user's, so the UI must still show it"
+        );
+        let again = apply_rating_to_xmp(&unrated, "keep").unwrap();
+        assert_eq!(
+            parse_xmp_rating(&again),
+            Some(1),
+            "a second keep must never eat a star CULL did not write"
+        );
     }
 }
