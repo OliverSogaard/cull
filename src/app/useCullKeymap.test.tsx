@@ -16,9 +16,10 @@ import { useCullKeymap } from "./useCullKeymap";
  * Three mechanics that make such tests lie if you get them wrong:
  *  1. A KeyboardEvent must be `cancelable: true`, or `preventDefault()` is a
  *     silent no-op and EVERY `defaultPrevented` assertion passes vacuously.
- *  2. Escape's `defaultPrevented` is ALWAYS true — a capture-phase listener
- *     (useCullKeymap.ts:839-845) preventDefaults it in every phase — so it
- *     proves nothing except in the one test that pins that listener.
+ *  2. Escape's `defaultPrevented` is ALWAYS true — the `swallowEsc` capture-
+ *     phase listener (its own `useEffect`, registered once, below the big
+ *     cull keymap in useCullKeymap.ts) preventDefaults it in every phase —
+ *     so it proves nothing except in the one test that pins that listener.
  *  3. `afterEach(cleanup)` is load-bearing. Vitest runs without `globals`,
  *     so RTL's auto-cleanup never registers; an un-unmounted hook leaves its
  *     window listeners attached and the NEXT test's keypress fires this
@@ -393,7 +394,8 @@ describe("Escape", () => {
 
   it("is swallowed in EVERY phase, home included — the macOS fullscreen listener", () => {
     // The one test allowed to assert Escape's defaultPrevented: it is pinning
-    // the capture-phase listener at :839-845 that makes it always true.
+    // the `swallowEsc` capture-phase listener (useCullKeymap.ts) that makes
+    // it always true.
     const p = props({ phase: "start" });
     renderKeymap(p);
     expect(press("Escape").defaultPrevented).toBe(true);
@@ -668,9 +670,12 @@ describe("filter digits", () => {
     return updater(from);
   }
 
-  // Asserted THROUGH cycleFilter, so renaming a Filter value or reordering a
-  // CYCLES entry (utils/filterModes.ts:13-19) breaks this test. A hard-coded
-  // "keepsFavs" would sail straight past both.
+  // What this pins: the digit→top mapping (key "3" reaches "keeps", etc.)
+  // and that the keymap dispatches through cycleFilter — CASES' own type
+  // (`Parameters<typeof cycleFilter>[1]`) makes a Filter rename a compile
+  // error here. Both sides of the assertion call the SAME cycleFilter, so a
+  // CYCLES reorder (utils/filterModes.ts:13-19) cancels out; the actual
+  // sub-mode order is pinned instead by filterModes.test.ts:47-65.
   const CASES: [string, Parameters<typeof cycleFilter>[1]][] = [
     ["1", "all"],
     ["2", "unrated"],
@@ -729,6 +734,13 @@ describe("holds", () => {
     expect(p.startHold).toHaveBeenCalledWith(1);
   });
 
+  it("ArrowLeft starts the scrub the other way", () => {
+    const p = props();
+    renderKeymap(p);
+    press("ArrowLeft");
+    expect(p.startHold).toHaveBeenCalledWith(-1);
+  });
+
   it("the OPPOSITE arrow mid-scrub is ignored entirely", () => {
     const p = props({ heldDirRef: ref<0 | 1 | -1>(1) });
     renderKeymap(p);
@@ -773,6 +785,14 @@ describe("holds", () => {
     expect(p.startGridVertHold).toHaveBeenCalledWith(1);
   });
 
+  it("ArrowUp starts the row-jump the other way", () => {
+    const p = props({ gridVisible: true });
+    renderKeymap(p);
+    press("ArrowUp");
+    expect(p.clearMultiSelection).toHaveBeenCalledTimes(1);
+    expect(p.startGridVertHold).toHaveBeenCalledWith(-1);
+  });
+
   it("Shift added mid row-jump kills the loop before it grows the selection", () => {
     const p = props({ gridVisible: true, heldGridVertDirRef: ref<0 | 1 | -1>(1) });
     renderKeymap(p);
@@ -789,7 +809,11 @@ describe("zoom", () => {
   it("Space arms 1:1, Shift+Space 2:1, and both re-centre the pan", () => {
     const plain = props();
     const { unmount } = renderKeymap(plain);
-    expect(press(" ", { code: "Space" }).defaultPrevented).toBe(true);
+    // key is deliberately NOT " " here: the implementation's keydown handler
+    // gates the zoom-arm branch on e.code, and every other dispatch in this
+    // describe sets both key and code — a key-vs-code swap in production
+    // would sail past all of them.
+    expect(press("", { code: "Space" }).defaultPrevented).toBe(true);
     expect(plain.setIsZooming).toHaveBeenCalledWith(true);
     expect(plain.setZoomLevel).toHaveBeenCalledWith(1);
     expect(plain.setPanOffset).toHaveBeenCalledWith({ x: 0, y: 0 });
@@ -820,7 +844,9 @@ describe("zoom", () => {
   it("releasing Space exits zoom — unless the MOUSE owns it", () => {
     const keyboard = props();
     const { unmount } = renderKeymap(keyboard);
-    release(" ", { code: "Space" });
+    // Same key-vs-code guard as the keydown test above — the keyup handler's
+    // exit-zoom branch also gates on e.code, not e.key.
+    release("", { code: "Space" });
     expect(keyboard.resetZoom).toHaveBeenCalledTimes(1);
     unmount();
 
@@ -848,9 +874,53 @@ describe("a state flip between renders", () => {
     const { rerender } = renderKeymap(p);
     press("Enter");
     expect(p.applyRating).toHaveBeenCalledTimes(1);
-    // Same spy, new props object: the effect rebuilds cullKeyRef's closures.
-    rerender(props({ helpVisible: true, applyRating: p.applyRating }));
+    // Every OTHER prop keeps its identity here — only helpVisible flips — so
+    // this only goes green because helpVisible is truly in the big cull
+    // keymap effect's dependency array (the `useEffect` that builds
+    // `cullKeyRef.current`, in useCullKeymap.ts). Minting a whole fresh
+    // `props()` object instead (as this test used to) would rebuild the
+    // effect regardless of that dep array, since ~30 of its other deps are
+    // freshly-identitied vi.fn()s on every call to `props()` too.
+    rerender({ ...p, helpVisible: true });
     press("Enter");
     expect(p.applyRating).toHaveBeenCalledTimes(1); // still one
+  });
+
+  // Same one-line proof, table-driven, for the other STATE flags in that
+  // dependency array: flip ONLY the named flag off the same stable `p`
+  // object (every other dep keeps its identity) and check the keymap now
+  // behaves as the flip says, not as it did at mount. Each `check` fails
+  // loudly if its own flag were dropped from the dependency array, the same
+  // way the helpVisible test above does.
+  const FLAG_CASES = [
+    {
+      flag: "settingsOpen",
+      check: (p: KeymapProps) => {
+        press("Enter");
+        expect(p.applyRating).not.toHaveBeenCalled();
+      },
+    },
+    {
+      flag: "gridVisible",
+      check: (p: KeymapProps) => {
+        press("ArrowRight");
+        expect(p.startHold).not.toHaveBeenCalled();
+        expect(p.advance).toHaveBeenCalledWith(1);
+      },
+    },
+    {
+      flag: "compareMode",
+      check: (p: KeymapProps) => {
+        press("Enter");
+        expect(p.challengerWins).toHaveBeenCalledTimes(1);
+        expect(p.applyRating).not.toHaveBeenCalled();
+      },
+    },
+  ] as const;
+  it.each(FLAG_CASES)("$flag flips take effect mid-session", ({ flag, check }) => {
+    const p = props();
+    const { rerender } = renderKeymap(p);
+    rerender({ ...p, [flag]: true });
+    check(p);
   });
 });
