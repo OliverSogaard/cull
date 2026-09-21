@@ -3,9 +3,9 @@
 //! Two commands feed the staged/analyze phases:
 //!
 //! - [`scan_folder`] recursively lists CR3 files.
-//! - [`analyze_folder`] orders them chronologically (from each file's mtime —
-//!   the camera's write time, which on the NAS this app targets matches shot
-//!   order) and restores any existing CULL ratings from their `.xmp` sidecars.
+//! - [`analyze_folder`] orders them chronologically (EXIF capture time when the
+//!   frontend asks for it, otherwise each file's mtime) and restores any
+//!   existing CULL ratings from their `.xmp` sidecars.
 //!
 //! Both invariants: read-only, no CR3 mutation.
 
@@ -16,6 +16,7 @@ use std::time::Instant;
 use tauri::Emitter;
 use walkdir::WalkDir;
 
+use crate::tier_cache::{CacheTier, TierCache};
 use crate::xmp::read_ratings;
 
 /// What a folder scan found: the staged CR3 paths plus a count of everything
@@ -101,6 +102,64 @@ fn order_by_capture(epoch: &[Option<i64>], paths: &[String]) -> Vec<usize> {
     order
 }
 
+/// One frame's sort key. EXIF capture time when the frame has one, else the
+/// file's own mtime (written in shoot order for an in-camera write), else
+/// `None` — which `order_by_capture` sinks to the end, in path order.
+///
+/// `offset_ms` is that FOLDER's clock correction and rides whichever source
+/// won: the offset describes a body's clock, so applying it only to the EXIF
+/// frames would split one folder across two clock spaces the moment a single
+/// frame lost its `DateTimeOriginal`. Saturating, so a pathological offset
+/// cannot wrap a sort key into the past.
+fn capture_epoch(exif_ms: Option<i64>, mtime_ms: Option<i64>, offset_ms: i64) -> Option<i64> {
+    exif_ms.or(mtime_ms).map(|t| t.saturating_add(offset_ms))
+}
+
+/// The two capture fields of a CACHED thumb-tier header (`bundle::ThumbHeader`),
+/// combined into an epoch. Minimal-struct parse in the house style of
+/// `bundle::OrientationOnly`: only the fields this pass needs, every one
+/// `serde(default)`, so a v1 header (`meta: null`), a header written before a
+/// field existed, or one written after a field is added all parse instead of
+/// erroring. `None` means "the cache cannot answer" — never "this frame has no
+/// time" — so the caller falls through to the source file.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedCapture {
+    #[serde(default)]
+    captured_at: Option<String>,
+    #[serde(default)]
+    sub_sec_ms: Option<u16>,
+}
+
+#[derive(serde::Deserialize)]
+struct CachedThumbHeader {
+    #[serde(default)]
+    meta: Option<CachedCapture>,
+}
+
+fn capture_from_thumb_header(header_json: &[u8]) -> Option<i64> {
+    let h: CachedThumbHeader = serde_json::from_slice(header_json).ok()?;
+    let m = h.meta?;
+    crate::analyze::captured_at_ms(m.captured_at.as_deref(), m.sub_sec_ms)
+}
+
+/// EXIF capture time for one frame, cheapest source first: the thumb tier's
+/// stored header (validated by the listing's own mtime + size, so a hit costs
+/// ZERO source-file round-trips and re-opening a shoot is free), then a
+/// `moov`-head read of the CR3 itself. Any read failure is `None` — a frame
+/// that cannot be opened here still sorts, on its mtime.
+fn exif_ms_for(cache: &TierCache, path: &str, stat: Option<(i64, u64)>) -> Option<i64> {
+    if let Some((ms, size)) = stat {
+        if let Some((header, _payload)) = cache.get(CacheTier::Thumb, path, ms, size) {
+            if let Some(t) = capture_from_thumb_header(&header) {
+                return Some(t);
+            }
+        }
+    }
+    let (captured_at, sub_sec) = crate::cr3::read_capture_time(path).ok()?;
+    crate::analyze::captured_at_ms(captured_at.as_deref(), sub_sec)
+}
+
 /// Scan a folder recursively for `.CR3` files, sorted lexicographically, plus
 /// a count of ignored non-CR3 files (see [`ScanResult`]).
 ///
@@ -161,9 +220,11 @@ struct AnalyzeProgress {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AnalyzeResult {
-    /// Input indices sorted by write time (mtime, sub-second), then path as a
-    /// tiebreak. mtime ≈ capture order for in-camera writes; precise EXIF
-    /// DateTimeOriginal is read lazily per image and is not used for ordering.
+    /// Input indices in session order. The key is each file's EXIF
+    /// `DateTimeOriginal` + `SubSecTimeOriginal` when `by_capture_time` is on
+    /// (falling back per frame to that file's mtime), otherwise the mtime
+    /// alone; path is the tiebreak either way, and a frame with neither sorts
+    /// last.
     order: Vec<usize>,
     /// Per input index: restored CULL rating from the `.xmp` sidecar, or null.
     ratings: Vec<Option<String>>,
@@ -378,22 +439,101 @@ fn restore_ratings(
     out
 }
 
+/// Read every frame's EXIF capture time, on `RESTORE_WORKERS` threads when the
+/// storage hint says local (same rule and same pool shape as `restore_ratings`
+/// — the benchmarked NAS punishes concurrent opens hard). `on_progress(done)`
+/// fires once per frame, from worker threads on the concurrent path.
+fn read_capture_epochs(
+    cache: &TierCache,
+    paths: &[String],
+    stats: &[Option<(i64, u64)>],
+    concurrent: bool,
+    on_progress: &(dyn Fn(usize) + Sync),
+) -> Vec<Option<i64>> {
+    let n = paths.len();
+    let mut out: Vec<Option<i64>> = vec![None; n];
+    if concurrent && n > RESTORE_WORKERS {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let done_counter = AtomicUsize::new(0);
+        let chunk_size = n.div_ceil(RESTORE_WORKERS);
+        let done_ref = &done_counter;
+        let all: Vec<usize> = (0..n).collect();
+        let parts: Vec<Vec<(usize, Option<i64>)>> = std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(RESTORE_WORKERS);
+            for chunk in all.chunks(chunk_size) {
+                handles.push(s.spawn(move || {
+                    let mut part = Vec::with_capacity(chunk.len());
+                    for &i in chunk {
+                        part.push((i, exif_ms_for(cache, &paths[i], stats[i])));
+                        on_progress(done_ref.fetch_add(1, Ordering::Relaxed) + 1);
+                    }
+                    part
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|h| {
+                    h.join().unwrap_or_else(|_| {
+                        // A panicked worker must not poison the whole analyze:
+                        // its chunk reads back with no EXIF and sorts on mtime.
+                        dlog!("[cull] analyze_folder: capture worker panicked; its chunk sorts on mtime");
+                        Vec::new()
+                    })
+                })
+                .collect()
+        });
+        for part in parts {
+            for (i, t) in part {
+                out[i] = t;
+            }
+        }
+    } else {
+        for i in 0..n {
+            out[i] = exif_ms_for(cache, &paths[i], stats[i]);
+            on_progress(i + 1);
+        }
+    }
+    out
+}
+
 /// `concurrent_restore` is a storage hint forwarded from frontend settings.
-/// `Some(true)` parallelises sidecar reads (fine on local SSD); defaults to
-/// sequential — safe on a NAS that punishes concurrent opens.
+/// `Some(true)` parallelises sidecar reads AND the capture-time pass (fine
+/// on local SSD); defaults to sequential — safe on a NAS that punishes
+/// concurrent opens.
+///
+/// `by_capture_time` (default false) swaps the sort key from each file's
+/// mtime to its EXIF `DateTimeOriginal` + `SubSecTimeOriginal`, per frame,
+/// falling back to that frame's mtime where the EXIF is absent.
+/// `offsets_ms` is a per-INPUT-PATH clock correction in milliseconds (the
+/// frontend resolves its own folder → offset map before calling, because
+/// the folder a frame belongs to is the folder the USER picked, not the
+/// subdirectory the recursive walk found it in). Ignored when
+/// `by_capture_time` is off; a short or absent vector reads as 0.
 #[tauri::command]
 pub(crate) async fn analyze_folder(
     window: tauri::Window,
     paths: Vec<String>,
     concurrent_restore: Option<bool>,
+    by_capture_time: Option<bool>,
+    offsets_ms: Option<Vec<i64>>,
     session: tauri::State<'_, std::sync::Arc<crate::io_gate::SessionGate>>,
+    cache: tauri::State<'_, std::sync::Arc<crate::tier_cache::TierCache>>,
 ) -> Result<AnalyzeResult, String> {
     // Spawn-blocking: directory listings + sequential sidecar restore are sync
     // fs I/O sized in NAS round-trips — off the async runtime, like scan_folder.
-    // The State borrow can't cross into the 'static closure; the Arc can.
+    // The State borrows can't cross into the 'static closure; the Arcs can.
     let session = session.inner().clone();
+    let cache = cache.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        analyze_folder_sync(window, paths, concurrent_restore, &session)
+        analyze_folder_sync(
+            window,
+            paths,
+            concurrent_restore,
+            by_capture_time,
+            offsets_ms,
+            &session,
+            &cache,
+        )
     })
     .await
     .map_err(|e| format!("analyze task failed: {e}"))?
@@ -403,10 +543,26 @@ fn analyze_folder_sync(
     window: tauri::Window,
     paths: Vec<String>,
     concurrent_restore: Option<bool>,
+    by_capture_time: Option<bool>,
+    offsets_ms: Option<Vec<i64>>,
     session: &crate::io_gate::SessionGate,
+    cache: &TierCache,
 ) -> Result<AnalyzeResult, String> {
     let concurrent_restore = concurrent_restore.unwrap_or(false);
+    let by_capture_time = by_capture_time.unwrap_or(false);
     let n = paths.len();
+    // A wrong-length offsets vector is memory-safe — `.get(i)` just reads 0 past
+    // the end — but silently wrong, which is worse: say so instead of shipping a
+    // folder whose clock correction quietly stopped applying partway through.
+    if let Some(v) = offsets_ms.as_ref() {
+        if v.len() != n {
+            dlog!(
+                "[cull] analyze_folder: {} offsets for {} paths; extras read as 0",
+                v.len(),
+                n
+            );
+        }
+    }
     if n == 0 {
         return Ok(AnalyzeResult {
             order: vec![],
@@ -455,10 +611,55 @@ fn analyze_folder_sync(
     session.note_mtimes(&listing.mtime);
     session.note_sizes(&listing.sizes);
 
-    let epoch: Vec<Option<i64>> = paths
-        .iter()
-        .map(|p| listing.mtime.get(p).copied())
-        .collect();
+    // The sort key. Default: each file's mtime, from the directory listings
+    // above — no file is opened. With `by_capture_time`, each frame's EXIF
+    // capture time instead (thumb-cache hit first, else a moov-head read),
+    // with that frame's folder offset, falling back to its mtime.
+    let epoch: Vec<Option<i64>> = if by_capture_time {
+        let stats: Vec<Option<(i64, u64)>> = paths
+            .iter()
+            .map(|p| match (listing.mtime.get(p), listing.sizes.get(p)) {
+                (Some(&ms), Some(&size)) => Some((ms, size)),
+                _ => None,
+            })
+            .collect();
+        let step_cap = (n / 100).max(1); // ≤ ~100 progress events
+        let exif = read_capture_epochs(cache, &paths, &stats, concurrent_restore, &|done| {
+            if done.is_multiple_of(step_cap) || done == n {
+                let _ = window.emit(
+                    "analyze-progress",
+                    AnalyzeProgress {
+                        done,
+                        total: n,
+                        phase: "capturing".into(),
+                    },
+                );
+            }
+        });
+        // One terminal tick, for the same reason the listing pass emits one.
+        let _ = window.emit(
+            "analyze-progress",
+            AnalyzeProgress {
+                done: n,
+                total: n,
+                phase: "capturing".into(),
+            },
+        );
+        (0..n)
+            .map(|i| {
+                let offset = offsets_ms
+                    .as_ref()
+                    .and_then(|v| v.get(i).copied())
+                    .unwrap_or(0);
+                capture_epoch(exif[i], listing.mtime.get(&paths[i]).copied(), offset)
+            })
+            .collect()
+    } else {
+        paths
+            .iter()
+            .map(|p| listing.mtime.get(p).copied())
+            .collect()
+    };
 
     // Restore ratings from the sidecars we KNOW exist. Two paths:
     //
@@ -497,7 +698,7 @@ fn analyze_folder_sync(
         }
     });
 
-    // Sort by capture time (mtime); missing times sort last, tiebreak on path.
+    // Sort by the epoch built above; missing times sort last, tiebreak on path.
     let order = order_by_capture(&epoch, &paths);
 
     let _ = window.emit(
@@ -509,9 +710,14 @@ fn analyze_folder_sync(
         },
     );
     dlog!(
-        "[cull] analyze_folder: {} images in {:?} (mtime fast path)",
+        "[cull] analyze_folder: {} images in {:?} ({})",
         n,
-        start.elapsed()
+        start.elapsed(),
+        if by_capture_time {
+            "EXIF capture time"
+        } else {
+            "mtime fast path"
+        }
     );
     Ok(AnalyzeResult {
         order,
@@ -521,6 +727,31 @@ fn analyze_folder_sync(
         restore_errors: restore.errors,
         restore_error_count: restore.error_count,
     })
+}
+
+/// Capture time (epoch ms, camera local clock) for a handful of paths — the
+/// staged screen's per-folder probe, called with the FIRST STAGED (i.e.
+/// lexicographically first, `scan.rs`'s `paths.sort()`) frame of each staged
+/// folder, so the row can print THAT frame's capture time and the signed
+/// difference from the first folder's. Not necessarily the folder's earliest
+/// frame — a 9999→0001 counter wrap reverses the two. Deliberately cache-free and
+/// sequential: N is the number of staged folders (one or two in practice), so
+/// wiring the tier cache in would cost more than the reads it saves.
+/// A per-path failure is `None`, never an error: a row with no time just shows
+/// a dash.
+#[tauri::command]
+pub(crate) async fn read_capture_times(paths: Vec<String>) -> Result<Vec<Option<i64>>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|p| {
+                let (captured_at, sub_sec) = crate::cr3::read_capture_time(p).ok()?;
+                crate::analyze::captured_at_ms(captured_at.as_deref(), sub_sec)
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| format!("capture-time task failed: {e}"))
 }
 
 #[cfg(test)]
@@ -682,5 +913,50 @@ mod tests {
             assert!(r.errors[0].contains("a.xmp"), "{}", r.errors[0]);
             let _ = fs::remove_dir_all(&work);
         }
+    }
+
+    /// capture_epoch: EXIF wins, the file's mtime is the fallback, and the
+    /// folder's clock offset rides whichever one won — a folder must never be
+    /// split across two clock spaces just because one frame lost its EXIF.
+    #[test]
+    fn capture_epoch_prefers_exif_then_mtime_and_always_offsets() {
+        assert_eq!(capture_epoch(Some(1_000), Some(9_000), 0), Some(1_000));
+        assert_eq!(capture_epoch(None, Some(9_000), 0), Some(9_000));
+        assert_eq!(capture_epoch(None, None, 5_000), None);
+        assert_eq!(capture_epoch(Some(1_000), None, 300_000), Some(301_000));
+        assert_eq!(capture_epoch(None, Some(9_000), -1_500), Some(7_500));
+    }
+
+    /// A pathological offset must not wrap the sort key into the past.
+    #[test]
+    fn capture_epoch_saturates_instead_of_overflowing() {
+        assert_eq!(capture_epoch(Some(i64::MAX), None, 1), Some(i64::MAX));
+        assert_eq!(capture_epoch(Some(i64::MIN), None, -1), Some(i64::MIN));
+    }
+
+    /// capture_from_thumb_header: the two fields are read out of a stored
+    /// ThumbHeader without re-opening the CR3, and every degraded shape
+    /// (a v1 `meta: null`, an empty object, a frame with no DateTimeOriginal,
+    /// outright garbage) answers None so the caller falls through to the file.
+    #[test]
+    fn capture_from_thumb_header_reads_a_cached_header_and_tolerates_old_ones() {
+        let full = br#"{"width":160,"height":120,"jpegLen":9000,"meta":{"capturedAt":"2026-09-20T14:02:11","subSecMs":470,"camera":"Canon EOS R6m3","iso":400}}"#;
+        let ms = capture_from_thumb_header(full).expect("a full header carries the time");
+        assert_eq!(
+            ms,
+            crate::analyze::captured_at_ms(Some("2026-09-20T14:02:11"), Some(470)).unwrap()
+        );
+        assert_eq!(
+            capture_from_thumb_header(br#"{"meta":null}"#),
+            None,
+            "v1 header"
+        );
+        assert_eq!(capture_from_thumb_header(b"{}"), None, "no meta key at all");
+        assert_eq!(
+            capture_from_thumb_header(br#"{"meta":{"subSecMs":470}}"#),
+            None,
+            "SubSec alone is not a time"
+        );
+        assert_eq!(capture_from_thumb_header(b"not json"), None);
     }
 }

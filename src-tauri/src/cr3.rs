@@ -856,11 +856,6 @@ pub fn read_thumbnail(path: &str) -> std::io::Result<Thumbnail> {
 /// carries the 160×120 THMB as well as the CMT boxes, so a smaller first read
 /// would usually cost a second round-trip — and on the benchmarked NAS the
 /// open, not the byte count, is what costs 37 ms.
-// `mod cr3;` is private (lib.rs:53), so in the non-test lib build a `pub fn`
-// with no caller is dead code and `clippy -D warnings` fails. Nothing calls
-// this until scan.rs's capture pass lands; Task 7 deletes this attribute when
-// `exif_ms_for` becomes its lib-build caller. Precedent: phash.rs:50.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn read_capture_time(path: &str) -> std::io::Result<(Option<String>, Option<u16>)> {
     const HEAD: usize = 1 << 20;
     const GROW: usize = 2 << 20;
