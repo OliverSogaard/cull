@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Img, NavEntry, UndoAction } from "../types";
+import type { Img, MetaChange, NavEntry, UndoAction } from "../types";
 import { omitIds, pruneGone, pruneHistory, remapIndex, remapNavStack } from "./pruneSession";
 
 const img = (id: number): Img => ({
@@ -100,5 +100,50 @@ describe("pruneHistory", () => {
     ];
     expect(pruneHistory(stack, new Set<number>())).toBe(stack);
     expect(stack[0].cursorBefore).toBeDefined();
+  });
+});
+
+describe("pruneHistory — the star and colour-label layer", () => {
+  const change = (imgId: number) => ({
+    imgId,
+    path: `/s/${imgId}.cr3`,
+    before: undefined,
+    after: "keep" as const,
+  });
+  const meta = (imgId: number): MetaChange => ({
+    imgId,
+    path: `/s/${imgId}.cr3`,
+    field: "star",
+    before: undefined,
+    after: 3,
+  });
+
+  it("a surviving frame's marks are carried through the rebuild, not silently dropped", () => {
+    // Frame 9 leaving is what forces the rebuild; the rebuild used to emit a
+    // bare `{ changes }` literal, so every field added to UndoAction vanished
+    // on the first Move rejects.
+    const stack: UndoAction[] = [
+      { changes: [change(1)], meta: [meta(1)] },
+      { changes: [change(9)] },
+    ];
+    const out = pruneHistory(stack, new Set([9]));
+    expect(out).toHaveLength(1);
+    expect(out[0].meta).toEqual([meta(1)]);
+  });
+
+  it("a mark-only action survives a rebuild that does not touch it", () => {
+    // Its `changes` list is empty BY DESIGN, so a `changes.length > 0` test
+    // would discard the whole action — every star in the history, silently.
+    const stack: UndoAction[] = [{ changes: [], meta: [meta(1)] }, { changes: [change(9)] }];
+    expect(pruneHistory(stack, new Set([9]))).toEqual([{ changes: [], meta: [meta(1)] }]);
+  });
+
+  it("a moved frame's marks go with it, and an emptied action is dropped", () => {
+    // Replaying a mark for a frame that has left the folder would ask the
+    // backend to write a sidecar it now refuses (`source missing:`) — the
+    // exact class of bug require_source exists for.
+    const stack: UndoAction[] = [{ changes: [], meta: [meta(1), meta(2)] }];
+    expect(pruneHistory(stack, new Set([1]))[0].meta).toEqual([meta(2)]);
+    expect(pruneHistory(stack, new Set([1, 2]))).toEqual([]);
   });
 });
