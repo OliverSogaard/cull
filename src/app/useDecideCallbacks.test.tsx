@@ -7,6 +7,27 @@ import { useDecideCallbacks } from "./useDecideCallbacks";
 import type { Img, NavEntry, Rating, UndoAction } from "../types";
 
 /**
+ * Compile-time pins for the names the comments below cite. `makeProps` ends
+ * with `satisfies Parameters<typeof useDecideCallbacks>[0]`, which already
+ * follows every PROP rename; this follows the RETURNED ones even in the tests
+ * that only mention them in prose.
+ *
+ * `resolveCompareDecide` and `DecideSpec` are deliberately absent: both are
+ * module-private (a `useCallback` local and a local type), and exporting them
+ * to satisfy a comment would widen the module's surface for documentation.
+ * The comments that used to name them cite the BEHAVIOUR instead.
+ */
+type Decides = ReturnType<typeof useDecideCallbacks>;
+const _PINNED: Record<keyof Decides, true> = {
+  applyRating: true,
+  unrateCurrent: true,
+  challengerLoses: true,
+  challengerKeptBoth: true,
+  challengerWins: true,
+};
+void _PINNED;
+
+/**
  * CHARACTERISATION of the three compare decides (`challengerLoses`,
  * `challengerKeptBoth`, `challengerWins`). The three bodies are near-identical
  * 60-line sequences whose ORDER of side effects is load-bearing — the file's
@@ -161,8 +182,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerLoses();
     });
 
-    // resolveCompareDecide: recordAction → flashFeedback → persist loop →
-    // setRatings → setChallengerIndex → dropZoomFullsExcept.
+    // The shared decide's side-effect spine: recordAction → flashFeedback →
+    // persist loop → setRatings → setChallengerIndex → dropZoomFullsExcept.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -171,12 +192,14 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setChallengerIndex",
       "dropZoomFullsExcept",
     ]);
-    expect(props.flashFeedback).toHaveBeenCalledWith("reject", 1); // resolveCompareDecide's flashFeedback call
+    expect(props.flashFeedback).toHaveBeenCalledWith("reject", 1); // the shared decide's flash, keyed to the judged frame
     expect(props.persistRating).toHaveBeenCalledTimes(1);
-    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "reject"); // resolveCompareDecide's persist loop
-    // resolveCompareDecide's setRatings(next) call: the whole next map, by value (not an updater function).
+    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "reject"); // the shared decide's persist loop
+    // The shared decide's setRatings call: the whole next map, BY VALUE (not
+    // an updater function) — the caller already derived it to ask
+    // nearestUnrated what was left.
     expect(props.setRatings).toHaveBeenCalledWith({ 0: "keep", 1: "reject" });
-    expect(props.setChallengerIndex).toHaveBeenCalledWith(2); // resolveCompareDecide's setChallengerIndex call
+    expect(props.setChallengerIndex).toHaveBeenCalledWith(2); // the shared decide's setChallengerIndex call
     // the `keep` pair passed to dropZoomFullsExcept: champion + the NEW challenger.
     expect(imageStore.dropZoomFullsExcept).toHaveBeenCalledWith(["/s/0.cr3", "/s/2.cr3"]);
     // Champion is untouched (see the `nextChampion !== championIndex` guard's comment).
@@ -205,7 +228,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setRatings",
       "goBack",
     ]);
-    expect(props.goBack).toHaveBeenCalledWith(0); // resolveCompareDecide's exiting-branch goBack call: land on the unchanged champion
+    expect(props.goBack).toHaveBeenCalledWith(0); // the shared decide's exiting-branch goBack call: land on the unchanged champion
     expect(props.setChallengerIndex).not.toHaveBeenCalled();
     expect(imageStore.dropZoomFullsExcept).not.toHaveBeenCalled();
   });
@@ -225,7 +248,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerLoses();
     });
 
-    // resolveCompareDecide's recordAction call, verbatim shape.
+    // The shared decide's recordAction call, verbatim shape.
     const action = props.recordAction.mock.calls[0][0];
     expect(action).toStrictEqual({
       changes: [{ imgId: 1, path: "/s/1.cr3", before: undefined, after: "reject" }],
@@ -260,8 +283,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerKeptBoth(true);
     });
 
-    // resolveCompareDecide: recordAction → flashFeedback → persist loop →
-    // setRatings → setChallengerIndex → dropZoomFullsExcept — same spine as challengerLoses.
+    // The shared decide's side-effect spine: recordAction → flashFeedback →
+    // persist loop → setRatings → setChallengerIndex → dropZoomFullsExcept — same spine as challengerLoses.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -270,10 +293,10 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setChallengerIndex",
       "dropZoomFullsExcept",
     ]);
-    expect(props.flashFeedback).toHaveBeenCalledWith("favorite", 1); // resolveCompareDecide's flashFeedback call
+    expect(props.flashFeedback).toHaveBeenCalledWith("favorite", 1); // the shared decide's flash, keyed to the judged frame
     expect(props.persistRating).toHaveBeenCalledTimes(1); // champion never written
-    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "favorite"); // resolveCompareDecide's persist loop
-    expect(props.setRatings).toHaveBeenCalledWith({ 0: "keep", 1: "favorite" }); // resolveCompareDecide's setRatings(next) call
+    expect(props.persistRating).toHaveBeenCalledWith("/s/1.cr3", "favorite"); // the shared decide's persist loop
+    expect(props.setRatings).toHaveBeenCalledWith({ 0: "keep", 1: "favorite" }); // the shared decide's setRatings call: the whole next map, by value
     expect(props.setChampionIndex).not.toHaveBeenCalled(); // champion stays champion
     expect(props.setChallengerIndex).toHaveBeenCalledWith(2);
     expect(imageStore.dropZoomFullsExcept).toHaveBeenCalledWith(["/s/0.cr3", "/s/2.cr3"]);
@@ -318,7 +341,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerKeptBoth(false);
     });
 
-    // resolveCompareDecide's exiting branch (goBack) + the `if (!exiting)`
+    // The shared decide's exiting branch (goBack) + the `if (!exiting)`
     // drop guard, mirroring challengerLoses' exit.
     expect(calls).toEqual([
       "recordAction",
@@ -344,8 +367,8 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerWins();
     });
 
-    // resolveCompareDecide: recordAction → flashFeedback → persist loop (both
-    // changes) → setRatings → setChampionIndex → setChallengerIndex → dropZoomFullsExcept.
+    // The shared decide's side-effect spine: recordAction → flashFeedback →
+    // persist loop (both changes) → setRatings → setChampionIndex → setChallengerIndex → dropZoomFullsExcept.
     expect(calls).toEqual([
       "recordAction",
       "flashFeedback",
@@ -356,12 +379,12 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "setChallengerIndex",
       "dropZoomFullsExcept",
     ]);
-    expect(props.flashFeedback).toHaveBeenCalledWith("keep", 1); // resolveCompareDecide's flashFeedback call: flashes the WINNER
+    expect(props.flashFeedback).toHaveBeenCalledWith("keep", 1); // the shared decide's flash, keyed to the judged frame: flashes the WINNER
     expect(props.persistRating).toHaveBeenNthCalledWith(1, "/s/0.cr3", "reject"); // dethroned
     expect(props.persistRating).toHaveBeenNthCalledWith(2, "/s/1.cr3", "keep"); // crowned
     expect(props.setRatings).toHaveBeenCalledWith({ 0: "reject", 1: "keep" }); // challengerWins builder's next map (dethroned champion, crowned challenger)
-    expect(props.setChampionIndex).toHaveBeenCalledWith(1); // resolveCompareDecide's setChampionIndex call: newChamp === old challenger
-    expect(props.setChallengerIndex).toHaveBeenCalledWith(2); // resolveCompareDecide's setChallengerIndex call
+    expect(props.setChampionIndex).toHaveBeenCalledWith(1); // the shared decide's crown-move call: newChamp === old challenger
+    expect(props.setChallengerIndex).toHaveBeenCalledWith(2); // the shared decide's setChallengerIndex call
     // the `keep` pair passed to dropZoomFullsExcept: the NEW champion + the new challenger.
     expect(imageStore.dropZoomFullsExcept).toHaveBeenCalledWith(["/s/1.cr3", "/s/2.cr3"]);
   });
@@ -379,7 +402,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       result.current.challengerWins();
     });
 
-    // resolveCompareDecide's recordAction call: old champion first, then the challenger.
+    // The shared decide's recordAction call: old champion first, then the challenger.
     expect(props.recordAction.mock.calls[0][0]).toStrictEqual({
       changes: [
         { imgId: 0, path: "/s/0.cr3", before: "keep", after: "reject" },
@@ -387,14 +410,14 @@ describe("compare decides — side-effect order (characterisation)", () => {
       ],
       cursorBefore: {
         compareMode: true,
-        championIndex: 0, // resolveCompareDecide's cursorBefore.championIndex: the OLD champion
+        championIndex: 0, // the shared decide's cursorBefore.championIndex: the OLD champion
         challengerIndex: 1,
         currentIndex: 3,
         navStack: [{ site: "loupe" }],
       },
       cursorAfter: {
         compareMode: true,
-        championIndex: 1, // resolveCompareDecide's cursorAfter.championIndex: redo re-crowns newChamp, not the rejected one
+        championIndex: 1, // the shared decide's cursorAfter.championIndex: redo re-crowns newChamp, not the rejected one
         challengerIndex: 2,
         currentIndex: 3,
       },
@@ -426,7 +449,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
       "goBack",
     ]);
     expect(props.setChampionIndex).toHaveBeenCalledWith(1);
-    expect(props.goBack).toHaveBeenCalledWith(1); // resolveCompareDecide's exiting-branch goBack call: the NEW champion, not the old one
+    expect(props.goBack).toHaveBeenCalledWith(1); // the shared decide's exiting-branch goBack call: the NEW champion, not the old one
     expect(props.setChallengerIndex).not.toHaveBeenCalled();
     expect(imageStore.dropZoomFullsExcept).not.toHaveBeenCalled();
   });
@@ -436,7 +459,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
   it("a zoomed decide sets zoomSwapInstant on all three, and resets pan only on a win", () => {
     const zoomed = { ratings: { 0: "keep" } as Ratings, championIndex: 0, challengerIndex: 1 };
 
-    // resolveCompareDecide's zoomed-decide comment: challenger pane swaps under the live transform; pan is kept.
+    // The shared decide's zoomed-decide handling: challenger pane swaps under the live transform; pan is kept.
     const loses = setup({ ...zoomed, isZooming: true });
     act(() => {
       loses.result.current.challengerLoses();
@@ -470,7 +493,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
     ]);
     expect(kept.props.setPanOffset).not.toHaveBeenCalled();
 
-    // resolveCompareDecide's resetPan branch: a NEW champion re-anchors both panes, so the shared pan resets.
+    // The shared decide's resetPan branch: a NEW champion re-anchors both panes, so the shared pan resets.
     calls.length = 0;
     const wins = setup({ ...zoomed, isZooming: true });
     act(() => {
@@ -493,7 +516,7 @@ describe("compare decides — side-effect order (characterisation)", () => {
   });
 
   it("a zoomed decide that exits compare does NOT set zoomSwapInstant", () => {
-    // The `&& !exiting` half of resolveCompareDecide's `if (isZoomingRef.current && !exiting)` guard.
+    // The `&& !exiting` half of the shared decide's `if (isZoomingRef.current && !exiting)` guard.
     const { result, props } = setup({
       ratings: { 0: "keep", 2: "keep", 3: "reject", 4: "keep" },
       championIndex: 0,
