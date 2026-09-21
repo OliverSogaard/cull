@@ -172,6 +172,57 @@ describe("the footer's breakpoints", () => {
     expect(tail).toMatch(/clip-path:\s*inset\(50%\)/);
     expect(tail.slice(0, tail.indexOf("}"))).not.toMatch(/display:\s*none/);
   });
+
+  test("the fifth tab is paid for inside the 1360 tier, not with a new breakpoint", () => {
+    // Both rules use ruleBody (a line-anchored `selector {` match), not
+    // toContain, so a comment naming the class cannot fake a pass.
+    const tier = statusbar.slice(
+      statusbar.indexOf("@media (width < 1360px) {"),
+      statusbar.indexOf("@media (width < 1240px) {"),
+    );
+    // Smart's count is CLIPPED, never `display: none` — the button's
+    // accessible name is "Smart · 4194" at every width.
+    const count = ruleBody(tier, ".cull-statusbar__smart-count");
+    expect(count).toMatch(/clip-path:\s*inset\(50%\)/);
+    expect(count).not.toMatch(/display:\s*none/);
+    // The padding override must out-specify chrome.css's own
+    // `.cull-filter-tabs button` rule (index.css imports statusbar.css FIRST,
+    // and a media query adds no specificity) WITHOUT reaching the sub-mode
+    // tooltip's buttons, whose own padding rule is only (0,1,1). Hence the
+    // two-member child-combinator list; ruleBody can only be asked for its
+    // last member, so the first is pinned by a line-anchored regex.
+    expect(tier).toMatch(/^ *\.cull-statusbar \.cull-filter-tabs > button,$/m);
+    expect(ruleBody(tier, ".cull-statusbar .cull-filter-tab-group > button")).toMatch(
+      /padding:\s*4px 8px/,
+    );
+    expect(tier, "the sub-mode chips keep their own 3px 7px").not.toMatch(
+      /\.cull-filter-tab-tooltip/,
+    );
+    // No fourth breakpoint: layout.test's tier slices are keyed to exactly
+    // these three widths. Matched on a LINE START so a width merely named in
+    // the arithmetic comment above cannot add a phantom entry.
+    const widths = [...statusbar.matchAll(/^@media \(width < (\d+)px\)/gm)].map((m) => m[1]);
+    expect([...new Set(widths)]).toEqual(["1360", "1240", "1120"]);
+  });
+
+  test("the hover tip still right-aligns at the tab strip's edge, now that Rejects is last", () => {
+    const chrome = sheet("./chrome.css");
+    // `.cull-filter-tab-group:last-child` stopped matching Smart the moment a
+    // bare <button> became the last child of .cull-filter-tabs.
+    expect(chrome, "the stale :last-child rule must be gone").not.toContain(
+      ".cull-filter-tab-group:last-child",
+    );
+    // ruleBody matches a selector that sits directly before ` {`, so it can
+    // only be asked for the LAST member of a selector list; the first member
+    // is pinned by its own line-anchored match instead.
+    expect(chrome, "Smart's group is right-aligned at its new position").toMatch(
+      /^\.cull-filter-tabs \.cull-filter-tab-group:nth-last-child\(2\) button\[data-tip\]:hover::after,$/m,
+    );
+    const tip = ruleBody(chrome, ".cull-filter-tabs > button[data-tip]:last-child:hover::after");
+    expect(tip).toMatch(/right:\s*0/);
+    expect(tip).toMatch(/left:\s*auto/);
+    expect(tip).toMatch(/transform:\s*none/);
+  });
 });
 
 describe("the filmstrip's scrub-speed chip", () => {

@@ -438,9 +438,14 @@
   z-index: var(--z-feedback);
 }
 
-/* The last group's tab (Smart) sits near the window edge — right-align its
-   tip so it can't clip offscreen. */
-.cull-filter-tabs .cull-filter-tab-group:last-child button[data-tip]:hover::after {
+/* The two rightmost tabs sit near the window edge — right-align their tips so
+   they can't clip offscreen. Two selectors because the two are shaped
+   differently: Smart is a `.cull-filter-tab-group` wrapper (it has sub-modes)
+   and is now the SECOND-to-last child, while Rejects is a bare button and is
+   the last. `:last-child` alone silently stopped matching anything the moment
+   Rejects was added. */
+.cull-filter-tabs .cull-filter-tab-group:nth-last-child(2) button[data-tip]:hover::after,
+.cull-filter-tabs > button[data-tip]:last-child:hover::after {
   left: auto;
   right: 0;
   transform: none;
