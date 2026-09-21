@@ -1,7 +1,7 @@
 # Architecture
 
 Design notes for the non-obvious parts of CULL. Source comments cover the
-*what*; this file covers the *why*.
+_what_; this file covers the _why_.
 
 ## Invariants
 
@@ -228,8 +228,8 @@ Settings "Image cache" control.
 
 ## Rating writes (XMP sidecars)
 
-`persistRating(path, rating)` queues a write through a *per-path serial
-write queue* (`writeQueue: Map<path, Promise>`). The reason: an undo fired
+`persistRating(path, rating)` queues a write through a _per-path serial
+write queue_ (`writeQueue: Map<path, Promise>`). The reason: an undo fired
 immediately after a rating used to race the original write, sometimes
 leaving disk and React state out of sync. With the queue, every write to a
 given path waits for the prior one to settle, so the order on disk matches
@@ -265,6 +265,43 @@ when CULL owned it (`cull:fav="star"`); a user's own star — including a genuin
 authored by CULL originally, the whole file is removed so unrating leaves no
 litter.
 
+### Stars and colour labels
+
+Behind the `starsAndLabels` setting (off by default) the app also writes the
+other two things Lightroom reads. They are **orthogonal** to the verdict:
+`Rating` is not widened, and the two live in their own maps beside `ratings` —
+`stars: Record<Img.id, 1|2|3|4|5>` and `labels: Record<Img.id, Label |
+"custom">` — so every count, filter and smart-culling input still keys on the
+verdict alone. Both maps are filled at open from the same sidecar pass that
+restores ratings (a star IS `xmp:Rating`, so it rides `lrcRatings`; labels have
+their own per-index field), validated at the boundary rather than cast.
+
+On disk a star is `xmp:Rating` `1`–`5` (cleared by removing the property) and a
+label is `xmp:Label` carrying one of the five English strings `Red` `Yellow`
+`Green` `Blue` `Purple`. Any other `xmp:Label` string is the user's own: it
+reads back as `"custom"`, and **CULL never overwrites it** — the colour keys
+skip such a frame, the rail's swatch row goes inert over it, and the backend
+refuses the write as a second line of defence.
+
+All three write kinds — rating, star, label — are read-modify-writes of the
+SAME file, so they share ONE per-path serial queue (`writeQueue`, keyed by
+path). The per-property bookkeeping (`writeSeq`, `failedWrites`) is keyed
+`kind:path` instead, because "a newer write superseded this one" is only true
+of the same property; the counts the chrome reports are per PHOTO.
+
+The `cull:fav` marker is three-valued — `"star"` (CULL's courtesy favorite 1★),
+`"flag"` (a favorite riding a star the user owns) and `"no"` (an explicit
+not-a-favorite, written on every plain keep and reject) — and the legacy
+"a lone 1★ means favorite" fallback now applies only to a sidecar carrying no
+marker at all.
+
+Clearing the last mark on an otherwise untouched frame would leave an empty
+sidecar behind, because only `clear_xmp_rating` may delete one. So a star or
+label change that leaves a frame with no verdict, no star and no label is
+followed by that unrate on the same queue — from the keypress and from an undo
+alike. The backend still refuses to delete a sidecar it did not create or one
+that holds user content.
+
 ## Finishing a cull (move / copy / trash)
 
 `file_ops.rs` batches are idempotent and never overwrite. Every result carries
@@ -275,7 +312,8 @@ follow its CR3 is an error in that count, so "N moved · 0 errors" means the
 ratings travelled too.
 
 After a move, `pruneMoved` (`useSessionLifecycle`) takes the `gone` frames out
-of the live session: `images`, ratings and metadata drop them, and every
+of the live session: `images`, ratings, stars, labels and metadata drop them,
+and every
 index-based cursor (current, champion, challenger, nav stack) is remapped
 through functional setState off its live value (`utils/pruneSession.ts`) —
 this runs after an await, so a closure value could otherwise be stale. The
@@ -357,7 +395,7 @@ key is released.
 
 Grid is different — single-tap = one cell, hold = OS auto-repeat (~30 Hz).
 Using the rAF loop in grid overshot quick taps: a tap fires keydown
-immediately *and* gets an extra rAF tick before keyup, advancing 2–3
+immediately _and_ gets an extra rAF tick before keyup, advancing 2–3
 cells. The single-cell-per-event model fixes that.
 
 ## Deferred full-res zoom
@@ -485,20 +523,20 @@ The headline setting is **storage mode** (`local` | `network`), which
 switches a whole performance profile rather than a single constant.
 Defaults to `local`; flip to `network` for NAS / SMB / SSHFS.
 
-| | `network` | `local` (default) |
-| --- | --- | --- |
-| Preview (nav-tier) concurrency | 4 | 12 |
-| Zoom full-res concurrency | 2 | 2 |
-| Thumbnail concurrency | 4 | 16 |
-| Background-fill concurrency | 2 | 8 |
-| Preview keep window (each side) | 60 | 150 |
-| Zoom-full keep window (each side) | 2 | 3 |
-| Preview neighbour prefetch (each side) | 4 | 8 |
-| Zoom-full settle warm-up | 400 ms | 150 ms |
-| Mid-tier generation concurrency (Phase 8) | 1 | 2 |
-| Mid-tier generation on `read_mid` miss / idle sweep | never (cache-only) | yes / yes |
-| Backend IoGate read permits | 6 | 16 |
-| XMP-restore on analyze | sequential | 4-thread scoped pool |
+|                                                     | `network`          | `local` (default)    |
+| --------------------------------------------------- | ------------------ | -------------------- |
+| Preview (nav-tier) concurrency                      | 4                  | 12                   |
+| Zoom full-res concurrency                           | 2                  | 2                    |
+| Thumbnail concurrency                               | 4                  | 16                   |
+| Background-fill concurrency                         | 2                  | 8                    |
+| Preview keep window (each side)                     | 60                 | 150                  |
+| Zoom-full keep window (each side)                   | 2                  | 3                    |
+| Preview neighbour prefetch (each side)              | 4                  | 8                    |
+| Zoom-full settle warm-up                            | 400 ms             | 150 ms               |
+| Mid-tier generation concurrency (Phase 8)           | 1                  | 2                    |
+| Mid-tier generation on `read_mid` miss / idle sweep | never (cache-only) | yes / yes            |
+| Backend IoGate read permits                         | 6                  | 16                   |
+| XMP-restore on analyze                              | sequential         | 4-thread scoped pool |
 
 The whole profile is pushed into the imageStore via `setProfile` when the
 storage setting flips — in-flight reads finish at the old numbers; new reads
@@ -544,7 +582,7 @@ Phase 3A ("see and feel") gave the chrome a handful of small, load-bearing
 conventions instead of per-component one-offs:
 
 - **Favourite is its own colour.** `--fav` (lilac `#b9a2dc`, `src/styles/
-  tokens.css`) marks a favourite verdict everywhere it appears — the
+tokens.css`) marks a favourite verdict everywhere it appears — the
   statusbar glyph, the strip/grid dots, the EXIF-rail suggestion — and stays
   visually distinct from `--accent` (champagne), which keeps the cursor
   ring, selection tint, brand mark, and progress fills. A favourite reads as
@@ -552,13 +590,13 @@ conventions instead of per-component one-offs:
 - **One focus ring.** `--ring` (`0 0 0 2px var(--bg), 0 0 0 4px var(--accent)`,
   `tokens.css`) is the one focus treatment in the app; a
   `:where(button, a, summary, [role="button"][tabindex], [tabindex]:not(
-  [tabindex="-1"]))` rule at the bottom of `src/styles/base.css` applies it at
+[tabindex="-1"]))` rule at the bottom of `src/styles/base.css` applies it at
   **zero specificity**, so it only fires as a fallback for a focusable
   control a component author forgot to ring explicitly — any component's
   own `:focus-visible` rule, however weak, still wins. `--ring` extends 4px past
   the element's own edge, so any control with less than 4px to a neighbour
   (or a window edge) takes the inset form, `--ring-inset` (`inset 0 0 0 2px
-  var(--accent), inset 0 0 0 4px var(--bg)`), instead — the accent line and
+var(--accent), inset 0 0 0 4px var(--bg)`), instead — the accent line and
   `--bg` buffer just point inward, so the ring still reads against a dark
   surface or an accent-filled one alike.
 - **Two button sizes, one keycap.** `src/styles/primitives/btn.css` defines
@@ -573,13 +611,13 @@ conventions instead of per-component one-offs:
   1.75), `lg` 16px (stroke 1.5) — so a row of unrelated icons reads as one
   set. Four families stay off-scale, for two different reasons. Three are
   drawn into a container far smaller than any scale step, so both their size
-  *and* their stroke are tuned heavier than the scale to stay legible: the
+  _and_ their stroke are tuned heavier than the scale to stay legible: the
   verdict glyphs inside rating dots (`verdictGlyph.tsx`, stroke 3 for
   keep/reject, 2.6 for favorite), the LrC star badges pinned to a thumbnail
   corner (`GridView.tsx` / `ThumbCell.tsx`, stroke 2.4), and the 22px glyph
   inside the 48px rating-feedback pop (`App.tsx`, stroke 3). The
   window-control icons (`WindowControls.tsx`) are the one family that keeps
-  only its *size* off-scale — sized to the Windows caption-button metric so
+  only its _size_ off-scale — sized to the Windows caption-button metric so
   the title bar matches the rest of the desktop — while its stroke takes the
   scale's lightest step verbatim (`ICON.lg.strokeWidth`, 1.5), so it still
   weighs the same as the icons in the app below it.
@@ -587,7 +625,7 @@ conventions instead of per-component one-offs:
   answers `prefers-reduced-motion: reduce`. The policy: motion that is purely
   decorative or attention-grabbing (a pulse beside a word that already says
   what's happening, an entrance, a sweep) stops outright, while motion that
-  is the *only* signal that something is working (spinners, the
+  is the _only_ signal that something is working (spinners, the
   indeterminate progress bar) keeps moving, just slower. `motion.test.ts`
   enforces the discipline mechanically: every `@keyframes` under `src/styles`
   must be named in a `reviewed:` comment in `motion.css`, so a newly added

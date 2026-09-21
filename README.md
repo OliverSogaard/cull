@@ -21,8 +21,8 @@ Lightroom star ratings are never overwritten.
 **Supported platforms: Windows (x64) and macOS (Apple Silicon).** Linux and
 mobile are intentionally unsupported and blocked at compile time.
 
-| Loupe | Compare | Grid |
-| ----- | ------- | ---- |
+| Loupe                               | Compare                                 | Grid                              |
+| ----------------------------------- | --------------------------------------- | --------------------------------- |
 | ![Loupe view](docs/media/loupe.jpg) | ![Compare view](docs/media/compare.jpg) | ![Grid view](docs/media/grid.jpg) |
 
 ## Running CULL
@@ -198,39 +198,59 @@ Hold **Tab** at any time inside the cull view for a context-aware reference.
 On macOS, `Ctrl` means `⌘` throughout (every shortcut accepts either).
 Cheat sheet:
 
-| Key | Loupe | Compare | Grid |
-| --- | ----- | ------- | ---- |
-| `enter`    | keep                | challenger wins      | keep selected      |
-| `backspace`| reject              | reject challenger    | reject selected    |
-| `f`        | favorite            | keep both, challenger ★ | favorite        |
-| `k`        | —                   | keep both            | —                  |
-| `u`        | unrate              | —                    | unrate             |
-| `← →`      | prev / next (hold to scrub) | pick challenger (hold) | prev / next (hold to traverse) |
-| `↑ ↓`      | —                   | —                    | row up / down      |
-| `home` `end` | first / last in filter | —         | first / last in filter |
-| `pgup` `pgdn` | jump one strip-width | jump one strip-width | one screen        |
-| `shift+home` / `shift+end` | — | —                | extend selection to edge |
-| `shift+pgup` / `shift+pgdn` | — | —               | extend selection one screen |
-| `+` `−`    | —                   | —                    | bigger / smaller cells |
-| `Ctrl+0`   | —                   | —                    | medium cells       |
-| `space`    | 1:1 zoom (hold)     | 1:1 zoom (hold)      | —                  |
-| `shift+space` | 2:1 zoom         | 2:1 zoom             | —                  |
-| `l` `c` `g` | switch view (current view's key is a no-op) | | |
-| `esc`      | clear grid selection, else leave to home (confirm) | | |
-| `i`        | exif + histogram    | exif + histogram     | —                  |
-| `h`        | clipping overlay    | clipping overlay     | —                  |
-| `p`        | focus peaking       | focus peaking        | —                  |
-| `o`        | rule of thirds      | rule of thirds       | —                  |
-| `t`        | toggle thumb strip  | toggle candidate strip | —                |
-| `1 – 5`    | filter tabs (all / unrated / keeps / smart / rejects); re-press cycles sub-modes (keeps→★, smart→rejects/keeps/favs) | — | same |
-| `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo | undo / redo | undo / redo |
-| `Ctrl+E`   | finish actions (move rejects / copy keeps) | same | same |
-| `Ctrl+,`   | settings (also from the home screen) | same | same |
+| Key                         | Loupe                                                                                                                | Compare                 | Grid                           |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------ |
+| `enter`                     | keep                                                                                                                 | challenger wins         | keep selected                  |
+| `backspace`                 | reject                                                                                                               | reject challenger       | reject selected                |
+| `f`                         | favorite                                                                                                             | keep both, challenger ★ | favorite                       |
+| `k`                         | —                                                                                                                    | keep both               | —                              |
+| `u`                         | unrate                                                                                                               | —                       | unrate                         |
+| `← →`                       | prev / next (hold to scrub)                                                                                          | pick challenger (hold)  | prev / next (hold to traverse) |
+| `↑ ↓`                       | —                                                                                                                    | —                       | row up / down                  |
+| `home` `end`                | first / last in filter                                                                                               | —                       | first / last in filter         |
+| `pgup` `pgdn`               | jump one strip-width                                                                                                 | jump one strip-width    | one screen                     |
+| `shift+home` / `shift+end`  | —                                                                                                                    | —                       | extend selection to edge       |
+| `shift+pgup` / `shift+pgdn` | —                                                                                                                    | —                       | extend selection one screen    |
+| `+` `−`                     | —                                                                                                                    | —                       | bigger / smaller cells         |
+| `Ctrl+0`                    | —                                                                                                                    | —                       | medium cells                   |
+| `space`                     | 1:1 zoom (hold)                                                                                                      | 1:1 zoom (hold)         | —                              |
+| `shift+space`               | 2:1 zoom                                                                                                             | 2:1 zoom                | —                              |
+| `l` `c` `g`                 | switch view (current view's key is a no-op)                                                                          |                         |                                |
+| `esc`                       | clear grid selection, else leave to home (confirm)                                                                   |                         |                                |
+| `i`                         | exif + histogram                                                                                                     | exif + histogram        | —                              |
+| `h`                         | clipping overlay                                                                                                     | clipping overlay        | —                              |
+| `p`                         | focus peaking                                                                                                        | focus peaking           | —                              |
+| `o`                         | rule of thirds                                                                                                       | rule of thirds          | —                              |
+| `t`                         | toggle thumb strip                                                                                                   | toggle candidate strip  | —                              |
+| `1 – 5`                     | filter tabs (all / unrated / keeps / smart / rejects); re-press cycles sub-modes (keeps→★, smart→rejects/keeps/favs) | —                       | same                           |
+| `Ctrl+Z` / `Ctrl+Shift+Z`   | undo / redo                                                                                                          | undo / redo             | undo / redo                    |
+| `Ctrl+E`                    | finish actions (move rejects / copy keeps)                                                                           | same                    | same                           |
+| `Ctrl+,`                    | settings (also from the home screen)                                                                                 | same                    | same                           |
 
 `Ctrl` + wheel over the contact sheet steps the grid size too.
 
 Rating keys, the filter digits and the page keys act **once per press** —
 holding an arrow still flies (that is the scrub).
+
+### With "Stars and colour labels" on
+
+Turning that setting on (Settings → General, off by default) gives the digit
+row Lightroom's meaning and moves the five filters onto `shift`. Nothing else
+in the table above changes, and nothing at all changes while it is off:
+
+| Key                 | Loupe                                                   | Compare | Grid                   |
+| ------------------- | ------------------------------------------------------- | ------- | ---------------------- |
+| `1 – 5`             | stars 1–5                                               | —       | stars on the selection |
+| `0`                 | clear the stars                                         | —       | same                   |
+| `6 7 8 9`           | label red / yellow / green / blue (re-press clears)     | —       | same                   |
+| `shift+6`           | label purple                                            | —       | same                   |
+| `shift+1 – shift+5` | filter tabs, exactly as `1 – 5` do with the setting off | —       | same                   |
+
+Stars and labels are **orthogonal** to keep / reject / favorite: a 3★ frame
+with no verdict is still unrated, and every count and filter still keys on the
+verdict alone. A colour label Lightroom wrote that CULL does not recognise is
+shown as an outlined swatch and is never overwritten — the colour keys skip
+that frame.
 
 ## Rating model
 
@@ -239,12 +259,12 @@ are Lightroom-Classic-compatible so verdicts survive a Lightroom round-trip; the
 `cull:fav` marker is CULL's own private-namespace attribute that Lightroom
 ignores:
 
-| State      | XMP                                                  |
-| ---------- | ---------------------------------------------------- |
-| reject     | `xmpDM:pick="-1"`, `xmpDM:good="false"`              |
-| keep       | `xmpDM:pick="1"`,  `xmpDM:good="true"`               |
-| favorite   | `xmpDM:pick="1"`,  `xmpDM:good="true"`, `cull:fav` (+ a courtesy `xmp:Rating="1"` only when the frame had no user star) |
-| (unrated)  | no pick attribute                                    |
+| State     | XMP                                                                                                                    |
+| --------- | ---------------------------------------------------------------------------------------------------------------------- |
+| reject    | `xmpDM:pick="-1"`, `xmpDM:good="false"`                                                                                |
+| keep      | `xmpDM:pick="1"`, `xmpDM:good="true"`                                                                                  |
+| favorite  | `xmpDM:pick="1"`, `xmpDM:good="true"`, `cull:fav` (+ a courtesy `xmp:Rating="1"` only when the frame had no user star) |
+| (unrated) | no pick attribute                                                                                                      |
 
 User stars 2–5 (LrC's edit-pass ratings) are never touched by CULL. A favorite on
 a starless frame gets a courtesy 1★ (`cull:fav="star"`, removed on demote); a
@@ -266,6 +286,11 @@ Open with **Ctrl+,** or the gear icon on the home screen.
   clipping, peaking, thirds), default thumbnail strip.
 - **Grid size** — Small / Medium / Large contact-sheet cells (also `+` / `−`
   / `Ctrl+wheel` / `Ctrl+0` in the grid; see "Keyboard reference" above).
+- **Stars and colour labels** — off by default. On, the digit row becomes
+  Lightroom's (1–5 stars, `0` clears, `6`–`9` and `shift+6` the five colour
+  labels) and the filters move to `shift+1` – `shift+5`; the info rail gains a
+  clickable star meter and swatch row, and the grid and filmstrip cells show
+  the marks. See "With 'Stars and colour labels' on" above.
 - **File operations** — name of the rejected-subfolder created by
   "move rejects", default destination for "copy keeps" (ask each time or
   use a pinned folder).
