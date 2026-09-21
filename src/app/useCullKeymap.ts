@@ -135,9 +135,10 @@ export function useCullKeymap({
   championIndex: number;
   goToSite: (target: NavSite) => void;
   goBack: (landIndex?: number) => void;
-  /** Compare's cursor move — the compare twin of `advance`. Its per-step
-   *  findUnrated scan makes a WHOLE-LIST step O(n²), so only the page keys
-   *  use it, never Home / End. */
+  /** Compare's cursor move — the compare twin of `advance`. Only the page
+   *  keys use it: Home / End mean "first / last frame of the active
+   *  FILTER", and the filter tablist is hidden in compare, so there's no
+   *  filter-relative target for them to jump to there. */
   cycleChallenger: (dir: 1 | -1, step?: number) => boolean;
   challengerWins: () => void;
   challengerLoses: () => void;
@@ -320,23 +321,36 @@ export function useCullKeymap({
           break;
         // One candidate-strip screenful. The strip is the same component and
         // the same metrics module as the loupe's, so the step is identical.
+        // e.repeat is dropped (not just ignored — the key still swallows via
+        // preventDefault below): a page-key auto-repeat never sets
+        // `scrubbing` the way a held arrow does (that's useHeldRepeat's own
+        // signal), and `scrubbing` is the gate on `wantFull` and
+        // `prefetchFullsAround` — so an unguarded held PgUp/PgDn would queue
+        // a full-res want plus a handful of prefetch pushes on EVERY OS
+        // repeat tick for frames the user is flying straight past, with
+        // nothing to dequeue them (a 2-second hold floods 200+ reads at the
+        // NAS). One step per press; flying through a shoot stays the arrows'
+        // job, which has the scrub machinery built for exactly that.
         case "PageUp":
           e.preventDefault();
+          if (e.repeat) break;
           cycleChallenger(-1, pageStep());
           break;
         case "PageDown":
           e.preventDefault();
+          if (e.repeat) break;
           cycleChallenger(1, pageStep());
           break;
         // Home / End are LOUPE + GRID only — they mean "first / last frame of
         // the active FILTER", and the filter tablist is hidden in compare
-        // (StatusBar.tsx:295). cycleChallenger walks findUnrated once per
-        // step, so a whole-list step here would be O(n²) — 17.6M scans on a
-        // 4,194-frame shoot. Swallowed anyway, so neither key can reach a
-        // platform default while compare is up.
+        // (StatusBar.tsx:295), so there's no filter-relative target for them
+        // to jump to here. The repeat guard is a no-op beside the bare
+        // preventDefault below, but matches PageUp / PageDown for
+        // uniformity across the four keys.
         case "Home":
         case "End":
           e.preventDefault();
+          if (e.repeat) break;
           break;
         case "i":
         case "I":
@@ -467,37 +481,45 @@ export function useCullKeymap({
             }
           }
           break;
-        // First / last frame OF THE ACTIVE FILTER, not index 0: `advance`
-        // works in filter-position space and clamps (App.tsx:1002-1019), so a
+        // First / last frame OF THE ACTIVE FILTER, not index 0: App's
+        // `advance` callback works in filter-position space and clamps, so a
         // step of images.length always lands on visibleIndices[0] / [len-1].
         // (Its pos === -1 arm lands on visibleIndices[0] for BOTH directions,
-        // but that state is unreachable from a keypress: the pre-paint
-        // auto-jump at App.tsx:948-953 snaps an out-of-filter cursor back in
-        // whenever the filter is non-empty, and on an empty filter advance
-        // returns false at :1004.)
+        // but that state is unreachable from a keypress: App's pre-paint
+        // auto-jump effect snaps an out-of-filter cursor back in whenever the
+        // filter is non-empty, and on an empty filter `advance` returns false
+        // before it ever computes a position.)
         //
         // In the grid, Shift extends the selection to the same target instead
         // of moving the cursor alone — the keyboard twin of shift-clicking the
         // first / last cell, and of the Shift+arrow cases above.
         //
         // No mid-hold stopGridVertHold() call here, unlike the Shift+arrow
-        // cases: none of these four keys is a vertical arrow, so :238-239 has
-        // already stopped any held row-jump before the switch is reached, and
-        // useHeldRepeat's stop() zeroes the ref synchronously.
+        // cases: none of these four keys is a vertical arrow, so the vertical-
+        // hold interrupt check earlier in handleModalKeys has already stopped
+        // any held row-jump before the switch is reached, and useHeldRepeat's
+        // stop() zeroes the ref synchronously.
         //
-        // e.repeat is deliberately NOT guarded on the plain Home / End — a
-        // clamped advance returns false without touching state, so a held key
-        // is free, and there is no rAF loop for a repeat to race. The SHIFT
-        // forms of Home / End DO guard it: growGridSelection writes a fresh
-        // Set every call and their step is always the whole list, so each
-        // repeat would rebuild an identical selection and re-render for
-        // nothing. Shift+PgUp / PgDn are NOT guarded, because each repeat
-        // genuinely grows the selection by another screenful — exactly like a
-        // held Shift+ArrowDown.
+        // CONTROLLER RULING (fix round 1 — reverses the plan's "allow
+        // repeat"): a HELD PgUp/PgDn floods the read pipeline. A page-key
+        // auto-repeat never sets `scrubbing` the way a held arrow does
+        // (that's useHeldRepeat's own signal), and `scrubbing` gates both
+        // `wantFull` and `prefetchFullsAround` — so an unguarded repeat queues
+        // a full-res want plus several prefetch pushes on EVERY OS repeat
+        // tick for a frame the user is flying past, with nothing to dequeue
+        // them (a 2-second hold floods 200+ reads at the NAS). So PageUp /
+        // PageDown — plain AND Shift — drop `e.repeat` entirely and step once
+        // per press; flying through a shoot stays the arrows' job, which has
+        // the scrub machinery for it. Home / End get the same guard for
+        // uniformity, though it's moot there: a clamped `advance` (or, under
+        // Shift, `growGridSelection` landing on the same whole-list target)
+        // already reaches the same endpoint on every repeat, so a held
+        // Home/End was already harmless — the guard just makes that explicit
+        // instead of relying on the clamp.
         case "Home":
           e.preventDefault();
+          if (e.repeat) break;
           if (gridVisible && e.shiftKey) {
-            if (e.repeat) break;
             growGridSelection(-images.length);
             break;
           }
@@ -506,8 +528,8 @@ export function useCullKeymap({
           break;
         case "End":
           e.preventDefault();
+          if (e.repeat) break;
           if (gridVisible && e.shiftKey) {
-            if (e.repeat) break;
             growGridSelection(images.length);
             break;
           }
@@ -518,6 +540,7 @@ export function useCullKeymap({
         // loupe (utils/pageStep, measured live — see App's `pageStep`).
         case "PageUp":
           e.preventDefault();
+          if (e.repeat) break;
           if (gridVisible && e.shiftKey) {
             growGridSelection(-pageStep());
             break;
@@ -527,6 +550,7 @@ export function useCullKeymap({
           break;
         case "PageDown":
           e.preventDefault();
+          if (e.repeat) break;
           if (gridVisible && e.shiftKey) {
             growGridSelection(pageStep());
             break;
@@ -679,6 +703,10 @@ export function useCullKeymap({
       // from accidentally cycling sort, switching to loupe, marking favorite,
       // etc. Shift modifiers still pass through (Shift+Space = 2:1 zoom,
       // capital letters from Shift+letter still match their lowercase cases).
+      // This `return` never reaches a `case`, but it does NOT `preventDefault`
+      // — so e.g. Ctrl+Home / Ctrl+End / Ctrl+PageDown still fall to whatever
+      // the platform does with them. Inert today, since nothing in the grid
+      // (or anywhere else in the culling UI) is focusable.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       // Space (hold) → 1:1 zoom (Shift+Space → 2:1); arrows pan while zoomed.
@@ -748,6 +776,7 @@ export function useCullKeymap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     phase,
+    images.length,
     startHold,
     stopHold,
     startGridVertHold,
