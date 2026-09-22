@@ -123,7 +123,7 @@ describe("cancelling the analyze pass", () => {
   });
   afterEach(cleanup);
 
-  it("returns to staged immediately, discards the late result, and re-arms a second Begin culling", async () => {
+  it("returns to staged immediately and discards the late result when it lands", async () => {
     const props = makeProps();
     let resolveAnalyze!: (r: AnalyzeResult) => void;
     mockInvoke.mockImplementation(
@@ -157,15 +157,48 @@ describe("cancelling the analyze pass", () => {
     });
     expect(props.setImages.mock.calls).toHaveLength(0);
     expect(lastCall(props.setPhase)).toBe("staged");
+  });
 
-    // A fresh Begin culling is not blocked by the cancelled pass's guard.
-    mockInvoke.mockResolvedValue(analyzed());
+  it("re-arms Begin culling immediately — before the cancelled pass's own promise ever settles", async () => {
+    const props = makeProps();
+    let resolveFirst!: (r: AnalyzeResult) => void;
+    mockInvoke.mockImplementationOnce(
+      () =>
+        new Promise<AnalyzeResult>((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    const { result } = renderHook(() => useSessionLifecycle(props));
+
+    let firstPromise!: Promise<void>;
+    await act(async () => {
+      firstPromise = result.current.beginCulling();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      result.current.cancelAnalyze();
+    });
+
+    // Retry while the FIRST pass's own promise is still pending — beginCulling's
+    // finally block hasn't run yet to clear the double-click guard on its own,
+    // so this only works if cancelAnalyze released it itself.
+    mockInvoke.mockResolvedValueOnce(analyzed());
     await act(async () => {
       await result.current.beginCulling();
     });
     expect(mockInvoke).toHaveBeenCalledTimes(2);
     expect(props.setImages.mock.calls).toHaveLength(1);
     expect(lastCall(props.setPhase)).toBe("culling");
+
+    // The stale first pass, resolved last, must still be a no-op.
+    await act(async () => {
+      resolveFirst(analyzed());
+      await firstPromise;
+    });
+    expect(props.setImages.mock.calls).toHaveLength(1); // unchanged
+    expect(lastCall(props.setPhase)).toBe("culling"); // unchanged
   });
 
   it("also discards a late FAILURE from a cancelled pass — no error surfaces on the staged screen", async () => {
