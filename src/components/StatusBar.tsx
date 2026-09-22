@@ -302,6 +302,8 @@ export const StatusBar = memo(function StatusBar({
           <div className="cull-filter-tabs" role="tablist" aria-label="filter">
             <button
               type="button"
+              role="tab"
+              aria-selected={filter.filter === "all"}
               className={filter.filter === "all" ? "is-active" : ""}
               onClick={() => filter.setFilter((f) => cycleFilter(f, "all"))}
               data-tip={filter.filter === "all" ? undefined : `${tabKey("all")} · show all`}
@@ -310,6 +312,8 @@ export const StatusBar = memo(function StatusBar({
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={filter.filter === "unrated"}
               className={filter.filter === "unrated" ? "is-active" : ""}
               onClick={() => filter.setFilter((f) => cycleFilter(f, "unrated"))}
               data-tip={
@@ -321,6 +325,8 @@ export const StatusBar = memo(function StatusBar({
             <span className="cull-filter-tab-group">
               <button
                 type="button"
+                role="tab"
+                aria-selected={topOf(filter.filter) === "keeps"}
                 className={topOf(filter.filter) === "keeps" ? "is-active" : ""}
                 onClick={() => {
                   filter.setFilter((f) => cycleFilter(f, "keeps"));
@@ -378,6 +384,8 @@ export const StatusBar = memo(function StatusBar({
             <span className="cull-filter-tab-group">
               <button
                 type="button"
+                role="tab"
+                aria-selected={topOf(filter.filter) === "suggested"}
                 className={topOf(filter.filter) === "suggested" ? "is-active" : ""}
                 onClick={() => {
                   filter.setFilter((f) => cycleFilter(f, "suggested"));
@@ -484,6 +492,8 @@ export const StatusBar = memo(function StatusBar({
                 (see statusbar.css's arithmetic). */}
             <button
               type="button"
+              role="tab"
+              aria-selected={filter.filter === "rejects"}
               className={filter.filter === "rejects" ? "is-active" : ""}
               onClick={() => filter.setFilter((f) => cycleFilter(f, "rejects"))}
               data-tip={
