@@ -21,7 +21,7 @@ export function UpdateChip({ state, onInstall }: Props) {
   const canInstall = state.status === "available" || state.status === "failed";
   return (
     <span className="cull-update-chip" role="status">
-      <span className="cull-update-chip__text">{label}</span>
+      <span>{label}</span>
       {canInstall && (
         <button type="button" className="btn btn--sm" onClick={onInstall}>
           {state.status === "failed" ? "Try again" : "Install and restart"}

@@ -445,9 +445,10 @@ export function useSessionLifecycle({
           ? images.map((im) => settings.captureOffsets[im.srcFolder] ?? 0)
           : null,
       });
-      // Cancelled while in flight: the backend's own generation guard already
-      // stopped the EXIF sub-phase, but listing and sidecar restore ran to
-      // completion regardless — their answer arrives here and must be a no-op.
+      // Cancelled while in flight: cancelAnalyze reset the store, which moved
+      // the session generation the backend polls, so its EXIF sub-phase bailed
+      // — but listing and sidecar restore ran to completion regardless, and
+      // their answer arrives here and must be a no-op.
       if (analyzeGenRef.current !== gen) return;
 
       const sorted = result.order.map((i) => images[i]);
@@ -577,6 +578,11 @@ export function useSessionLifecycle({
   const cancelAnalyze = useCallback(() => {
     analyzeGenRef.current += 1;
     analyzingRef.current = false;
+    // The backend's analyze pass polls the SESSION generation, which only
+    // moves on a store reset — the frontend generation bump above is invisible
+    // to it. Without this, Cancel on a big shoot leaves the whole EXIF pass
+    // grinding, and a retry runs a second pass beside it.
+    imageStore.reset([]);
     setPhase("staged");
   }, [setPhase]);
 

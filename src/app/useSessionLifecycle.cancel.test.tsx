@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
+import { imageStore } from "../image/imageStore";
 import type { Dispatch, SetStateAction } from "react";
 import { useSessionLifecycle } from "./useSessionLifecycle";
 import { DEFAULT_SETTINGS } from "../types/settings";
@@ -148,6 +149,10 @@ describe("cancelling the analyze pass", () => {
     });
     // Back on staged the instant Cancel is pressed — not waiting on the pass.
     expect(lastCall(props.setPhase)).toBe("staged");
+    // And the BACKEND stops: analyze_folder polls the session generation, which
+    // only moves on a store reset — without this, Cancel on a 4,000-frame shoot
+    // leaves the whole EXIF pass grinding and a retry runs a second one beside it.
+    expect(imageStore.reset).toHaveBeenCalledWith([]);
 
     // The stale pass now resolves. Its result must be a no-op: no images
     // committed, and the phase must not flip to "culling" behind the user.

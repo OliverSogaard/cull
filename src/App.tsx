@@ -1708,11 +1708,7 @@ export default function App() {
               <div className="cull-chrome__sub">
                 {progress.done > 0 ? `${progress.done} / ${progress.total}` : "Starting…"}
               </div>
-              <button
-                type="button"
-                className="btn btn--sm cull-analyzing__cancel"
-                onClick={cancelAnalyze}
-              >
+              <button type="button" className="btn btn--sm" onClick={cancelAnalyze}>
                 Cancel
               </button>
             </>

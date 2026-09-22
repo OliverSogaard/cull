@@ -113,8 +113,6 @@ export function computeGridBurstSegments(
  * membership for the burst walk — this just tells the caller which stretches
  * are worth drawing a bracket around.
  */
-export function drawableGridBurstSegments(
-  segs: readonly GridBurstSegment[],
-): GridBurstSegment[] {
+export function drawableGridBurstSegments(segs: readonly GridBurstSegment[]): GridBurstSegment[] {
   return segs.filter((s) => s.c1 > s.c0);
 }

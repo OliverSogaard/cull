@@ -28,9 +28,12 @@ export function useUpdateCheck(enabled: boolean) {
         if (!alive || !found) return;
         update.current = found;
         setState({ status: "available", version: found.version });
-      } catch {
+      } catch (e) {
         // No network, no release yet, or a signature that does not verify:
-        // all of them mean "nothing to offer", never an error surface.
+        // all of them mean "nothing to offer", never an error surface. The
+        // reason still goes to the console, or a key that does not match the
+        // committed pubkey would fail silently forever.
+        console.warn("update check:", e);
       }
     })();
     return () => {
