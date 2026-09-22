@@ -329,3 +329,13 @@
     --home-row-pad: 16px;
   }
 }
+
+/* ── update chip (home screen) ────────────────────────────────
+   Rendered only when a newer release exists; sits in the how-row so the
+   hero's rhythm is unchanged when there is nothing to offer. */
+.cull-update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text);
+}

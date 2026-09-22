@@ -104,4 +104,9 @@
 .cull-staged-sort__offset {
   min-width: 84px;
   color: var(--text);
+  /* Overrides the shared list rule's `text-align: right` above: right-aligned
+     text hugs the box's far edge, leaving the whole 84px as dead air between
+     it and the − button even though the flex gap is already tight — centring
+     it reads as one − / value / + group instead. */
+  text-align: center;
 }

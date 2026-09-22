@@ -71,6 +71,7 @@ function props(over: Partial<KeymapProps> = {}): KeymapProps {
     setSettingsOpen: setter<boolean>(),
     pickFolder: vi.fn(() => Promise.resolve()),
     beginCulling: vi.fn(() => Promise.resolve()),
+    cancelAnalyze: vi.fn(() => {}),
     resetSession: vi.fn(() => {}),
     quitGuard: false,
     setQuitGuard: setter<boolean>(),
@@ -240,6 +241,14 @@ describe("modal gates", () => {
     renderKeymap(p);
     press("Escape");
     expect(p.resetSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape on the analyzing screen cancels the pass, not the staged reset", () => {
+    const p = props({ phase: "analyzing" });
+    renderKeymap(p);
+    expect(press("Escape").defaultPrevented).toBe(true);
+    expect(p.cancelAnalyze).toHaveBeenCalledTimes(1);
+    expect(p.resetSession).not.toHaveBeenCalled();
   });
 
   // The table the spec asks for: no overlay may ever let a rating through, in

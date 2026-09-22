@@ -75,6 +75,7 @@ export function useCullKeymap({
   setSettingsOpen,
   pickFolder,
   beginCulling,
+  cancelAnalyze,
   resetSession,
   quitGuard,
   setQuitGuard,
@@ -141,6 +142,8 @@ export function useCullKeymap({
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   pickFolder: () => Promise<void>;
   beginCulling: () => Promise<void>;
+  /** Cancel an in-flight analyze pass — the "analyzing" screen's Escape. */
+  cancelAnalyze: () => void;
   resetSession: () => void;
   quitGuard: boolean;
   setQuitGuard: Dispatch<SetStateAction<boolean>>;
@@ -263,10 +266,26 @@ export function useCullKeymap({
         e.preventDefault();
         resetSession();
       }
+      // Esc on the analyzing screen → cancel the in-flight pass and return to
+      // staged (mirrors the Cancel button). Free here: the big cull keymap's
+      // ESC branch only ever runs for phase === "culling".
+      if (phase === "analyzing" && e.key === "Escape") {
+        e.preventDefault();
+        cancelAnalyze();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [settingsOpen, phase, pickFolder, beginCulling, images.length, resetSession, setSettingsOpen]);
+  }, [
+    settingsOpen,
+    phase,
+    pickFolder,
+    beginCulling,
+    cancelAnalyze,
+    images.length,
+    resetSession,
+    setSettingsOpen,
+  ]);
 
   // The cull keymap closures capture currentIndex/ratings/etc., so they rebuild on
   // every nav step + rating. Dispatch through a ref and register the window

@@ -9,7 +9,7 @@ import { hasLrcRating } from "../utils/ratingColor";
 import { useThumb } from "../image/useThumb";
 import { computeScrollIndicator } from "../utils/scrollIndicator";
 import { computeGridAutoScrollTop, computeGridWindow } from "./gridWindow";
-import { computeGridBurstSegments } from "./gridBurstSegments";
+import { computeGridBurstSegments, drawableGridBurstSegments } from "./gridBurstSegments";
 import { gridCellWidth } from "../utils/gridSize";
 
 /** Visible rows above and below the viewport that we still render. */
@@ -313,7 +313,7 @@ export const GridView = memo(function GridView({
         </div>
       )}
       <div className="cull-grid__inner" style={{ height: totalH }}>
-        {burstSegs.map((s) => (
+        {drawableGridBurstSegments(burstSegs).map((s) => (
           <fieldset
             key={`burst-${s.key}`}
             className={`cull-burst-box cull-burst-box--grid${

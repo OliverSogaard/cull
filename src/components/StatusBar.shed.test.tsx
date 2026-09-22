@@ -140,7 +140,9 @@ describe("the Rejects tab", () => {
   it("splits Smart's count suffix into its own element, leaving the name whole", () => {
     const base = props();
     render(<StatusBar {...base} filter={{ ...base.filter, suggestionCount: 4194 }} />);
-    const smart = screen.getByRole("button", { name: "Smart · 4194" });
+    // The Smart tab now carries role="tab" (StatusBar.tabs.test.tsx), so its
+    // accessible role is "tab", not the button default.
+    const smart = screen.getByRole("tab", { name: "Smart · 4194" });
     const count = smart.querySelector(".cull-statusbar__smart-count");
     expect(count?.textContent).toBe("· 4194");
   });

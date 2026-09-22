@@ -11,7 +11,11 @@ import { KeyCombo } from "./KeyCombo";
  * group on every page, so the user doesn't have to remember which mode
  * surfaces which utility.
  */
-function helpGroupsFor(mode: HelpMode, starsAndLabels?: boolean): HelpGroup[] {
+function helpGroupsFor(
+  mode: HelpMode,
+  starsAndLabels?: boolean,
+  rejectsFilterActive?: boolean,
+): HelpGroup[] {
   // The five filters live on the bare digit row, unless the stars-and-labels
   // layer has taken it — then they move to Shift and the digits mark instead.
   const filterRow: HelpRow = {
@@ -36,6 +40,14 @@ function helpGroupsFor(mode: HelpMode, starsAndLabels?: boolean): HelpGroup[] {
     ],
   };
   const marks: HelpGroup[] = starsAndLabels ? [markGroup] : [];
+  // C is a silent no-op from the Rejects filter (a reject can't champion a
+  // compare — goToSite's pre-existing guard) — name the rule here rather than
+  // leave it unexplained, but only while that filter is actually live.
+  const compareRow: HelpRow = {
+    keys: ["C"],
+    desc: "Compare",
+    ...(rejectsFilterActive ? { note: "not from Rejects" } : {}),
+  };
   const session: HelpGroup = {
     title: "session",
     rows: [
@@ -86,10 +98,7 @@ function helpGroupsFor(mode: HelpMode, starsAndLabels?: boolean): HelpGroup[] {
       },
       {
         title: "switch view",
-        rows: [
-          { keys: ["C"], desc: "Compare" },
-          { keys: ["G"], desc: "Grid" },
-        ],
+        rows: [compareRow, { keys: ["G"], desc: "Grid" }],
       },
       session,
     ];
@@ -167,10 +176,7 @@ function helpGroupsFor(mode: HelpMode, starsAndLabels?: boolean): HelpGroup[] {
     },
     {
       title: "switch view",
-      rows: [
-        { keys: ["L"], desc: "Loupe" },
-        { keys: ["C"], desc: "Compare" },
-      ],
+      rows: [{ keys: ["L"], desc: "Loupe" }, compareRow],
     },
     session,
   ];
@@ -186,6 +192,7 @@ export function HelpOverlay({
   intro,
   onDismiss,
   starsAndLabels,
+  rejectsFilterActive,
 }: {
   mode: HelpMode;
   intro?: boolean;
@@ -193,8 +200,11 @@ export function HelpOverlay({
   /** `settings.starsAndLabels` — which of the two keymap shapes to teach.
    *  Absent or false: every row is what it has always been. */
   starsAndLabels?: boolean;
+  /** `filter === "rejects"` — names the Compare row's reject-champion rule
+   *  only while it actually applies. */
+  rejectsFilterActive?: boolean;
 }) {
-  const groups = helpGroupsFor(mode, starsAndLabels);
+  const groups = helpGroupsFor(mode, starsAndLabels, rejectsFilterActive);
   return (
     <div className="cull-help" onClick={onDismiss}>
       <div className="cull-help__inner">
@@ -239,7 +249,15 @@ export function HelpOverlay({
                     )}
                     {row.hold && <span className="cull-help__hold">hold</span>}
                   </span>
-                  <span className="cull-help__desc">{row.desc}</span>
+                  <span className="cull-help__desc">
+                    {row.desc}
+                    {row.note && (
+                      <>
+                        {" "}
+                        <span className="cull-help__note">({row.note})</span>
+                      </>
+                    )}
+                  </span>
                 </div>
               ))}
             </div>

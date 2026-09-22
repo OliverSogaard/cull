@@ -39,6 +39,8 @@ import { ICON, ICON_DISPLAY_STROKE } from "./components/icons";
 import { KeyCombo } from "./components/KeyCombo";
 import { QuitGuardOverlay } from "./components/QuitGuardOverlay";
 import { RecentFolders } from "./components/RecentFolders";
+import { UpdateChip } from "./components/UpdateChip";
+import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import { SaveStatusPill } from "./components/SaveStatusPill";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -205,6 +207,8 @@ export default function App() {
   // User-tunable settings, persisted to localStorage. Opened with Ctrl+,.
   const [settings, setSettings] = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Release builds ask GitHub once per launch; the dev exe and the tests never do.
+  const update = useUpdateCheck(import.meta.env.PROD);
 
   // EXIF metadata per path. Fed by the imageStore's metadata sink (full-res
   // bundle reads return camera/lens/AF/pixel-dims) and seeded with LrC stars
@@ -734,54 +738,61 @@ export default function App() {
   // Staging (picker / drag-drop / recents / launch auto-open), begin-culling
   // (analyze + sort + rating restore), the session's recents write-back, and
   // session teardown (reset / leave-to-home) live in app/useSessionLifecycle.
-  const { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome, pruneMoved } =
-    useSessionLifecycle({
-      images,
-      imagesRef,
-      ratings,
-      settings,
-      phase,
-      pickerBusy,
-      profile,
-      recentFolders,
-      pushRecent,
-      removeEntry,
-      undoStack,
-      redoStack,
-      resetZoom,
-      setFeedback,
-      setImages,
-      setRatings,
-      setStars,
-      setLabels,
-      setMetadata,
-      setCurrentIndex,
-      setFilter,
-      setPhase,
-      setPendingFolder,
-      setPickerBusy,
-      setScanFailures,
-      setAnalyzeError,
-      setAnalyzeWarning,
-      setLastAdded,
-      setLastIgnored,
-      setLastBatchFolders,
-      setFolder,
-      setProgress,
-      setThumbsVisible,
-      setExifVisible,
-      setClippingVisible,
-      setPeakingVisible,
-      setCompositionVisible,
-      setCompareMode,
-      setGridVisible,
-      setNavStack,
-      setSelectedIndices,
-      setSelectionAnchor,
-      setConfirmHome,
-      setChampionIndex,
-      setChallengerIndex,
-    });
+  const {
+    openFoldersByPaths,
+    pickFolder,
+    beginCulling,
+    cancelAnalyze,
+    resetSession,
+    leaveToHome,
+    pruneMoved,
+  } = useSessionLifecycle({
+    images,
+    imagesRef,
+    ratings,
+    settings,
+    phase,
+    pickerBusy,
+    profile,
+    recentFolders,
+    pushRecent,
+    removeEntry,
+    undoStack,
+    redoStack,
+    resetZoom,
+    setFeedback,
+    setImages,
+    setRatings,
+    setStars,
+    setLabels,
+    setMetadata,
+    setCurrentIndex,
+    setFilter,
+    setPhase,
+    setPendingFolder,
+    setPickerBusy,
+    setScanFailures,
+    setAnalyzeError,
+    setAnalyzeWarning,
+    setLastAdded,
+    setLastIgnored,
+    setLastBatchFolders,
+    setFolder,
+    setProgress,
+    setThumbsVisible,
+    setExifVisible,
+    setClippingVisible,
+    setPeakingVisible,
+    setCompositionVisible,
+    setCompareMode,
+    setGridVisible,
+    setNavStack,
+    setSelectedIndices,
+    setSelectionAnchor,
+    setConfirmHome,
+    setChampionIndex,
+    setChallengerIndex,
+  });
 
   // Wipe the multi-selection state — called whenever the user leaves the grid
   // context (site switch, ESC, opening another folder). Cleanly decoupled from
@@ -1386,6 +1397,7 @@ export default function App() {
     setSettingsOpen,
     pickFolder,
     beginCulling,
+    cancelAnalyze,
     resetSession,
     quitGuard,
     setQuitGuard,
@@ -1650,6 +1662,7 @@ export default function App() {
                   <KeyCombo keys={["mod", ","]} className="cull-hero__how-key" />
                   Settings
                 </span>
+                <UpdateChip state={update.state} onInstall={() => void update.install()} />
               </div>
             </div>
           )}
@@ -1695,6 +1708,9 @@ export default function App() {
               <div className="cull-chrome__sub">
                 {progress.done > 0 ? `${progress.done} / ${progress.total}` : "Starting…"}
               </div>
+              <button type="button" className="btn btn--sm" onClick={cancelAnalyze}>
+                Cancel
+              </button>
             </>
           )}
 
@@ -2233,6 +2249,7 @@ export default function App() {
             setHelpIntro(false);
           }}
           starsAndLabels={settings.starsAndLabels}
+          rejectsFilterActive={filter === "rejects"}
         />
       )}
 

@@ -91,3 +91,10 @@
   white-space: normal;
 }
 
+/* A qualifier that only sometimes applies (e.g. a rule live under one
+   filter) — muted, same treatment as "hold", so it reads as an aside rather
+   than part of the description proper. */
+.cull-help__note {
+  color: var(--muted);
+}
+

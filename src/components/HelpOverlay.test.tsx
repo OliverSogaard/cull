@@ -136,3 +136,28 @@ describe("the help sheet follows the stars-and-labels setting", () => {
     expect(() => rowFor(container, "Clear the stars")).toThrow();
   });
 });
+
+/**
+ * `C` from the Rejects filter is a pre-existing, correct no-op (a reject
+ * cannot champion a compare) — but it used to be silent. The help sheet's
+ * Compare row now names the rule, and ONLY while that filter is active.
+ */
+describe("the compare row warns from the Rejects filter", () => {
+  test("names the rule in loupe when Rejects is active", () => {
+    const { container } = render(<HelpOverlay mode="loupe" rejectsFilterActive />);
+    const row = rowFor(container, "Compare");
+    expect(row.querySelector(".cull-help__note")?.textContent).toBe("(not from Rejects)");
+  });
+
+  test("names the rule in grid when Rejects is active", () => {
+    const { container } = render(<HelpOverlay mode="grid" rejectsFilterActive />);
+    const row = rowFor(container, "Compare");
+    expect(row.querySelector(".cull-help__note")?.textContent).toBe("(not from Rejects)");
+  });
+
+  test("stays silent outside the Rejects filter", () => {
+    const { container } = render(<HelpOverlay mode="loupe" />);
+    const row = rowFor(container, "Compare");
+    expect(row.querySelector(".cull-help__note")).toBeNull();
+  });
+});
