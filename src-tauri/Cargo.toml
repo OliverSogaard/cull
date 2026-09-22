@@ -86,7 +86,7 @@ strip = true
 # smart-ml: ONNX Runtime bindings, pinned to the rc (production-ready, API not
 # yet stable — pin exactly). EP per platform: CoreML / DirectML, CPU fallback.
 [target.'cfg(target_os = "macos")'.dependencies]
-ort = { version = "=2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "copy-dylibs", "coreml"] }
+ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "copy-dylibs", "coreml"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "=2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "copy-dylibs", "directml"] }
