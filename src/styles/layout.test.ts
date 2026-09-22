@@ -319,6 +319,31 @@ describe("the backdrops", () => {
   });
 });
 
+describe("the staged-folder offset stepper", () => {
+  test("− / value / + read as one tight group, not spread across the row", () => {
+    const css = sheet("./staged-sort.css");
+    // --sp-2 is 6px (tokens.css) — the tightest of the two small steps, and
+    // the ceiling the brief picked for "a few px gap".
+    const stepper = ruleBody(css, ".cull-staged-sort__stepper");
+    expect(stepper).toMatch(/gap:\s*var\(--sp-2\)/);
+    expect(stepper, "would push the value away from one button").not.toMatch(
+      /justify-content:\s*space-between/,
+    );
+    // The value itself used to hug the right edge of its 84px box (inherited
+    // `text-align: right` from the shared count/time/delta/offset list rule
+    // above), which read as "far from the −" even though the flex gap on
+    // both sides was already tight — centring it is what actually closes the
+    // visual gap to the − button. `.cull-staged-sort__offset` is also the
+    // LAST selector of that shared comma list, so it line-anchors identically
+    // to its own standalone override rule below — slice past the shared
+    // rule's close brace first so `ruleBody` can only find the override.
+    const sharedListEnd = css.indexOf("}", css.indexOf(".cull-staged-sort__offset {"));
+    expect(ruleBody(css.slice(sharedListEnd), ".cull-staged-sort__offset")).toMatch(
+      /text-align:\s*center/,
+    );
+  });
+});
+
 describe("the grid's colour-label bar", () => {
   test("out-specifies marks.css's inset with a compound selector, not import order", () => {
     // marks.css's `.cull-label-bar` and grid.css's inset rule are both a
