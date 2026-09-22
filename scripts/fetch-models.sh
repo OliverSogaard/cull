@@ -4,6 +4,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../src-tauri/models"
 
+# macOS ships shasum, Git Bash on the Windows runner ships sha256sum; either
+# prints "<hex>  <file>".
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi; }
+
 RELEASE_URL="https://github.com/OliverSogaard/cull/releases/download/models-v1"
 
 # name<space>sha256 — one line per release-hosted model.
@@ -13,14 +17,14 @@ dinov2s.onnx bc2bbab71ee5fceee6220cc6efd56177b96f6b9ba93860f3508a2de2ba49afb2"
 
 fetch_one() {
   local file="$1" sha="$2"
-  if [ -f "$file" ] && shasum -a 256 "$file" 2>/dev/null | grep -q "^$sha "; then
+  if [ -f "$file" ] && sha256 "$file" 2>/dev/null | grep -q "^$sha "; then
     echo "$file already present and verified"
     return 0
   fi
   echo "downloading $file ..."
   rm -f "$file.tmp"
   if ! curl -fL --retry 3 -o "$file.tmp" "$RELEASE_URL/$file" ||
-    ! echo "$sha  $file.tmp" | shasum -a 256 -c -; then
+    ! sha256 "$file.tmp" | grep -q "^$sha "; then
     rm -f "$file.tmp"
     return 1
   fi
