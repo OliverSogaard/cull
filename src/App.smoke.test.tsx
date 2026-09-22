@@ -122,7 +122,7 @@ describe("App, end to end on one path", () => {
 
     // Culling. The Rejects filter tab lives in the footer StatusBar, which
     // renders only past App.tsx:1517's `phase !== "culling"` return.
-    await screen.findByRole("button", { name: "Rejects" });
+    await screen.findByRole("tab", { name: "Rejects" });
 
     fireEvent.keyDown(window, { key: "Enter", bubbles: true, cancelable: true });
     await waitFor(() =>
@@ -140,7 +140,7 @@ describe("App, end to end on one path", () => {
     // `findByRole` alone only proves the tab EXISTS — StatusBar renders it in
     // every filter state, so a `3` that did nothing at all would leave this
     // green too. `is-active` is the actual claim: the press selected it.
-    const keepsTab = await screen.findByRole("button", { name: "Keeps" });
+    const keepsTab = await screen.findByRole("tab", { name: "Keeps" });
     await waitFor(() => expect(keepsTab.className).toContain("is-active"));
     expect(invoke).not.toHaveBeenCalledWith("write_xmp_star", expect.anything());
   });
@@ -160,7 +160,7 @@ describe("App, end to end on one path", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Open folders/ }));
     await waitFor(() => expect(dialogOpen).toHaveBeenCalledTimes(1));
     fireEvent.click(await screen.findByRole("button", { name: "Begin culling →" }));
-    await screen.findByRole("button", { name: "Rejects" });
+    await screen.findByRole("tab", { name: "Rejects" });
 
     fireEvent.keyDown(window, { key: "Enter", bubbles: true, cancelable: true });
     await waitFor(() =>
@@ -198,7 +198,7 @@ describe("App, end to end on one path", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Open folders/ }));
     await waitFor(() => expect(dialogOpen).toHaveBeenCalledTimes(1));
     fireEvent.click(await screen.findByRole("button", { name: "Begin culling →" }));
-    await screen.findByRole("button", { name: "Rejects" });
+    await screen.findByRole("tab", { name: "Rejects" });
 
     fireEvent.keyDown(window, { key: "3", code: "Digit3", bubbles: true, cancelable: true });
     await waitFor(() =>
