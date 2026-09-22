@@ -142,6 +142,12 @@ export function useSessionLifecycle({
   const openBusyRef = useRef(false);
   // Guards begin-culling against a double-click firing two analyze passes.
   const analyzingRef = useRef(false);
+  // Bumped by cancelAnalyze to invalidate an in-flight analyze pass: beginCulling
+  // captures the generation before its await and checks it again after — a
+  // mismatch means the pass was cancelled while in flight, so its result (or
+  // error) — and the phase flip that would otherwise follow it — is dropped
+  // instead of landing on top of the staged screen cancel already returned to.
+  const analyzeGenRef = useRef(0);
 
   // The recents key of the entry THIS session last wrote. A session's folder
   // set can grow (drop-append while staged), which changes its key — tracking
@@ -411,6 +417,7 @@ export function useSessionLifecycle({
     if (images.length === 0) return;
     if (analyzingRef.current) return; // ignore a double-click — one analyze pass
     analyzingRef.current = true;
+    const gen = analyzeGenRef.current;
     setAnalyzeError(null);
     setAnalyzeWarning(null);
     setProgress({ done: 0, total: images.length, phase: "reading" });
@@ -438,6 +445,10 @@ export function useSessionLifecycle({
           ? images.map((im) => settings.captureOffsets[im.srcFolder] ?? 0)
           : null,
       });
+      // Cancelled while in flight: the backend's own generation guard already
+      // stopped the EXIF sub-phase, but listing and sidecar restore ran to
+      // completion regardless — their answer arrives here and must be a no-op.
+      if (analyzeGenRef.current !== gen) return;
 
       const sorted = result.order.map((i) => images[i]);
       // ratings are indexed by the ORIGINAL input order; key them by stable id.
@@ -519,6 +530,9 @@ export function useSessionLifecycle({
       // read pool loads the current frame (priority 0) and its prefetch window as
       // soon as the view mounts, so there's no entry-time read stampede.
     } catch (e) {
+      // A cancelled pass's error is stale too — cancelAnalyze already put the
+      // user back on staged with no error message; don't surface one now.
+      if (analyzeGenRef.current !== gen) return;
       // Don't drop the user into an unsorted, ratings-not-restored cull: surface
       // the error and return to the staged screen so they can retry.
       ok = false;
@@ -527,7 +541,9 @@ export function useSessionLifecycle({
     } finally {
       unlisten();
       analyzingRef.current = false;
-      setPhase(ok ? "culling" : "staged");
+      // A cancelled pass must not flip the phase out from under the staged
+      // screen cancelAnalyze already returned to.
+      if (analyzeGenRef.current === gen) setPhase(ok ? "culling" : "staged");
     }
   }, [
     images,
@@ -551,6 +567,18 @@ export function useSessionLifecycle({
     setPeakingVisible,
     setCompositionVisible,
   ]);
+
+  // Cancel an in-flight Begin-culling pass (the "analyzing" screen's Cancel
+  // button / Escape): bump the generation so beginCulling's own result/error
+  // handling drops it as stale, release the double-click guard immediately so
+  // a fresh Begin culling isn't wedged behind the pass just walked away from,
+  // and drop straight back to staged — beginCulling's state commits (images,
+  // ratings, stars, labels…) never ran, so the staged set is untouched.
+  const cancelAnalyze = useCallback(() => {
+    analyzeGenRef.current += 1;
+    analyzingRef.current = false;
+    setPhase("staged");
+  }, [setPhase]);
 
   // After "Move rejects" (subfolder or Trash): take the moved frames out of
   // the live session in place. Every cursor is remapped through functional
@@ -705,5 +733,13 @@ export function useSessionLifecycle({
     resetSession();
   }, [images, ratings, resetSession, writeSessionRecent, setConfirmHome]);
 
-  return { openFoldersByPaths, pickFolder, beginCulling, resetSession, leaveToHome, pruneMoved };
+  return {
+    openFoldersByPaths,
+    pickFolder,
+    beginCulling,
+    cancelAnalyze,
+    resetSession,
+    leaveToHome,
+    pruneMoved,
+  };
 }

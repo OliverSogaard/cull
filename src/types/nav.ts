@@ -24,6 +24,10 @@ export type HelpRow = {
   mod?: string;
   /** Muted word after the caps. "hold" is never inside a cap. */
   hold?: boolean;
+  /** A muted parenthetical after `desc` — a qualifier that only applies
+   *  sometimes (e.g. a rule that's live only under one filter), so it can't
+   *  just be baked into `desc` itself. */
+  note?: string;
   desc: string;
 };
 
