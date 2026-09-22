@@ -104,3 +104,17 @@ export function computeGridBurstSegments(
   close();
   return out;
 }
+
+/**
+ * The RENDER-side guard for the "fence" of one-cell boxes two interleaved
+ * bodies produce (see `gridBurstSegments.test.ts`'s "splits two interleaved
+ * bodies..." case, where every stretch is exactly one cell wide). The DATA
+ * above is unchanged — a lone one-cell stretch still carries its full
+ * membership for the burst walk — this just tells the caller which stretches
+ * are worth drawing a bracket around.
+ */
+export function drawableGridBurstSegments(
+  segs: readonly GridBurstSegment[],
+): GridBurstSegment[] {
+  return segs.filter((s) => s.c1 > s.c0);
+}
