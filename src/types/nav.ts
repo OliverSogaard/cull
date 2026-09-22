@@ -18,6 +18,10 @@ export type HelpRow = {
   keys: readonly string[];
   /** Draw the two keys as a range — `1` – `4` — with a muted en dash. */
   range?: boolean;
+  /** A modifier that applies to BOTH ends of a `range`, drawn on each cap
+   *  (`Shift` `1` – `Shift` `5`) rather than once in front, so neither end can
+   *  be read as the bare key. Ignored without `range`. */
+  mod?: string;
   /** Muted word after the caps. "hold" is never inside a cap. */
   hold?: boolean;
   desc: string;

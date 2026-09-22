@@ -1,6 +1,6 @@
 // src/components/ThumbStrip.tsx
 import { memo, useMemo } from "react";
-import type { Img, ImageMetadata, Rating } from "../types";
+import type { Img, ImageMetadata, LabelValue, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
 import { ThumbCell } from "./ThumbCell";
@@ -28,6 +28,8 @@ export const ThumbStrip = memo(function ThumbStrip({
   similar,
   scrubbing,
   scrubSpeed,
+  starsAndLabels,
+  labels,
 }: {
   images: Img[];
   currentIndex: number;
@@ -46,6 +48,11 @@ export const ThumbStrip = memo(function ThumbStrip({
   scrubbing?: boolean;
   /** Staged scrub acceleration factor — labeled above the bar's marker. */
   scrubSpeed?: number;
+  /** Phase 5A. Absent or false: the cells render exactly as they did before. */
+  starsAndLabels?: boolean;
+  /** Colour labels by image id. The cell itself does no map lookups — the
+   *  strip hands it the one primitive, as it already does for `rating`. */
+  labels?: Record<number, LabelValue>;
 }) {
   const visibleSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
   const indices = useMemo(() => images.map((_, i) => i), [images]);
@@ -69,6 +76,8 @@ export const ThumbStrip = memo(function ThumbStrip({
           dimmed={!visibleSet.has(idx)}
           onPick={onPick}
           suggestion={suggestions?.[images[idx].id] ?? null}
+          starsAndLabels={starsAndLabels}
+          label={labels?.[images[idx].id]}
         />
       )}
     />

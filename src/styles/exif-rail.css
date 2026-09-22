@@ -209,3 +209,66 @@
     gap: 28px;
   }
 }
+
+/* ── Stars and colour labels (Phase 5A) ───────────────────────────────────
+   POSITION and hit area only; the look of every mark is in marks.css. */
+
+/* The star slots are buttons so the rail is the one mouse route to a rating,
+   but they must not look or measure like buttons. */
+.cull-exif-rail__star-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  line-height: 0;
+  cursor: pointer;
+  color: inherit;
+}
+
+.cull-exif-rail__star-btn:focus-visible {
+  border-radius: var(--r-1);
+  box-shadow: var(--ring-inset);
+  outline: none;
+}
+
+/* The label row: the active label's NAME, then the five swatches. */
+.cull-exif-rail__labels {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: var(--sp-1);
+  line-height: 1;
+}
+
+.cull-exif-rail__label-name {
+  color: var(--text-2);
+  margin-right: var(--sp-1);
+}
+
+.cull-exif-rail__labels button {
+  appearance: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.cull-exif-rail__labels button:focus-visible {
+  box-shadow: var(--ring-inset);
+  outline: none;
+}
+
+/* The custom-label swatches are inert via aria-disabled, not the `disabled`
+   attribute (see ExifRail.tsx), so they need their OWN visual affordance —
+   `:disabled` never matches them. */
+.cull-exif-rail__labels button[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* The active swatch wears a ring, so which one is set survives a
+   screenshot, a colour-blind reader and a dark room. */
+.cull-label-swatch.is-active {
+  box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3px var(--text-2);
+}

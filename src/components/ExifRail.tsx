@@ -1,8 +1,9 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Star } from "lucide-react";
 import { ICON } from "./icons";
 import { stripExt } from "../utils/path";
-import type { ImageMetadata, Rating } from "../types";
+import type { ImageMetadata, Label, LabelValue, Rating, Star as StarValue } from "../types";
+import { LABELS, LABEL_NAME } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
 import type { SimilarCtx } from "../smart/groupSimilar";
@@ -21,6 +22,34 @@ import { hasLrcRating } from "../utils/ratingColor";
 /** The five LrC star slots, so the meter maps over positions instead of
  *  repeating a character twice with two different colours. */
 const LRC_STAR_SLOTS = [1, 2, 3, 4, 5];
+
+/** How long the set-flash lasts. Mirrors `--dur-fast` (tokens.css); the CSS
+ *  owns the animation, this only owns how long the class stays on. */
+const MARK_FLASH_MS = 120;
+
+/** What the swatch row says while the frame carries a label CULL cannot
+ *  reproduce. One string for the disabled swatches' title and the custom
+ *  swatch's accessible name, so the two can never say different things. */
+const CUSTOM_LABEL_NOTE = "Custom Lightroom label — not changed by CULL";
+
+/**
+ * True for one flash window after `value` changes while the FRAME stays the
+ * same — "the user just set this", as opposed to "the cursor moved to a
+ * frame that already had it". Mount never flashes.
+ */
+function useChangeFlash(frameId: number | undefined, value: unknown): boolean {
+  const [flash, setFlash] = useState(false);
+  const prev = useRef({ frameId, value });
+  useEffect(() => {
+    const was = prev.current;
+    prev.current = { frameId, value };
+    if (was.frameId !== frameId || was.value === value) return;
+    setFlash(true);
+    const t = window.setTimeout(() => setFlash(false), MARK_FLASH_MS);
+    return () => window.clearTimeout(t);
+  }, [frameId, value]);
+  return flash;
+}
 
 /**
  * Loupe-side EXIF rail. A 290-px column (232 below 1200px of window width —
@@ -42,6 +71,12 @@ export const ExifRail = memo(function ExifRail({
   suggestion,
   burst,
   similar,
+  starsAndLabels,
+  frameId,
+  star,
+  label,
+  onSetStar,
+  onSetLabel,
 }: {
   metadata: ImageMetadata | undefined;
   histogramUrl: string | undefined;
@@ -55,6 +90,16 @@ export const ExifRail = memo(function ExifRail({
   /** Similar set membership — shown regardless of rating/verdict, so the analysis
    *  is visible even when it has nothing to suggest. */
   similar?: SimilarCtx | null;
+  /** Phase 5A. Absent or false: the rail renders exactly what it rendered
+   *  before, read-only "LrC rating" row included. */
+  starsAndLabels?: boolean;
+  /** The frame the rail is describing — only used to tell "the user set a
+   *  star" apart from "the cursor moved to a starred frame". */
+  frameId?: number;
+  star?: StarValue;
+  label?: LabelValue;
+  onSetStar?: (star: StarValue | null) => void;
+  onSetLabel?: (label: Label) => void;
 }) {
   const meta = metadata ?? null;
   // Frame section
@@ -74,6 +119,13 @@ export const ExifRail = memo(function ExifRail({
   );
   const lrc = meta?.lrcRating ?? null;
   const showLrc = hasLrcRating(lrc);
+
+  // The star row and the read-only LrC row are the SAME property on disk
+  // (`xmp:Rating`). `lrcRating` is a snapshot taken at open; `star` is live.
+  // With the layer on, only the live one is drawn.
+  const marks = starsAndLabels === true;
+  const starFlash = useChangeFlash(frameId, star);
+  const labelFlash = useChangeFlash(frameId, label);
 
   // Exposure section
   const shutter = formatShutter(meta?.shutterSeconds ?? null);
@@ -116,7 +168,99 @@ export const ExifRail = memo(function ExifRail({
           {timeStr && <RailRow k="Time" v={timeStr} />}
           {dateStr && <RailRow k="Date" v={dateStr} />}
           {imageSize && <RailRow k="Image" v={imageSize} />}
-          {showLrc && lrc != null && (
+          {marks && (
+            <div className="cull-exif-rail__row">
+              <span className="cull-exif-rail__k">Rating</span>
+              <span
+                className={`cull-exif-rail__v cull-mark-stars${starFlash ? " cull-mark-flash" : ""}`}
+                // "group", not "img": these five children are BUTTONS, and
+                // `img`'s "children presentational" rule would prune them
+                // from the accessibility tree — a screen reader would
+                // announce one image and five nameless focus stops instead
+                // of a named group of five controls.
+                role="group"
+                aria-label={`${star ?? 0} of 5 stars`}
+              >
+                {LRC_STAR_SLOTS.map((slot) => (
+                  <button
+                    key={slot}
+                    type="button"
+                    className="cull-exif-rail__star-btn"
+                    // Clicking the star already set clears the rating, which
+                    // is both Lightroom's behaviour and the only mouse route
+                    // to what `0` does.
+                    onClick={() => onSetStar?.(star === slot ? null : (slot as StarValue))}
+                    aria-label={star === slot ? "Clear the rating" : `${slot} stars`}
+                  >
+                    <Star
+                      className={slot <= (star ?? 0) ? "cull-mark-star--on" : "cull-mark-star--off"}
+                      {...ICON.sm}
+                      fill="currentColor"
+                      aria-hidden
+                    />
+                  </button>
+                ))}
+              </span>
+            </div>
+          )}
+          {marks && (
+            <div className="cull-exif-rail__row">
+              <span className="cull-exif-rail__k">Label</span>
+              <span className="cull-exif-rail__v cull-exif-rail__labels">
+                <span className="cull-exif-rail__label-name">
+                  {label ? LABEL_NAME[label] : "—"}
+                </span>
+                {LABELS.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`cull-label-swatch cull-label--${key}${
+                      label === key ? ` is-active${labelFlash ? " cull-mark-flash" : ""}` : ""
+                    }`}
+                    onClick={() => {
+                      if (label === "custom") return;
+                      onSetLabel?.(key);
+                    }}
+                    // Inert over a custom label: CULL never overwrites one,
+                    // and the keyboard skips such a frame too, so a swatch
+                    // that still looked clickable would be lying.
+                    //
+                    // aria-disabled, not the `disabled` attribute: Chromium
+                    // (hence WebView2) drops a natively-disabled element from
+                    // the accessibility tree outright, so a screen reader
+                    // could never even reach the swatch's own name — the
+                    // click is refused in the handler above instead.
+                    aria-disabled={label === "custom" || undefined}
+                    title={label === "custom" ? CUSTOM_LABEL_NOTE : undefined}
+                    aria-label={LABEL_NAME[key]}
+                    aria-pressed={label === key}
+                  />
+                ))}
+                {label === "custom" && (
+                  // The user's own Lightroom label. Shown so it is never a
+                  // surprise, outlined so it cannot be mistaken for one of
+                  // the five, and not a button: CULL does not write it.
+                  <span
+                    className="cull-label-swatch cull-label--custom is-active"
+                    aria-label={CUSTOM_LABEL_NOTE}
+                    title={CUSTOM_LABEL_NOTE}
+                  />
+                )}
+              </span>
+            </div>
+          )}
+          {marks && label === "custom" && (
+            // The `title` above WebView2 never shows on a disabled control,
+            // and aria-disabled alone still leaves a mouse user with no
+            // visible reason the row is inert — so the reason gets its own
+            // line, same "—" key convention as the other empty-state rows
+            // below (Reading… / No exposure data).
+            <div className="cull-exif-rail__row">
+              <span className="cull-exif-rail__k">—</span>
+              <span className="cull-exif-rail__v cull-exif-rail__v--dim">{CUSTOM_LABEL_NOTE}</span>
+            </div>
+          )}
+          {!marks && showLrc && lrc != null && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">LrC rating</span>
               <span
@@ -138,7 +282,7 @@ export const ExifRail = memo(function ExifRail({
               </span>
             </div>
           )}
-          {!body && !lens && !timeStr && !dateStr && !imageSize && !showLrc && (
+          {!body && !lens && !timeStr && !dateStr && !imageSize && !showLrc && !marks && (
             <div className="cull-exif-rail__row">
               <span className="cull-exif-rail__k">—</span>
               <span className="cull-exif-rail__v cull-exif-rail__v--dim">Reading…</span>

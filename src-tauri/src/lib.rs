@@ -218,6 +218,8 @@ pub fn run() {
             scan::read_capture_times,
             xmp::write_xmp_rating,
             xmp::clear_xmp_rating,
+            xmp::write_xmp_star,
+            xmp::write_xmp_label,
             file_ops::move_rejects_to_subfolder,
             file_ops::move_rejects_to_trash,
             file_ops::copy_keeps_to_export,

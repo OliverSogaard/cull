@@ -4,7 +4,16 @@ import type { SetStateAction } from "react";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { imageStore } from "../image/imageStore";
 import { useDecideCallbacks } from "./useDecideCallbacks";
-import type { Img, NavEntry, Rating, UndoAction } from "../types";
+import type {
+  Img,
+  Label,
+  LabelValue,
+  MetaChange,
+  NavEntry,
+  Rating,
+  Star,
+  UndoAction,
+} from "../types";
 
 /**
  * Compile-time pins for the names the comments below cite. `makeProps` ends
@@ -24,6 +33,8 @@ const _PINNED: Record<keyof Decides, true> = {
   challengerLoses: true,
   challengerKeptBoth: true,
   challengerWins: true,
+  applyStar: true,
+  applyLabel: true,
 };
 void _PINNED;
 
@@ -89,6 +100,10 @@ type PropsInit = {
   isZooming?: boolean;
   gridVisible?: boolean;
   selectedIndices?: Set<number>;
+  stars?: Record<number, Star>;
+  labels?: Record<number, LabelValue>;
+  /** Defaults to every frame; set it to pin the cursor OUTSIDE the filter. */
+  visibleIndices?: number[];
 };
 
 /**
@@ -122,7 +137,7 @@ function makeProps(init: PropsInit) {
     setChallengerIndex: vi.fn((_n: SetStateAction<number>) => {
       note("setChallengerIndex");
     }),
-    visibleIndices: images.map((_, i) => i),
+    visibleIndices: init.visibleIndices ?? images.map((_, i) => i),
     gridVisible: init.gridVisible ?? false,
     selectedIndices: init.selectedIndices ?? new Set<number>(),
     navStackRef: { current: init.navStack ?? [] },
@@ -139,6 +154,20 @@ function makeProps(init: PropsInit) {
     }),
     persistRating: vi.fn((_path: string, _rating: Rating | null) => {
       note("persistRating");
+    }),
+    stars: init.stars ?? {},
+    setStars: vi.fn((_v: SetStateAction<Record<number, Star>>) => {
+      note("setStars");
+    }),
+    labels: init.labels ?? {},
+    setLabels: vi.fn((_v: SetStateAction<Record<number, LabelValue>>) => {
+      note("setLabels");
+    }),
+    persistStar: vi.fn((_path: string, _star: Star | null) => {
+      note("persistStar");
+    }),
+    persistLabel: vi.fn((_path: string, _label: Label | null) => {
+      note("persistLabel");
     }),
     recordAction: vi.fn((_action: UndoAction) => {
       note("recordAction");
@@ -684,5 +713,324 @@ describe("applyRating / unrateCurrent — the ratings map setRatings actually pr
     expect(props.recordAction).toHaveBeenCalledWith({
       changes: [{ imgId: 0, path: "/s/0.cr3", before: "keep", after: undefined }],
     });
+  });
+});
+
+/**
+ * The star / colour-label layer beside the verdicts. What these pin is that it
+ * is ORTHOGONAL: one keypress is one undo step whose `changes` list is empty,
+ * the cursor does not advance, and no verdict wash is painted.
+ *
+ * This file's `makeProps` factory and per-suite `setup` helper are reused
+ * as-is; the factory grew six props (the two maps, their setters and the two
+ * persist callbacks), which changes no existing assertion because none of the
+ * verdict paths touch them.
+ */
+describe("applyStar / applyLabel — the orthogonal layer", () => {
+  const calls: string[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+  });
+  afterEach(cleanup);
+
+  function setup(init: Omit<PropsInit, "calls">) {
+    const props = makeProps({ ...init, calls });
+    const { result } = renderHook(() => useDecideCallbacks(props));
+    return { result, props };
+  }
+
+  it("stars the current frame as ONE undo step, and does not advance", () => {
+    const { result, props } = setup({});
+
+    act(() => {
+      result.current.applyStar(3);
+    });
+
+    expect(props.recordAction).toHaveBeenCalledTimes(1);
+    const action = props.recordAction.mock.calls[0][0];
+    expect(action.changes).toEqual([]);
+    expect(action.meta).toEqual([
+      { imgId: 0, path: "/s/0.cr3", field: "star", before: undefined, after: 3 },
+    ]);
+    expect(props.persistStar).toHaveBeenCalledWith("/s/0.cr3", 3);
+    // A star is not a verdict: it finishes nothing, so the cursor stays put
+    // and no verdict wash is painted.
+    expect(props.setCurrentIndex).not.toHaveBeenCalled();
+    expect(props.flashFeedback).not.toHaveBeenCalled();
+    expect(props.setRatings).not.toHaveBeenCalled();
+  });
+
+  it("0 clears a star — one entry, `after: undefined`, and null on the wire", () => {
+    const { result, props } = setup({ stars: { 0: 4 } });
+
+    act(() => {
+      result.current.applyStar(null);
+    });
+
+    expect(props.recordAction.mock.calls[0][0].meta).toEqual([
+      { imgId: 0, path: "/s/0.cr3", field: "star", before: 4, after: undefined },
+    ]);
+    expect(props.persistStar).toHaveBeenCalledWith("/s/0.cr3", null);
+  });
+
+  it("re-pressing the star already on the frame writes nothing at all", () => {
+    const { result, props } = setup({ stars: { 0: 3 } });
+
+    act(() => {
+      result.current.applyStar(3);
+    });
+
+    expect(props.recordAction).not.toHaveBeenCalled();
+    expect(props.persistStar).not.toHaveBeenCalled();
+    expect(props.setStars).not.toHaveBeenCalled();
+  });
+
+  it("the stars map setStars actually produces sets, and a clear DELETES the key", () => {
+    // Same ruling as the ratings suite above: pull the updater out of the mock
+    // and run it against a HAND-BUILT map, because a stored `undefined` would
+    // still make `id in stars` true and every count wrong.
+    const set = setup({});
+    act(() => {
+      set.result.current.applyStar(2);
+    });
+    const setUpdater = set.props.setStars.mock.calls[0][0];
+    if (typeof setUpdater !== "function") throw new Error("setStars needs an updater");
+    expect(setUpdater({ 1: 5 })).toEqual({ 0: 2, 1: 5 });
+
+    cleanup();
+    const clear = setup({ stars: { 0: 4 } });
+    act(() => {
+      clear.result.current.applyStar(null);
+    });
+    const clearUpdater = clear.props.setStars.mock.calls[0][0];
+    if (typeof clearUpdater !== "function") throw new Error("setStars needs an updater");
+    const after = clearUpdater({ 0: 4, 1: 5 });
+    expect("0" in after).toBe(false);
+    expect(after).toEqual({ 1: 5 });
+  });
+
+  it("a label toggles off when its own key is pressed again (Lightroom's rule)", () => {
+    const set = setup({});
+    act(() => {
+      set.result.current.applyLabel("red");
+    });
+    expect(set.props.recordAction.mock.calls[0][0].meta).toEqual([
+      { imgId: 0, path: "/s/0.cr3", field: "label", before: undefined, after: "red" },
+    ]);
+    expect(set.props.persistLabel).toHaveBeenCalledWith("/s/0.cr3", "red");
+
+    cleanup();
+    const clear = setup({ labels: { 0: "red" } });
+    act(() => {
+      clear.result.current.applyLabel("red");
+    });
+    expect(clear.props.recordAction.mock.calls[0][0].meta).toEqual([
+      { imgId: 0, path: "/s/0.cr3", field: "label", before: "red", after: undefined },
+    ]);
+    expect(clear.props.persistLabel).toHaveBeenCalledWith("/s/0.cr3", null);
+  });
+
+  it("a label CULL does not recognise is never overwritten — the press is a no-op", () => {
+    // "custom" is the user's own Lightroom label, and the frontend only ever
+    // learns the WORD "custom" — never the string. Replacing it would be a
+    // one-way door: undo could not put the user's own label back.
+    const { result, props } = setup({ labels: { 0: "custom" } });
+
+    act(() => {
+      result.current.applyLabel("blue");
+    });
+
+    expect(props.recordAction).not.toHaveBeenCalled();
+    expect(props.persistLabel).not.toHaveBeenCalled();
+    expect(props.setLabels).not.toHaveBeenCalled();
+  });
+
+  it("a multi-select skips the custom frame and still changes the rest, in one step", () => {
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1, 2]),
+      currentIndex: 0,
+      labels: { 1: "custom" },
+    });
+
+    act(() => {
+      result.current.applyLabel("green");
+    });
+
+    expect(props.recordAction).toHaveBeenCalledTimes(1);
+    const meta = props.recordAction.mock.calls[0][0].meta as MetaChange[];
+    expect(meta.map((m) => m.imgId)).toEqual([0, 2]);
+    expect(props.persistLabel).toHaveBeenCalledTimes(2);
+    expect(props.persistLabel).not.toHaveBeenCalledWith("/s/1.cr3", "green");
+  });
+
+  it("a custom frame cannot be the anchor that decides the toggle", () => {
+    // The cursor sits on the untouchable frame, so the toggle question is
+    // answered by the first frame the press can actually reach: frame 1 is
+    // not green, so the press SETS green rather than clearing it.
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1]),
+      currentIndex: 0,
+      labels: { 0: "custom" },
+    });
+
+    act(() => {
+      result.current.applyLabel("green");
+    });
+
+    const meta = props.recordAction.mock.calls[0][0].meta as MetaChange[];
+    expect(meta).toEqual([
+      { imgId: 1, path: "/s/1.cr3", field: "label", before: undefined, after: "green" },
+    ]);
+  });
+
+  it("the ANCHOR decides a multi-select's toggle, so one press does one thing", () => {
+    // The cursor frame is inside the selection and already red, so the press
+    // clears the whole set rather than half-toggling it.
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1, 2]),
+      currentIndex: 1,
+      labels: { 1: "red", 2: "red" },
+    });
+
+    act(() => {
+      result.current.applyLabel("red");
+    });
+
+    const meta = props.recordAction.mock.calls[0][0].meta as MetaChange[];
+    // Frame 0 carries no label and is already at the target (`undefined`), so
+    // it is dropped; the two red ones are cleared.
+    expect(meta.map((m) => m.imgId)).toEqual([1, 2]);
+    expect(meta.every((m) => m.after === undefined)).toBe(true);
+    expect(props.persistLabel).toHaveBeenCalledTimes(2);
+    expect(props.persistLabel).toHaveBeenCalledWith("/s/1.cr3", null);
+  });
+
+  it("a grid multi-select is ONE undo step, one entry per frame that changes", () => {
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1, 2]),
+      stars: { 1: 5 },
+    });
+
+    act(() => {
+      result.current.applyStar(5);
+    });
+
+    expect(props.recordAction).toHaveBeenCalledTimes(1);
+    const meta = props.recordAction.mock.calls[0][0].meta as MetaChange[];
+    // Frame 1 is already 5★ — no redundant write, no dead before===after entry.
+    expect(meta.map((m) => m.imgId)).toEqual([0, 2]);
+    expect(props.persistStar).toHaveBeenCalledTimes(2);
+  });
+
+  it("never grades a frame outside the active filter", () => {
+    // Same guard as applyRating's `pos === -1` return: with the cursor
+    // outside the filter the photo is not on screen, and grading something
+    // you cannot see is never right.
+    const { result, props } = setup({ visibleIndices: [1, 2] }); // currentIndex 0 is hidden
+
+    act(() => {
+      result.current.applyStar(2);
+    });
+    act(() => {
+      result.current.applyLabel("green");
+    });
+
+    expect(props.recordAction).not.toHaveBeenCalled();
+    expect(props.persistStar).not.toHaveBeenCalled();
+    expect(props.persistLabel).not.toHaveBeenCalled();
+  });
+
+  it("clearing the last mark asks for the unrate that can delete an empty sidecar", () => {
+    // `3` then `0` on an unrated frame wrote a CULL sidecar and then emptied
+    // it. Nothing sent `clear_xmp_rating` (the unrate key returns early for a
+    // frame that is already unrated), so the empty file stayed in the folder.
+    const { result, props } = setup({ stars: { 0: 3 } });
+
+    act(() => {
+      result.current.applyStar(null);
+    });
+
+    expect(props.persistStar).toHaveBeenCalledWith("/s/0.cr3", null);
+    expect(props.persistRating).toHaveBeenCalledWith("/s/0.cr3", null);
+    // ORDER matters: the two share one per-path queue, and the delete gate
+    // reads the file the star clear left behind.
+    expect(props.persistStar.mock.invocationCallOrder[0]).toBeLessThan(
+      props.persistRating.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("leaves the sidecar alone while anything at all is still in it", () => {
+    const rated = setup({ stars: { 0: 3 }, ratings: { 0: "keep" } });
+    act(() => {
+      rated.result.current.applyStar(null);
+    });
+    expect(rated.props.persistRating).not.toHaveBeenCalled();
+
+    cleanup();
+    const labelled = setup({ stars: { 0: 3 }, labels: { 0: "blue" } });
+    act(() => {
+      labelled.result.current.applyStar(null);
+    });
+    expect(labelled.props.persistRating).not.toHaveBeenCalled();
+
+    cleanup();
+    // The user's own Lightroom label is content too — the one thing here most
+    // worth not deleting.
+    const custom = setup({ stars: { 0: 3 }, labels: { 0: "custom" } });
+    act(() => {
+      custom.result.current.applyStar(null);
+    });
+    expect(custom.props.persistRating).not.toHaveBeenCalled();
+  });
+
+  it("never asks for an unrate when the press SETS a mark", () => {
+    const { result, props } = setup({});
+    act(() => {
+      result.current.applyStar(4);
+    });
+    act(() => {
+      result.current.applyLabel("green");
+    });
+    expect(props.persistRating).not.toHaveBeenCalled();
+  });
+
+  it("asks once per frame when a multi-select's label toggles off", () => {
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1]),
+      currentIndex: 0,
+      labels: { 0: "red", 1: "red" },
+    });
+
+    act(() => {
+      result.current.applyLabel("red");
+    });
+
+    expect(props.persistRating.mock.calls).toEqual([
+      ["/s/0.cr3", null],
+      ["/s/1.cr3", null],
+    ]);
+  });
+
+  it("a grid selection never reaches a selected frame the filter hides", () => {
+    // Mirrors applyRating's grid branch, which intersects the selection with
+    // visibleIndices for the same reason.
+    const { result, props } = setup({
+      gridVisible: true,
+      selectedIndices: new Set([0, 1, 2]),
+      visibleIndices: [0, 2],
+    });
+
+    act(() => {
+      result.current.applyStar(1);
+    });
+
+    const meta = props.recordAction.mock.calls[0][0].meta as MetaChange[];
+    expect(meta.map((m) => m.imgId)).toEqual([0, 2]);
   });
 });

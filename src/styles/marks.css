@@ -1,0 +1,118 @@
+/* ── Stars and colour labels (Phase 5A) ───────────────────────────────────
+   What a mark LOOKS like, in one place. Where each one sits is its surface's
+   business (exif-rail.css, grid.css, strip.css) — but the grid's red and the
+   rail's red have to be one red, so the colour, the shape and the flash live
+   here and nowhere else.
+
+   Nothing below is ever rendered while `settings.starsAndLabels` is off: the
+   components do not emit the elements at all, which is what makes "off costs
+   nothing" structural rather than careful. */
+
+/* The rail's five-glyph meter. Lucide <Star> SVGs, never the ★ character —
+   a character is rendered by whatever font the OS picks and drifts from the
+   icons beside it (see icons.ts, and icons.test.ts which fails on one). */
+.cull-mark-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-0);
+  line-height: 1;
+}
+
+.cull-mark-star--on {
+  color: var(--accent);
+}
+
+/* Same dimming the LrC meter already uses, so the two read as one family. */
+.cull-mark-star--off {
+  color: color-mix(in srgb, var(--text-2) 58%, var(--bg));
+}
+
+/* The grid cell's compact readout — the NUMBER plus one filled star, in the
+   muted token, because five glyphs do not survive a contact-sheet cell. */
+.cull-mark-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px; /* off-scale: pairs a digit with an 11px glyph, not two blocks */
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--muted);
+}
+
+/* One hue per label, read by BOTH the bar and the swatch through one local
+   custom property — so a new surface picks the colour up by adding the
+   modifier class, with no second colour table anywhere. */
+.cull-label--red {
+  --label-ink: var(--label-red);
+}
+
+.cull-label--yellow {
+  --label-ink: var(--label-yellow);
+}
+
+.cull-label--green {
+  --label-ink: var(--label-green);
+}
+
+.cull-label--blue {
+  --label-ink: var(--label-blue);
+}
+
+.cull-label--purple {
+  --label-ink: var(--label-purple);
+}
+
+/* A label string CULL did not write — the user's own Lightroom label set, or
+   a non-English one. Shown, never guessed at, never rewritten: neutral ink,
+   and the swatch below draws it as an outline so it cannot be mistaken for
+   one of the five. */
+.cull-label--custom {
+  --label-ink: var(--text-2);
+}
+
+/* The cell bar — a 4px band along the bottom edge. A BAR, never a dot: the
+   verdict dot is a glyph in a circle at the bottom-right, so shape and place
+   separate the two before hue has to. */
+.cull-label-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: var(--label-ink);
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* The rail swatch — a square beside the label's name. */
+.cull-label-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-1);
+  background: var(--label-ink);
+  flex-shrink: 0;
+}
+
+.cull-label-swatch.cull-label--custom {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--label-ink);
+}
+
+/* A brief confirmation when a mark is SET — the verdict flash's own duration
+   and easing tokens, on compositor-friendly properties only. */
+.cull-mark-flash {
+  animation: cull-mark-flash var(--dur-fast) var(--ease-out);
+}
+
+@keyframes cull-mark-flash {
+  from {
+    opacity: 0.35;
+    transform: scale(1.18);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

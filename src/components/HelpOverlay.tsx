@@ -1,4 +1,4 @@
-import type { HelpGroup, HelpMode } from "../types";
+import type { HelpGroup, HelpMode, HelpRow } from "../types";
 import { KeyCombo } from "./KeyCombo";
 
 /**
@@ -11,7 +11,31 @@ import { KeyCombo } from "./KeyCombo";
  * group on every page, so the user doesn't have to remember which mode
  * surfaces which utility.
  */
-function helpGroupsFor(mode: HelpMode): HelpGroup[] {
+function helpGroupsFor(mode: HelpMode, starsAndLabels?: boolean): HelpGroup[] {
+  // The five filters live on the bare digit row, unless the stars-and-labels
+  // layer has taken it — then they move to Shift and the digits mark instead.
+  const filterRow: HelpRow = {
+    keys: ["1", "5"],
+    range: true,
+    ...(starsAndLabels ? { mod: "Shift" } : {}),
+    desc: "Filter: all / unrated / keeps / smart / rejects  (repeat to cycle sub-modes)",
+  };
+  // Lightroom's own row, and only ever in loupe and grid: the digits are
+  // unbound in compare, which decides a pair rather than grading a frame.
+  const markGroup: HelpGroup = {
+    title: "mark",
+    rows: [
+      { keys: ["1", "5"], range: true, desc: "Stars 1–5" },
+      { keys: ["0"], desc: "Clear the stars" },
+      {
+        keys: ["6", "9"],
+        range: true,
+        desc: "Colour label: red / yellow / green / blue (re-press clears)",
+      },
+      { keys: ["Shift", "6"], desc: "Purple label (re-press clears)" },
+    ],
+  };
+  const marks: HelpGroup[] = starsAndLabels ? [markGroup] : [];
   const session: HelpGroup = {
     title: "session",
     rows: [
@@ -33,6 +57,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
           { keys: ["U"], desc: "Unrate" },
         ],
       },
+      ...marks,
       {
         title: "navigate",
         rows: [
@@ -46,11 +71,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
           { keys: ["Shift", "Space"], desc: "2:1 zoom  (shift+click too)" },
           { keys: ["Home", "End"], desc: "First / last in the filter" },
           { keys: ["PgUp", "PgDn"], desc: "Jump one strip-width" },
-          {
-            keys: ["1", "5"],
-            range: true,
-            desc: "Filter: all / unrated / keeps / smart / rejects  (repeat to cycle sub-modes)",
-          },
+          filterRow,
         ],
       },
       {
@@ -124,6 +145,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         { keys: ["U"], desc: "Unrate" },
       ],
     },
+    ...marks,
     {
       title: "navigate",
       rows: [
@@ -133,11 +155,7 @@ function helpGroupsFor(mode: HelpMode): HelpGroup[] {
         { keys: ["mod", "0"], desc: "Medium cells" },
         { keys: ["Home", "End"], desc: "First / last in the filter" },
         { keys: ["PgUp", "PgDn"], desc: "One screen" },
-        {
-          keys: ["1", "5"],
-          range: true,
-          desc: "Filter: all / unrated / keeps / smart / rejects  (repeat to cycle sub-modes)",
-        },
+        filterRow,
         { keys: ["Click"], desc: "Open in loupe" },
         { keys: ["Shift", "Click"], desc: "Select range" },
         { keys: ["Shift", "←", "→", "↑", "↓"], desc: "Grow selection" },
@@ -167,12 +185,16 @@ export function HelpOverlay({
   mode,
   intro,
   onDismiss,
+  starsAndLabels,
 }: {
   mode: HelpMode;
   intro?: boolean;
   onDismiss?: () => void;
+  /** `settings.starsAndLabels` — which of the two keymap shapes to teach.
+   *  Absent or false: every row is what it has always been. */
+  starsAndLabels?: boolean;
 }) {
-  const groups = helpGroupsFor(mode);
+  const groups = helpGroupsFor(mode, starsAndLabels);
   return (
     <div className="cull-help" onClick={onDismiss}>
       <div className="cull-help__inner">
@@ -196,10 +218,12 @@ export function HelpOverlay({
                 <div key={`${row.keys.join("+")}·${row.desc}`} className="cull-help__row">
                   <span className="cull-help__key">
                     {row.range ? (
+                      // A range's modifier rides BOTH caps: "Shift 1 – 5"
+                      // would read as if only the first end took Shift.
                       <>
-                        <KeyCombo keys={[row.keys[0]]} />
+                        <KeyCombo keys={row.mod ? [row.mod, row.keys[0]] : [row.keys[0]]} />
                         <span className="cull-help__range">–</span>
-                        <KeyCombo keys={[row.keys[1]]} />
+                        <KeyCombo keys={row.mod ? [row.mod, row.keys[1]] : [row.keys[1]]} />
                       </>
                     ) : row.keys.length > 3 ? (
                       // Four or more caps overflow the 132px key column inside

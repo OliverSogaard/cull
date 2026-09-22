@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { Star } from "lucide-react";
-import type { Img, Rating } from "../types";
+import type { Img, LabelValue, Rating } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import { hasLrcRating } from "../utils/ratingColor";
 import { stripExt } from "../utils/path";
@@ -25,6 +25,9 @@ type ThumbCellProps = {
    *  while the frame is unrated (compare strips never pass it: suppressed
    *  by construction there). */
   suggestion?: Suggestion | null;
+  /** Phase 5A. Absent or false: the cell renders exactly as it did before. */
+  starsAndLabels?: boolean;
+  label?: LabelValue;
 };
 
 /**
@@ -43,6 +46,8 @@ export const ThumbCell = memo(function ThumbCell({
   onPick,
   roleVariant,
   suggestion,
+  starsAndLabels,
+  label,
 }: ThumbCellProps) {
   // Strip cells only ever need the thumbnail (plumbing shared with GridCell).
   const { url, shimmerDelayMs: shimmerDelay, probeOnLoad } = useThumb(img.path);
@@ -63,7 +68,11 @@ export const ThumbCell = memo(function ThumbCell({
     .join(" ");
   const outlineColor = (isCurrent || roleVariant) && !isGhost ? "var(--accent)" : "transparent";
 
-  const showLrc = hasLrcRating(lrcRating);
+  // With the star layer on, the LrC badge and the star readout are the SAME
+  // property on disk (`xmp:Rating`) — but `lrcRating` is a snapshot taken at
+  // open while `star` is live, so drawing both would show a stale second
+  // number beside the current one (see GridCell's identical `marks` guard).
+  const showLrc = starsAndLabels !== true && hasLrcRating(lrcRating);
 
   return (
     <div
@@ -118,6 +127,13 @@ export const ThumbCell = memo(function ThumbCell({
               <Star size={9} strokeWidth={2.4} fill="currentColor" />
             </div>
           )
+        )}
+        {/* The colour label, and only the colour label: this cell is 76x54
+            with two badges already on it at 3px insets, so a third marker is
+            the tightest surface in the app. The star lives in the grid and
+            the rail. */}
+        {starsAndLabels === true && label !== undefined && (
+          <div className={`cull-label-bar cull-label--${label}`} aria-label={`${label} label`} />
         )}
       </div>
       {/* Solid committed dot, else ghost suggestion — shared with GridCell

@@ -163,4 +163,12 @@
      rather than any motion, and leave reduced-motion users with MORE
      visual churn than everyone else. Ruled on, then left alone.
      reviewed: cull-spinner-reveal */
+
+  /* Setting a star or a colour label is a change the user just asked for;
+     the pop only confirms it, and the mark stays exactly where it was. Pure
+     decoration (distinction 1's opposite) → off.
+     reviewed: cull-mark-flash */
+  .cull-mark-flash {
+    animation: none;
+  }
 }

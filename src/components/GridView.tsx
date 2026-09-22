@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Star } from "lucide-react";
 import { VerdictDot } from "./VerdictDot";
-import type { Img, ImageMetadata, Rating } from "../types";
+import type { Img, ImageMetadata, LabelValue, Rating, Star as StarValue } from "../types";
 import type { Suggestion } from "../smart/deriveVerdict";
 import type { BurstCtx } from "../smart/groupBursts";
 import { stripExt } from "../utils/path";
@@ -59,6 +59,9 @@ export const GridView = memo(function GridView({
   bursts,
   similar,
   scrubSpeed = 1,
+  starsAndLabels,
+  stars,
+  labels,
 }: {
   images: Img[];
   visibleIndices: number[];
@@ -94,6 +97,13 @@ export const GridView = memo(function GridView({
    *  hold's scrubSpeed. >1 shows a ×N badge on the right-edge indicator,
    *  same visual language as the strip's .cull-scrubbar__speed. */
   scrubSpeed?: number;
+  /** Phase 5A. Absent or false: the grid renders exactly what it rendered
+   *  before, LrC badge included. */
+  starsAndLabels?: boolean;
+  /** Star ratings by image id — live, unlike `metadata`'s snapshot. */
+  stars?: Record<number, StarValue>;
+  /** Colour labels by image id. */
+  labels?: Record<number, LabelValue>;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
@@ -350,6 +360,9 @@ export const GridView = memo(function GridView({
             isMultiSelected={selectedIndices?.has(idx) ?? false}
             rating={ratings[images[idx].id]}
             lrcRating={metadata?.[images[idx].path]?.lrcRating ?? null}
+            starsAndLabels={starsAndLabels}
+            star={stars?.[images[idx].id]}
+            label={labels?.[images[idx].id]}
             onPick={onPick}
             top={row * rowH}
             left={col * cellW}
@@ -370,6 +383,9 @@ const GridCell = memo(function GridCell({
   isMultiSelected,
   rating,
   lrcRating,
+  starsAndLabels,
+  star,
+  label,
   onPick,
   top,
   left,
@@ -383,6 +399,9 @@ const GridCell = memo(function GridCell({
   isMultiSelected: boolean;
   rating: Rating | undefined;
   lrcRating: number | null;
+  starsAndLabels?: boolean;
+  star?: StarValue;
+  label?: LabelValue;
   onPick: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   top: number;
   left: number;
@@ -401,7 +420,12 @@ const GridCell = memo(function GridCell({
   // sharp layer never loads, the THMB underneath is simply what stays.
   const [hiLoaded, setHiLoaded] = useState<string | undefined>(undefined);
   const isReject = rating === "reject";
-  const showLrc = hasLrcRating(lrcRating);
+  // With the star layer on, the LrC badge and the star readout are the SAME
+  // property on disk (`xmp:Rating`) — but `lrcRating` is a snapshot taken at
+  // open while `star` is live, so drawing both would show a stale second
+  // number beside the current one.
+  const marks = starsAndLabels === true;
+  const showLrc = !marks && hasLrcRating(lrcRating);
   const cellClass = [
     "cull-grid__cell",
     isCurrent ? "is-current" : "",
@@ -466,6 +490,24 @@ const GridCell = memo(function GridCell({
         <div className="cull-grid__lrc-badge" aria-label={`LrC ${lrcRating}★`}>
           <Star size={11} strokeWidth={2.4} fill="currentColor" />
         </div>
+      )}
+      {/* The one free corner (top-left is the LrC badge, bottom-right the
+          verdict dot, bottom-left the hover filename). The NUMBER plus one
+          filled star — five glyphs do not survive a contact-sheet cell — and
+          the star is a Lucide SVG, never the ★ character (icons.ts). */}
+      {marks && star !== undefined && (
+        <div className="cull-grid__star cull-mark-count" aria-label={`${star} of 5 stars`}>
+          {star}
+          <Star size={11} strokeWidth={2.4} fill="currentColor" aria-hidden />
+        </div>
+      )}
+      {/* A BAR along the bottom edge, never a dot: the verdict is a glyph in
+          a circle, so shape and place tell the two apart before hue has to. */}
+      {marks && label !== undefined && (
+        <div
+          className={`cull-label-bar cull-grid__label-bar cull-label--${label}`}
+          aria-label={`${label} label`}
+        />
       )}
       {/* Hover-revealed filename badge — mono pill at bottom-left, only shown on
           cells that have a loaded thumb (placeholder cells already display

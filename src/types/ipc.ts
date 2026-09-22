@@ -101,6 +101,17 @@ export type AnalyzeResult = {
    * sidecar pass as `ratings`, so it's free to extract on the backend.
    */
   lrcRatings: (number | null)[];
+  /**
+   * Per input index: the frame's colour label as the lowercase key CULL uses
+   * (`"red"`…`"purple"`), or `"custom"` for an `xmp:Label` string CULL does
+   * not recognise, or null for none. Same sidecar pass as `ratings` and
+   * `lrcRatings`, so it is free to extract on the backend.
+   *
+   * Stars need no field of their own: a star IS `xmp:Rating`, which
+   * `lrcRatings` already carries (with CULL's own courtesy favourite star
+   * filtered out at the Rust read boundary).
+   */
+  labels: (string | null)[];
   /** Parent folders the analyze pass could not list (`"<dir>: <error>"`):
    *  their frames sort last and read back unrated. */
   unreadableDirs: string[];

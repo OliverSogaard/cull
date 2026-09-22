@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { cleanup, renderHook } from "@testing-library/react";
-import type { Filter, Img, NavSite, Rating } from "../types";
+import type { Filter, Img, Label, NavSite, Rating, Star } from "../types";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import { cycleFilter } from "../utils/filterModes";
 import { useCullKeymap } from "./useCullKeymap";
@@ -119,6 +119,8 @@ function props(over: Partial<KeymapProps> = {}): KeymapProps {
     challengerKeptBoth: vi.fn((_asFavorite: boolean) => {}),
     applyRating: vi.fn((_rating: Rating) => {}),
     unrateCurrent: vi.fn(() => {}),
+    applyStar: vi.fn((_star: Star | null) => {}),
+    applyLabel: vi.fn((_label: Label) => {}),
     setFilter: setter<Filter>(),
     chipsTooltip: { pulse: vi.fn(() => {}) },
     startAnalysis: vi.fn(() => {}),
@@ -1045,5 +1047,175 @@ describe("a state flip between renders", () => {
     const { rerender } = renderKeymap(p);
     rerender({ ...p, [flag]: true });
     check(p);
+  });
+});
+
+/**
+ * The stars-and-labels layer (Phase 5A). The suite above this one IS the
+ * off-proof: every assertion in it runs against DEFAULT_SETTINGS, whose
+ * `starsAndLabels` is false, and none of them was touched to add this
+ * feature. What follows pins the other shape, and the handful of things that
+ * must still be true with the layer off.
+ */
+const STAR_CASES: [string, Star][] = [
+  ["1", 1],
+  ["2", 2],
+  ["3", 3],
+  ["4", 4],
+  ["5", 5],
+];
+const LABEL_CASES: [string, Label][] = [
+  ["6", "red"],
+  ["7", "yellow"],
+  ["8", "green"],
+  ["9", "blue"],
+];
+const SHIFT_FILTER_CASES: [string, Parameters<typeof cycleFilter>[1]][] = [
+  ["Digit1", "all"],
+  ["Digit2", "unrated"],
+  ["Digit3", "keeps"],
+  ["Digit4", "suggested"],
+  ["Digit5", "rejects"],
+];
+
+/** Props with the layer ON — the ONE line that switches keymap shapes. */
+function onProps(over: Partial<KeymapProps> = {}): KeymapProps {
+  return props({ settings: { ...DEFAULT_SETTINGS, starsAndLabels: true }, ...over });
+}
+
+describe("stars and labels, OFF (the default)", () => {
+  it("leaves 0 and 6–9 as unbound as they have always been", () => {
+    const p = props();
+    renderKeymap(p);
+    for (const key of ["0", "6", "7", "8", "9"]) {
+      const e = press(key);
+      // Not even preventDefault: today there is no case for these at all,
+      // and "off" has to mean the same dispatch, not a quieter one.
+      expect(e.defaultPrevented, key).toBe(false);
+    }
+    expect(p.applyStar).not.toHaveBeenCalled();
+    expect(p.applyLabel).not.toHaveBeenCalled();
+    expect(p.setFilter).not.toHaveBeenCalled();
+  });
+
+  it("leaves Shift+digit alone — the filters stay on the bare row", () => {
+    const p = props();
+    renderKeymap(p);
+    press("!", { code: "Digit1", shiftKey: true });
+    press("^", { code: "Digit6", shiftKey: true });
+    expect(p.setFilter).not.toHaveBeenCalled();
+    expect(p.applyLabel).not.toHaveBeenCalled();
+    press("1");
+    expect(p.setFilter).toHaveBeenCalledTimes(1); // the bare digit still filters
+  });
+});
+
+describe("stars and labels, ON", () => {
+  it.each(STAR_CASES)("%s sets %d stars, once per press", (key, star) => {
+    const p = onProps();
+    renderKeymap(p);
+    press(key);
+    press(key, { repeat: true });
+    expect(p.applyStar).toHaveBeenCalledTimes(1);
+    expect(p.applyStar).toHaveBeenCalledWith(star);
+    expect(p.setFilter).not.toHaveBeenCalled(); // the filters moved
+  });
+
+  it("0 clears the stars, once per press", () => {
+    const p = onProps();
+    renderKeymap(p);
+    press("0");
+    press("0", { repeat: true });
+    expect(p.applyStar).toHaveBeenCalledTimes(1);
+    expect(p.applyStar).toHaveBeenCalledWith(null);
+  });
+
+  it.each(LABEL_CASES)("%s sets the %s label, once per press", (key, label) => {
+    const p = onProps();
+    renderKeymap(p);
+    press(key);
+    press(key, { repeat: true });
+    expect(p.applyLabel).toHaveBeenCalledTimes(1);
+    expect(p.applyLabel).toHaveBeenCalledWith(label);
+  });
+
+  it("Shift+6 sets Purple — the one label Lightroom gives no key", () => {
+    const p = onProps();
+    renderKeymap(p);
+    // e.key is the SHIFTED symbol, which differs per layout; e.code is not.
+    press("^", { code: "Digit6", shiftKey: true });
+    expect(p.applyLabel).toHaveBeenCalledWith("purple");
+    expect(p.setFilter).not.toHaveBeenCalled();
+  });
+
+  it.each(SHIFT_FILTER_CASES)("Shift+%s selects the %s tab, on e.code", (code, top) => {
+    const p = onProps();
+    renderKeymap(p);
+    // `e.key` is deliberately a value no case could ever match (a US layout
+    // would say ! @ # $ %, a Danish one something else again). Whatever it
+    // says, the binding must be found — that IS the reason it reads e.code.
+    press("Unidentified", { code, shiftKey: true });
+    const calls = vi.mocked(p.setFilter).mock.calls;
+    expect(calls).toHaveLength(1);
+    const updater = calls[0][0];
+    if (typeof updater !== "function") throw new Error("setFilter was called with a value");
+    expect(updater("all")).toBe(cycleFilter("all", top));
+    expect(p.applyStar).not.toHaveBeenCalled();
+  });
+
+  it("a held Shift+digit cycles once per press, and 4 still starts analysis", () => {
+    const p = onProps();
+    renderKeymap(p);
+    press("Unidentified", { code: "Digit4", shiftKey: true });
+    press("Unidentified", { code: "Digit4", shiftKey: true, repeat: true });
+    expect(p.setFilter).toHaveBeenCalledTimes(1);
+    expect(p.chipsTooltip.pulse).toHaveBeenCalledTimes(1);
+    expect(p.startAnalysis).toHaveBeenCalledTimes(1);
+  });
+
+  it("Shift on a NON-digit still does what it always did", () => {
+    const p = onProps({ gridVisible: true });
+    renderKeymap(p);
+    press("F", { shiftKey: true });
+    expect(p.applyRating).toHaveBeenCalledWith("favorite");
+    press("ArrowRight", { shiftKey: true, code: "ArrowRight" });
+    expect(p.growGridSelection).toHaveBeenCalledWith(1);
+  });
+
+  it("nothing grades behind an overlay, or in compare", () => {
+    const behind = onProps({ helpVisible: true });
+    const { unmount } = renderKeymap(behind);
+    press("3");
+    press("7");
+    expect(behind.applyStar).not.toHaveBeenCalled();
+    expect(behind.applyLabel).not.toHaveBeenCalled();
+    unmount();
+
+    // Compare decides a pair; it does not grade. The digits are unbound
+    // there today and the layer must not change that.
+    const compare = onProps({ compareMode: true });
+    renderKeymap(compare);
+    press("3");
+    press("7");
+    press("0");
+    press("Unidentified", { code: "Digit2", shiftKey: true });
+    expect(compare.applyStar).not.toHaveBeenCalled();
+    expect(compare.applyLabel).not.toHaveBeenCalled();
+    expect(compare.setFilter).not.toHaveBeenCalled();
+  });
+
+  it("the layer flips mid-session — the same key changes meaning", () => {
+    // The dependency-array proof for `settings.starsAndLabels`: the handler
+    // is rebuilt on ~40 deps, and a flag missing from that list keeps the
+    // keymap behaving as it did at mount.
+    const p = props();
+    const { rerender } = renderKeymap(p);
+    press("3");
+    expect(p.setFilter).toHaveBeenCalledTimes(1);
+    expect(p.applyStar).not.toHaveBeenCalled();
+    rerender({ ...p, settings: { ...DEFAULT_SETTINGS, starsAndLabels: true } });
+    press("3");
+    expect(p.setFilter).toHaveBeenCalledTimes(1); // no second filter call
+    expect(p.applyStar).toHaveBeenCalledWith(3);
   });
 });

@@ -145,3 +145,47 @@ describe("the Rejects tab", () => {
     expect(count?.textContent).toBe("· 4194");
   });
 });
+
+/**
+ * Every footer tip names a key, and with the stars-and-labels layer on the
+ * bare digit row belongs to the stars — so the five filters move to Shift.
+ * A hint that still said "3" would send the user's keeps press into a star.
+ */
+describe("the filter tabs' key hints follow the stars-and-labels setting", () => {
+  /** Tab label → its hover tip (null while that tab is the active one). */
+  function tips(over: Partial<StatusBarProps["filter"]>): Record<string, string | null> {
+    const base = props();
+    const { container } = render(<StatusBar {...base} filter={{ ...base.filter, ...over }} />);
+    const tabs = container.querySelector(".cull-filter-tabs");
+    if (!tabs) throw new Error("no .cull-filter-tabs");
+    const out: Record<string, string | null> = {};
+    for (const b of tabs.querySelectorAll(":scope > button, :scope > span > button")) {
+      out[b.textContent ?? ""] = b.getAttribute("data-tip");
+    }
+    return out;
+  }
+
+  it("names the bare digits while the layer is off", () => {
+    expect(tips({ filter: "unrated" })).toEqual({
+      All: "1 · show all",
+      Unrated: null,
+      Keeps: "3 · show keeps",
+      Smart: "4 · show suggestions",
+      Rejects: "5 · show rejects",
+    });
+    cleanup();
+    expect(tips({ filter: "all" }).Unrated).toBe("2 · show unrated");
+  });
+
+  it("moves every tip onto Shift once the digits are stars", () => {
+    expect(tips({ filter: "unrated", starsAndLabels: true })).toEqual({
+      All: "Shift+1 · show all",
+      Unrated: null,
+      Keeps: "Shift+3 · show keeps",
+      Smart: "Shift+4 · show suggestions",
+      Rejects: "Shift+5 · show rejects",
+    });
+    cleanup();
+    expect(tips({ filter: "all", starsAndLabels: true }).Unrated).toBe("Shift+2 · show unrated");
+  });
+});

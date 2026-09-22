@@ -78,6 +78,9 @@ export function coerceSettings(raw: unknown): Settings {
     // Renamed from `smartCullingML` (default OFF) — the legacy key is ignored on
     // purpose so the rename lands everyone on the new ON default once.
     deepAnalysis: bool(p.deepAnalysis, d.deepAnalysis),
+    // Off is the default and the guarantee — a present-but-wrong-typed value
+    // must not turn the layer on for a user who never asked for it.
+    starsAndLabels: bool(p.starsAndLabels, d.starsAndLabels),
   };
 }
 

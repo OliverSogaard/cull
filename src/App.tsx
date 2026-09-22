@@ -17,9 +17,13 @@ import type {
   Filter,
   Img,
   ImageMetadata,
+  LabelValue,
   NavEntry,
   Phase,
   Rating,
+  // `Star` is already bound in this file as the Lucide icon component, so the
+  // rating type rides under an alias; every `<Star>` in the JSX is the icon.
+  Star as StarValue,
 } from "./types";
 import "./styles/index.css";
 
@@ -77,6 +81,7 @@ import { imageStore } from "./image/imageStore";
 import { overlayService } from "./overlays/overlayService";
 import { useImage } from "./image/useImage";
 import type { AnalyzeWarning } from "./utils/analyzeWarnings";
+import type { MarkMaps } from "./utils/emptySidecar";
 import { passesFilter } from "./utils/filter";
 import { topOf } from "./utils/filterModes";
 import { extendSelection } from "./utils/gridSelection";
@@ -138,6 +143,14 @@ export default function App() {
   // Capture-time order from analyze_folder — preserved so sort modes can return.
   const [currentIndex, setCurrentIndex] = useState(0);
   const [ratings, setRatings] = useState<Record<number, Rating>>({});
+  // The star / colour-label layer (Phase 5A) — two maps BESIDE `ratings`,
+  // keyed by the same `Img.id`, because a star is orthogonal to a verdict: a
+  // 3★ frame with no keep/reject is still unrated. Both are filled at open
+  // from the sidecar pass regardless of `settings.starsAndLabels` (the maps
+  // are cheap, and the setting can be flipped mid-session); the setting gates
+  // the KEYS and the RENDER, never what we know.
+  const [stars, setStars] = useState<Record<number, StarValue>>({});
+  const [labels, setLabels] = useState<Record<number, LabelValue>>({});
   const [filter, setFilter] = useState<Filter>("all");
   // Floating tooltip above the active Keeps/Smart tab that hosts the
   // sub-mode chips (all/★, or all/✕/✓/★) — see useChipsTooltipVisibility for
@@ -285,18 +298,35 @@ export default function App() {
   // Rating-write durability (savingCount / failed-write tracking / the serial
   // per-path write queue) lives in app/useRatingPersistence; the quit guard
   // that refuses to lose those writes lives in app/useQuitGuard.
+  // Lightroom can rewrite a sidecar's label while the session is open, so the
+  // labels map can be stale by the time a colour key reaches the backend —
+  // which then keeps the user's own label and refuses the write. Nothing was
+  // lost; our copy was simply wrong, so put "custom" back and let the rail and
+  // the cells tell the truth. Reads `imagesRef` so it never has to be
+  // re-created when the frame set changes.
+  const markLabelCustom = useCallback(
+    (path: string) => {
+      const img = imagesRef.current.find((im) => im.path === path);
+      if (!img) return;
+      setLabels((prev) => (prev[img.id] === "custom" ? prev : { ...prev, [img.id]: "custom" }));
+    },
+    [imagesRef],
+  );
+
   const {
     feedback,
     setFeedback,
     flashFeedback,
     persistRating,
+    persistStar,
+    persistLabel,
     retryFailed,
     savingCount,
     failedCount,
     missingCount,
     savingRef,
     failedCountRef,
-  } = useRatingPersistence();
+  } = useRatingPersistence({ onCustomLabelKept: markLabelCustom });
   const { quitGuard, setQuitGuard, destroyedRef } = useQuitGuard({
     savingCount,
     failedCount,
@@ -308,17 +338,30 @@ export default function App() {
   // Stacks + recordAction/undo/redo live in app/useUndoRedo (no effects, so
   // its position here carries no ordering weight). Refs because the stacks
   // themselves don't drive any render — only the rating writes they replay do.
+  // Render-phase mirror of the three mark maps — same idiom as settingsRef
+  // below: a pure function of state, the same value every render, no tearing
+  // concern. It exists so an undo that clears a frame's last mark can ask
+  // "is this frame empty now?" without making the undo/redo callbacks change
+  // identity on every star (the keymap effect depends on them).
+  const marksRef = useRef<MarkMaps>({ ratings, stars, labels });
+  marksRef.current = { ratings, stars, labels };
+
   const { undoStack, redoStack, recordAction, undo, redo } = useUndoRedo({
     images,
     compareMode,
     persistRating,
+    persistStar,
+    persistLabel,
     setRatings,
+    setStars,
+    setLabels,
     setCompareMode,
     setGridVisible,
     setChampionIndex,
     setChallengerIndex,
     setCurrentIndex,
     setNavStack,
+    marksRef,
   });
 
   // Measured rect of the displayed image (relative to the stage), reported up
@@ -709,6 +752,8 @@ export default function App() {
       setFeedback,
       setImages,
       setRatings,
+      setStars,
+      setLabels,
       setMetadata,
       setCurrentIndex,
       setFilter,
@@ -1056,31 +1101,44 @@ export default function App() {
   // The rating decides — single-frame / grid-selection rating and the three
   // compare decides, with their load-bearing setState-then-dropZoomFullsExcept
   // sequencing — live in app/useDecideCallbacks.
-  const { applyRating, unrateCurrent, challengerLoses, challengerKeptBoth, challengerWins } =
-    useDecideCallbacks({
-      images,
-      ratings,
-      setRatings,
-      currentIndex,
-      setCurrentIndex,
-      championIndex,
-      setChampionIndex,
-      challengerIndex,
-      setChallengerIndex,
-      visibleIndices,
-      gridVisible,
-      selectedIndices,
-      navStackRef,
-      isZoomingRef,
-      keepZoomOnAdvanceRef,
-      setZoomSwapInstant,
-      setPanOffset,
-      flashFeedback,
-      persistRating,
-      recordAction,
-      nearestUnrated,
-      goBack,
-    });
+  const {
+    applyRating,
+    unrateCurrent,
+    challengerLoses,
+    challengerKeptBoth,
+    challengerWins,
+    applyStar,
+    applyLabel,
+  } = useDecideCallbacks({
+    images,
+    ratings,
+    setRatings,
+    currentIndex,
+    setCurrentIndex,
+    championIndex,
+    setChampionIndex,
+    challengerIndex,
+    setChallengerIndex,
+    visibleIndices,
+    gridVisible,
+    selectedIndices,
+    navStackRef,
+    isZoomingRef,
+    keepZoomOnAdvanceRef,
+    setZoomSwapInstant,
+    setPanOffset,
+    flashFeedback,
+    persistRating,
+    stars,
+    setStars,
+    labels,
+    setLabels,
+    persistStar,
+    persistLabel,
+    recordAction,
+    nearestUnrated,
+    goBack,
+  });
 
   // Held-arrow navigation — the hold-delay → rAF-paced repeat engine lives in
   // app/useHeldRepeat (immediate first step, staged 1×/3×/10× accel, ONE step
@@ -1376,6 +1434,8 @@ export default function App() {
     challengerKeptBoth,
     applyRating,
     unrateCurrent,
+    applyStar,
+    applyLabel,
     setFilter,
     chipsTooltip,
     startAnalysis,
@@ -1489,6 +1549,7 @@ export default function App() {
       chipsTooltip,
       positionInFilter,
       visibleCount: visibleIndices.length,
+      starsAndLabels: settings.starsAndLabels,
     }),
     [
       filter,
@@ -1502,6 +1563,7 @@ export default function App() {
       chipsTooltip,
       positionInFilter,
       visibleIndices.length,
+      settings.starsAndLabels,
     ],
   );
   const statusSession = useMemo<StatusBarSession>(
@@ -1807,6 +1869,7 @@ export default function App() {
               analyzing={qualityAnalyzing}
               scoredCount={Object.keys(qualityScores).length}
               progress={qualityProgress}
+              starsAndLabels={settings.starsAndLabels}
             />
           ) : cur.stage === "shimmer" && cur.error ? (
             // Full-screen error only when there's NO thumb to fall back to. If a
@@ -1877,6 +1940,15 @@ export default function App() {
             suggestion={suggestions[current.id] ?? null}
             burst={burstCtx.get(current.id) ?? null}
             similar={similarCtx.get(current.id) ?? null}
+            /* The rail draws the LIVE star instead of the read-only "LrC ★"
+               snapshot when the layer is on — same property on disk, so it is
+               never shown twice. */
+            starsAndLabels={settings.starsAndLabels}
+            frameId={current.id}
+            star={stars[current.id]}
+            label={labels[current.id]}
+            onSetStar={applyStar}
+            onSetLabel={applyLabel}
           />
         )}
       </div>
@@ -1916,6 +1988,8 @@ export default function App() {
       similar={similarCtx}
       scrubbing={scrubbing}
       scrubSpeed={scrubSpeed}
+      starsAndLabels={settings.starsAndLabels}
+      labels={labels}
     />
   );
   const cmpStrip = (
@@ -2073,6 +2147,7 @@ export default function App() {
                 analyzing={qualityAnalyzing}
                 scoredCount={Object.keys(qualityScores).length}
                 progress={qualityProgress}
+                starsAndLabels={settings.starsAndLabels}
               />
             ) : (
               <GridView
@@ -2095,6 +2170,14 @@ export default function App() {
                 bursts={showGridGroupBoxes ? burstCtx : undefined}
                 similar={showGridGroupBoxes ? similarCtx : undefined}
                 scrubSpeed={scrubSpeed}
+                // The maps go down whole and each CELL is handed primitives
+                // (`star={stars?.[id]}`), so a star landing on one frame
+                // re-renders that cell and no other — and an unrelated App
+                // render leaves both map identities alone, so `memo` bails
+                // for all of them.
+                starsAndLabels={settings.starsAndLabels}
+                stars={stars}
+                labels={labels}
               />
             )}
             {feedbackChip}
@@ -2149,6 +2232,7 @@ export default function App() {
             setHelpVisible(false);
             setHelpIntro(false);
           }}
+          starsAndLabels={settings.starsAndLabels}
         />
       )}
 

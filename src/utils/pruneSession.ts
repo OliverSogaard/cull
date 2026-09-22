@@ -68,12 +68,12 @@ export function omitIds<T>(
   return out;
 }
 
-/** Undo/redo entries after a prune: changes for gone frames are dropped (their
- *  files are not in the folder any more — replaying would ask the backend to
- *  write a sidecar it now refuses), actions left empty are dropped, and the
- *  compare-cursor snapshots are stripped because their indices are stale —
- *  undo/redo then land by frame id (`useUndoRedo`'s existing fallback).
- *  Returns the same array when nothing is affected. */
+/** Undo/redo entries after a prune: changes and marks for gone frames are
+ *  dropped (their files are not in the folder any more — replaying would ask
+ *  the backend to write a sidecar it now refuses), actions left empty are
+ *  dropped, and the compare-cursor snapshots are stripped because their
+ *  indices are stale — undo/redo then land by frame id (`useUndoRedo`'s
+ *  existing fallback). Returns the same array when nothing is affected. */
 export function pruneHistory(
   stack: readonly UndoAction[],
   goneIds: ReadonlySet<number>,
@@ -81,13 +81,24 @@ export function pruneHistory(
   // No frame left the session: history is untouched, snapshots included.
   if (goneIds.size === 0) return stack as UndoAction[];
   const touched = stack.some(
-    (a) => a.cursorBefore || a.cursorAfter || a.changes.some((c) => goneIds.has(c.imgId)),
+    (a) =>
+      a.cursorBefore ||
+      a.cursorAfter ||
+      a.changes.some((c) => goneIds.has(c.imgId)) ||
+      (a.meta?.some((m) => goneIds.has(m.imgId)) ?? false),
   );
   if (!touched) return stack as UndoAction[];
   const out: UndoAction[] = [];
   for (const action of stack) {
     const changes = action.changes.filter((c) => !goneIds.has(c.imgId));
-    if (changes.length > 0) out.push({ changes });
+    // The star / colour-label layer rides here too. Rebuilding a bare
+    // `{ changes }` literal would silently DELETE every star and label from
+    // the history on the first Move rejects — and would discard a whole
+    // star action, whose `changes` list is empty by design.
+    const meta = action.meta?.filter((m) => !goneIds.has(m.imgId));
+    if (changes.length > 0 || (meta?.length ?? 0) > 0) {
+      out.push(meta && meta.length > 0 ? { changes, meta } : { changes });
+    }
   }
   return out;
 }

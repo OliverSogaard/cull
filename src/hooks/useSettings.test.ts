@@ -115,3 +115,19 @@ describe("coerceSettings — capture-time sort (Phase 3C)", () => {
     expect(coerceSettings({ captureOffsets: [1, 2] }).captureOffsets).toEqual({});
   });
 });
+
+describe("coerceSettings — starsAndLabels (Phase 5A)", () => {
+  it("defaults starsAndLabels OFF for a blob that predates the field", () => {
+    // The whole feature's promise is that a user who never turns it on sees
+    // no change. That starts here: an existing user's stored settings have
+    // no such key, and must come back false.
+    expect(coerceSettings({}).starsAndLabels).toBe(false);
+    expect(DEFAULT_SETTINGS.starsAndLabels).toBe(false);
+  });
+
+  it("keeps an explicit stored value and rejects a wrong-typed one", () => {
+    expect(coerceSettings({ starsAndLabels: true }).starsAndLabels).toBe(true);
+    expect(coerceSettings({ starsAndLabels: "yes" }).starsAndLabels).toBe(false);
+    expect(coerceSettings({ starsAndLabels: 1 }).starsAndLabels).toBe(false);
+  });
+});

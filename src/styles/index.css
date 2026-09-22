@@ -21,6 +21,7 @@
 @import url("./help.css");
 @import url("./compare.css");
 @import url("./exif-rail.css");
+@import url("./marks.css");
 /* LAST: its reduced-motion overrides repeat each animating selector, so they
    win on source order at equal specificity. */
 @import url("./motion.css");

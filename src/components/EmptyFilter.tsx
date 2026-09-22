@@ -30,6 +30,17 @@ function NoMatchEmptyState({
 }
 
 /**
+ * One filter key, spelled the way the keymap currently binds it. With the
+ * stars-and-labels layer on the bare digits set stars, so the filters move to
+ * Shift+digit — these hints are the only thing on an empty screen telling the
+ * user how to get back to All, so they must never name a key that stars.
+ */
+function FilterKey({ digit, starsAndLabels }: { digit: string; starsAndLabels?: boolean }) {
+  if (starsAndLabels) return <KeyCombo keys={["Shift", digit]} />;
+  return <kbd className="kbd">{digit}</kbd>;
+}
+
+/**
  * Centered empty-state shown in loupe / grid when the active filter has zero
  * matches. Small icon,
  * uppercase eyebrow, headline with the missing filter highlighted, and a key
@@ -42,6 +53,7 @@ export function EmptyFilter({
   analyzing,
   scoredCount,
   progress,
+  starsAndLabels,
 }: {
   filter: Filter;
   /** `settings.smartCulling` — the master switch. Smart is now a valid filter
@@ -58,6 +70,9 @@ export function EmptyFilter({
    *  minutes (by design: it always yields to interactive reads), and without
    *  a count "analyzing" is indistinguishable from "hung". */
   progress?: { done: number; total: number } | null;
+  /** `settings.starsAndLabels` — decides whether a hint names the bare digit
+   *  or Shift+digit. Absent or false: every hint is byte-identical to before. */
+  starsAndLabels?: boolean;
 }) {
   // The whole "suggested" family (base + verdict sub-modes) has five empty
   // states, and telling them apart is the difference between "working as
@@ -78,7 +93,8 @@ export function EmptyFilter({
             title="Smart culling is turned off"
             hint={
               <>
-                <KeyCombo keys={["mod", ","]} /> for Settings · <kbd className="kbd">1</kbd> for all
+                <KeyCombo keys={["mod", ","]} /> for Settings ·{" "}
+                <FilterKey digit="1" starsAndLabels={starsAndLabels} /> for all
               </>
             }
           />
@@ -98,8 +114,8 @@ export function EmptyFilter({
             }
             hint={
               <>
-                Fills in as frames are scored · culling comes first · <kbd className="kbd">1</kbd>{" "}
-                for all
+                Fills in as frames are scored · culling comes first ·{" "}
+                <FilterKey digit="1" starsAndLabels={starsAndLabels} /> for all
               </>
             }
           />
@@ -115,7 +131,7 @@ export function EmptyFilter({
             title={<>Analysis done · no suggestions left here ({scoredCount} scored)</>}
             hint={
               <>
-                <kbd className="kbd">1</kbd> for all
+                <FilterKey digit="1" starsAndLabels={starsAndLabels} /> for all
               </>
             }
           />
@@ -128,7 +144,7 @@ export function EmptyFilter({
             title="No frames have been scored yet"
             hint={
               <>
-                <kbd className="kbd">1</kbd> for all
+                <FilterKey digit="1" starsAndLabels={starsAndLabels} /> for all
               </>
             }
           />
@@ -142,7 +158,8 @@ export function EmptyFilter({
             title="No frames have been scored yet"
             hint={
               <>
-                <kbd className="kbd">4</kbd> to analyze · <kbd className="kbd">1</kbd> for all
+                <FilterKey digit="4" starsAndLabels={starsAndLabels} /> to analyze ·{" "}
+                <FilterKey digit="1" starsAndLabels={starsAndLabels} /> for all
               </>
             }
           />
@@ -172,12 +189,12 @@ export function EmptyFilter({
       hint={
         filter === "rejects" ? (
           <>
-            Rejected frames show up here until you finish the cull · <kbd className="kbd">1</kbd>{" "}
-            for all
+            Rejected frames show up here until you finish the cull ·{" "}
+            <FilterKey digit="1" starsAndLabels={starsAndLabels} /> for all
           </>
         ) : (
           <>
-            <kbd className="kbd">1</kbd> for all
+            <FilterKey digit="1" starsAndLabels={starsAndLabels} /> for all
           </>
         )
       }

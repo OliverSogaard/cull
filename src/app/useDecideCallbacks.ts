@@ -1,7 +1,23 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
-import type { Img, NavEntry, Rating, UndoAction } from "../types";
+import type {
+  Img,
+  Label,
+  LabelValue,
+  MetaChange,
+  NavEntry,
+  Rating,
+  Star,
+  UndoAction,
+} from "../types";
 import { imageStore } from "../image/imageStore";
-import { withChanges } from "../utils/withChanges";
+import { emptiedPaths } from "../utils/emptySidecar";
+import { withChanges, withMeta } from "../utils/withChanges";
+
+/** The two halves of {@link MetaChange}, narrowed. `withMeta` is generic over
+ *  ONE value type, so the union itself would not fit the `Record<number, Star>`
+ *  call; each builder below produces only its own half anyway. */
+type StarChange = Extract<MetaChange, { field: "star" }>;
+type LabelChange = Extract<MetaChange, { field: "label" }>;
 
 /**
  * The rating decides, verbatim from App (grand cleanup Phase 6): single-frame
@@ -52,6 +68,12 @@ export function useDecideCallbacks({
   setPanOffset,
   flashFeedback,
   persistRating,
+  stars,
+  setStars,
+  labels,
+  setLabels,
+  persistStar,
+  persistLabel,
   recordAction,
   nearestUnrated,
   goBack,
@@ -75,6 +97,12 @@ export function useDecideCallbacks({
   setPanOffset: Dispatch<SetStateAction<{ x: number; y: number }>>;
   flashFeedback: (rating: Rating, imageId: number) => void;
   persistRating: (path: string, rating: Rating | null) => void;
+  stars: Record<number, Star>;
+  setStars: Dispatch<SetStateAction<Record<number, Star>>>;
+  labels: Record<number, LabelValue>;
+  setLabels: Dispatch<SetStateAction<Record<number, LabelValue>>>;
+  persistStar: (path: string, star: Star | null) => void;
+  persistLabel: (path: string, label: Label | null) => void;
   recordAction: (action: UndoAction) => void;
   nearestUnrated: (from: number, ratingsMap: Record<number, Rating>, skip: number) => number;
   goBack: (landIndex?: number) => void;
@@ -241,6 +269,128 @@ export function useDecideCallbacks({
     recordAction,
     setRatings,
   ]);
+
+  /**
+   * Which frames a star / colour-label keypress acts on: the whole grid
+   * selection when there is one, intersected with the active filter, exactly
+   * as `applyRating` does — else the current frame, and NOTHING when the
+   * cursor sits outside the active filter (the loupe shows a no-match screen
+   * there, and grading a frame you cannot see is never right).
+   */
+  const markTargets = useCallback((): Img[] => {
+    if (gridVisible && selectedIndices.size >= 1) {
+      const visibleSet = new Set(visibleIndices);
+      return Array.from(selectedIndices)
+        .filter((idx) => visibleSet.has(idx))
+        .map((idx) => images[idx])
+        .filter((im): im is Img => Boolean(im));
+    }
+    const cur = images[currentIndex];
+    if (!cur) return [];
+    if (visibleIndices.indexOf(currentIndex) === -1) return [];
+    return [cur];
+  }, [gridVisible, selectedIndices, visibleIndices, images, currentIndex]);
+
+  /**
+   * A mark clear can leave a CULL-created sidecar holding nothing at all, and
+   * the backend only deletes such a file inside `clear_xmp_rating` — which
+   * `unrateCurrent` never sends for a frame that is already unrated. So every
+   * star / label change is followed by the unrate for whichever frames it
+   * emptied: same per-path queue, issued AFTER the clear, once per frame. The
+   * backend still refuses to delete a sidecar it did not create or one that
+   * holds user content; this only gives it the chance to decide.
+   */
+  const sweepEmptied = useCallback(
+    (meta: readonly MetaChange[]) => {
+      for (const path of emptiedPaths(meta, { ratings, stars, labels })) {
+        persistRating(path, null);
+      }
+    },
+    [ratings, stars, labels, persistRating],
+  );
+
+  /**
+   * Set (or clear, with `null`) the star on the current frame or the whole
+   * grid selection. ONE undo step per keypress, whatever the selection size.
+   *
+   * Deliberately NOT like `applyRating`: no advance and no verdict flash. A
+   * star is orthogonal to keep/reject — it finishes nothing, so the cursor
+   * stays where the user is looking, and the full-frame wash belongs to a
+   * verdict. Frames already at the target star are dropped, so a re-press is
+   * free (no sidecar round-trip, no dead before===after entry that would also
+   * wipe a pending redo).
+   */
+  const applyStar = useCallback(
+    (star: Star | null) => {
+      const after = star ?? undefined;
+      const meta: StarChange[] = markTargets()
+        .filter((im) => stars[im.id] !== after)
+        .map((im) => ({
+          imgId: im.id,
+          path: im.path,
+          field: "star" as const,
+          before: stars[im.id],
+          after,
+        }));
+      if (meta.length === 0) return;
+      recordAction({ changes: [], meta });
+      setStars((prev) => withMeta(prev, meta));
+      for (const m of meta) persistStar(m.path, star);
+      sweepEmptied(meta);
+    },
+    [markTargets, stars, recordAction, setStars, persistStar, sweepEmptied],
+  );
+
+  /**
+   * Set the colour label on the current frame or the whole grid selection —
+   * TOGGLING it off when that label is already there, as Lightroom does.
+   *
+   * With a multi-select the toggle needs one answer, not N: the ANCHOR
+   * decides — the cursor frame when it is inside the selection, else the
+   * first selected frame — so one press does one thing to the whole set
+   * instead of half-toggling it.
+   *
+   * A frame carrying `"custom"` — the user's own Lightroom label — is SKIPPED
+   * outright: no state change, no write, no undo entry. CULL only ever learns
+   * the WORD "custom", never the string behind it, so overwriting one would be
+   * a one-way door that undo could not reverse. In a multi-select the other
+   * frames still change; when every target is custom the press does nothing at
+   * all. It is therefore not eligible to be the anchor either — the toggle
+   * question is answered by a frame the press can actually reach.
+   */
+  const applyLabel = useCallback(
+    (label: Label) => {
+      const targets = markTargets().filter((im) => labels[im.id] !== "custom");
+      if (targets.length === 0) return;
+      const cursor = images[currentIndex];
+      const anchor = targets.find((im) => im.id === cursor?.id) ?? targets[0];
+      const after: Label | undefined = labels[anchor.id] === label ? undefined : label;
+      const meta: LabelChange[] = targets
+        .filter((im) => labels[im.id] !== after)
+        .map((im) => ({
+          imgId: im.id,
+          path: im.path,
+          field: "label" as const,
+          before: labels[im.id],
+          after,
+        }));
+      if (meta.length === 0) return;
+      recordAction({ changes: [], meta });
+      setLabels((prev) => withMeta(prev, meta));
+      for (const m of meta) persistLabel(m.path, after ?? null);
+      sweepEmptied(meta);
+    },
+    [
+      markTargets,
+      labels,
+      images,
+      currentIndex,
+      recordAction,
+      setLabels,
+      persistLabel,
+      sweepEmptied,
+    ],
+  );
 
   /**
    * THE compare-decide sequence — one copy, three callers (challenger loses /
@@ -414,5 +564,13 @@ export function useDecideCallbacks({
     });
   }, [images, championIndex, challengerIndex, ratings, nearestUnrated, resolveCompareDecide]);
 
-  return { applyRating, unrateCurrent, challengerLoses, challengerKeptBoth, challengerWins };
+  return {
+    applyRating,
+    unrateCurrent,
+    challengerLoses,
+    challengerKeptBoth,
+    challengerWins,
+    applyStar,
+    applyLabel,
+  };
 }

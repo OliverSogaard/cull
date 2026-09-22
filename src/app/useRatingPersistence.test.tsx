@@ -34,6 +34,8 @@ const RETRY_SCHEDULE_MS = 5900;
 const MISSING = "source missing: C:\\shoot\\gone.cr3 is not a file";
 /** A transient failure — the kind the retry schedule exists for. */
 const TRANSIENT = "rename xmp: EACCES";
+/** The backend keeping the user's own Lightroom label (`xmp.rs`). */
+const CUSTOM_KEPT = "custom label kept: C:\\shoot\\flaky.cr3 carries a label CULL did not write";
 
 const GONE = "C:\\shoot\\gone.cr3";
 const FLAKY = "C:\\shoot\\flaky.cr3";
@@ -44,6 +46,16 @@ const STUCK = "C:\\shoot\\stuck.cr3";
 async function settleWrites(): Promise<void> {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(RETRY_SCHEDULE_MS);
+  });
+}
+
+/** Let the per-path write queue advance one link without running a timer — the
+ *  queue chains through `.then`, so the first write is issued in a microtask,
+ *  not synchronously inside `act`. */
+async function drainMicrotasks(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
   });
 }
 
@@ -311,5 +323,278 @@ describe("useRatingPersistence — a missing photo is a permanent failure", () =
     // still refuses to lose it silently.
     expect(result.current.failedCount).toBe(1);
     expect(result.current.missingCount).toBe(1);
+  });
+});
+
+describe("useRatingPersistence — stars and labels share the photo, not the verdict", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockInvoke.mockReset();
+    // Same reason as the suite above: the hook logs every exhausted write, and
+    // these tests assert the counts rather than the log.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("sends each kind to its own command, with null meaning clear", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistStar(FLAKY, 3);
+      result.current.persistLabel(FLAKY, "red");
+      result.current.persistStar(FLAKY, null);
+      result.current.persistLabel(FLAKY, null);
+    });
+    await settleWrites();
+    expect(mockInvoke.mock.calls.map(([cmd]) => cmd)).toEqual([
+      "write_xmp_star",
+      "write_xmp_label",
+      "write_xmp_star",
+      "write_xmp_label",
+    ]);
+    expect(mockInvoke.mock.calls.map(([, args]) => args)).toEqual([
+      { path: FLAKY, star: 3 },
+      { path: FLAKY, label: "red" },
+      { path: FLAKY, star: null },
+      { path: FLAKY, label: null },
+    ]);
+  });
+
+  it("serialises all three kinds for ONE photo — they edit one file", async () => {
+    // The sidecar write is read-modify-write. Two of these overlapping would
+    // lose whichever read first, which is why the queue is keyed by PATH and
+    // not by kind.
+    const releases: (() => void)[] = [];
+    mockInvoke.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistRating(FLAKY, "keep");
+      result.current.persistStar(FLAKY, 3);
+      result.current.persistLabel(FLAKY, "blue");
+    });
+    await drainMicrotasks();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockInvoke.mock.calls[0][0]).toBe("write_xmp_rating");
+    await act(async () => {
+      releases[releases.length - 1]?.();
+    });
+    expect(mockInvoke).toHaveBeenCalledTimes(2);
+    expect(mockInvoke.mock.calls[1][0]).toBe("write_xmp_star");
+  });
+
+  it("a star write never clears a rating's unsaved flag for the same photo", async () => {
+    // Keyed by path alone, the star's issue-time "this path has a fresh
+    // write" sweep would have deleted the rating's failure — and the rating
+    // still would not be on disk.
+    mockInvoke.mockRejectedValue(new Error(TRANSIENT));
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistRating(STUCK, "reject");
+    });
+    await settleWrites();
+    expect(result.current.failedCount).toBe(1);
+
+    mockInvoke.mockResolvedValue(undefined);
+    act(() => {
+      result.current.persistStar(STUCK, 2);
+    });
+    await settleWrites();
+    expect(result.current.failedCount, "the rating is still unsaved").toBe(1);
+
+    // …and a fresh RATING write to the same path still clears it.
+    act(() => {
+      result.current.persistRating(STUCK, "reject");
+    });
+    await settleWrites();
+    expect(result.current.failedCount).toBe(0);
+  });
+
+  it("retryFailed re-issues each stuck write with its own command and value", async () => {
+    mockInvoke.mockRejectedValue(new Error(TRANSIENT));
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistStar(FLAKY, 5);
+      result.current.persistLabel(GONE, "yellow");
+    });
+    await settleWrites();
+    expect(result.current.failedCount).toBe(2);
+
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue(undefined);
+    act(() => {
+      result.current.retryFailed();
+    });
+    await settleWrites();
+    // Sorted by command so the two retries' order in the queue does not decide
+    // whether the test passes. Objects rather than tuples: `invoke`'s args
+    // parameter is optional, so a tuple's members type as possibly-undefined
+    // and the comparator would not typecheck.
+    const reissued = mockInvoke.mock.calls
+      .map(([cmd, args]) => ({ cmd, args }))
+      .sort((a, b) => (a.cmd < b.cmd ? -1 : 1));
+    expect(reissued).toEqual([
+      { cmd: "write_xmp_label", args: { path: GONE, label: "yellow" } },
+      { cmd: "write_xmp_star", args: { path: FLAKY, star: 5 } },
+    ]);
+    expect(result.current.failedCount).toBe(0);
+  });
+
+  it("a missing-source refusal is permanent for a star too — one attempt, no schedule", async () => {
+    // The `source missing:` no-retry rule is not a property of the RATING
+    // command: it is a property of the sidecar write, so it has to cover the
+    // two new kinds as well, or a star aimed at a moved photo would hammer a
+    // refusal on a timer.
+    mockInvoke.mockRejectedValue(new Error(MISSING));
+    const { result } = renderHook(() => useRatingPersistence());
+    act(() => {
+      result.current.persistLabel(GONE, "green");
+    });
+    await settleWrites();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(result.current.failedCount).toBe(1);
+    expect(result.current.missingCount).toBe(1);
+
+    // A transient star failure keeps the 400/1500/4000 ms schedule.
+    mockInvoke.mockReset();
+    mockInvoke.mockRejectedValue(new Error(TRANSIENT));
+    act(() => {
+      result.current.persistStar(FLAKY, 4);
+    });
+    await settleWrites();
+    expect(mockInvoke).toHaveBeenCalledTimes(4);
+    expect(result.current.missingCount).toBe(1);
+  });
+});
+
+/**
+ * The backend refuses to overwrite an `xmp:Label` CULL did not write. The
+ * frontend already skips such frames, so this can only be reached with a
+ * STALE map — Lightroom edited the sidecar while the session was open. The
+ * file is untouched, so nothing was lost: it must not count as a failed save,
+ * must not be retried, and the map must be told the truth.
+ */
+describe("useRatingPersistence — a custom label the backend kept", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockInvoke.mockReset();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("is not a failure, is not retried, and hands the path back for the map", async () => {
+    const onCustomLabelKept = vi.fn((_path: string): void => {});
+    mockInvoke.mockRejectedValue(new Error(CUSTOM_KEPT));
+    const { result } = renderHook(() => useRatingPersistence({ onCustomLabelKept }));
+
+    act(() => {
+      result.current.persistLabel(FLAKY, "blue");
+    });
+    await settleWrites();
+
+    expect(mockInvoke).toHaveBeenCalledTimes(1); // no 400/1500/4000 schedule
+    expect(result.current.failedCount).toBe(0);
+    expect(result.current.missingCount).toBe(0);
+    expect(result.current.savingCount).toBe(0);
+    expect(onCustomLabelKept).toHaveBeenCalledWith(FLAKY);
+  });
+
+  it("still counts every other label failure", async () => {
+    const onCustomLabelKept = vi.fn((_path: string): void => {});
+    mockInvoke.mockRejectedValue(new Error(TRANSIENT));
+    const { result } = renderHook(() => useRatingPersistence({ onCustomLabelKept }));
+
+    act(() => {
+      result.current.persistLabel(FLAKY, "blue");
+    });
+    await settleWrites();
+
+    expect(result.current.failedCount).toBe(1);
+    expect(onCustomLabelKept).not.toHaveBeenCalled();
+  });
+
+  it("a rating write rejected with this exact prefix is still counted as a failure", async () => {
+    // `isCustomLabelKept` is a bare string-prefix test on the error message.
+    // No backend path produces this prefix for anything but a label today,
+    // but the check must be keyed on `write.kind === "label"` as well — not
+    // the message alone — or a rating/star failure that ever happened to
+    // collide with this exact prefix would vanish silently: no retry
+    // schedule, no failedWrites entry, nothing for the quit guard to see.
+    const onCustomLabelKept = vi.fn((_path: string): void => {});
+    mockInvoke.mockRejectedValue(new Error(CUSTOM_KEPT));
+    const { result } = renderHook(() => useRatingPersistence({ onCustomLabelKept }));
+
+    act(() => {
+      result.current.persistRating(FLAKY, "keep");
+    });
+    await settleWrites();
+
+    expect(mockInvoke).toHaveBeenCalledTimes(4); // the full 400/1500/4000 schedule
+    expect(result.current.failedCount).toBe(1);
+    expect(onCustomLabelKept).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the counts MEAN. Every surface that reports them says "photos" or
+ * "ratings" — "3 photos missing", "3 ratings didn't save" — so they have to
+ * count photos. `failedWrites` stays keyed per property, because `retryFailed`
+ * has to re-issue each stuck write with its own command and value.
+ */
+describe("useRatingPersistence — the counts are per photo", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockInvoke.mockReset();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("two stuck properties on ONE photo is one unsaved photo, and two retries", async () => {
+    mockInvoke.mockRejectedValue(new Error(MISSING));
+    const { result } = renderHook(() => useRatingPersistence());
+
+    act(() => {
+      result.current.persistRating(GONE, "keep");
+      result.current.persistLabel(GONE, "red");
+    });
+    await settleWrites();
+    await settleWrites();
+
+    expect(result.current.failedCount, "one photo, not two writes").toBe(1);
+    expect(result.current.missingCount).toBe(1);
+
+    // …and the retry still re-issues BOTH properties: the count is what the
+    // chrome says, the record is what gets replayed.
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue(undefined);
+    act(() => {
+      result.current.retryFailed();
+    });
+    await settleWrites();
+    await settleWrites();
+
+    expect(mockInvoke.mock.calls.map(([cmd]) => cmd).sort()).toEqual([
+      "write_xmp_label",
+      "write_xmp_rating",
+    ]);
+    expect(result.current.failedCount).toBe(0);
   });
 });
