@@ -37,24 +37,23 @@ export function prefersReducedMotion(): boolean {
 }
 
 /**
- * Transform for the deferred hi-res layer: the native-size raster reproduces
- * the base layer's `scale(Z)` about (originX%, originY%) EXACTLY, so it can
- * appear/disappear with zero visible shift. One formula for loupe and compare
- * (they had byte-identical copies).
+ * The deferred hi-res layer's FIT scale: what shrinks the native-size raster
+ * onto the displayed box, so that a wrapper scaling it by `Z` about
+ * (originX%, originY%) reproduces the base layer's zoom EXACTLY and the sharp
+ * pixels can appear/disappear with zero visible shift. The origin lives on
+ * the wrapper as transform-origin (not folded into a translate as it once
+ * was): a translate is part of `transform`, so every pan update restarted
+ * the 300 ms transform transition — a drag on the sharp layer eased and
+ * lagged, and a drag during the engage glide kept restarting the glide.
+ * transform-origin is not transitioned, so the origin moves instantly while
+ * only the scale glides, the same as the presenter layers.
  */
-export function hiResTransform(
+export function hiResFitScale(
   rect: PaneRect | null | undefined,
   native: { w: number; h: number } | null | undefined,
-  originX: number,
-  originY: number,
-  zoomZ: number,
-): { tx: number; ty: number; scale: number } {
-  if (!rect || !native || native.w <= 0) return { tx: 0, ty: 0, scale: 1 };
-  return {
-    tx: (originX / 100) * rect.width * (1 - zoomZ),
-    ty: (originY / 100) * rect.height * (1 - zoomZ),
-    scale: (rect.width / native.w) * zoomZ,
-  };
+): number {
+  if (!rect || !native || native.w <= 0) return 1;
+  return rect.width / native.w;
 }
 
 /**
