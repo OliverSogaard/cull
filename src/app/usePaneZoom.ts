@@ -3,6 +3,7 @@ import type { Img, ImageMetadata } from "../types";
 import type { PaneRect } from "../components/pane/paneGeometry";
 import { imageStore } from "../image/imageStore";
 import { zoomOriginMeta } from "../utils/zoom";
+import { readRenderedScale } from "../utils/renderedScale";
 
 const PAN_LIMIT = 40; // max % offset from the AF point
 
@@ -10,8 +11,8 @@ const PAN_LIMIT = 40; // max % offset from the AF point
  * Zoom choreography, verbatim from App (grand cleanup Phase 7): the hold-based
  * Space/mouse zoom state, keyboard pan, the carried-advance one-shot flag, the
  * zoomSwapInstant two-rAF reset, the index-change zoom reset/carry, and the
- * cursor-anchored mouse zoom (press = zoom at point, move = the zoom follows
- * the cursor, release = exit).
+ * cursor-anchored mouse zoom (press = zoom at point, drag = grab-pan,
+ * release = exit).
  *
  * The render-derived zoomZ/zoomGlide stay in App's culling render (they read
  * the loupe's useImage result, which doesn't exist at this call site) — App
@@ -69,15 +70,15 @@ export function usePaneZoom({
   }, [isZooming]);
 
   // Cursor-anchored mouse zoom: press on the photo = zoom at that point,
-  // move = the zoom origin follows the cursor (a loupe, not a grab: the
-  // origin is the one input the scale glide is indifferent to, so steering
-  // it mid-glide never fights the animation), release = exit. Mirrors Space
-  // (hold-based, no sticky state); rating while held carries the zoom like
-  // the keyboard flow.
+  // drag = the photo sticks to the pointer (grab), release = exit. Mirrors
+  // Space (hold-based, no sticky state); rating while held carries the zoom
+  // like the keyboard flow. A loupe (origin follows the cursor) was tried in
+  // 1.0.1 and moved the view (Z−1)× the cursor speed — too twitchy at 1:1.
   const [mouseZooming, setMouseZooming] = useState(false);
+  const lastMouseRef = useRef({ x: 0, y: 0 });
   // Mirror for the stable-identity pan() below: while the mouse owns the
-  // zoom, arrow-key pan must stand down — the cursor sets the origin outright
-  // and a keyboard nudge would be overwritten by the next mouse move anyway.
+  // zoom, arrow-key pan must stand down — its ±40% clamp would snap a drag
+  // that legitimately sits outside it (mouse pan clamps by origin bounds).
   const mouseZoomingRef = useRef(false);
   useEffect(() => {
     mouseZoomingRef.current = mouseZooming;
@@ -145,25 +146,34 @@ export function usePaneZoom({
     return { x: meta?.afXPct ?? 50, y: meta?.afYPct ?? 50 };
   }, [images, currentIndex, metadata]);
 
-  // Mouse-zoom follow loop + release. Listeners exist only while the button
+  // Mouse-zoom drag loop + release. Listeners exist only while the button
   // is held. Deps close over the LIVE imgRect/meta on purpose: a carried
   // rating advance mid-hold swaps them, the effect re-attaches, and the
-  // follow continues seamlessly on the new frame.
+  // drag continues seamlessly on the new frame.
   useEffect(() => {
     if (!mouseZooming) return;
     const af = afPoint();
     const onMove = (e: MouseEvent) => {
-      const at = cursorPct(e.clientX, e.clientY);
-      if (!at) return;
-      // origin = AF + pan, so this pan puts the origin exactly under the
-      // cursor — the same formula as the press. No scale factor and no
-      // per-move delta, so there is nothing to drift or to fight the glide.
-      // Clamped to the image: a held button can wander off the frame, and
-      // the zoom then holds at the nearest edge instead of anchoring outside.
-      setPanOffset({
-        x: Math.max(0, Math.min(100, at.x)) - af.x,
-        y: Math.max(0, Math.min(100, at.y)) - af.y,
-      });
+      const dx = e.clientX - lastMouseRef.current.x;
+      const dy = e.clientY - lastMouseRef.current.y;
+      lastMouseRef.current = { x: e.clientX, y: e.clientY };
+      const rect = imgRect;
+      if (!rect) return;
+      // Grab semantics: the photo sticks to the pointer, like dragging a
+      // print. Moving the origin by d% shifts the content by d(Z−1)% the
+      // other way, so 1:1 tracking is dx / (Z−1) — with Z the scale the
+      // layer is PAINTED at this instant (mid-glide included), never the
+      // target: the target overstates the divisor during the engage glide,
+      // which made a drag crawl for 300 ms and then lurch. Below ~1.05 the
+      // divisor is noise, and there is nothing to drag yet anyway.
+      const z = readRenderedScale(stageRef.current?.querySelector(".cull-image") ?? null);
+      if (z < 1.05) return;
+      // Pan clamps to origin bounds [0,100]: a corner anchor legitimately
+      // exceeds the keyboard's ±40%.
+      setPanOffset((o) => ({
+        x: Math.max(-af.x, Math.min(100 - af.x, o.x - ((dx / rect.width) * 100) / (z - 1))),
+        y: Math.max(-af.y, Math.min(100 - af.y, o.y - ((dy / rect.height) * 100) / (z - 1))),
+      }));
     };
     const end = () => {
       setMouseZooming(false);
@@ -177,7 +187,7 @@ export function usePaneZoom({
       window.removeEventListener("mouseup", end);
       window.removeEventListener("blur", end);
     };
-  }, [mouseZooming, afPoint, cursorPct, resetZoom]);
+  }, [mouseZooming, afPoint, imgRect, stageRef, resetZoom]);
 
   // Press on the loupe photo: zoom anchored at the cursor (Shift = 2:1).
   // Only from an un-zoomed state (Space zoom owns the frame otherwise), only
@@ -192,6 +202,7 @@ export function usePaneZoom({
       if (!at || at.x < 0 || at.x > 100 || at.y < 0 || at.y > 100) return;
       const af = afPoint();
       e.preventDefault();
+      lastMouseRef.current = { x: e.clientX, y: e.clientY };
       // origin = AF + pan, so this pan puts the origin exactly under the cursor.
       setPanOffset({ x: at.x - af.x, y: at.y - af.y });
       setZoomLevel(e.shiftKey ? 2 : 1);
