@@ -276,14 +276,16 @@
   border-color: rgba(200, 127, 127, 0.5);
 }
 
-/* Cursor-anchored mouse zoom affordance: the photo area invites a press,
-   and a held drag reads as grabbing. Keyboard zoom (Space) shows neither. */
-.cull-image-area--zoomable {
+/* Cursor-anchored mouse zoom affordance: only the photo itself (the
+   matte-inset clip box, never the surrounding stage) invites a press, and
+   while the button is held the whole scaled frame says "release to leave".
+   Keyboard zoom (Space) shows neither. */
+.cull-image-area--zoomable .cull-photo-frame__clip {
   cursor: zoom-in;
 }
 
-.cull-image-area--grabbing {
-  cursor: grabbing;
+.cull-image-area--held {
+  cursor: zoom-out;
 }
 
 /* Rejects-destination segment in the finish dialog: reuses the settings

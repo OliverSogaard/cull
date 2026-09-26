@@ -28,11 +28,11 @@ describe("useUpdateCheck", () => {
     expect(mocks.check).not.toHaveBeenCalled();
   });
 
-  it("stays idle when there is nothing newer, and when the check fails", async () => {
+  it("is current when there is nothing newer, and stays idle when the check fails", async () => {
     mocks.check.mockResolvedValueOnce(null);
     const a = renderHook(() => useUpdateCheck(true));
-    await waitFor(() => expect(mocks.check).toHaveBeenCalledTimes(1));
-    expect(a.result.current.state.status).toBe("idle");
+    await waitFor(() => expect(a.result.current.state.status).toBe("current"));
+    expect(mocks.check).toHaveBeenCalledTimes(1);
 
     mocks.check.mockRejectedValueOnce(new Error("offline"));
     const b = renderHook(() => useUpdateCheck(true));

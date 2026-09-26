@@ -40,6 +40,7 @@ import { KeyCombo } from "./components/KeyCombo";
 import { QuitGuardOverlay } from "./components/QuitGuardOverlay";
 import { RecentFolders } from "./components/RecentFolders";
 import { UpdateChip } from "./components/UpdateChip";
+import { keepKeyboardFocusOffChrome } from "./utils/mouseFocus";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import { SaveStatusPill } from "./components/SaveStatusPill";
 import { ScanFailureCard, type ScanFailure } from "./components/ScanFailureCard";
@@ -94,7 +95,7 @@ import {
   stepGridSize,
   wheelStepDue,
 } from "./utils/gridSize";
-import { paneZoomZ, type PaneRect } from "./components/pane/paneGeometry";
+import type { PaneRect } from "./components/pane/paneGeometry";
 import type { PressureLevel } from "./image/pressureProfile";
 import { formatFolderSet } from "./utils/format";
 import { gridPageStep, stripPageStep } from "./utils/pageStep";
@@ -438,8 +439,7 @@ export default function App() {
   // Space/mouse zoom state, keyboard pan, the carried-advance flag, the
   // two-rAF zoomSwapInstant reset, the index-change reset/carry, and the
   // cursor-anchored mouse zoom live in app/usePaneZoom. The render-derived
-  // zoomZ/zoomGlide stay in the culling render below (they read the loupe's
-  // useImage result), assigning zoomZRef each render.
+  // zoomGlide stays in the culling render below.
   const {
     isZooming,
     setIsZooming,
@@ -452,7 +452,6 @@ export default function App() {
     isZoomingRef,
     keepZoomOnAdvanceRef,
     mouseZooming,
-    zoomZRef,
     pan,
     resetZoom,
     handleStageMouseDown,
@@ -1598,7 +1597,7 @@ export default function App() {
             ? "ANALYZING"
             : "STAGED";
     return (
-      <main className="cull-app cull-app--chrome">
+      <main className="cull-app cull-app--chrome" onMouseDownCapture={keepKeyboardFocusOffChrome}>
         {quitGuardOverlay}
         <WindowControls onSettings={() => setSettingsOpen(true)} />
         {/* Top chrome row — brand block with mode name and save status pill.
@@ -1782,6 +1781,7 @@ export default function App() {
             settings={settings}
             onChange={setSettings}
             onClose={() => setSettingsOpen(false)}
+            update={{ state: update.state, onInstall: () => void update.install() }}
           />
         )}
       </main>
@@ -1805,17 +1805,6 @@ export default function App() {
   // Zoom transform-origin = AF point (display coords) + pan, clamped to image.
   const { x: originX, y: originY } = afZoomOrigin(originMeta, panOffset);
 
-  // The pane owns the real zoom geometry (hi-res transform, frame dims);
-  // this mirror of its zoomZ exists only for the mouse-drag pan factor, via
-  // the SAME shared formula over the rect the pane reports up. Native dims
-  // of the ZOOM raster: the zoom tier's meta-derived dims → the thumb's
-  // sensor display dims (cur.dims is orientation-adjusted, not 160×120).
-  const zoomNative =
-    cur.full?.dims ?? (cur.dims && cur.dims.w > 1 && cur.dims.h > 1 ? cur.dims : undefined);
-  const zoomZ = paneZoomZ(zoomNative, imgRect, zoomLevel, isZooming);
-  // Render-phase ref mirror for the mouse-drag pan loop (see its effect):
-  // pure function of state, same value every render, no tearing concern.
-  zoomZRef.current = zoomZ;
   // One transition string for EVERY layer that scales with zoom (presenter,
   // hi-res, clip/peak masks) — "none" for the carried-zoom frame swap, the
   // directional glide otherwise. Single source so layers can't tear apart.
@@ -1864,16 +1853,19 @@ export default function App() {
   const singleModeBody = (
     <div className="cull-stage">
       <div className="cull-loupe-body">
+        {/* Mouse zoom stands down under the help sheet like every key does
+            (the sheet is pointer-transparent, so a press would otherwise
+            reach the photo through it): no affordance cursor, no handler. */}
         <div
           className={`cull-image-area${
-            positionInFilter !== -1 && !isZooming
+            positionInFilter !== -1 && !isZooming && !helpVisible
               ? " cull-image-area--zoomable"
               : mouseZooming
-                ? " cull-image-area--grabbing"
+                ? " cull-image-area--held"
                 : ""
           }`}
           ref={stageRef}
-          onMouseDown={handleStageMouseDown}
+          onMouseDown={helpVisible ? undefined : handleStageMouseDown}
         >
           {images.length === 0 ? (
             <div className="cull-message">no images</div>
@@ -2025,7 +2017,11 @@ export default function App() {
   );
 
   return (
-    <main className="cull-app" data-thumbs-pos={settings.thumbsPosition}>
+    <main
+      className="cull-app"
+      data-thumbs-pos={settings.thumbsPosition}
+      onMouseDownCapture={keepKeyboardFocusOffChrome}
+    >
       {quitGuardOverlay}
       <WindowControls onSettings={() => setSettingsOpen(true)} />
       {/* Top chrome / title bar — brand block + view name + save status pill.
@@ -2258,6 +2254,7 @@ export default function App() {
           settings={settings}
           onChange={setSettings}
           onClose={() => setSettingsOpen(false)}
+          update={{ state: update.state, onInstall: () => void update.install() }}
         />
       )}
     </main>

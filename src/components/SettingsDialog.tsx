@@ -12,6 +12,8 @@ import { filterKeyHint } from "../utils/filterModes";
 import { sanitizeFolderName } from "../utils/path";
 import { modCombo } from "../utils/platform";
 import { KeyCombo } from "./KeyCombo";
+import { UpdateChip } from "./UpdateChip";
+import type { UpdateState } from "../hooks/useUpdateCheck";
 
 /**
  * Settings modal. Opens with `Ctrl + ,` or the settings cog in the top-right
@@ -25,10 +27,13 @@ export function SettingsDialog({
   settings,
   onChange,
   onClose,
+  update,
 }: {
   settings: Settings;
   onChange: (next: Settings) => void;
   onClose: () => void;
+  /** The launch-time update check, shown on the About tab. */
+  update?: { state: UpdateState; onInstall: () => void };
 }) {
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     onChange({ ...settings, [key]: value });
@@ -66,7 +71,9 @@ export function SettingsDialog({
               <button
                 key={t.id}
                 type="button"
-                className={`cull-settings__navitem${tab === t.id ? " is-active" : ""}`}
+                className={`cull-settings__navitem${tab === t.id ? " is-active" : ""}${
+                  t.foot ? " is-foot" : ""
+                }`}
                 onClick={() => setTab(t.id)}
                 aria-current={tab === t.id}
               >
@@ -112,7 +119,7 @@ export function SettingsDialog({
                 </SettingRow>
                 <SettingRow
                   label="Default overlays"
-                  help="Active at start. Toggle with i / h / p / o / t."
+                  help="Active at start. Toggle with t / i / h / p / o."
                 >
                   <div className="cull-settings__chips">
                     <Chip
@@ -328,6 +335,8 @@ export function SettingsDialog({
                 <ResetRow onReset={() => onChange(DEFAULT_SETTINGS)} />
               </>
             )}
+
+            {tab === "about" && <About update={update} />}
           </div>
         </div>
 
@@ -339,14 +348,49 @@ export function SettingsDialog({
   );
 }
 
-type TabId = "general" | "smart" | "files" | "storage";
+type TabId = "general" | "smart" | "files" | "storage" | "about";
 
-const TABS: { id: TabId; label: string }[] = [
+const TABS: { id: TabId; label: string; foot?: true }[] = [
   { id: "general", label: "General" },
   { id: "smart", label: "Smart culling" },
   { id: "files", label: "Files" },
   { id: "storage", label: "Storage" },
+  { id: "about", label: "About", foot: true },
 ];
+
+/** Injected by Vite from package.json (see vite.config.ts) — the same
+ *  number the installer and the updater manifest carry. */
+declare const __APP_VERSION__: string;
+
+function About({ update }: { update?: { state: UpdateState; onInstall: () => void } }) {
+  // "idle" is a check that never ran or could not reach GitHub (the dev exe,
+  // no network); "current" is a completed check that found nothing newer.
+  const updates =
+    !update || update.state.status === "idle" ? (
+      "Could not check for updates at launch."
+    ) : update.state.status === "current" ? (
+      "Up to date."
+    ) : (
+      <UpdateChip state={update.state} onInstall={update.onInstall} />
+    );
+  return (
+    <div className="cull-about">
+      <div className="cull-about__name">CULL</div>
+      <p className="cull-about__blurb">
+        Keyboard-first culling for Canon CR3 shoots. Verdicts are written as XMP sidecars that
+        Lightroom reads; the RAW files themselves are never modified.
+      </p>
+      <dl className="cull-about__facts">
+        <dt>Version</dt>
+        <dd>{__APP_VERSION__}</dd>
+        <dt>Updates</dt>
+        <dd>{updates}</dd>
+        <dt>Source</dt>
+        <dd>github.com/OliverSogaard/cull</dd>
+      </dl>
+    </div>
+  );
+}
 
 function SettingRow({
   label,

@@ -65,6 +65,14 @@ body,
   flex-direction: column;
 }
 
+/* Selected text is champagne, not the browser's blue — the only place the
+   platform's own accent could otherwise leak in (paths, EXIF values, custom
+   label text; the shell itself is user-select: none). */
+::selection {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
 /* Focus-ring safety net: a plain grep for `:focus`/`:focus-visible` in
    src/styles can't see a classless focusable added later (a bare <button>,
    <a>, <summary>, or a manual role="button"/tabIndex widget) — it would
@@ -74,13 +82,12 @@ body,
    textareas/selects are deliberately excluded — they show :focus-visible on
    a plain mouse click and already carry their own border-based treatment. */
 :where(
-    button,
-    a,
-    summary,
-    [role="button"][tabindex],
-    [tabindex]:not([tabindex="-1"])
-  ):focus-visible {
+  button,
+  a,
+  summary,
+  [role="button"][tabindex],
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
   outline: none;
   box-shadow: var(--ring);
 }
-

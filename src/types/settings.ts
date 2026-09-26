@@ -144,7 +144,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
   defaultFilter: "all",
   defaultThumbsVisible: true,
-  defaultExifVisible: false,
+  defaultExifVisible: true,
   defaultClippingVisible: false,
   defaultPeakingVisible: false,
   defaultCompositionVisible: false,

@@ -9,7 +9,7 @@ type Props = {
  *  there is none — the check is silent by design. Sentence case; the version
  *  comes straight from the release, so it reads "1.1.0", not "v1.1.0". */
 export function UpdateChip({ state, onInstall }: Props) {
-  if (state.status === "idle") return null;
+  if (state.status === "idle" || state.status === "current") return null;
   const label =
     state.status === "available"
       ? `Update ${state.version} is ready to install`
