@@ -157,3 +157,85 @@ describe("usePaneZoom — mouse zoom", () => {
     expect(hook.result.current.isZooming).toBe(false);
   });
 });
+
+/**
+ * A frame change while a zoom glide is still in flight. The layers are the
+ * same DOM elements across frames, so the new frame would inherit the
+ * half-way scale and finish the glide as if it had been zoomed (Oliver, on
+ * 1.0.4: "weirdly zoomed in at the next image"). The hook lands such a
+ * frame instantly instead — and only such a frame: after the glide has
+ * landed, a frame change stays glided as before.
+ */
+describe("usePaneZoom — a frame change mid-glide lands the new frame instantly", () => {
+  type Props = Parameters<typeof usePaneZoom>[0];
+  function setupIndexed() {
+    const stage = document.createElement("div");
+    stage.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1400, height: 800, right: 1400, bottom: 800 }) as DOMRect;
+    document.body.appendChild(stage);
+    let now = 10_000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const tick = (ms: number) => {
+      now += ms;
+    };
+    const images = [IMG, { ...IMG, id: 2, path: "/s/2.cr3", filename: "2.cr3" }];
+    const props = (currentIndex: number): Props => ({
+      images,
+      currentIndex,
+      metadata: {},
+      imgRect: RECT,
+      stageRef: { current: stage },
+      positionInFilter: currentIndex,
+    });
+    const hook = renderHook((p: Props) => usePaneZoom(p), { initialProps: props(0) });
+    const zoomIn = () =>
+      act(() => {
+        hook.result.current.setIsZooming(true);
+      });
+    const zoomOut = () =>
+      act(() => {
+        hook.result.current.resetZoom();
+      });
+    const nextFrame = () => act(() => hook.rerender(props(1)));
+    return { hook, tick, zoomIn, zoomOut, nextFrame };
+  }
+
+  it("an arrow inside the engage glide: zoom drops and the swap is instant", () => {
+    const { hook, tick, zoomIn, nextFrame } = setupIndexed();
+    zoomIn();
+    tick(120); // inside the 300 ms engage glide
+    nextFrame();
+    expect(hook.result.current.isZooming).toBe(false);
+    expect(hook.result.current.zoomSwapInstant).toBe(true);
+  });
+
+  it("an arrow inside the release glide: the swap is instant", () => {
+    const { hook, tick, zoomIn, zoomOut, nextFrame } = setupIndexed();
+    zoomIn();
+    tick(400);
+    zoomOut();
+    tick(80); // inside the 200 ms release glide
+    nextFrame();
+    expect(hook.result.current.isZooming).toBe(false);
+    expect(hook.result.current.zoomSwapInstant).toBe(true);
+  });
+
+  it("an arrow after the glide has landed changes nothing about the swap", () => {
+    const { hook, tick, zoomIn, zoomOut, nextFrame } = setupIndexed();
+    zoomIn();
+    tick(400);
+    zoomOut();
+    tick(400);
+    nextFrame();
+    expect(hook.result.current.zoomSwapInstant).toBe(false);
+  });
+
+  it("a zoomed frame change after the engage glide still drops the zoom, glided", () => {
+    const { hook, tick, zoomIn, nextFrame } = setupIndexed();
+    zoomIn();
+    tick(400);
+    nextFrame();
+    expect(hook.result.current.isZooming).toBe(false);
+    expect(hook.result.current.zoomSwapInstant).toBe(false);
+  });
+});

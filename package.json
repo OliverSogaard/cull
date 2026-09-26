@@ -1,7 +1,7 @@
 {
   "name": "cull",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Keyboard-fast culling for Canon CR3 RAW photos.",
   "author": "Oliver Søgaard-Andersen",
   "license": "MIT",

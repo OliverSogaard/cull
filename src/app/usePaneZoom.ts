@@ -4,6 +4,7 @@ import type { PaneRect } from "../components/pane/paneGeometry";
 import { imageStore } from "../image/imageStore";
 import { zoomOriginMeta } from "../utils/zoom";
 import { readRenderedScale } from "../utils/renderedScale";
+import { ZOOM_ENGAGE_MS, ZOOM_RELEASE_MS } from "../components/pane/zoomTransition";
 
 const PAN_LIMIT = 40; // max % offset from the AF point
 
@@ -68,6 +69,20 @@ export function usePaneZoom({
   useEffect(() => {
     isZoomingRef.current = isZooming;
   }, [isZooming]);
+  // When the glide that the last isZooming flip started will have landed.
+  // The layers keep animating through a frame change (they are the same
+  // DOM elements, only their content swaps), so a new frame arriving
+  // mid-glide would inherit a half-way scale and finish the glide as if
+  // it had been zoomed — the index-change effect checks this and lands
+  // such a frame instantly instead.
+  const glideEndsAtRef = useRef(0);
+  const glideForRef = useRef(isZooming);
+  useEffect(() => {
+    // Mount runs this too, and nothing glides on mount.
+    if (glideForRef.current === isZooming) return;
+    glideForRef.current = isZooming;
+    glideEndsAtRef.current = performance.now() + (isZooming ? ZOOM_ENGAGE_MS : ZOOM_RELEASE_MS);
+  }, [isZooming]);
 
   // Cursor-anchored mouse zoom: press on the photo = zoom at that point,
   // drag = the photo sticks to the pointer (grab), release = exit. Mirrors
@@ -110,12 +125,23 @@ export function usePaneZoom({
   // point). The flag is one-shot: undo, compare exits, and any other cursor
   // move still exit zoom. Reads isZoomingRef so it fires on the index change,
   // never on the Space-press that started the zoom.
+  //
+  // A frame change while a glide is still in flight — an arrow inside the
+  // 300 ms engage or the 200 ms release — lands the new frame at its fit
+  // size with the transition off (zoomSwapInstant), so it cannot inherit
+  // the half-way scale and "arrive zoomed". Not for a carried advance,
+  // which lands at scale on purpose and already goes instant at its site.
   useEffect(() => {
-    if (!isZoomingRef.current) return;
+    const gliding = performance.now() < glideEndsAtRef.current;
+    if (!isZoomingRef.current) {
+      if (gliding) setZoomSwapInstant(true);
+      return;
+    }
     if (keepZoomOnAdvanceRef.current) {
       keepZoomOnAdvanceRef.current = false;
       return;
     }
+    if (gliding) setZoomSwapInstant(true);
     resetZoom();
   }, [currentIndex, resetZoom]);
 
