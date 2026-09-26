@@ -99,7 +99,7 @@ export type StatusBarProps = {
  *
  * Layout (left → right):
  *   filename · MP  ·  verdict pill (glyph + label)
- *   overlay cluster (i h p o t — circular toggle chips, on/off state)
+ *   overlay cluster (t i h p o — circular toggle chips, on/off state)
  *   spacer
  *   position N / M  ·  filter tabs (loupe + grid)  ·  finish button
  */
@@ -173,6 +173,15 @@ export const StatusBar = memo(function StatusBar({
           <div className="cull-statusbar__overlay-cluster" aria-label="overlays">
             <button
               type="button"
+              className={`cull-statusbar__ov${overlays.thumbs.on ? " is-on" : ""}`}
+              onClick={overlays.thumbs.toggle}
+              title="t · thumb strip"
+              aria-pressed={overlays.thumbs.on}
+            >
+              t
+            </button>
+            <button
+              type="button"
               className={`cull-statusbar__ov${overlays.exif.on ? " is-on" : ""}`}
               onClick={overlays.exif.toggle}
               title="i · info"
@@ -206,15 +215,6 @@ export const StatusBar = memo(function StatusBar({
               aria-pressed={overlays.composition.on}
             >
               o
-            </button>
-            <button
-              type="button"
-              className={`cull-statusbar__ov${overlays.thumbs.on ? " is-on" : ""}`}
-              onClick={overlays.thumbs.toggle}
-              title="t · thumb strip"
-              aria-pressed={overlays.thumbs.on}
-            >
-              t
             </button>
           </div>
         )}

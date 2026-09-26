@@ -5,6 +5,8 @@ import { SettingsDialog } from "./SettingsDialog";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import type { Settings } from "../types";
 
+declare const __APP_VERSION__: string;
+
 /**
  * The stars-and-labels switch, and the one piece of Settings copy that names
  * a filter digit. Both are about the SETTING being the single source of
@@ -66,5 +68,43 @@ describe("the analyze hint names the key the keymap binds", () => {
     open({ smartCullingOnOpen: false, starsAndLabels: true });
     fireEvent.click(screen.getByRole("button", { name: "Smart culling" }));
     expect(screen.getByText("Press Shift+4 in the Smart filter to analyze.")).toBeTruthy();
+  });
+});
+
+describe("the About tab", () => {
+  it("sits last in the rail and names the version the build carries", () => {
+    open();
+    const items = screen.getAllByRole("button", {
+      name: /General|Smart culling|Files|Storage|About/,
+    });
+    expect(items[items.length - 1].textContent).toBe("About");
+    fireEvent.click(screen.getByRole("button", { name: "About" }));
+    expect(screen.getByText("CULL", { selector: ".cull-about__name" })).toBeTruthy();
+    expect(screen.getByText(__APP_VERSION__)).toBeTruthy();
+    expect(screen.getByText("github.com/OliverSogaard/cull")).toBeTruthy();
+    // Without a check result it must not claim to be current.
+    expect(screen.getByText("Could not check for updates at launch.")).toBeTruthy();
+  });
+
+  it("tells a finished check apart from one that could not run, and offers a found release", () => {
+    const onInstall = vi.fn();
+    const base = { settings: DEFAULT_SETTINGS, onChange: () => {}, onClose: () => {} };
+    const { unmount } = render(
+      <SettingsDialog {...base} update={{ state: { status: "current" }, onInstall }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "About" }));
+    expect(screen.getByText("Up to date.")).toBeTruthy();
+    unmount();
+
+    render(
+      <SettingsDialog
+        {...base}
+        update={{ state: { status: "available", version: "1.0.2" }, onInstall }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "About" }));
+    expect(screen.getByText("Update 1.0.2 is ready to install")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Install and restart" }));
+    expect(onInstall).toHaveBeenCalledTimes(1);
   });
 });

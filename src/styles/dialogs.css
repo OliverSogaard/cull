@@ -21,7 +21,9 @@
    height keeps the dialog from resizing as tabs change. */
 .cull-settings__layout {
   display: flex;
-  height: min(440px, 62vh);
+  /* 480: the General tab's six rows overflowed 440 by a few pixels on a
+     4K/150% display and grew a scrollbar for nothing. */
+  height: min(480px, 62vh);
   min-height: 0;
 }
 
@@ -61,6 +63,11 @@
   background: var(--accent-soft);
 }
 
+/* About sits at the foot of the rail, apart from the settings proper. */
+.cull-settings__navitem.is-foot {
+  margin-top: auto;
+}
+
 .cull-settings__navitem:focus-visible {
   outline: none;
   /* .cull-settings__nav stacks these with a 2px gap — inset per the ring rule. */
@@ -95,6 +102,50 @@
 .cull-settings__group.is-off {
   opacity: 0.4;
   pointer-events: none;
+}
+
+/* ── about pane ── */
+.cull-about {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cull-about__name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-9);
+  letter-spacing: 0.3em;
+  color: var(--accent);
+}
+
+.cull-about__blurb {
+  margin: 0;
+  color: var(--text-2);
+  line-height: 1.5;
+  max-width: 44ch;
+}
+
+.cull-about__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 18px;
+  margin: 0;
+  align-items: center;
+}
+
+.cull-about__facts dt {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cull-about__facts dd {
+  margin: 0;
+  color: var(--text);
+  /* The repo address is meant to be copied. */
+  user-select: text;
 }
 
 .cull-settings__foot {

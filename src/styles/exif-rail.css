@@ -172,13 +172,15 @@
   align-items: baseline;
 }
 
-/* No gap before the key text: the dot's own box already carries more space
-   than the 90px track can spare. Sized to match the Phase 3A bullet it
-   replaced (a Lucide Dot glyph painted too small to read as a mark at
-   14px — see Task 4b) rather than scaled off the icon grid. */
+/* A 5px gap before the key text: at 4px the dot read as part of the first
+   letter. "LrC rating" + dot + gap still fits the 90px track. Sized to match
+   the Phase 3A bullet it replaced (a Lucide Dot glyph painted too small to
+   read as a mark at 14px — see Task 4b) rather than scaled off the icon
+   grid. */
 .cull-cr-rail__diff-dot {
   align-self: center;
   flex-shrink: 0;
+  margin-right: 5px;
   width: 4px;
   height: 4px;
   border-radius: 50%;
@@ -270,5 +272,7 @@
 /* The active swatch wears a ring, so which one is set survives a
    screenshot, a colour-blind reader and a dark room. */
 .cull-label-swatch.is-active {
-  box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3px var(--text-2);
+  box-shadow:
+    0 0 0 1.5px var(--bg),
+    0 0 0 3px var(--text-2);
 }

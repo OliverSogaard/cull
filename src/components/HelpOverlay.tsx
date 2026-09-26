@@ -89,11 +89,11 @@ function helpGroupsFor(
       {
         title: "overlays",
         rows: [
+          { keys: ["T"], desc: "Thumbnail strip" },
           { keys: ["I"], desc: "EXIF + histogram" },
           { keys: ["H"], desc: "Clipping" },
           { keys: ["P"], desc: "Focus peaking" },
           { keys: ["O"], desc: "Thirds grid" },
-          { keys: ["T"], desc: "Thumbnail strip" },
         ],
       },
       {
@@ -126,11 +126,11 @@ function helpGroupsFor(
       {
         title: "overlays",
         rows: [
+          { keys: ["T"], desc: "Candidate strip" },
           { keys: ["I"], desc: "EXIF + histogram" },
           { keys: ["H"], desc: "Clipping" },
           { keys: ["P"], desc: "Focus peaking" },
           { keys: ["O"], desc: "Thirds grid" },
-          { keys: ["T"], desc: "Candidate strip" },
         ],
       },
       {

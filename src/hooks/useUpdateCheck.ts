@@ -2,10 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
-/** What the home screen's update chip shows. `idle` renders nothing: a failed
- *  or empty check must never nag — the app is fully usable without it. */
+/** What the home screen's update chip shows. `idle` (no check ran, or it
+ *  failed) and `current` (it ran and found nothing newer) both render
+ *  nothing there — a failed or empty check must never nag, the app is fully
+ *  usable without it. The About tab tells the two apart. */
 export type UpdateState =
   | { status: "idle" }
+  | { status: "current" }
   | { status: "available"; version: string }
   | { status: "downloading"; version: string; percent: number }
   | { status: "ready"; version: string }
@@ -25,7 +28,11 @@ export function useUpdateCheck(enabled: boolean) {
     void (async () => {
       try {
         const found = await check();
-        if (!alive || !found) return;
+        if (!alive) return;
+        if (!found) {
+          setState({ status: "current" });
+          return;
+        }
         update.current = found;
         setState({ status: "available", version: found.version });
       } catch (e) {
