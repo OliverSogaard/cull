@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import {
-  hiResTransform,
+  hiResFitScale,
   paneZoomZ,
   prefersReducedMotion,
   unzoomRetreatMs,
@@ -11,23 +11,16 @@ import {
 const rect = { left: 0, top: 0, width: 800, height: 533 };
 const native = { w: 6960, h: 4640 };
 
-describe("hiResTransform — the native-size raster reproduces scale(Z) about the origin", () => {
-  it("matches the loupe/compare formula", () => {
-    const t = hiResTransform(rect, native, 50, 50, 6);
-    expect(t.scale).toBeCloseTo((800 / 6960) * 6);
-    expect(t.tx).toBeCloseTo(0.5 * 800 * (1 - 6));
-    expect(t.ty).toBeCloseTo(0.5 * 533 * (1 - 6));
+describe("hiResFitScale — the native-size raster fits the displayed box", () => {
+  it("is displayed width over native width, so fit × zoomZ is the base's scale(Z)", () => {
+    expect(hiResFitScale(rect, native)).toBeCloseTo(800 / 6960);
+    expect(hiResFitScale(rect, native) * paneZoomZ(native, rect, 1, true)).toBeCloseTo(1);
   });
 
-  it("identity at zoom 1 centered origin still offsets zero", () => {
-    const t = hiResTransform(rect, native, 50, 50, 1);
-    expect(t.tx).toBe(0);
-    expect(t.ty).toBe(0);
-  });
-
-  it("null rect or native yields the inert transform", () => {
-    expect(hiResTransform(null, native, 50, 50, 6)).toEqual({ tx: 0, ty: 0, scale: 1 });
-    expect(hiResTransform(rect, undefined, 50, 50, 6)).toEqual({ tx: 0, ty: 0, scale: 1 });
+  it("null rect or native yields the inert scale", () => {
+    expect(hiResFitScale(null, native)).toBe(1);
+    expect(hiResFitScale(rect, undefined)).toBe(1);
+    expect(hiResFitScale(rect, { w: 0, h: 0 })).toBe(1);
   });
 });
 

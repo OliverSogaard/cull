@@ -10,7 +10,7 @@ import { sizerSrc } from "../../utils/sizer";
 import { HiResLayer } from "./HiResLayer";
 import { PresentLayers } from "./PresentLayers";
 import {
-  hiResTransform,
+  hiResFitScale,
   measurePaneRect,
   paneZoomZ,
   prefersReducedMotion,
@@ -298,11 +298,11 @@ export const PhotoPane = memo(function PhotoPane({
   // display dims (dims is the full sensor size, orientation-adjusted).
   const zoomNative = img.full?.dims ?? dims;
   const zoomZ = paneZoomZ(zoomNative, rect, zoomLevel, isZooming);
-  // Transform for the deferred hi-res layer: reproduces the base's scale(Z)
-  // about the origin EXACTLY, from the native-pixel-size element — pixel-
-  // aligned with the base by construction, so it can appear/disappear with
-  // zero visible shift.
-  const hiResT = hiResTransform(rect, zoomNative, originX, originY, zoomZ);
+  // Fit scale for the deferred hi-res layer: its wrapper then applies the
+  // SAME scale(Z) about the SAME origin as the presenter layers, so the
+  // native-pixel-size raster is pixel-aligned with the base by construction
+  // and can appear/disappear with zero visible shift.
+  const hiResFit = hiResFitScale(rect, zoomNative);
   const hiResSrc = img.full?.url;
   // True while the hi-res layer's pixels are actually decoded + in place
   // (HiResLayer reports both ways) — drives the zoom loading ring below.
@@ -452,9 +452,11 @@ export const PhotoPane = memo(function PhotoPane({
             url={hiResSrc}
             w={zoomNative.w}
             h={zoomNative.h}
-            tx={hiResT.tx}
-            ty={hiResT.ty}
-            scale={hiResT.scale}
+            fit={hiResFit}
+            originX={originX}
+            originY={originY}
+            zoomZ={zoomZ}
+            isZooming={isZooming}
             transition={zoomGlide}
             className={`${cls.img} cull-image--hires`}
             onDecoded={setHiResReady}

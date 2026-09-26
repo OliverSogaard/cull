@@ -18,9 +18,11 @@ export function HiResLayer({
   url,
   w,
   h,
-  tx,
-  ty,
-  scale,
+  fit,
+  originX,
+  originY,
+  zoomZ,
+  isZooming,
   transition,
   className,
   onDecoded,
@@ -28,9 +30,17 @@ export function HiResLayer({
   url: string;
   w: number;
   h: number;
-  tx: number;
-  ty: number;
-  scale: number;
+  /** Shrinks the native-size raster onto the displayed box (hiResFitScale). */
+  fit: number;
+  /** The presenter layers' zoom, verbatim: the wrapper mirrors their
+   *  `scale(Z)` about `(originX%, originY%)`. The origin is a transform-origin,
+   *  never folded into a translate — a translate is part of `transform` and
+   *  restarts its transition on every pan update, which made a drag on the
+   *  sharp layer ease and lag behind the pointer. */
+  originX: number;
+  originY: number;
+  zoomZ: number;
+  isZooming: boolean;
   /** Transform transition — MUST match the presenter layers' current zoom
    *  curve (zoomTransition) or the sharp raster tears away from the base
    *  mid-glide. */
@@ -72,32 +82,47 @@ export function HiResLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
   return (
-    <img
-      ref={ref}
+    // Two elements on purpose. The WRAPPER fills the clip box exactly like a
+    // presenter layer (same class, same box) and carries the zoom: scale(Z)
+    // about the origin, on the shared glide. The IMG inside only shrinks the
+    // native raster onto that box (a constant per frame, never transitioned)
+    // and cross-fades in once decoded. Nothing that changes on a pan sits
+    // inside a transitioned `transform`.
+    <div
       className={className}
-      alt=""
       aria-hidden
       style={{
-        position: "absolute",
         // ABOVE the presenter layers (front layer is zIndex 2): without this
         // the sharp raster paints UNDERNEATH the zoomed preview and zoom
         // never visibly sharpens (found in the macOS manual matrix).
         zIndex: 3,
-        // Inside .cull-photo-frame__clip (the content box) — the clip's
-        // inset already accounts for the matte.
-        left: 0,
-        top: 0,
-        width: w,
-        height: h,
-        maxWidth: "none",
-        maxHeight: "none",
-        transformOrigin: "0 0",
-        transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-        transition: `${transition ?? "transform 200ms ease-out"}, opacity 100ms ease-out`,
-        opacity: decoded ? 1 : 0,
+        // .cull-image paints the matte colour; this box must stay see-through
+        // until the raster has decoded, or it blanks the preview beneath.
+        backgroundColor: "transparent",
+        transform: isZooming ? `scale(${zoomZ})` : undefined,
+        transformOrigin: `${originX}% ${originY}%`,
+        transition: transition ?? "transform 200ms ease-out",
         pointerEvents: "none",
-        willChange: "transform",
       }}
-    />
+    >
+      <img
+        ref={ref}
+        alt=""
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: w,
+          height: h,
+          maxWidth: "none",
+          maxHeight: "none",
+          transformOrigin: "0 0",
+          transform: `scale(${fit})`,
+          transition: "opacity 100ms ease-out",
+          opacity: decoded ? 1 : 0,
+          pointerEvents: "none",
+        }}
+      />
+    </div>
   );
 }

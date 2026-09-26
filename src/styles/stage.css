@@ -127,11 +127,11 @@
   background-color: var(--matte);
 }
 
-/* The deferred hi-res zoom layer owns ALL its geometry inline (position:absolute,
-   left/top:10, width/height = the zoom tier's native dims, max-*:none); the base
-   .cull-image class still supplies object-fit / radius / background. No
-   `.cull-image--hires` rule is needed — inline styles already win over the class,
-   so a body here would be dead. */
+/* The deferred hi-res zoom layer is a .cull-image WRAPPER (same box and zoom
+   transform as a presenter layer, background overridden to transparent
+   inline) around a native-size <img> that owns its own geometry inline. No
+   `.cull-image--hires` rule is needed here — the reduced-motion override in
+   motion.css is the one place it matters. */
 
 /* Verdict flash — momentary colored wash over the photo (inside the matte
    padding) when a rating fires. The pseudo-element re-creates itself each
