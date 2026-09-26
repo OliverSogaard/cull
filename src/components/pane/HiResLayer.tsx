@@ -88,6 +88,14 @@ export function HiResLayer({
     // native raster onto that box (a constant per frame, never transitioned)
     // and cross-fades in once decoded. Nothing that changes on a pan sits
     // inside a transitioned `transform`.
+    //
+    // The IMG must be its own compositor layer (will-change: transform), and
+    // the wrapper must NOT be one. A composited <img> with no border, radius
+    // or background is drawn straight from the decoded bitmap through the
+    // whole ancestor transform, so it is sharp at any zoom and downscales
+    // with proper filtering. Painted INSIDE a composited wrapper instead, it
+    // is rasterised once at screen resolution and stretched by scale(Z) —
+    // 1.0.3 shipped that and every frame went soft, zoomed or not.
     <div
       className={className}
       aria-hidden
@@ -99,6 +107,8 @@ export function HiResLayer({
         // .cull-image paints the matte colour; this box must stay see-through
         // until the raster has decoded, or it blanks the preview beneath.
         backgroundColor: "transparent",
+        // .cull-image also asks for a layer — see the note above.
+        willChange: "auto",
         transform: isZooming ? `scale(${zoomZ})` : undefined,
         transformOrigin: `${originX}% ${originY}%`,
         transition: transition ?? "transform 200ms ease-out",
@@ -121,6 +131,7 @@ export function HiResLayer({
           transition: "opacity 100ms ease-out",
           opacity: decoded ? 1 : 0,
           pointerEvents: "none",
+          willChange: "transform",
         }}
       />
     </div>
