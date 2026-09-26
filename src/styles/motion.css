@@ -144,16 +144,12 @@
     transition: none !important;
   }
 
-  /* The hi-res layer is the exception (distinction 3). HiResLayer.tsx:96
-     composes its inline string as `<zoomGlide>, opacity 100ms ease-out`, so
-     the blanket rule above would take the cross-fade with it and make the
-     sharp raster pop in. A cross-fade is not vestibular motion, so it is
-     restored verbatim from that line while the transform half stays gone.
-     Same specificity as the rule above and declared after it, so it wins the
-     tie; `!important` for the same inline-style reason. */
-  .cull-image--hires {
-    transition: opacity 100ms ease-out !important;
-  }
+  /* The hi-res layer needs no exception any more (distinction 3 still
+     holds). Its zoom transform sits on a .cull-image WRAPPER, which the
+     blanket rule above lands on; its decode cross-fade sits on the classless
+     <img> inside (HiResLayer.tsx), which no rule here reaches. A cross-fade
+     is not vestibular motion, so that is the split wanted: the zoom lands,
+     the sharp raster still fades in. */
 
   /* NO CHANGE, deliberately. `.cull-photo-frame__spinner-wrap` runs its
      reveal as `1ms linear 150ms forwards` — a debounce spelled as an
