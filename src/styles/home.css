@@ -77,6 +77,9 @@
   padding-top: 24px;
   border-top: 1px solid var(--border-soft);
   display: flex;
+  /* Centred, not stretched: the update chip carries a button that is
+     taller than the text, and the two must share a midline, not a top. */
+  align-items: center;
   gap: 28px;
   /* stylelint-disable-next-line declaration-property-value-disallowed-list */
   font-family: Inter, sans-serif;
@@ -332,10 +335,14 @@
 
 /* ── update chip (home screen) ────────────────────────────────
    Rendered only when a newer release exists; sits in the how-row so the
-   hero's rhythm is unchanged when there is nothing to offer. */
+   hero's rhythm is unchanged when there is nothing to offer. Pushed to
+   the row's far edge (flush with the divider above it) in the row's own
+   quiet voice — the button is the only thing that asks for attention. */
 .cull-update-chip {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  color: var(--text);
+  margin-left: auto;
+  color: var(--text-2);
+  white-space: nowrap;
 }
